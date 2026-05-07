@@ -1,0 +1,74 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: cs2coach
+      POSTGRES_USER: cs2coach
+      POSTGRES_PASSWORD: cs2coach
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cs2coach -d cs2coach"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  api:
+    build:
+      context: ./backend
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+    environment:
+      DATABASE_URL: postgresql+psycopg2://cs2coach:cs2coach@postgres:5432/cs2coach
+      REDIS_URL: redis://redis:6379/0
+      REDIS_QUEUE_NAME: cs2-demo-jobs
+      REPLAY_STORAGE_DIR: /data/replays
+      CORS_ORIGINS: http://localhost:3000,http://127.0.0.1:3000
+    ports:
+      - "8000:8000"
+    volumes:
+      - replay-data:/data/replays
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  worker:
+    build:
+      context: ./backend
+    command: python -m app.workers.worker
+    environment:
+      DATABASE_URL: postgresql+psycopg2://cs2coach:cs2coach@postgres:5432/cs2coach
+      REDIS_URL: redis://redis:6379/0
+      REDIS_QUEUE_NAME: cs2-demo-jobs
+      REPLAY_STORAGE_DIR: /data/replays
+    volumes:
+      - replay-data:/data/replays
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ./frontend
+    command: npm run dev -- --hostname 0.0.0.0 --port 3000
+    environment:
+      NEXT_PUBLIC_API_BASE_URL: http://localhost:8000
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api
+
+volumes:
+  postgres-data:
+  replay-data:
