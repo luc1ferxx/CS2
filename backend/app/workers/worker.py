@@ -11,6 +11,8 @@ from app.core.redis import get_redis_client
 from app.models.coaching import CoachingEvent
 from app.models.demo import Demo
 from app.models.job import DemoJob
+from app.parser.demo_parser import parse_demo_file
+from app.parser.normalizer import normalize_parser_output
 from app.services.demo_service import DemoService
 from app.services.mock_replay_service import build_mock_replay
 
@@ -27,6 +29,9 @@ def process_job(db: Session, job_id: str, demo_id: str) -> None:
 
     if job.job_type == "mock_render":
         process_mock_render_job(db, demo, job)
+        return
+    if job.job_type == "real_parse":
+        process_real_parse_job(db, demo, job)
         return
     if job.job_type != "mock_parse":
         raise ValueError(f"Unsupported job type: {job.job_type}")
@@ -58,6 +63,41 @@ def process_mock_parse_job(db: Session, demo: Demo, job: DemoJob) -> None:
     demo.tick_rate = replay["tickRate"]
     demo.round_count = len(replay["rounds"])
     demo.coaching_event_count = len(events)
+    demo.replay_storage_key = replay_storage_key
+    demo.completed_at = utc_now()
+    demo.error_message = None
+
+    job.status = "completed"
+    job.finished_at = utc_now()
+    job.error_message = None
+    db.commit()
+
+
+def process_real_parse_job(db: Session, demo: Demo, job: DemoJob) -> None:
+    service = DemoService(db)
+
+    job.status = "processing"
+    job.attempts += 1
+    job.started_at = utc_now()
+    demo.status = "parsing"
+    db.commit()
+
+    parsed = parse_demo_file(service.source_demo_path(demo))
+
+    demo.status = "analyzing"
+    db.commit()
+
+    replay = normalize_parser_output(demo.id, parsed)
+    replay_storage_key = service.write_replay_blob(demo.id, replay)
+
+    db.query(CoachingEvent).filter(CoachingEvent.demo_id == demo.id).delete()
+
+    demo.status = "completed"
+    demo.name = f"{replay['mapName']} parser spike {demo.id[:8]}"
+    demo.map_name = replay["mapName"]
+    demo.tick_rate = replay["tickRate"]
+    demo.round_count = len(replay["rounds"])
+    demo.coaching_event_count = 0
     demo.replay_storage_key = replay_storage_key
     demo.completed_at = utc_now()
     demo.error_message = None

@@ -1,6 +1,12 @@
 "use client";
 
+import { useMemo } from "react";
+
 import type { ReplayData, ReplayFrame, ReplayFramePlayer } from "@/types/replay";
+
+const MAP_RADAR_IMAGES: Record<string, string> = {
+  de_dust2: "/maps/de_dust2_radar.png"
+};
 
 interface ReplayViewerProps {
   replay: ReplayData;
@@ -17,10 +23,14 @@ export function ReplayViewer({
   onSelectPlayer,
   variant = "full"
 }: ReplayViewerProps) {
-  const frame = getFrameForTick(replay.frames, currentTick);
+  const frame = useMemo(
+    () => getInterpolatedFrameForTick(replay.frames, currentTick),
+    [currentTick, replay.frames]
+  );
   const tPlayers = frame.players.filter((player) => player.side === "T");
   const ctPlayers = frame.players.filter((player) => player.side === "CT");
   const round = replay.rounds.find((item) => item.roundNumber === frame.roundNumber);
+  const isDust2 = replay.mapName === "de_dust2";
 
   return (
     <section
@@ -34,34 +44,14 @@ export function ReplayViewer({
         <span>{round ? `${round.winnerSide} won round ${round.roundNumber}` : "Mock replay"}</span>
       </div>
 
-      <div className="map-frame">
-        <svg viewBox="0 0 100 100" role="img" aria-label="Abstract tactical minimap">
+      <div className={`map-frame ${isDust2 ? "dust2-map-frame" : ""}`}>
+        <svg viewBox="0 0 100 100" role="img" aria-label={`${replay.mapName} tactical minimap`}>
           <defs>
             <pattern id="grid" width="5" height="5" patternUnits="userSpaceOnUse">
               <path d="M 5 0 L 0 0 0 5" fill="none" stroke="#1c2a32" strokeWidth="0.25" />
             </pattern>
           </defs>
-          <rect x="0" y="0" width="100" height="100" fill="#0c1318" />
-          <rect x="0" y="0" width="100" height="100" fill="url(#grid)" />
-          <path
-            d="M13 68 L28 68 L28 58 L40 58 L40 48 L53 48 L53 36 L66 36 L66 27 L82 27 L82 42 L72 42 L72 53 L84 53 L84 66 L66 66 L66 80 L50 80 L50 66 L35 66 L35 81 L18 81 L18 74 L13 74 Z"
-            fill="#17232c"
-            stroke="#435865"
-            strokeWidth="0.8"
-          />
-          <path
-            d="M35 66 L50 66 L50 80 L66 80 L66 66 L84 66 L84 53 L72 53 L72 42 L66 42 L66 36 L53 36 L53 48 L40 48 L40 58 L35 58 Z"
-            fill="#1f2f3a"
-            opacity="0.88"
-          />
-          <rect x="70" y="33" width="12" height="12" fill="rgba(244,183,64,0.13)" stroke="#7b6650" />
-          <text x="76" y="41" textAnchor="middle" fill="#d6b777" fontSize="7" fontWeight="700">
-            A
-          </text>
-          <rect x="22" y="70" width="12" height="12" fill="rgba(244,183,64,0.13)" stroke="#7b6650" />
-          <text x="28" y="78" textAnchor="middle" fill="#d6b777" fontSize="7" fontWeight="700">
-            B
-          </text>
+          {isDust2 ? <RadarImageBackground mapName={replay.mapName} /> : <GenericMapBackground />}
 
           {frame.players.map((player, index) => (
             <PlayerDot
@@ -87,6 +77,53 @@ export function ReplayViewer({
         </div>
       </div>
     </section>
+  );
+}
+
+function GenericMapBackground() {
+  return (
+    <>
+      <rect x="0" y="0" width="100" height="100" fill="#0c1318" />
+      <rect x="0" y="0" width="100" height="100" fill="url(#grid)" />
+      <path
+        d="M13 68 L28 68 L28 58 L40 58 L40 48 L53 48 L53 36 L66 36 L66 27 L82 27 L82 42 L72 42 L72 53 L84 53 L84 66 L66 66 L66 80 L50 80 L50 66 L35 66 L35 81 L18 81 L18 74 L13 74 Z"
+        fill="#17232c"
+        stroke="#435865"
+        strokeWidth="0.8"
+      />
+      <path
+        d="M35 66 L50 66 L50 80 L66 80 L66 66 L84 66 L84 53 L72 53 L72 42 L66 42 L66 36 L53 36 L53 48 L40 48 L40 58 L35 58 Z"
+        fill="#1f2f3a"
+        opacity="0.88"
+      />
+      <rect x="70" y="33" width="12" height="12" fill="rgba(244,183,64,0.13)" stroke="#7b6650" />
+      <text x="76" y="41" textAnchor="middle" fill="#d6b777" fontSize="7" fontWeight="700">
+        A
+      </text>
+      <rect x="22" y="70" width="12" height="12" fill="rgba(244,183,64,0.13)" stroke="#7b6650" />
+      <text x="28" y="78" textAnchor="middle" fill="#d6b777" fontSize="7" fontWeight="700">
+        B
+      </text>
+    </>
+  );
+}
+
+function RadarImageBackground({ mapName }: { mapName: string }) {
+  const radarUrl = MAP_RADAR_IMAGES[mapName];
+  if (!radarUrl) {
+    return <GenericMapBackground />;
+  }
+
+  return (
+    <image
+      className="map-radar-image"
+      href={radarUrl}
+      x="0"
+      y="0"
+      width="100"
+      height="100"
+      preserveAspectRatio="none"
+    />
   );
 }
 
@@ -159,13 +196,64 @@ function Roster({
   );
 }
 
-function getFrameForTick(frames: ReplayFrame[], tick: number): ReplayFrame {
-  let selected = frames[0];
-  for (const frame of frames) {
-    if (frame.tick > tick) {
-      break;
-    }
-    selected = frame;
+function getInterpolatedFrameForTick(frames: ReplayFrame[], tick: number): ReplayFrame {
+  const firstFrame = frames[0];
+  if (tick <= firstFrame.tick) {
+    return firstFrame;
   }
-  return selected;
+
+  for (let index = 1; index < frames.length; index += 1) {
+    const nextFrame = frames[index];
+    if (nextFrame.tick < tick) {
+      continue;
+    }
+
+    const previousFrame = frames[index - 1];
+    if (nextFrame.tick === previousFrame.tick) {
+      return previousFrame;
+    }
+
+    const progress = Math.min(
+      1,
+      Math.max(0, (tick - previousFrame.tick) / (nextFrame.tick - previousFrame.tick))
+    );
+
+    return {
+      ...previousFrame,
+      tick,
+      timeSeconds: interpolate(previousFrame.timeSeconds, nextFrame.timeSeconds, progress),
+      roundNumber: progress < 0.5 ? previousFrame.roundNumber : nextFrame.roundNumber,
+      players: interpolatePlayers(previousFrame.players, nextFrame.players, progress),
+      bombState: progress < 0.5 ? previousFrame.bombState : nextFrame.bombState
+    };
+  }
+
+  return frames[frames.length - 1];
+}
+
+function interpolatePlayers(
+  previousPlayers: ReplayFramePlayer[],
+  nextPlayers: ReplayFramePlayer[],
+  progress: number
+): ReplayFramePlayer[] {
+  const nextById = new Map(nextPlayers.map((player) => [player.id, player]));
+  return previousPlayers.map((player) => {
+    const nextPlayer = nextById.get(player.id);
+    if (!nextPlayer) {
+      return player;
+    }
+
+    return {
+      ...player,
+      x: interpolate(player.x, nextPlayer.x, progress),
+      y: interpolate(player.y, nextPlayer.y, progress),
+      alive: progress < 0.85 ? player.alive : nextPlayer.alive,
+      hp: Math.round(interpolate(player.hp, nextPlayer.hp, progress)),
+      hasBomb: progress < 0.5 ? player.hasBomb : nextPlayer.hasBomb
+    };
+  });
+}
+
+function interpolate(start: number, end: number, progress: number): number {
+  return start + (end - start) * progress;
 }

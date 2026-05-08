@@ -4,3 +4,6 @@ SQLAlchemy==2.0.36
 psycopg2-binary==2.9.10
 redis==5.2.1
 pydantic==2.10.4
+python-multipart==0.0.20
+demoparser2==0.41.0
+pandas==2.2.3

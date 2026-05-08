@@ -5,7 +5,7 @@ import { Activity, CircleCheck, Clock3, Loader2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { DemoUploader } from "@/components/upload/DemoUploader";
-import { createMockUpload, listDemos } from "@/lib/api";
+import { createDemoUpload, createMockUpload, listDemos } from "@/lib/api";
 import type { DemoProcessingStatus, DemoSummary } from "@/types/demo";
 
 const ACTIVE_STATUSES: DemoProcessingStatus[] = ["queued", "parsing", "analyzing"];
@@ -53,6 +53,18 @@ export default function DashboardPage() {
     }
   }
 
+  async function handleDemoUpload(file: File) {
+    setCreating(true);
+    try {
+      await createDemoUpload(file);
+      await loadDemos();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to upload demo");
+    } finally {
+      setCreating(false);
+    }
+  }
+
   return (
     <main className="app-shell">
       <header className="topbar">
@@ -80,7 +92,7 @@ export default function DashboardPage() {
               Queue synthetic demos, watch processing status, then open first-person coaching review.
             </p>
           </div>
-          <DemoUploader disabled={creating} onMockUpload={handleMockUpload} />
+          <DemoUploader disabled={creating} onMockUpload={handleMockUpload} onDemoUpload={handleDemoUpload} />
         </div>
 
         {error ? <div className="error-panel">{error}</div> : null}
@@ -108,7 +120,7 @@ export default function DashboardPage() {
                 <tr>
                   <td colSpan={6}>
                     <div className="empty-state">
-                      No demos yet. Use Mock Upload to create the first replay job.
+                      No demos yet. Use Demo Upload for a .dem/.zip parser job or Mock Upload for a synthetic replay.
                     </div>
                   </td>
                 </tr>

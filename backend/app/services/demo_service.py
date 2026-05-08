@@ -13,6 +13,7 @@ from app.models.demo import Demo
 from app.models.job import DemoJob
 from app.schemas.coaching import CoachingEventOut
 from app.schemas.demo import DemoListItem
+from app.services.upload_service import demo_upload_path, store_demo_upload
 
 
 class DemoService:
@@ -69,6 +70,45 @@ class DemoService:
         )
 
         return DemoListItem.model_validate(demo)
+
+    async def create_real_demo(self, upload: Any) -> DemoListItem:
+        demo_id = str(uuid.uuid4())
+        job_id = str(uuid.uuid4())
+        stored_upload = await store_demo_upload(demo_id, upload)
+
+        demo = Demo(
+            id=demo_id,
+            user_id=settings.dev_user_id,
+            name=f"Uploaded Demo {demo_id[:8]}",
+            original_filename=stored_upload.original_filename,
+            map_name="unknown",
+            tick_rate=64,
+            round_count=0,
+            coaching_event_count=0,
+            status="queued",
+        )
+        job = DemoJob(
+            id=job_id,
+            demo_id=demo_id,
+            job_type="real_parse",
+            status="queued",
+            attempts=0,
+        )
+
+        self.db.add(demo)
+        self.db.add(job)
+        self.db.commit()
+        self.db.refresh(demo)
+
+        get_redis_client().lpush(
+            settings.redis_queue_name,
+            json.dumps({"job_id": job_id, "demo_id": demo_id}),
+        )
+
+        return DemoListItem.model_validate(demo)
+
+    def source_demo_path(self, demo: Demo) -> Path:
+        return demo_upload_path(demo.id, demo.original_filename)
 
     def create_mock_render_job(self, demo: Demo) -> DemoJob:
         replay = self.load_replay_blob(demo)

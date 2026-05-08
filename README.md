@@ -1,8 +1,8 @@
 # CS2 Demo AI Coach Mock MVP
 
-This is a runnable first-phase mock MVP for a website-based CS2 demo AI coach.
+This is a runnable MVP for a website-based CS2 demo AI coach with a mock flow and an early real `.dem` parser spike.
 
-The current build does not upload real `.dem` files, does not parse CS2 demos, does not call OpenAI, and does not use S3/R2. The `Mock Upload` button creates a synthetic demo, queues a worker job, generates mock replay frames plus coaching events, and lets the frontend play a first-person replay shell with a synchronized tactical map.
+The current build does not call OpenAI, does not use S3/R2, and does not render real CS2 first-person video. The `Mock Upload` button still creates a synthetic demo. The `Demo Upload` button accepts a local `.dem` or `.zip`, queues a parser job, and tries to normalize sampled CS2 positions into the same replay JSON contract used by the frontend.
 
 ## Stack
 
@@ -11,6 +11,8 @@ The current build does not upload real `.dem` files, does not parse CS2 demos, d
 - Database: PostgreSQL
 - Queue: Redis list consumed by a simple Python worker
 - Replay blob boundary: local JSON files in `/data/replays` shared by the API and worker containers
+- Demo upload boundary: local files in `/data/uploads` shared by the API and worker containers
+- Parser spike: `demoparser2` in the worker container
 - First-person media boundary: replay JSON includes `video` metadata, but no real video is rendered in this mock phase
 - Deployment shape: Docker Compose with `frontend`, `api`, `worker`, `postgres`, and `redis`
 
@@ -38,11 +40,34 @@ Then open:
 8. The dashboard polls `GET /demos` and shows the completed demo.
 9. Open the demo detail page to use the first-person replay shell, tactical map companion, timeline controls, round selector, speed selector, and tick-linked coaching panel.
 
+## Real Demo Parser Spike
+
+The real parser path is intentionally narrow:
+
+1. Open `/dashboard`.
+2. Click `Demo Upload`.
+3. Choose a `.dem` or `.zip` file.
+4. The frontend calls `POST /uploads/demo`.
+5. The API validates extension and size, writes the file to `/data/uploads`, creates a `real_parse` job, and enqueues it in Redis.
+6. The worker updates status from `queued` to `parsing` to `analyzing` to `completed`.
+7. The parser tries `demoparser2`, extracts map name, tick rate, rounds, players, sampled player positions, and kill/death events.
+8. The normalizer writes the current replay JSON contract to `/data/replays`.
+
+CLI equivalent:
+
+```bash
+curl -F "file=@sample-demos/the-mongolz-vs-liquid-ancient.dem" \
+  http://localhost:8000/uploads/demo
+```
+
+If `demoparser2` is missing or fails on a demo, the worker marks `demo.status = failed` and writes the parser error to `demo.error_message`. This spike does not yet generate coaching events from real rule analysis.
+
 ## API
 
 - `GET /health`
 - `GET /demos`
 - `POST /uploads/mock`
+- `POST /uploads/demo`
 - `GET /demos/{demo_id}/status`
 - `GET /demos/{demo_id}/replay`
 - `GET /demos/{demo_id}/coaching`
@@ -59,7 +84,7 @@ PostgreSQL stores only metadata and indexed coaching events:
 - `demo_jobs`
 - `coaching_events`
 
-Replay frame data is treated as blob-style storage and written to shared JSON files. This keeps the boundary ready for S3/R2 later and avoids putting large tick payloads in PostgreSQL.
+Replay frame data is treated as blob-style storage and written to shared JSON files. Uploaded demos are also local files in the Docker volume during this spike. This keeps the boundary ready for S3/R2 later and avoids putting large tick payloads in PostgreSQL.
 
 Video files are not stored in PostgreSQL. The current replay contract only carries media metadata such as `video.status`, `video.url`, `video.durationSeconds`, tick range, tick rate, source, and optional `errorMessage`. Real mp4/HLS assets should live in object storage later.
 
@@ -67,7 +92,7 @@ Video files are not stored in PostgreSQL. The current replay contract only carri
 
 Browsers cannot directly play CS2 `.dem` files. A `.dem` is not a video stream, and this MVP does not try to render CS2 first-person gameplay in the browser.
 
-The current first-person player is a mock/player shell. If `video.url` is `null`, the frontend renders a styled mock first-person viewport and synchronizes it with the same `currentTick` used by coaching events and the tactical map.
+The current first-person player is still a mock/player shell. If `video.url` is `null`, the frontend renders a styled mock first-person viewport and synchronizes it with the same `currentTick` used by coaching events and the tactical map. For real parsed demos, the tactical map uses sampled real player coordinates, but the first-person viewport is not real CS2 video.
 
 The production path should be:
 
@@ -81,18 +106,37 @@ upload .dem
   -> frontend plays the video and synchronizes coaching via tick <-> video time
 ```
 
-## Next Phase: Real `.dem` Parser
+## Parser Spike Scope
 
-The next phase should replace `backend/app/services/mock_replay_service.py` with a parser-backed implementation:
+Current support:
 
-1. Add real upload sessions and object storage direct upload.
-2. Store original `.dem` or `.zip` files in S3/R2 quarantine storage.
-3. Add zip validation, size limits, and safe extraction.
-4. Use `demoparser2` or `awpy` inside parser workers.
-5. Normalize parser output into the existing replay blob schema.
-6. Keep coaching events in PostgreSQL, but store large replay payloads as object storage blobs.
-7. Add a rules package for positioning, trading, utility, timing, economy, objective, retake, and post-plant events.
-8. Add OpenAI only after rule events exist, passing structured coaching context rather than raw demo data.
+- `.dem` uploads and `.zip` uploads containing at least one `.dem`
+- Extension validation and 1 GiB upload size limit
+- Local upload storage only, no S3/R2
+- `demoparser2==0.41.0`, selected because it has Python 3.12 Linux wheels for the backend Docker image
+- Best-effort extraction of map, tick rate, rounds, roster, sampled positions, and kill/death rows
+- Existing replay JSON contract, so the current Demo Detail page can open parser output
+- `de_dust2` uses the CS2 overview transform (`pos_x=-2476`, `pos_y=3239`, `scale=4.4`) and a real CS2 radar image in `frontend/public/maps/de_dust2_radar.png`
+
+Not supported yet:
+
+- `.rar` extraction
+- Full tick-by-tick replay at original demo density
+- Rule-generated coaching events for real demos
+- Real first-person video
+- OpenAI coaching copy
+
+Next parser work should add upload sessions, S3/R2 quarantine storage, stricter zip inspection, parser telemetry, map-specific coordinate calibration, and a rules package for positioning, trading, utility, timing, economy, objective, retake, and post-plant events.
+
+## Tactical Map Assets
+
+The replay UI supports map-specific radar backgrounds. `de_dust2` currently uses:
+
+- Image: `frontend/public/maps/de_dust2_radar.png`
+- Attribution: `frontend/public/maps/ATTRIBUTION.md`
+- Coordinate transform: `backend/app/parser/normalizer.py`
+
+CS2 radar images are square assets from `panorama/images/overheadmaps`; overview values come from `resource/overviews/{map}.txt`. For production, extract these from the operator's CS2 install with Source 2 Viewer or replace them with internally licensed assets, then keep the parser normalizer and frontend map image table in sync.
 
 ## Next Phase: Render Worker Spike
 

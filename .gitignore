@@ -18,3 +18,11 @@ npm-debug.log*
 # Local QA artifacts
 .playwright-mcp/
 cs2-demo-detail-*.png
+
+# Local demo samples
+sample-demos/
+*.dem
+*.dem.zip
+*.rar
+*.mp4
+frontend/public/videos/

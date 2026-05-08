@@ -12,6 +12,7 @@ class Settings:
     redis_url: str = os.getenv("REDIS_URL", "redis://localhost:6379/0")
     redis_queue_name: str = os.getenv("REDIS_QUEUE_NAME", "cs2-demo-jobs")
     replay_storage_dir: Path = Path(os.getenv("REPLAY_STORAGE_DIR", "/data/replays"))
+    demo_upload_storage_dir: Path = Path(os.getenv("DEMO_UPLOAD_STORAGE_DIR", "/data/uploads"))
     dev_user_id: str = os.getenv("DEV_USER_ID", "dev-user")
     cors_origins_raw: str = os.getenv(
         "CORS_ORIGINS",

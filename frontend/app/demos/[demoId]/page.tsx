@@ -49,8 +49,12 @@ export default function DemoDetailPage() {
       ]);
       setReplay(nextReplay);
       setEvents(nextEvents);
-      setSelectedRound(nextReplay.rounds[0]?.roundNumber ?? 1);
-      setCurrentTick(nextReplay.rounds[0]?.startTick ?? 0);
+      const initialTick = nextReplay.video.url
+        ? nextReplay.video.tickStart
+        : nextReplay.rounds[0]?.startTick ?? 0;
+      const initialRound = findRoundForTick(nextReplay.rounds, initialTick) ?? nextReplay.rounds[0];
+      setSelectedRound(initialRound?.roundNumber ?? 1);
+      setCurrentTick(initialTick);
       setSelectedPlayerId(nextReplay.players[0]?.id ?? null);
       setError(null);
     } catch (err) {
@@ -125,7 +129,7 @@ export default function DemoDetailPage() {
   }, [loadVideoStatus, videoStatus]);
 
   useEffect(() => {
-    if (!playing || !replay || !selectedRoundData) {
+    if (!playing || !replay || !selectedRoundData || replay.video.url) {
       return;
     }
 
@@ -143,7 +147,7 @@ export default function DemoDetailPage() {
     return () => window.clearInterval(intervalId);
   }, [playing, replay, selectedRoundData, speed]);
 
-  function seek(tick: number) {
+  const seek = useCallback((tick: number) => {
     setCurrentTick(tick);
     const nextRound = replay?.rounds.find(
       (round) => tick >= round.startTick && tick <= round.endTick
@@ -151,7 +155,7 @@ export default function DemoDetailPage() {
     if (nextRound) {
       setSelectedRound(nextRound.roundNumber);
     }
-  }
+  }, [replay?.rounds]);
 
   function changeRound(roundNumber: number) {
     const nextRound = replay?.rounds.find((round) => round.roundNumber === roundNumber);
@@ -260,4 +264,8 @@ export default function DemoDetailPage() {
       </section>
     </main>
   );
+}
+
+function findRoundForTick(rounds: ReplayData["rounds"], tick: number) {
+  return rounds.find((round) => tick >= round.startTick && tick <= round.endTick);
 }

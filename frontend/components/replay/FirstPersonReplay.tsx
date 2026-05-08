@@ -26,6 +26,7 @@ export function FirstPersonReplay({
   onSeekTick
 }: FirstPersonReplayProps) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const lastSyncedTickRef = useRef<number | null>(null);
   const frame = useMemo(() => getFrameForTick(replay.frames, currentTick), [currentTick, replay.frames]);
   const videoTime = tickToVideoTime(currentTick, replay.video);
   const progress = Math.min(1, Math.max(0, videoTime / Math.max(1, replay.video.durationSeconds)));
@@ -47,6 +48,27 @@ export function FirstPersonReplay({
       element.pause();
     }
   }, [playing, replay.video.url, speed, videoTime]);
+
+  useEffect(() => {
+    const element = videoRef.current;
+    if (!element || !replay.video.url || !playing) {
+      return;
+    }
+
+    let animationFrameId = 0;
+    const syncTickFromVideo = () => {
+      const nextTick = videoTimeToTick(element.currentTime, replay.video);
+      const lastSyncedTick = lastSyncedTickRef.current;
+      if (lastSyncedTick === null || Math.abs(nextTick - lastSyncedTick) >= 1) {
+        lastSyncedTickRef.current = nextTick;
+        onSeekTick(nextTick);
+      }
+      animationFrameId = window.requestAnimationFrame(syncTickFromVideo);
+    };
+
+    animationFrameId = window.requestAnimationFrame(syncTickFromVideo);
+    return () => window.cancelAnimationFrame(animationFrameId);
+  }, [onSeekTick, playing, replay.video]);
 
   return (
     <section className="panel first-person-panel" aria-label="First-person replay player">
@@ -85,7 +107,8 @@ export function FirstPersonReplay({
             playsInline
             onTimeUpdate={(event) => {
               const nextTick = videoTimeToTick(event.currentTarget.currentTime, replay.video);
-              if (Math.abs(nextTick - currentTick) > replay.video.tickRate / 2) {
+              if (Math.abs(nextTick - currentTick) > 1) {
+                lastSyncedTickRef.current = nextTick;
                 onSeekTick(nextTick);
               }
             }}

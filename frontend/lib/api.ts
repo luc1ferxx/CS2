@@ -34,12 +34,33 @@ async function requestJson<T>(
   return response.json() as Promise<T>;
 }
 
+async function requestForm<T>(path: string, formData: FormData): Promise<T> {
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    method: "POST",
+    body: formData,
+    cache: "no-store"
+  });
+
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(detail || `Request failed with ${response.status}`);
+  }
+
+  return response.json() as Promise<T>;
+}
+
 export function listDemos(): Promise<DemoSummary[]> {
   return requestJson<DemoSummary[]>("/demos");
 }
 
 export function createMockUpload(): Promise<DemoSummary> {
   return requestJson<DemoSummary>("/uploads/mock", { method: "POST" });
+}
+
+export function createDemoUpload(file: File): Promise<DemoSummary> {
+  const formData = new FormData();
+  formData.append("file", file);
+  return requestForm<DemoSummary>("/uploads/demo", formData);
 }
 
 export function getDemoStatus(demoId: string): Promise<DemoStatus> {
