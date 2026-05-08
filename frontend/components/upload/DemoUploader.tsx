@@ -35,7 +35,7 @@ export function DemoUploader({ disabled, onMockUpload, onDemoUpload }: DemoUploa
         title="Upload a local .dem or .zip and queue a real parser spike job"
       >
         <FileUp size={17} strokeWidth={2.2} />
-        Demo Upload
+        Real Demo Upload
       </button>
       <button
         className="primary-button"

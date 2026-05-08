@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class DemoListItem(BaseModel):
@@ -15,23 +15,36 @@ class DemoListItem(BaseModel):
     round_count: int
     coaching_event_count: int
     status: str
+    archived: bool = False
     error_message: str | None
     created_at: datetime
     updated_at: datetime
     completed_at: datetime | None
+    video_status: str | None = None
+    video_source: str | None = None
+    video_url: str | None = None
+    latest_render_status: str | None = None
 
 
 class DemoStatus(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
+    name: str | None = None
+    original_filename: str | None = None
     status: str
+    archived: bool = False
     map_name: str
     round_count: int
     coaching_event_count: int
     error_message: str | None
     updated_at: datetime
     completed_at: datetime | None
+
+
+class DemoUpdate(BaseModel):
+    name: str | None = Field(default=None, max_length=255)
+    archived: bool | None = None
 
 
 class ReplayVideoStatus(BaseModel):

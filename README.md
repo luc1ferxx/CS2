@@ -43,6 +43,25 @@ Then open:
 8. The dashboard polls `GET /demos` and shows the completed demo.
 9. Open the demo detail page to use the first-person replay shell, tactical map companion, timeline controls, round selector, speed selector, and tick-linked coaching panel.
 
+## Demo Library V1
+
+`/dashboard` is now a compact Demo Library for managing multiple demos, not a development-only test table. It keeps polling processing state while giving users library controls for review workflows.
+
+The library supports:
+
+- Search across demo name, original filename, and map.
+- Status and map filters, plus sorting by recently uploaded, name, map, or status.
+- Visible parse/coaching/review counts, parse error messages, and compact render/video state derived from existing replay and render job metadata.
+- Inline rename through `PATCH /demos/{demo_id}`.
+- Soft archive through `POST /demos/{demo_id}/archive`; archived demos are hidden from `GET /demos` by default and can be returned with `includeArchived=true`.
+- Mock Upload and Real Demo Upload actions with queued status feedback while the existing polling flow updates the list.
+
+Current limitations:
+
+- Archive is a soft hide only. It does not delete uploaded `.dem`, replay JSON, videos, jobs, or coaching rows.
+- The dashboard derives render readiness from current replay video metadata and latest `render_clip` job state; it does not render footage itself.
+- Date filtering is not exposed yet beyond recent/uploaded sorting.
+
 ## Real Demo Parser Spike
 
 The real parser path is intentionally narrow:

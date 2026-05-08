@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, File, Header, HTTPException, Response, UploadFile
+from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, Response, UploadFile
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -6,6 +6,7 @@ from app.core.database import get_db
 from app.schemas.demo import (
     DemoListItem,
     DemoStatus,
+    DemoUpdate,
     RenderClipRequest,
     RenderJobManifest,
     RenderJobCreated,
@@ -30,8 +31,48 @@ def require_render_worker_token(
 
 
 @router.get("/demos", response_model=list[DemoListItem])
-def list_demos(db: Session = Depends(get_db)) -> list[DemoListItem]:
-    return DemoService(db).list_demos()
+def list_demos(
+    search: str | None = None,
+    status: str | None = None,
+    map_name: str | None = Query(default=None, alias="map"),
+    sort: str = "recent",
+    order: str | None = None,
+    include_archived: bool = Query(default=False, alias="includeArchived"),
+    db: Session = Depends(get_db),
+) -> list[DemoListItem]:
+    return DemoService(db).list_demos(
+        search=search,
+        status=status,
+        map_name=map_name,
+        sort=sort,
+        order=order,
+        include_archived=include_archived,
+    )
+
+
+@router.patch("/demos/{demo_id}", response_model=DemoListItem)
+def update_demo(
+    demo_id: str,
+    update: DemoUpdate,
+    db: Session = Depends(get_db),
+) -> DemoListItem:
+    service = DemoService(db)
+    try:
+        demo = service.update_demo(demo_id, name=update.name, archived=update.archived)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if demo is None:
+        raise HTTPException(status_code=404, detail="Demo not found")
+    return service.demo_list_item(demo)
+
+
+@router.post("/demos/{demo_id}/archive", response_model=DemoListItem)
+def archive_demo(demo_id: str, db: Session = Depends(get_db)) -> DemoListItem:
+    service = DemoService(db)
+    demo = service.archive_demo(demo_id)
+    if demo is None:
+        raise HTTPException(status_code=404, detail="Demo not found")
+    return service.demo_list_item(demo)
 
 
 def render_job_created_response(

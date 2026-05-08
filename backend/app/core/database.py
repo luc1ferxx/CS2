@@ -40,11 +40,21 @@ def init_db() -> None:
 
 def ensure_schema_backfills() -> None:
     inspector = inspect(engine)
-    if "demo_jobs" not in inspector.get_table_names():
+    table_names = set(inspector.get_table_names())
+
+    if "demos" in table_names:
+        demo_column_names = {column["name"] for column in inspector.get_columns("demos")}
+        if "archived" not in demo_column_names:
+            with engine.begin() as connection:
+                connection.execute(
+                    text("ALTER TABLE demos ADD COLUMN archived BOOLEAN DEFAULT FALSE NOT NULL")
+                )
+
+    if "demo_jobs" not in table_names:
         return
 
-    column_names = {column["name"] for column in inspector.get_columns("demo_jobs")}
-    if "metadata_json" not in column_names:
+    job_column_names = {column["name"] for column in inspector.get_columns("demo_jobs")}
+    if "metadata_json" not in job_column_names:
         with engine.begin() as connection:
             connection.execute(
                 text("ALTER TABLE demo_jobs ADD COLUMN metadata_json TEXT DEFAULT '{}' NOT NULL")

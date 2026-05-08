@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import desc
+from sqlalchemy import asc, desc, func, or_
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -36,14 +36,61 @@ class DemoService:
     def __init__(self, db: Session):
         self.db = db
 
-    def list_demos(self) -> list[DemoListItem]:
-        demos = (
-            self.db.query(Demo)
-            .filter(Demo.user_id == settings.dev_user_id)
-            .order_by(desc(Demo.created_at))
-            .all()
+    def list_demos(
+        self,
+        *,
+        search: str | None = None,
+        status: str | None = None,
+        map_name: str | None = None,
+        sort: str = "recent",
+        order: str | None = None,
+        include_archived: bool = False,
+    ) -> list[DemoListItem]:
+        query = self.db.query(Demo).filter(Demo.user_id == settings.dev_user_id)
+
+        if not include_archived:
+            query = query.filter(Demo.archived.is_(False))
+
+        normalized_search = (search or "").strip().lower()
+        if normalized_search:
+            like_search = f"%{normalized_search}%"
+            query = query.filter(
+                or_(
+                    func.lower(Demo.name).like(like_search),
+                    func.lower(Demo.original_filename).like(like_search),
+                    func.lower(Demo.map_name).like(like_search),
+                )
+            )
+
+        if status and status != "all":
+            query = query.filter(Demo.status == status)
+        if map_name and map_name != "all":
+            query = query.filter(Demo.map_name == map_name)
+
+        sort_column = {
+            "recent": Demo.created_at,
+            "created": Demo.created_at,
+            "updated": Demo.updated_at,
+            "name": Demo.name,
+            "map": Demo.map_name,
+            "status": Demo.status,
+        }.get(sort, Demo.created_at)
+        normalized_order = order or ("desc" if sort in {"recent", "created", "updated"} else "asc")
+        direction = desc if normalized_order == "desc" else asc
+        demos = query.order_by(direction(sort_column), desc(Demo.created_at)).all()
+        return [self.demo_list_item(demo) for demo in demos]
+
+    def demo_list_item(self, demo: Demo) -> DemoListItem:
+        video = self._video_status_for_list(demo)
+        latest_render_job = self._latest_render_clip_job(demo)
+        return DemoListItem.model_validate(demo).model_copy(
+            update={
+                "video_status": _optional_str(video.get("status")),
+                "video_source": _optional_str(video.get("source")),
+                "video_url": _optional_str(video.get("url")),
+                "latest_render_status": latest_render_job.status if latest_render_job else None,
+            }
         )
-        return [DemoListItem.model_validate(demo) for demo in demos]
 
     def get_demo(self, demo_id: str) -> Demo | None:
         return (
@@ -51,6 +98,34 @@ class DemoService:
             .filter(Demo.id == demo_id, Demo.user_id == settings.dev_user_id)
             .one_or_none()
         )
+
+    def update_demo(
+        self,
+        demo_id: str,
+        *,
+        name: str | None = None,
+        archived: bool | None = None,
+    ) -> Demo | None:
+        demo = self.get_demo(demo_id)
+        if demo is None:
+            return None
+
+        if name is not None:
+            normalized_name = name.strip()
+            if not normalized_name:
+                raise ValueError("name cannot be blank")
+            if len(normalized_name) > 255:
+                raise ValueError("name must be 255 characters or fewer")
+            demo.name = normalized_name
+        if archived is not None:
+            demo.archived = archived
+
+        self.db.commit()
+        self.db.refresh(demo)
+        return demo
+
+    def archive_demo(self, demo_id: str) -> Demo | None:
+        return self.update_demo(demo_id, archived=True)
 
     def create_mock_demo(self) -> DemoListItem:
         demo_id = str(uuid.uuid4())
@@ -217,6 +292,14 @@ class DemoService:
         )
         return [self.render_job_status(job) for job in jobs]
 
+    def _latest_render_clip_job(self, demo: Demo) -> DemoJob | None:
+        return (
+            self.db.query(DemoJob)
+            .filter(DemoJob.demo_id == demo.id, DemoJob.job_type == RENDER_CLIP_JOB_TYPE)
+            .order_by(desc(DemoJob.created_at))
+            .first()
+        )
+
     def get_render_clip_job(self, job_id: str) -> DemoJob | None:
         job = (
             self.db.query(DemoJob)
@@ -355,6 +438,16 @@ class DemoService:
         if isinstance(video, dict):
             return video
         raise ValueError("Invalid replay video contract")
+
+    def _video_status_for_list(self, demo: Demo) -> dict[str, Any]:
+        try:
+            return self.get_video_status(demo)
+        except (OSError, ValueError, json.JSONDecodeError):
+            return {
+                "status": "unknown",
+                "url": None,
+                "source": "unknown",
+            }
 
     def attach_manual_video(self, demo: Demo, stored_video: StoredVideoUpload) -> dict[str, Any]:
         current_video = self.get_video_status(demo)

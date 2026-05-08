@@ -66,6 +66,20 @@ export interface VideoCalibrationUpdate {
   timeOriginSeconds?: number;
 }
 
+export interface DemoListParams {
+  search?: string;
+  status?: string;
+  map?: string;
+  sort?: string;
+  order?: string;
+  includeArchived?: boolean;
+}
+
+export interface DemoUpdateRequest {
+  name?: string;
+  archived?: boolean;
+}
+
 async function requestJson<T>(
   path: string,
   init?: RequestInit
@@ -102,8 +116,16 @@ async function requestForm<T>(path: string, formData: FormData): Promise<T> {
   return response.json() as Promise<T>;
 }
 
-export function listDemos(): Promise<DemoSummary[]> {
-  return requestJson<DemoSummary[]>("/demos");
+export function listDemos(params: DemoListParams = {}): Promise<DemoSummary[]> {
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value === undefined || value === null || value === "" || value === "all") {
+      continue;
+    }
+    query.set(key, String(value));
+  }
+  const suffix = query.toString() ? `?${query.toString()}` : "";
+  return requestJson<DemoSummary[]>(`/demos${suffix}`);
 }
 
 export function createMockUpload(): Promise<DemoSummary> {
@@ -118,6 +140,20 @@ export function createDemoUpload(file: File): Promise<DemoSummary> {
 
 export function getDemoStatus(demoId: string): Promise<DemoStatus> {
   return requestJson<DemoStatus>(`/demos/${demoId}/status`);
+}
+
+export function updateDemo(
+  demoId: string,
+  request: DemoUpdateRequest
+): Promise<DemoSummary> {
+  return requestJson<DemoSummary>(`/demos/${demoId}`, {
+    method: "PATCH",
+    body: JSON.stringify(request)
+  });
+}
+
+export function archiveDemo(demoId: string): Promise<DemoSummary> {
+  return requestJson<DemoSummary>(`/demos/${demoId}/archive`, { method: "POST" });
 }
 
 export function getReplay(demoId: string): Promise<ReplayData> {

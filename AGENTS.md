@@ -45,6 +45,8 @@ Coaching UI should remain a deterministic review surface for stored rules-based 
 
 Demo Detail round workflows should remain review-tool focused. Round list, summary, and quick-jump UI must keep first-person replay, tactical map, timeline, parser markers, and coaching cards synchronized through the shared tick/round state rather than parallel state.
 
+Dashboard is a working Demo Library, not a marketing page. Library changes should keep search, status/map filtering, sorting, upload polling, rename, and soft archive flows utilitarian and dense. Prefer soft archive over destructive delete, keep archived demos directly openable by ID, and keep large upload, replay, and media files out of PostgreSQL.
+
 Tactical map additions must go through the centralized map config in `backend/app/parser/map_config.py` and `frontend/lib/map-config.ts`. Do not hardcode radar image paths, Dust2 transforms, or per-map coordinate math inside `ReplayViewer` or the parser normalizer.
 
 Parser data-quality additions must keep the replay contract backward compatible. Old replay blobs without `events` should load as `events: []`, parser event extraction should stay best-effort, and one missing event family must not fail the entire parse. Do not store raw parser dataframes, huge raw event dumps, or large media/demo artifacts in PostgreSQL or replay blobs.

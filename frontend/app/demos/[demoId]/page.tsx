@@ -355,11 +355,13 @@ export default function DemoDetailPage() {
       <section className="page">
         <div className="detail-top">
           <div className="detail-title">
-            <h1>{status ? `Mock Demo ${status.id.slice(0, 8)}` : "Loading demo"}</h1>
+            <h1>{status?.name ?? (status ? `Demo ${status.id.slice(0, 8)}` : "Loading demo")}</h1>
             <div className="detail-meta">
+              {status?.original_filename ? <span>{status.original_filename}</span> : null}
               <span>{status?.map_name ?? "map pending"}</span>
               <span>{status?.round_count ?? 0} rounds</span>
               <span>{status?.coaching_event_count ?? 0} coaching events</span>
+              {status?.archived ? <span>archived</span> : null}
             </div>
           </div>
           {status ? <span className={`status-badge ${status.status}`}>{status.status}</span> : null}
