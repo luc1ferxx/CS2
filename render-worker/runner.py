@@ -11,15 +11,19 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
+RUNNER_ROOT = Path(__file__).resolve().parent
+if str(RUNNER_ROOT) not in sys.path:
+    sys.path.insert(0, str(RUNNER_ROOT))
+
+from adapters.base import AdapterResult
+from adapters.cs2_manual import CS2ManualAdapter
+from adapters.fake_video import FakeVideoAdapter
+
 
 DEFAULT_API_BASE_URL = "http://localhost:8000"
 DEFAULT_RENDER_WORKER_TOKEN = "dev-render-worker-token"
 DEFAULT_WORK_DIR = ".render-worker-work"
 DEFAULT_POLL_INTERVAL_SECONDS = 5
-NO_RENDERER_ERROR = (
-    "DEV_FAKE_VIDEO_PATH is not set or does not exist; real renderer is not connected. "
-    "This skeleton does not start CS2, Steam, OBS, or ffmpeg."
-)
 
 
 class WorkerClient(Protocol):
@@ -43,10 +47,15 @@ class RunnerConfig:
     work_dir: Path
     poll_interval_seconds: int
     dev_fake_video_path: Path | None = None
+    cs2_install_dir: Path | None = None
+    steam_user_data_dir: Path | None = None
+    cs2_manual_output_filename: str = "{job_id}.mp4"
 
     @classmethod
     def from_env(cls) -> RunnerConfig:
         fake_path = os.getenv("DEV_FAKE_VIDEO_PATH")
+        cs2_install_dir = os.getenv("CS2_INSTALL_DIR")
+        steam_user_data_dir = os.getenv("STEAM_USER_DATA_DIR")
         return cls(
             api_base_url=os.getenv("API_BASE_URL", DEFAULT_API_BASE_URL).rstrip("/"),
             render_worker_token=os.getenv("RENDER_WORKER_TOKEN", DEFAULT_RENDER_WORKER_TOKEN),
@@ -55,16 +64,13 @@ class RunnerConfig:
                 os.getenv("POLL_INTERVAL_SECONDS", str(DEFAULT_POLL_INTERVAL_SECONDS))
             ),
             dev_fake_video_path=Path(fake_path) if fake_path else None,
+            cs2_install_dir=Path(cs2_install_dir) if cs2_install_dir else None,
+            steam_user_data_dir=Path(steam_user_data_dir) if steam_user_data_dir else None,
+            cs2_manual_output_filename=os.getenv("CS2_MANUAL_OUTPUT_FILENAME", "{job_id}.mp4"),
         )
 
 
-@dataclass(frozen=True)
-class WorkerRunResult:
-    action: str
-    job_id: str | None
-    message: str
-    manifest_path: Path | None = None
-    callback_payload: dict[str, Any] | None = None
+WorkerRunResult = AdapterResult
 
 
 class RenderWorkerApiClient:
@@ -204,7 +210,8 @@ def process_manifest(
 ) -> WorkerRunResult:
     job_id = str(manifest["jobId"])
     manifest_path = write_manifest_snapshot(config, manifest)
-    plan = build_plan(config, manifest)
+    adapter = fake_video_adapter(config)
+    plan = adapter.build_plan(manifest, config.work_dir)
     if dry_run:
         return WorkerRunResult(
             action="dry-run",
@@ -213,90 +220,49 @@ def process_manifest(
             manifest_path=manifest_path,
         )
 
-    fake_video_path = config.dev_fake_video_path
-    fake_path_is_api_url = is_api_media_url_path(fake_video_path)
-    if fake_video_path is None or (not fake_path_is_api_url and not fake_video_path.exists()):
-        payload = failed_payload(manifest, NO_RENDERER_ERROR)
-        client.post_result(job_id, payload)
-        return WorkerRunResult(
-            action="failed",
-            job_id=job_id,
-            message=NO_RENDERER_ERROR,
-            manifest_path=manifest_path,
-            callback_payload=payload,
-        )
+    return adapter.process(manifest, client, manifest_path=manifest_path)
 
-    if fake_path_is_api_url:
-        video_url = str(fake_video_path)
-    else:
-        video_url = client.upload_media(job_id, fake_video_path)
 
-    payload = completed_payload(manifest, video_url)
-    client.post_result(job_id, payload)
-    return WorkerRunResult(
-        action="completed",
-        job_id=job_id,
-        message=f"Completed render callback with fake media {video_url}",
-        manifest_path=manifest_path,
-        callback_payload=payload,
+def prepare_job(
+    config: RunnerConfig,
+    job_id: str,
+    *,
+    adapter_name: str = "cs2-manual",
+    client: WorkerClient | None = None,
+) -> WorkerRunResult:
+    if adapter_name != "cs2-manual":
+        raise ValueError("prepare-job currently supports only --adapter cs2-manual")
+    worker_client = client or RenderWorkerApiClient(config)
+    manifest = worker_client.fetch_manifest(job_id)
+    return cs2_manual_adapter(config).prepare(manifest)
+
+
+def complete_prepared_job(
+    config: RunnerConfig,
+    job_id: str,
+    *,
+    video_path: Path | None = None,
+    client: WorkerClient | None = None,
+) -> WorkerRunResult:
+    worker_client = client or RenderWorkerApiClient(config)
+    return cs2_manual_adapter(config).complete_prepared_job(
+        job_id,
+        worker_client,
+        video_path=video_path,
     )
 
 
-def build_plan(config: RunnerConfig, manifest: dict[str, Any]) -> dict[str, Any]:
-    demo_path = Path(str(manifest["demoFilePath"]))
-    fake_path = config.dev_fake_video_path
-    return {
-        "jobId": manifest["jobId"],
-        "demoId": manifest["demoId"],
-        "demoFilePath": str(demo_path),
-        "demoFileExists": demo_path.exists(),
-        "demoStorageKey": manifest.get("demoStorageKey"),
-        "tickStart": manifest["tickStart"],
-        "tickEnd": manifest["tickEnd"],
-        "tickRate": manifest["tickRate"],
-        "renderPreset": manifest["renderPreset"],
-        "workDir": str(config.work_dir),
-        "devFakeVideoPath": str(fake_path) if fake_path else None,
-        "devFakeVideoExists": bool(
-            fake_path and (fake_path.exists() or is_api_media_url_path(fake_path))
-        ),
-        "plannedAction": "callback completed with fake mp4"
-        if fake_path and (fake_path.exists() or is_api_media_url_path(fake_path))
-        else "callback failed because real renderer is not connected",
-    }
+def fake_video_adapter(config: RunnerConfig) -> FakeVideoAdapter:
+    return FakeVideoAdapter(dev_fake_video_path=config.dev_fake_video_path)
 
 
-def completed_payload(manifest: dict[str, Any], video_url: str) -> dict[str, Any]:
-    return {
-        "status": "completed",
-        "videoUrl": video_url,
-        "localMediaPath": None,
-        "tickStart": int(manifest["tickStart"]),
-        "tickEnd": int(manifest["tickEnd"]),
-        "tickRate": int(manifest["tickRate"]),
-        "timeOriginSeconds": 0,
-        "durationSeconds": clip_duration_seconds(manifest),
-        "errorMessage": None,
-    }
-
-
-def failed_payload(manifest: dict[str, Any], error_message: str) -> dict[str, Any]:
-    return {
-        "status": "failed",
-        "videoUrl": None,
-        "localMediaPath": None,
-        "tickStart": int(manifest["tickStart"]),
-        "tickEnd": int(manifest["tickEnd"]),
-        "tickRate": int(manifest["tickRate"]),
-        "timeOriginSeconds": 0,
-        "durationSeconds": clip_duration_seconds(manifest),
-        "errorMessage": error_message,
-    }
-
-
-def clip_duration_seconds(manifest: dict[str, Any]) -> float:
-    tick_rate = max(1, int(manifest["tickRate"]))
-    return round((int(manifest["tickEnd"]) - int(manifest["tickStart"])) / tick_rate, 3)
+def cs2_manual_adapter(config: RunnerConfig) -> CS2ManualAdapter:
+    return CS2ManualAdapter(
+        cs2_install_dir=config.cs2_install_dir,
+        steam_user_data_dir=config.steam_user_data_dir,
+        work_dir=config.work_dir,
+        output_filename_template=config.cs2_manual_output_filename,
+    )
 
 
 def write_manifest_snapshot(config: RunnerConfig, manifest: dict[str, Any]) -> Path:
@@ -307,16 +273,15 @@ def write_manifest_snapshot(config: RunnerConfig, manifest: dict[str, Any]) -> P
     return manifest_path
 
 
-def is_api_media_url_path(path: Path | None) -> bool:
-    return path is not None and str(path).startswith("/media/videos/")
-
-
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Render Worker V1 skeleton runner")
     parser.add_argument("--api-base-url", default=None)
     parser.add_argument("--token", default=None)
     parser.add_argument("--work-dir", default=None)
     parser.add_argument("--dev-fake-video-path", default=None)
+    parser.add_argument("--cs2-install-dir", default=None)
+    parser.add_argument("--steam-user-data-dir", default=None)
+    parser.add_argument("--cs2-manual-output-filename", default=None)
 
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -329,6 +294,17 @@ def build_parser() -> argparse.ArgumentParser:
 
     dry_run_parser = subparsers.add_parser("dry-run", help="Print manifest and plan without callback")
     dry_run_parser.add_argument("job_id", nargs="?")
+
+    prepare_parser = subparsers.add_parser("prepare-job", help="Prepare a manual adapter workspace")
+    prepare_parser.add_argument("--job-id", required=True)
+    prepare_parser.add_argument("--adapter", default="cs2-manual", choices=["cs2-manual"])
+
+    complete_parser = subparsers.add_parser(
+        "complete-prepared-job",
+        help="Upload a prepared manual mp4 and post completed callback",
+    )
+    complete_parser.add_argument("--job-id", required=True)
+    complete_parser.add_argument("--video-path", default=None)
 
     return parser
 
@@ -343,6 +319,14 @@ def config_from_args(args: argparse.Namespace) -> RunnerConfig:
         dev_fake_video_path=Path(args.dev_fake_video_path)
         if args.dev_fake_video_path
         else config.dev_fake_video_path,
+        cs2_install_dir=Path(args.cs2_install_dir)
+        if args.cs2_install_dir
+        else config.cs2_install_dir,
+        steam_user_data_dir=Path(args.steam_user_data_dir)
+        if args.steam_user_data_dir
+        else config.steam_user_data_dir,
+        cs2_manual_output_filename=args.cs2_manual_output_filename
+        or config.cs2_manual_output_filename,
     )
 
 
@@ -359,6 +343,14 @@ def main(argv: list[str] | None = None) -> int:
             result = process_job(config, args.job_id, dry_run=True)
         else:
             result = poll_once(config, dry_run=True)
+    elif args.command == "prepare-job":
+        result = prepare_job(config, args.job_id, adapter_name=args.adapter)
+    elif args.command == "complete-prepared-job":
+        result = complete_prepared_job(
+            config,
+            args.job_id,
+            video_path=Path(args.video_path) if args.video_path else None,
+        )
     else:
         raise ValueError(f"Unsupported command: {args.command}")
 
@@ -374,6 +366,8 @@ def format_result(result: WorkerRunResult) -> str:
             "message": result.message,
             "manifestPath": str(result.manifest_path) if result.manifest_path else None,
             "callbackPayload": result.callback_payload,
+            "workspacePath": str(result.workspace_path) if result.workspace_path else None,
+            "outputPath": str(result.output_path) if result.output_path else None,
         },
         indent=2,
         sort_keys=True,

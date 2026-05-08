@@ -1,16 +1,16 @@
 # Render Worker Runner Skeleton
 
-This directory is a standalone development skeleton for the future Windows/Linux GPU render worker.
+This directory is a standalone development skeleton for a future Windows/Linux GPU render worker. It proves the Render Worker V1 adapter chain without launching CS2, Steam, OBS, ffmpeg, OpenAI, S3, or R2. It never controls the user's computer or records the user's screen.
 
-It proves the adapter chain only:
+## Adapter Architecture
 
-1. Fetch a Render Worker V1 manifest from the API.
-2. Locate the demo file path/reference from the manifest.
-3. Use `DEV_FAKE_VIDEO_PATH` as a placeholder mp4 output.
-4. Upload that placeholder mp4 to the API through the dev worker media endpoint.
-5. POST the existing result callback so replay `video` metadata becomes `source = rendered`.
+`runner.py` fetches render manifests and delegates render-specific behavior to adapters:
 
-It does not launch CS2, Steam, OBS, ffmpeg, OpenAI, S3, or R2. It also does not control the user's computer or record the user's screen.
+- `adapters/base.py`: shared result types, callback payload helpers, and adapter errors.
+- `adapters/fake_video.py`: `FakeVideoAdapter`, the existing dev fake mp4 flow.
+- `adapters/cs2_manual.py`: `CS2ManualAdapter`, a manual probe that prepares files and callback metadata for an operator.
+
+The callback contract stays the same: adapters either upload or reference an mp4, then POST `/render-worker/jobs/{job_id}/result`.
 
 ## Configuration
 
@@ -21,42 +21,84 @@ export API_BASE_URL=http://localhost:8000
 export RENDER_WORKER_TOKEN=dev-render-worker-token
 export WORK_DIR=.render-worker-work
 export POLL_INTERVAL_SECONDS=5
+```
+
+Fake adapter:
+
+```bash
 export DEV_FAKE_VIDEO_PATH=/absolute/path/to/dev-placeholder.mp4
 ```
 
-`DEV_FAKE_VIDEO_PATH` is optional. If it is missing or points at a file that does not exist, the runner posts a failed callback with a clear "real renderer is not connected" message.
+Manual adapter:
 
-`WORK_DIR` is used for local manifest snapshots. It is not object storage and should not contain committed media.
+```bash
+export CS2_INSTALL_DIR="/absolute/path/to/Counter-Strike Global Offensive"
+export STEAM_USER_DATA_DIR=/absolute/path/to/Steam/userdata
+export CS2_MANUAL_OUTPUT_FILENAME="{job_id}.mp4"
+```
+
+The manual adapter checks that `CS2_INSTALL_DIR`, `STEAM_USER_DATA_DIR`, and `WORK_DIR` are configured, but it does not start anything. Tests use temporary directories; a normal dev machine does not need real CS2 paths unless you are doing a manual probe.
 
 ## Commands
 
-Fetch the next queued `render_clip` manifest and print the plan without callback:
+Existing fake flow:
 
 ```bash
 python3 render-worker/runner.py dry-run
-```
-
-Process a known job without callback:
-
-```bash
 python3 render-worker/runner.py dry-run {job_id}
-```
-
-Process a known job and callback completed/failed:
-
-```bash
 python3 render-worker/runner.py process-job {job_id}
-```
-
-Poll one queued job and process it:
-
-```bash
 python3 render-worker/runner.py poll-once
 ```
 
-## Fake MP4 End-To-End Check
+Manual adapter flow:
 
-1. Start the stack:
+```bash
+python3 render-worker/runner.py prepare-job --job-id {job_id} --adapter cs2-manual
+python3 render-worker/runner.py complete-prepared-job --job-id {job_id}
+python3 render-worker/runner.py complete-prepared-job --job-id {job_id} --video-path /absolute/path/to/rendered.mp4
+```
+
+## FakeVideoAdapter
+
+`FakeVideoAdapter` preserves the previous skeleton behavior:
+
+1. Fetch a manifest by job id or through `poll-once`.
+2. If `DEV_FAKE_VIDEO_PATH` points at an existing local mp4, upload it through `/render-worker/jobs/{job_id}/media`.
+3. POST a completed callback with the returned `/media/videos/...` URL.
+4. If `DEV_FAKE_VIDEO_PATH` is missing or invalid, POST a failed callback with a clear "real renderer is not connected" message.
+
+This remains a dev bridge only. It does not render real CS2 footage.
+
+## CS2ManualAdapter
+
+`CS2ManualAdapter` is a manual probe, not automation. It does not log into Steam, start CS2, execute `playdemo`, call OBS, or run ffmpeg.
+
+`prepare-job` creates:
+
+```text
+{WORK_DIR}/jobs/{job_id}/
+  manifest.json
+  instructions.md
+  expected_output.json
+  output/{job_id}.mp4
+```
+
+`instructions.md` includes:
+
+- demo file path and storage reference
+- map name
+- POV player id / Steam ID
+- `tickStart`, `tickEnd`, `tickRate`, and `roundNumber`
+- recommended output file path
+- manual steps: open CS2 manually, load the demo, seek to the tick range, record the clip, export an mp4 to the output path
+
+`expected_output.json` contains the callback metadata template that will be used after a human places the mp4 at the expected path.
+
+If the output mp4 exists, `complete-prepared-job` uploads it and posts a completed callback. If the output mp4 does not exist, the runner returns `waiting` and does not mark the job completed or failed.
+
+## Manual Probe End-To-End
+
+1. Start the local stack:
 
    ```bash
    docker compose up --build
@@ -70,39 +112,31 @@ python3 render-worker/runner.py poll-once
      -d '{"tickStart":0,"tickEnd":640,"tickRate":64}'
    ```
 
-3. Dry-run the manifest:
+3. Prepare the job:
 
    ```bash
-   python3 render-worker/runner.py dry-run {job_id}
+   python3 render-worker/runner.py prepare-job --job-id {job_id} --adapter cs2-manual
    ```
 
-4. Point the runner at a small local mp4 and process the job:
+4. On a controlled render machine, manually open CS2 and follow `{WORK_DIR}/jobs/{job_id}/instructions.md`.
+
+5. Put the mp4 at the expected output path or pass a custom path:
 
    ```bash
-   export DEV_FAKE_VIDEO_PATH=/absolute/path/to/dev-placeholder.mp4
-   python3 render-worker/runner.py process-job {job_id}
+   python3 render-worker/runner.py complete-prepared-job --job-id {job_id}
+   # or
+   python3 render-worker/runner.py complete-prepared-job --job-id {job_id} --video-path /absolute/path/to/clip.mp4
    ```
 
-5. Open the demo detail page. `FirstPersonReplay` should play the callback video URL because the replay contract now has `video.source = rendered`, `video.status = ready`, and a non-empty `video.url`.
-
-## Failure Path Check
-
-Unset or break `DEV_FAKE_VIDEO_PATH`:
-
-```bash
-unset DEV_FAKE_VIDEO_PATH
-python3 render-worker/runner.py process-job {job_id}
-```
-
-The runner posts a failed callback. If the demo already has `source = manual_upload` video metadata, the API preserves it.
+6. Open the demo detail page. `FirstPersonReplay` should play the callback URL because replay `video` metadata is now `status = ready`, `source = rendered`, and has a non-empty `url`.
 
 ## Future Real Adapter
 
-Replace only the placeholder-media section of `runner.py` with a real controlled-infrastructure adapter:
+Replace the manual/fake adapter with a controlled-infrastructure adapter later:
 
 1. Resolve or download the `.dem` using `demoFilePath` or a future object-storage key.
 2. Run CS2 only on managed Windows/Linux GPU workers.
-3. Render the selected POV and tick range.
+3. Render the selected POV/tick range.
 4. Produce mp4/HLS output.
 5. Upload media through a production storage path.
 6. POST the same result callback payload.

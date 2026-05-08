@@ -112,6 +112,67 @@ class RenderWorkerRunnerTest(unittest.TestCase):
         self.assertEqual(payload["durationSeconds"], 10)
         self.assertIsNone(payload["errorMessage"])
 
+    def test_prepare_job_command_function_creates_manual_workspace(self) -> None:
+        client = FakeClient(manifest=manifest("render-job-prepare"))
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            cs2_dir = root / "cs2"
+            steam_dir = root / "steam"
+            work_dir = root / "work"
+            cs2_dir.mkdir()
+            steam_dir.mkdir()
+            config = self.runner.RunnerConfig(
+                api_base_url="http://api.test",
+                render_worker_token="token",
+                work_dir=work_dir,
+                poll_interval_seconds=5,
+                cs2_install_dir=cs2_dir,
+                steam_user_data_dir=steam_dir,
+            )
+
+            result = self.runner.prepare_job(config, "render-job-prepare", client=client)
+            self.assertTrue((result.workspace_path / "manifest.json").exists())
+            self.assertTrue((result.workspace_path / "instructions.md").exists())
+            self.assertTrue((result.workspace_path / "expected_output.json").exists())
+
+        self.assertEqual(result.action, "prepared")
+        self.assertEqual(client.fetched_job_ids, ["render-job-prepare"])
+
+    def test_complete_prepared_job_command_function_callbacks_with_existing_output(self) -> None:
+        client = FakeClient(
+            manifest=manifest("render-job-manual-complete"),
+            uploaded_video_url="/media/videos/demo-1/manual-complete.mp4",
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            cs2_dir = root / "cs2"
+            steam_dir = root / "steam"
+            work_dir = root / "work"
+            cs2_dir.mkdir()
+            steam_dir.mkdir()
+            config = self.runner.RunnerConfig(
+                api_base_url="http://api.test",
+                render_worker_token="token",
+                work_dir=work_dir,
+                poll_interval_seconds=5,
+                cs2_install_dir=cs2_dir,
+                steam_user_data_dir=steam_dir,
+            )
+            prepared = self.runner.prepare_job(config, "render-job-manual-complete", client=client)
+            output_path = prepared.output_path
+            output_path.write_bytes(b"manual render bytes")
+
+            result = self.runner.complete_prepared_job(
+                config,
+                "render-job-manual-complete",
+                client=client,
+            )
+
+        self.assertEqual(result.action, "completed")
+        self.assertEqual(client.uploaded_media, [("render-job-manual-complete", output_path)])
+        self.assertEqual(client.posted_results[-1][1]["status"], "completed")
+        self.assertEqual(client.posted_results[-1][1]["videoUrl"], "/media/videos/demo-1/manual-complete.mp4")
+
 
 class FakeClient:
     def __init__(self, *, manifest: dict, uploaded_video_url: str = "/media/videos/demo-1/fake.mp4"):

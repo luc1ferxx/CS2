@@ -16,7 +16,7 @@ The current build does not call OpenAI, does not use S3/R2, and does not render 
 - First-person media boundary: replay JSON includes `video` metadata; manually uploaded local `.mp4` files can be bound and calibrated, but no CS2 video is rendered automatically in this mock phase
 - Manual video boundary: local mp4 files in `/data/videos` exposed by the API at `/media/videos/...`
 - Render clip boundary: `POST /demos/{demo_id}/render/clip` creates a compact `demo_jobs.job_type = render_clip` row for a short POV/tick range; Render Worker V1 endpoints expose a manifest and callback contract for a future GPU worker
-- Render worker runner skeleton: `render-worker/runner.py` can fetch manifests, dry-run a plan, upload a dev fake mp4, and call the existing completed/failed callback without launching CS2/Steam/OBS/ffmpeg
+- Render worker runner skeleton: `render-worker/runner.py` can fetch manifests, dry-run a plan, upload a dev fake mp4, prepare CS2 manual probe workspaces, and call the existing completed/failed callback without launching CS2/Steam/OBS/ffmpeg
 - Deployment shape: Docker Compose with `frontend`, `api`, `worker`, `postgres`, and `redis`
 
 ## Start
@@ -269,6 +269,11 @@ Future GPU worker integration should:
 
 `render-worker/runner.py` is a local/dev skeleton for the future external GPU worker. It uses the same token-gated Render Worker V1 API and deliberately performs no real rendering.
 
+It is adapter-based:
+
+- `FakeVideoAdapter` preserves the dev fake mp4 upload and callback flow.
+- `CS2ManualAdapter` prepares a manual render workspace and callback metadata for an operator. It does not start Steam, start CS2, run `playdemo`, call OBS, or call ffmpeg.
+
 Environment:
 
 ```bash
@@ -277,6 +282,9 @@ export RENDER_WORKER_TOKEN=dev-render-worker-token
 export WORK_DIR=.render-worker-work
 export POLL_INTERVAL_SECONDS=5
 export DEV_FAKE_VIDEO_PATH=/absolute/path/to/dev-placeholder.mp4
+export CS2_INSTALL_DIR="/absolute/path/to/Counter-Strike Global Offensive"
+export STEAM_USER_DATA_DIR=/absolute/path/to/Steam/userdata
+export CS2_MANUAL_OUTPUT_FILENAME="{job_id}.mp4"
 ```
 
 Commands:
@@ -286,11 +294,16 @@ python3 render-worker/runner.py dry-run {job_id}
 python3 render-worker/runner.py dry-run
 python3 render-worker/runner.py process-job {job_id}
 python3 render-worker/runner.py poll-once
+python3 render-worker/runner.py prepare-job --job-id {job_id} --adapter cs2-manual
+python3 render-worker/runner.py complete-prepared-job --job-id {job_id}
+python3 render-worker/runner.py complete-prepared-job --job-id {job_id} --video-path /absolute/path/to/clip.mp4
 ```
 
 `dry-run` fetches a manifest and writes a local manifest snapshot under `WORK_DIR`, then prints the plan without upload or callback. `process-job` fetches one known manifest. `poll-once` asks the API for the next queued `render_clip` manifest.
 
 If `DEV_FAKE_VIDEO_PATH` points at an existing local `.mp4`, the runner uploads it to the dev media endpoint and posts a completed result callback with the returned `/media/videos/...` URL. The frontend then plays that URL through the existing `FirstPersonReplay` branch. If `DEV_FAKE_VIDEO_PATH` is missing or invalid, the runner posts a failed callback explaining that the real renderer is not connected; existing `manual_upload` video metadata is preserved by the API.
+
+`prepare-job --adapter cs2-manual` creates `{WORK_DIR}/jobs/{job_id}/manifest.json`, `instructions.md`, `expected_output.json`, and an `output/` directory. The instructions list the demo path/reference, POV player or Steam ID, tick range, round, recommended mp4 path, and manual steps for a controlled render operator. `complete-prepared-job` uploads the expected or supplied mp4 and posts a completed callback. If the mp4 does not exist, it returns a waiting state and does not mark the job completed.
 
 See `render-worker/README.md` for the full skeleton workflow and replacement path for a real controlled GPU adapter.
 
@@ -450,6 +463,12 @@ POST /render-worker/jobs/{job_id}/result
   -> marks the job completed or failed
   -> completed updates replay.video so FirstPersonReplay can play the mp4/HLS URL
   -> failed preserves existing manual_upload metadata
+
+render-worker CS2ManualAdapter
+  -> prepare-job writes manifest, instructions, expected output metadata, and output path
+  -> operator manually renders on controlled infrastructure
+  -> complete-prepared-job uploads the mp4 and uses the same result callback
+  -> no Steam/CS2/OBS/ffmpeg automation is run by the skeleton
 ```
 
 Do not implement real CS2 automation in the API container. The next media-focused spike should connect a separate GPU worker to claim `render_clip` jobs and write rendered video metadata back to the replay contract.
