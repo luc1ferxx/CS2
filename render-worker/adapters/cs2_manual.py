@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -52,9 +53,11 @@ class CS2ManualAdapter:
         manifest_path = workspace / "manifest.json"
         expected_output_path = workspace / "expected_output.json"
         instructions_path = workspace / "instructions.md"
+        status_path = workspace / "status.json"
 
         write_json(manifest_path, manifest)
         write_json(expected_output_path, build_expected_output(manifest, output_path))
+        write_json(status_path, build_status(manifest, output_path))
         instructions_path.write_text(
             build_instructions(
                 manifest,
@@ -123,7 +126,24 @@ def build_expected_output(manifest: dict[str, Any], output_path: Path) -> dict[s
         "jobId": manifest["jobId"],
         "demoId": manifest["demoId"],
         "outputPath": str(output_path),
+        "expectedVideoFilename": output_path.name,
+        "expectedVideoPath": str(output_path),
         "callbackPayload": payload,
+    }
+
+
+def build_status(manifest: dict[str, Any], output_path: Path) -> dict[str, Any]:
+    return {
+        "adapter": "cs2-manual",
+        "jobId": manifest["jobId"],
+        "demoId": manifest["demoId"],
+        "preparedAt": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "expectedVideoPath": str(output_path),
+        "state": "waiting_for_manual_recording",
+        "nextAction": (
+            "Manually record the clip, place the mp4 at "
+            f"{output_path}, then run complete-prepared-job --job-id {manifest['jobId']}."
+        ),
     }
 
 

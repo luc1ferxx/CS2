@@ -7,6 +7,7 @@ import { useParams } from "next/navigation";
 
 import { CoachingPanel } from "@/components/coaching/CoachingPanel";
 import { FirstPersonReplay } from "@/components/replay/FirstPersonReplay";
+import { RenderOperatorPanel } from "@/components/replay/RenderOperatorPanel";
 import { ReplayViewer } from "@/components/replay/ReplayViewer";
 import { Timeline } from "@/components/replay/Timeline";
 import { VideoSetupPanel } from "@/components/replay/VideoSetupPanel";
@@ -45,6 +46,7 @@ export default function DemoDetailPage() {
   const [clipRequestingEventId, setClipRequestingEventId] = useState<string | null>(null);
   const [tickClipRequesting, setTickClipRequesting] = useState(false);
   const [renderJobs, setRenderJobs] = useState<RenderJobStatus[]>([]);
+  const [renderJobsRefreshing, setRenderJobsRefreshing] = useState(false);
   const [currentVideoTime, setCurrentVideoTime] = useState(0);
   const [detectedVideoDuration, setDetectedVideoDuration] = useState<number | null>(null);
 
@@ -163,6 +165,25 @@ export default function DemoDetailPage() {
       return null;
     }
   }, [demoId, replay]);
+
+  const refreshRenderOperatorState = useCallback(async () => {
+    setRenderJobsRefreshing(true);
+    try {
+      const [nextJobs, video] = await Promise.all([
+        getRenderJobs(demoId),
+        getDemoVideo(demoId)
+      ]);
+      setRenderJobs(nextJobs);
+      setReplay((currentReplay) =>
+        currentReplay ? { ...currentReplay, video } : currentReplay
+      );
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to refresh render state");
+    } finally {
+      setRenderJobsRefreshing(false);
+    }
+  }, [demoId]);
 
   useEffect(() => {
     if (videoStatus !== "queued" && videoStatus !== "rendering") {
@@ -365,6 +386,13 @@ export default function DemoDetailPage() {
                   onSeekTick={seek}
                   onVideoDurationChange={setDetectedVideoDuration}
                   onVideoTimeChange={setCurrentVideoTime}
+                />
+                <RenderOperatorPanel
+                  video={replay.video}
+                  latestJob={latestRenderClipJob}
+                  jobCount={renderJobs.length}
+                  refreshing={renderJobsRefreshing}
+                  onRefresh={() => void refreshRenderOperatorState()}
                 />
                 <VideoSetupPanel
                   currentVideoTime={currentVideoTime}

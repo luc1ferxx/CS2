@@ -75,10 +75,13 @@ class CS2ManualAdapterTest(unittest.TestCase):
             self.assertTrue((workspace / "manifest.json").exists())
             self.assertTrue((workspace / "instructions.md").exists())
             self.assertTrue((workspace / "expected_output.json").exists())
+            self.assertTrue((workspace / "status.json").exists())
 
             saved_manifest = json.loads((workspace / "manifest.json").read_text(encoding="utf-8"))
             instructions = (workspace / "instructions.md").read_text(encoding="utf-8")
             expected_output = json.loads((workspace / "expected_output.json").read_text(encoding="utf-8"))
+            status = json.loads((workspace / "status.json").read_text(encoding="utf-8"))
+            expected_video_path = workspace / "output" / "manual-prepare.mp4"
 
             self.assertEqual(saved_manifest["jobId"], "manual-prepare")
             self.assertIn("/data/uploads/demo-1/source.dem", instructions)
@@ -88,12 +91,15 @@ class CS2ManualAdapterTest(unittest.TestCase):
             self.assertIn("tickEnd: 1280", instructions)
             self.assertIn("Open CS2 manually", instructions)
             self.assertIn("Do not automate Steam or CS2", instructions)
-            self.assertEqual(
-                expected_output["outputPath"],
-                str(workspace / "output" / "manual-prepare.mp4"),
-            )
+            self.assertEqual(expected_output["outputPath"], str(expected_video_path))
+            self.assertEqual(expected_output["expectedVideoFilename"], "manual-prepare.mp4")
+            self.assertEqual(expected_output["expectedVideoPath"], str(expected_video_path))
             self.assertEqual(expected_output["callbackPayload"]["status"], "completed")
             self.assertEqual(expected_output["callbackPayload"]["tickStart"], 640)
+            self.assertEqual(status["state"], "waiting_for_manual_recording")
+            self.assertEqual(status["expectedVideoPath"], str(expected_video_path))
+            self.assertIn("preparedAt", status)
+            self.assertIn("complete-prepared-job", status["nextAction"])
 
     def test_prepare_job_missing_config_raises_clear_error(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

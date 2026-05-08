@@ -351,6 +351,19 @@ button {
   padding: 14px;
 }
 
+.render-operator-panel {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+}
+
+.render-operator-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
 .video-setup-header {
   display: flex;
   align-items: center;
@@ -358,17 +371,103 @@ button {
   gap: 12px;
 }
 
+.render-operator-header h2,
 .video-setup-header h2 {
   margin: 0 0 5px;
   font-size: 16px;
   line-height: 1.2;
 }
 
+.render-operator-header span,
 .video-setup-header span,
+.operator-metadata-grid dt,
 .video-metadata-grid dt,
 .calibration-grid span {
   color: var(--muted);
   font-size: 12px;
+}
+
+.operator-state-row {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+  padding: 10px 0;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+
+.operator-state-icon {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(9, 13, 16, 0.45);
+}
+
+.operator-state-icon.ready {
+  color: var(--green);
+  border-color: rgba(57, 217, 138, 0.28);
+}
+
+.operator-state-icon.waiting {
+  color: var(--amber);
+  border-color: rgba(244, 183, 64, 0.34);
+}
+
+.operator-state-icon.failed {
+  color: var(--red);
+  border-color: rgba(241, 91, 91, 0.34);
+}
+
+.operator-state-row strong {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 14px;
+}
+
+.operator-state-row p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.42;
+}
+
+.operator-metadata-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px 12px;
+  margin: 0;
+}
+
+.operator-metadata-grid div {
+  min-width: 0;
+}
+
+.operator-metadata-grid dt {
+  margin-bottom: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.operator-metadata-grid dd {
+  margin: 0;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 750;
+  overflow-wrap: anywhere;
+}
+
+.operator-error {
+  padding: 9px 10px;
+  border: 1px solid rgba(241, 91, 91, 0.34);
+  border-radius: 8px;
+  background: var(--red-soft);
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.42;
 }
 
 .disabled-label {
@@ -1146,12 +1245,14 @@ button {
     flex-direction: column;
   }
 
+  .render-operator-header,
   .video-setup-header,
   .calibration-actions {
     align-items: flex-start;
     flex-direction: column;
   }
 
+  .operator-metadata-grid,
   .video-metadata-grid,
   .calibration-grid {
     grid-template-columns: 1fr;

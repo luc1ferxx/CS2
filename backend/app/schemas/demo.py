@@ -70,6 +70,18 @@ class RenderJobStatus(BaseModel):
     demo_id: str
     job_type: str
     status: str
+    source: str
+    video_status: str | None = None
+    video_url: str | None = None
+    tick_start: int | None = None
+    tick_end: int | None = None
+    tick_rate: int | None = None
+    duration_seconds: float | None = None
+    event_id: str | None = None
+    player_id: str | None = None
+    pov_steam_id: str | None = None
+    round_number: int | None = None
+    render_preset: str | None = None
     metadata: dict[str, Any]
     error_message: str | None = None
     created_at: datetime
@@ -122,14 +134,5 @@ class RenderWorkerMediaUpload(BaseModel):
     sizeBytes: int
 
 
-class RenderJobCreated(BaseModel):
-    job_id: str
-    demo_id: str
-    job_type: str
-    status: str
-    metadata: dict[str, Any]
-    error_message: str | None = None
-    created_at: datetime
-    started_at: datetime | None = None
-    finished_at: datetime | None = None
+class RenderJobCreated(RenderJobStatus):
     video: ReplayVideoStatus

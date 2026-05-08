@@ -241,12 +241,26 @@ class DemoService:
         )
 
     def render_job_status(self, job: DemoJob) -> RenderJobStatus:
+        metadata = _job_metadata(job)
+        video = self.get_video_status(job.demo) if job.demo is not None else {}
         return RenderJobStatus(
             job_id=job.id,
             demo_id=job.demo_id,
             job_type=job.job_type,
             status=job.status,
-            metadata=_job_metadata(job),
+            source=_optional_str(video.get("source")) or "unknown",
+            video_status=_optional_str(video.get("status")),
+            video_url=_optional_str(video.get("url")),
+            tick_start=_optional_int(metadata.get("tickStart")),
+            tick_end=_optional_int(metadata.get("tickEnd")),
+            tick_rate=_optional_int(metadata.get("tickRate")),
+            duration_seconds=_optional_float(metadata.get("durationSeconds")),
+            event_id=_optional_str(metadata.get("eventId")),
+            player_id=_optional_str(metadata.get("playerId")),
+            pov_steam_id=_optional_str(metadata.get("povSteamId")),
+            round_number=_optional_int(metadata.get("roundNumber")),
+            render_preset=_optional_str(metadata.get("renderPreset")),
+            metadata=metadata,
             error_message=job.error_message,
             created_at=job.created_at,
             started_at=job.started_at,
@@ -588,6 +602,12 @@ def _optional_int(value: Any) -> int | None:
     if value is None:
         return None
     return int(value)
+
+
+def _optional_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    return float(value)
 
 
 def _optional_str(value: Any) -> str | None:

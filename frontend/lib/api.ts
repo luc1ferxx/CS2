@@ -35,6 +35,18 @@ export interface RenderJobStatus {
   demo_id: string;
   job_type: string;
   status: string;
+  source: string;
+  video_status?: ReplayVideo["status"] | string | null;
+  video_url?: string | null;
+  tick_start?: number | null;
+  tick_end?: number | null;
+  tick_rate?: number | null;
+  duration_seconds?: number | null;
+  event_id?: string | null;
+  player_id?: string | null;
+  pov_steam_id?: string | null;
+  round_number?: number | null;
+  render_preset?: string | null;
   metadata: RenderClipMetadata;
   error_message?: string | null;
   created_at: string;

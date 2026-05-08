@@ -34,6 +34,13 @@ def list_demos(db: Session = Depends(get_db)) -> list[DemoListItem]:
     return DemoService(db).list_demos()
 
 
+def render_job_created_response(
+    job_status: RenderJobStatus,
+    video: ReplayVideoStatus,
+) -> RenderJobCreated:
+    return RenderJobCreated(**job_status.model_dump(), video=video)
+
+
 @router.get("/demos/{demo_id}/status", response_model=DemoStatus)
 def get_demo_status(demo_id: str, db: Session = Depends(get_db)) -> DemoStatus:
     demo = DemoService(db).get_demo(demo_id)
@@ -119,17 +126,9 @@ def create_mock_render_job(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     job_status = service.render_job_status(job)
-    return RenderJobCreated(
-        job_id=job_status.job_id,
-        demo_id=job_status.demo_id,
-        job_type=job_status.job_type,
-        status=job_status.status,
-        metadata=job_status.metadata,
-        error_message=job_status.error_message,
-        created_at=job_status.created_at,
-        started_at=job_status.started_at,
-        finished_at=job_status.finished_at,
-        video=ReplayVideoStatus.model_validate(service.get_video_status(demo)),
+    return render_job_created_response(
+        job_status,
+        ReplayVideoStatus.model_validate(service.get_video_status(demo)),
     )
 
 
@@ -153,17 +152,9 @@ def create_render_clip_job(
         raise HTTPException(status_code=status_code, detail=str(exc)) from exc
 
     job_status = service.render_job_status(job)
-    return RenderJobCreated(
-        job_id=job_status.job_id,
-        demo_id=demo.id,
-        job_type=job_status.job_type,
-        status=job_status.status,
-        metadata=job_status.metadata,
-        error_message=job_status.error_message,
-        created_at=job_status.created_at,
-        started_at=job_status.started_at,
-        finished_at=job_status.finished_at,
-        video=ReplayVideoStatus.model_validate(service.get_video_status(demo)),
+    return render_job_created_response(
+        job_status,
+        ReplayVideoStatus.model_validate(service.get_video_status(demo)),
     )
 
 

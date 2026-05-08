@@ -149,6 +149,7 @@ Current behavior:
 5. The local worker recognizes `render_clip`, moves the job from `queued` to `rendering`, then marks it `failed` with: `Render clip worker is not connected yet. A Windows/Linux GPU worker must process this job.`
 6. Render Worker V1 endpoints can expose the job manifest and accept a future worker callback that marks the job completed or failed.
 7. Manual `source = manual_upload` video metadata is left intact on failures. If no manual video is bound, the replay video status may show queued/rendering/failed while the first-person fallback shell stays available.
+8. The demo detail page shows a compact internal Render Operator panel with the latest `render_clip` job, requested tick range, event/player/POV metadata, current video source/status, output URL when available, and a refresh action.
 
 V1 intentionally fails because the API container must not run CS2, OBS, ffmpeg, OpenAI, or object-storage automation. The failure is the contract marker for a future external render worker, not an application error.
 
@@ -182,6 +183,14 @@ curl http://localhost:8000/render-worker/jobs/next \
 ```
 
 If no queued `render_clip` job exists, this returns `204 No Content`.
+
+Recent render jobs for a demo:
+
+```bash
+curl http://localhost:8000/demos/{demo_id}/render/jobs
+```
+
+The response is read-only and includes recent `render_clip` jobs with job status, timestamps, error message, requested tick range, event/player/POV metadata, render preset, and current video source/status. Local render-worker workspace paths are not returned because the API container does not know where an operator prepared a job.
 
 Manifest shape:
 
@@ -304,6 +313,8 @@ python3 render-worker/runner.py complete-prepared-job --job-id {job_id} --video-
 If `DEV_FAKE_VIDEO_PATH` points at an existing local `.mp4`, the runner uploads it to the dev media endpoint and posts a completed result callback with the returned `/media/videos/...` URL. The frontend then plays that URL through the existing `FirstPersonReplay` branch. If `DEV_FAKE_VIDEO_PATH` is missing or invalid, the runner posts a failed callback explaining that the real renderer is not connected; existing `manual_upload` video metadata is preserved by the API.
 
 `prepare-job --adapter cs2-manual` creates `{WORK_DIR}/jobs/{job_id}/manifest.json`, `instructions.md`, `expected_output.json`, and an `output/` directory. The instructions list the demo path/reference, POV player or Steam ID, tick range, round, recommended mp4 path, and manual steps for a controlled render operator. `complete-prepared-job` uploads the expected or supplied mp4 and posts a completed callback. If the mp4 does not exist, it returns a waiting state and does not mark the job completed.
+
+The manual adapter also writes `status.json` with `preparedAt`, `expectedVideoPath`, `state = waiting_for_manual_recording`, and the next runner action. A MacBook development machine can verify the full contract with fake/manual MP4 files, but it cannot perform real CS2 rendering.
 
 See `render-worker/README.md` for the full skeleton workflow and replacement path for a real controlled GPU adapter.
 

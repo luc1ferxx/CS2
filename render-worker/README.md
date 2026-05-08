@@ -80,6 +80,7 @@ This remains a dev bridge only. It does not render real CS2 footage.
   manifest.json
   instructions.md
   expected_output.json
+  status.json
   output/{job_id}.mp4
 ```
 
@@ -92,7 +93,14 @@ This remains a dev bridge only. It does not render real CS2 footage.
 - recommended output file path
 - manual steps: open CS2 manually, load the demo, seek to the tick range, record the clip, export an mp4 to the output path
 
-`expected_output.json` contains the callback metadata template that will be used after a human places the mp4 at the expected path.
+`expected_output.json` contains the expected MP4 filename/path plus the callback metadata template that will be used after a human places the mp4 at the expected path.
+
+`status.json` is a small operator state file with:
+
+- `preparedAt`
+- `expectedVideoPath`
+- `state: waiting_for_manual_recording`
+- `nextAction`
 
 If the output mp4 exists, `complete-prepared-job` uploads it and posts a completed callback. If the output mp4 does not exist, the runner returns `waiting` and does not mark the job completed or failed.
 
@@ -118,7 +126,7 @@ If the output mp4 exists, `complete-prepared-job` uploads it and posts a complet
    python3 render-worker/runner.py prepare-job --job-id {job_id} --adapter cs2-manual
    ```
 
-4. On a controlled render machine, manually open CS2 and follow `{WORK_DIR}/jobs/{job_id}/instructions.md`.
+4. Inspect `{WORK_DIR}/jobs/{job_id}/manifest.json`, `instructions.md`, `expected_output.json`, and `status.json`. On a controlled render machine, manually open CS2 and follow the instructions file.
 
 5. Put the mp4 at the expected output path or pass a custom path:
 
@@ -129,6 +137,8 @@ If the output mp4 exists, `complete-prepared-job` uploads it and posts a complet
    ```
 
 6. Open the demo detail page. `FirstPersonReplay` should play the callback URL because replay `video` metadata is now `status = ready`, `source = rendered`, and has a non-empty `url`.
+
+The app's Render Operator panel reads API job/video status only. It does not know the local workspace path unless an operator opens the files produced by this runner.
 
 ## Future Real Adapter
 

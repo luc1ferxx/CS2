@@ -11,7 +11,7 @@ from sqlalchemy.orm import sessionmaker
 from app.core.config import settings
 from app.core.database import Base
 from app.models import Demo, DemoJob
-from app.schemas.demo import RenderClipRequest, RenderWorkerResult
+from app.schemas.demo import RenderClipRequest, RenderJobCreated, RenderWorkerResult, ReplayVideoStatus
 from app.services.demo_service import DemoService
 from app.workers.worker import RENDER_CLIP_NOT_CONNECTED_ERROR, process_render_clip_job
 
@@ -295,6 +295,151 @@ class RenderClipJobTest(unittest.TestCase):
                 manifest = service.render_job_manifest(job)
                 self.assertEqual(manifest.jobId, "render-job-queued-oldest")
                 self.assertEqual(manifest.tickStart, 640)
+
+    def test_list_render_clip_jobs_serializes_operator_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            with replay_storage_dir(Path(directory)), patch(
+                "app.services.demo_service.get_redis_client",
+                return_value=FakeRedis(),
+            ):
+                db = self.Session()
+                demo = add_completed_demo(db, "demo-render-operator-list")
+                service = DemoService(db)
+                service.write_replay_blob(demo.id, replay_contract(demo.id))
+                job = service.create_render_clip_job(
+                    demo,
+                    RenderClipRequest(
+                        eventId="event-operator",
+                        playerId="t-entry",
+                        povSteamId="76561190000000001",
+                        tickStart=1280,
+                        tickEnd=1920,
+                        tickRate=64,
+                        roundNumber=4,
+                        renderPreset="operator_panel_probe",
+                    ),
+                )
+
+                statuses = service.list_render_clip_jobs(demo)
+
+                self.assertEqual(len(statuses), 1)
+                status = statuses[0]
+                self.assertEqual(status.job_id, job.id)
+                self.assertEqual(status.source, "rendered")
+                self.assertEqual(status.video_status, "queued")
+                self.assertIsNone(status.video_url)
+                self.assertEqual(status.tick_start, 1280)
+                self.assertEqual(status.tick_end, 1920)
+                self.assertEqual(status.tick_rate, 64)
+                self.assertEqual(status.duration_seconds, 10)
+                self.assertEqual(status.event_id, "event-operator")
+                self.assertEqual(status.player_id, "t-entry")
+                self.assertEqual(status.pov_steam_id, "76561190000000001")
+                self.assertEqual(status.round_number, 4)
+                self.assertEqual(status.render_preset, "operator_panel_probe")
+
+    def test_render_job_created_schema_preserves_operator_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            with replay_storage_dir(Path(directory)), patch(
+                "app.services.demo_service.get_redis_client",
+                return_value=FakeRedis(),
+            ):
+                db = self.Session()
+                demo = add_completed_demo(db, "demo-render-created-schema")
+                service = DemoService(db)
+                service.write_replay_blob(demo.id, replay_contract(demo.id))
+                job = service.create_render_clip_job(
+                    demo,
+                    RenderClipRequest(
+                        eventId="event-created",
+                        tickStart=640,
+                        tickEnd=1280,
+                        tickRate=64,
+                    ),
+                )
+                status = service.render_job_status(job)
+                video = ReplayVideoStatus.model_validate(service.get_video_status(demo))
+
+                created = RenderJobCreated(**status.model_dump(), video=video)
+
+                self.assertEqual(created.source, "rendered")
+                self.assertEqual(created.video_status, "queued")
+                self.assertEqual(created.tick_start, 640)
+                self.assertEqual(created.tick_end, 1280)
+                self.assertEqual(created.event_id, "event-created")
+
+    def test_render_job_status_serializes_failed_manual_and_completed_video_state(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            with replay_storage_dir(Path(directory)), patch(
+                "app.services.demo_service.get_redis_client",
+                return_value=FakeRedis(),
+            ):
+                db = self.Session()
+                demo = add_completed_demo(db, "demo-render-status-source")
+                service = DemoService(db)
+                service.write_replay_blob(
+                    demo.id,
+                    replay_contract(
+                        demo.id,
+                        video={
+                            "status": "ready",
+                            "url": "/media/videos/demo-render-status-source/manual.mp4",
+                            "durationSeconds": 30,
+                            "tickStart": 200,
+                            "tickEnd": 2120,
+                            "tickRate": 64,
+                            "source": "manual_upload",
+                            "errorMessage": None,
+                            "timeOriginSeconds": 2,
+                        },
+                    ),
+                )
+                failed_job = DemoJob(
+                    id="render-job-failed-manual-state",
+                    demo_id=demo.id,
+                    job_type="render_clip",
+                    status="failed",
+                    error_message="Operator cancelled capture",
+                    metadata_json=json.dumps(render_job_metadata(200, 2120)),
+                )
+                db.add(failed_job)
+                db.commit()
+
+                failed_status = service.render_job_status(failed_job)
+
+                self.assertEqual(failed_status.status, "failed")
+                self.assertEqual(failed_status.source, "manual_upload")
+                self.assertEqual(failed_status.video_status, "ready")
+                self.assertEqual(
+                    failed_status.video_url,
+                    "/media/videos/demo-render-status-source/manual.mp4",
+                )
+                self.assertEqual(failed_status.error_message, "Operator cancelled capture")
+
+                completed_job = service.create_render_clip_job(
+                    demo,
+                    RenderClipRequest(tickStart=640, tickEnd=1280, tickRate=64),
+                )
+                service.apply_render_worker_result(
+                    completed_job,
+                    RenderWorkerResult(
+                        status="completed",
+                        videoUrl="/media/videos/demo-render-status-source/rendered.mp4",
+                        tickStart=640,
+                        tickEnd=1280,
+                        tickRate=64,
+                        durationSeconds=10,
+                    ),
+                )
+
+                completed_status = service.render_job_status(completed_job)
+                self.assertEqual(completed_status.status, "completed")
+                self.assertEqual(completed_status.source, "rendered")
+                self.assertEqual(completed_status.video_status, "ready")
+                self.assertEqual(
+                    completed_status.video_url,
+                    "/media/videos/demo-render-status-source/rendered.mp4",
+                )
 
     def test_render_worker_completed_result_updates_rendered_video_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
