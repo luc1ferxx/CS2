@@ -99,6 +99,27 @@ const events = [
       distance: 2.1,
       spacingType: "stacked"
     }
+  }),
+  coachingEvent({
+    id: "weak-utility",
+    round_number: 4,
+    player_id: "p1",
+    player_name: "entry.one",
+    tick_start: 3100,
+    severity: "medium",
+    title: "Execute lacked utility before the plant",
+    message: "The plant happened with too little utility support.",
+    structured_context_json: {
+      ruleId: "weak_utility_before_execute",
+      involvedPlayerIds: ["p1"],
+      evidenceTicks: [3100],
+      relatedEventIds: ["plant-a", "smoke-early"],
+      utilityType: "smoke",
+      utilityLabel: "Smoke",
+      bombEventType: "bomb_planted",
+      bombEventLabel: "Bomb planted A",
+      windowSeconds: 12
+    }
   })
 ];
 
@@ -109,7 +130,7 @@ const events = [
     search: "trade.two"
   });
 
-  assert.equal(model.totalCount, 3);
+  assert.equal(model.totalCount, 4);
   assert.equal(model.filteredCount, 1);
   assert.equal(model.roundGroups.length, 1);
   assert.equal(model.roundGroups[0].roundNumber, 2);
@@ -117,7 +138,8 @@ const events = [
   assert.deepEqual(normalize(model.availableRules.map((item) => item.id)), [
     "isolated_entry",
     "poor_spacing",
-    "post_plant_spread"
+    "post_plant_spread",
+    "weak_utility_before_execute"
   ]);
 }
 
@@ -134,12 +156,57 @@ const events = [
 }
 
 {
+  const model = buildCoachingReviewModel(events, players, {
+    severity: "all",
+    rule: "weak_utility_before_execute",
+    search: "plant-a"
+  });
+
+  assert.equal(model.filteredCount, 1);
+  assert.equal(model.roundGroups[0].events[0].event.id, "weak-utility");
+}
+
+{
   const summary = evidenceSummaryForEvent(events[0]);
   assert.deepEqual(normalize(summary), [
     { label: "distance", value: "26.42" },
     { label: "windowSeconds", value: "5" },
     { label: "evidenceTicks", value: "1100, 1120" }
   ]);
+}
+
+{
+  const summary = evidenceSummaryForEvent(events[3]);
+  assert.deepEqual(normalize(summary), [
+    { label: "relatedEventIds", value: "plant-a, smoke-early" },
+    { label: "windowSeconds", value: "12" },
+    { label: "evidenceTicks", value: "3100" },
+    { label: "utilityType", value: "smoke" },
+    { label: "utilityLabel", value: "Smoke" }
+  ]);
+}
+
+{
+  const summary = evidenceSummaryForEvent(
+    coachingEvent({
+      id: "unknown-metadata",
+      round_number: 5,
+      player_id: "p1",
+      player_name: "entry.one",
+      tick_start: 4100,
+      severity: "low",
+      title: "Unknown metadata shape",
+      message: "Unknown metadata should not crash summary generation.",
+      structured_context_json: {
+        ruleId: "experimental_rule",
+        relatedEventIds: ["event-a"],
+        utilityTypes: [],
+        customNested: { unsupported: true }
+      }
+    })
+  );
+
+  assert.deepEqual(normalize(summary), [{ label: "relatedEventIds", value: "event-a" }]);
 }
 
 {

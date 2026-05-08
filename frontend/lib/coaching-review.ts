@@ -8,7 +8,10 @@ export type RuleFilter =
   | "isolated_entry"
   | "poor_spacing"
   | "post_plant_spread"
-  | "retake_desync";
+  | "retake_desync"
+  | "weak_utility_before_execute"
+  | "late_post_plant_utility"
+  | "post_plant_spacing_with_bomb_event";
 
 export interface CoachingReviewFilters {
   severity: SeverityFilter;
@@ -55,17 +58,30 @@ export interface TimelineMarker {
 
 const RULE_LABELS: Record<string, string> = {
   isolated_entry: "Isolated entry",
+  late_post_plant_utility: "Late post-plant utility",
   poor_spacing: "Poor spacing",
+  post_plant_spacing_with_bomb_event: "Post-plant spacing with bomb event",
   post_plant_spread: "Post-plant spread",
   post_plant_spread_issue: "Post-plant spread",
   retake_desync: "Retake desync",
-  untraded_death: "Untraded death"
+  untraded_death: "Untraded death",
+  weak_utility_before_execute: "Weak execute utility"
 };
 
 const EVIDENCE_KEYS = [
+  "relatedEventIds",
   "distance",
   "windowSeconds",
   "evidenceTicks",
+  "utilityType",
+  "utilityLabel",
+  "utilityTypes",
+  "utilityCount",
+  "requiredUtilityCount",
+  "bombTick",
+  "bombEventType",
+  "bombEventLabel",
+  "graceWindowSeconds",
   "nearbyCount",
   "spacingType",
   "side",
@@ -146,7 +162,10 @@ export function ruleFilterForRuleId(ruleId: string): RuleFilter {
     ruleId === "isolated_entry" ||
     ruleId === "poor_spacing" ||
     ruleId === "post_plant_spread" ||
-    ruleId === "retake_desync"
+    ruleId === "retake_desync" ||
+    ruleId === "weak_utility_before_execute" ||
+    ruleId === "late_post_plant_utility" ||
+    ruleId === "post_plant_spacing_with_bomb_event"
   ) {
     return ruleId;
   }
@@ -164,6 +183,9 @@ export function evidenceSummaryForEvent(event: CoachingEvent): EvidenceSummaryIt
   for (const key of EVIDENCE_KEYS) {
     const value = context[key];
     if (value === undefined || value === null || value === "") {
+      continue;
+    }
+    if (Array.isArray(value) && value.length === 0) {
       continue;
     }
     summary.push({
@@ -246,7 +268,8 @@ function matchesSearch(
     event.player_name,
     ruleIdForEvent(event),
     ruleLabelForRuleId(ruleIdForEvent(event)),
-    ...involvedPlayersForEvent(event, playerNameById)
+    ...involvedPlayersForEvent(event, playerNameById),
+    ...evidenceSummaryForEvent(event).flatMap((item) => [item.label, item.value])
   ]
     .join(" ")
     .toLowerCase();

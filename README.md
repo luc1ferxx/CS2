@@ -66,7 +66,7 @@ curl -F "file=@sample-demos/the-mongolz-vs-liquid-ancient.dem" \
 
 If `demoparser2` is missing or fails on a demo, the worker marks `demo.status = failed` and writes the parser error to `demo.error_message`. Parser failures do not run the rules analyzer.
 
-## Rules-Based Coaching V2
+## Rules-Based Coaching V3
 
 Real parser output now gets a deterministic, explainable rules pass after replay normalization. This is not OpenAI and does not generate AI prose; each coaching event is built from fixed thresholds and replay facts, then stored in `coaching_events`.
 
@@ -77,8 +77,11 @@ Current rules:
 - `poor_spacing`: flags one stretched or overly stacked side spacing moment per round/side.
 - `post_plant_spread_issue`: flags planted-bomb frames where multiple alive Ts stay tightly clustered for several seconds.
 - `retake_desync`: flags planted-bomb frames where CTs reach the bomb area several seconds apart.
+- `weak_utility_before_execute`: uses parser `bomb_planted` and utility events to flag plants with fewer than two T-side utility events in the prior 12 seconds.
+- `late_post_plant_utility`: uses parser `bomb_planted` and utility events to flag the first T-side post-plant utility that arrives more than 6 seconds after the plant.
+- `post_plant_spacing_with_bomb_event`: anchors the post-plant clustering signal to a parser `bomb_planted` event and records the related bomb event id/tick.
 
-The analyzer reads replay JSON `rounds`, `frames`, `players`, `kills`, `deaths`, and frame-level `bombState`, but only writes compact coaching event rows. Parser `events` are exposed to the replay UI for navigation and context; rules v2 semantics do not consume them yet. Large frame payloads stay in `/data/replays`.
+The analyzer reads replay JSON `rounds`, `frames`, `players`, `kills`, `deaths`, frame-level `bombState`, and compact parser `events`, but only writes compact coaching event rows. Parser event-backed rules are best-effort and skip cleanly when their required event family is missing. Large frame payloads stay in `/data/replays`.
 
 Rules are configured through `backend/app/analysis/rules.py::RuleConfig`. The current defaults are:
 
@@ -93,18 +96,21 @@ Rules are configured through `backend/app/analysis/rules.py::RuleConfig`. The cu
 - `post_plant_min_duration_seconds = 4`
 - `retake_site_distance = 12`
 - `retake_desync_seconds = 4`
+- `execute_utility_window_seconds = 12`
+- `min_execute_utility_events = 2`
+- `post_plant_utility_grace_seconds = 6`
 
-Events are de-duped when the same round, player, category, and near tick would otherwise produce repeated cards. Output is sorted by severity first, then tick, so review starts with the highest-signal issues. Event metadata includes `ruleId`, `involvedPlayerIds`, `evidenceTicks`, and rule-specific fields such as `distance`, `windowSeconds`, and `nearbyCount`.
+Events are de-duped when the same round, player, category, and near tick would otherwise produce repeated cards. Output is sorted by severity first, then tick, so review starts with the highest-signal issues. Event metadata includes `ruleId`, `involvedPlayerIds`, `evidenceTicks`, and rule-specific fields such as `relatedEventIds`, `distance`, `windowSeconds`, `nearbyCount`, utility event labels/types, and bomb event labels/types.
 
-## Coaching Review UI V2
+## Coaching Review UI V3
 
 The demo detail coaching panel is a review tool for deterministic event rows, not an OpenAI chat surface. It supports:
 
 - Round-grouped coaching events across the full demo, with the selected round highlighted.
 - Severity filtering for `all`, `high`, `medium`, and `low` where `critical` is included with high and `info` is included with low.
-- Rule filtering for current rules such as `untraded_death`, `isolated_entry`, `poor_spacing`, `post_plant_spread`, and `retake_desync`. The UI treats stored `post_plant_spread_issue` rows as the `post_plant_spread` filter.
-- Search across player names, event title, event description, rule id, and rule label.
-- Dense event cards showing severity, rule id/label, round, tick, involved players, short explanation, and evidence metadata such as `distance`, `windowSeconds`, `evidenceTicks`, `nearbyCount`, and `site`.
+- Rule filtering for current rules such as `untraded_death`, `isolated_entry`, `poor_spacing`, `post_plant_spread`, `retake_desync`, `weak_utility_before_execute`, `late_post_plant_utility`, and `post_plant_spacing_with_bomb_event`. The UI treats stored `post_plant_spread_issue` rows as the `post_plant_spread` filter.
+- Search across player names, event title, event description, rule id, rule label, and summarized evidence metadata.
+- Dense event cards showing severity, rule id/label, round, tick, involved players, short explanation, and evidence metadata such as `relatedEventIds`, `distance`, `windowSeconds`, `evidenceTicks`, `nearbyCount`, utility details, bomb details, and `site`.
 - Tick-linked coaching markers on the timeline. Marker position is derived from `tick_start` within the current round and marker color follows severity.
 - Compact parser event markers on the timeline for kills, bomb plant/defuse/explode, and utility events. These sit in their own marker row so they do not cover the slider or coaching markers.
 - Event-level `Generate Clip for this event`, which calls the existing `render_clip` API and refreshes the Render Operator panel state.
@@ -114,7 +120,7 @@ Known limitations:
 - Parser frames are sampled, not full tick density, so distances and timing are approximate.
 - Tactical map coordinates are map-specific for the supported pool, but only Dust II is calibrated from CS2 overview values today. Mirage, Inferno, Ancient, Nuke, and Anubis use approximate bounds and are labeled as such in the replay UI.
 - Line-of-sight, economy, and economy-aware round context are not modeled yet.
-- Real parser bomb state and utility events are best-effort. Missing bomb/utility event families are tolerated and do not fail a parse. `post_plant_spread_issue` and `retake_desync` run only when replay frames include planted bomb position data; otherwise they skip without failing the parse.
+- Real parser bomb state and utility events are best-effort. Missing bomb/utility event families are tolerated and do not fail a parse or analysis run. `post_plant_spread_issue` and `retake_desync` run only when replay frames include planted bomb position data; event-backed utility/bomb rules skip when their parser events are absent.
 - Trade tagging in parser `events` is not enabled yet. Existing rules still infer trade windows from kill/death rows during analysis.
 
 ## Product Direction: Demo-First Review
@@ -434,7 +440,7 @@ Current support:
 - `demoparser2==0.41.0`, selected because it has Python 3.12 Linux wheels for the backend Docker image
 - Best-effort extraction of map, tick rate, rounds, roster, sampled positions, and kill/death rows
 - Existing replay JSON contract, so the current Demo Detail page can open parser output
-- Deterministic rules-based coaching events for first-pass trading, entry spacing, team spacing, post-plant clustering, and retake timing signals
+- Deterministic rules-based coaching events for first-pass trading, entry spacing, team spacing, post-plant clustering, retake timing, weak execute utility, and late post-plant utility signals
 - Map metadata in replay JSON for tactical map rendering, including radar image path, transform, attribution source, and calibration confidence
 - Parser Data Quality v1 compact replay events in `replay.events`
 
@@ -504,7 +510,7 @@ Current demoparser2 limitations:
 
 - Event families may be absent or use different field names across demos.
 - Utility and bomb events can be missing while player frames and kill rows still parse correctly.
-- Trade metadata is not emitted in `replay.events`; rules v2 still performs its own best-effort trade-window inference from kill/death rows.
+- Trade metadata is not emitted in `replay.events`; analyzer rules still perform their own best-effort trade-window inference from kill/death rows.
 - Full tick density is not stored. Replay frames remain sampled and compact.
 
 Parser/normalizer behavior must stay tolerant: one missing event family should not fail the whole demo parse, and large raw parser dataframes or unbounded JSON must not be stored in PostgreSQL or replay blobs.

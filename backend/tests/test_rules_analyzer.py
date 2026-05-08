@@ -106,6 +106,20 @@ class RulesAnalyzerTest(unittest.TestCase):
             ),
             [],
         )
+
+    def test_missing_or_empty_replay_events_do_not_crash_analysis(self) -> None:
+        replay_without_events = replay_fixture(
+            kills=[],
+            frames=[frame(100, [player("t-entry", "T Entry", "T", 20, 20)])],
+        )
+        replay_without_events.pop("events")
+        replay_with_empty_events = {
+            **replay_without_events,
+            "events": [],
+        }
+
+        self.assertIsInstance(analyze_replay(replay_without_events), list)
+        self.assertIsInstance(analyze_replay(replay_with_empty_events), list)
         self.assertEqual(
             analyze_replay(
                 replay_fixture(
@@ -299,6 +313,117 @@ class RulesAnalyzerTest(unittest.TestCase):
         self.assertEqual(retake[0]["structured_context_json"]["windowSeconds"], 5.625)
         self.assertEqual(retake[0]["structured_context_json"]["involvedPlayerIds"], ["ct-1", "ct-2"])
 
+    def test_weak_utility_before_execute_uses_bomb_and_utility_events(self) -> None:
+        replay = replay_fixture(
+            kills=[],
+            rounds=[{"roundNumber": 1, "startTick": 0, "freezeEndTick": 0, "endTick": 1400}],
+            frames=[
+                frame(100, [player("t-entry", "T Entry", "T", 20, 20)]),
+                frame(1200, [player("t-entry", "T Entry", "T", 50, 50)]),
+            ],
+            events=[
+                replay_event("smoke-early", "smoke", 120, player_id="t-entry", player_name="T Entry", side="T"),
+                replay_event("plant-a", "bomb_planted", 1200, player_id="t-entry", player_name="T Entry", side="T"),
+            ],
+        )
+
+        events = analyze_replay(replay)
+
+        weak_utility = [
+            event for event in events
+            if event["structured_context_json"]["ruleId"] == "weak_utility_before_execute"
+        ]
+        self.assertEqual(len(weak_utility), 1)
+        context = weak_utility[0]["structured_context_json"]
+        self.assertEqual(context["relatedEventIds"], ["plant-a"])
+        self.assertEqual(context["evidenceTicks"], [1200])
+        self.assertEqual(context["utilityCount"], 0)
+        self.assertEqual(context["requiredUtilityCount"], 2)
+        self.assertEqual(context["windowSeconds"], 12)
+
+    def test_utility_dependent_rules_do_not_false_positive_when_utility_events_missing(self) -> None:
+        replay = replay_fixture(
+            kills=[],
+            frames=[
+                frame(100, [player("t-entry", "T Entry", "T", 20, 20)]),
+                frame(520, [player("t-entry", "T Entry", "T", 50, 50)]),
+            ],
+            events=[
+                replay_event("plant-a", "bomb_planted", 520, player_id="t-entry", player_name="T Entry", side="T"),
+            ],
+        )
+
+        events = analyze_replay(replay)
+        rule_ids = {event["structured_context_json"]["ruleId"] for event in events}
+
+        self.assertNotIn("weak_utility_before_execute", rule_ids)
+        self.assertNotIn("late_post_plant_utility", rule_ids)
+
+    def test_late_post_plant_utility_includes_related_event_metadata(self) -> None:
+        replay = replay_fixture(
+            kills=[],
+            frames=[
+                frame(500, [player("t-entry", "T Entry", "T", 20, 20)]),
+                frame(1200, [player("t-support", "T Support", "T", 45, 45)]),
+            ],
+            events=[
+                replay_event("plant-a", "bomb_planted", 500, player_id="t-entry", player_name="T Entry", side="T"),
+                replay_event("smoke-late", "smoke", 1200, player_id="t-support", player_name="T Support", side="T"),
+            ],
+        )
+
+        events = analyze_replay(replay)
+
+        late_utility = [
+            event for event in events
+            if event["structured_context_json"]["ruleId"] == "late_post_plant_utility"
+        ]
+        self.assertEqual(len(late_utility), 1)
+        context = late_utility[0]["structured_context_json"]
+        self.assertEqual(context["relatedEventIds"], ["plant-a", "smoke-late"])
+        self.assertEqual(context["utilityType"], "smoke")
+        self.assertEqual(context["utilityLabel"], "Smoke")
+        self.assertGreater(context["windowSeconds"], context["graceWindowSeconds"])
+
+    def test_post_plant_spacing_with_bomb_event_uses_bomb_tick_and_event_id(self) -> None:
+        replay = replay_fixture(
+            kills=[],
+            frames=[
+                planted_frame(500, cluster_t_players(50, 50), bomb=(52, 52)),
+                planted_frame(700, cluster_t_players(50.5, 50.5), bomb=(52, 52)),
+                planted_frame(900, cluster_t_players(51, 51), bomb=(52, 52)),
+            ],
+            events=[
+                replay_event("plant-a", "bomb_planted", 500, player_id="t-entry", player_name="T Entry", side="T"),
+            ],
+        )
+
+        events = analyze_replay(
+            replay,
+            config=RuleConfig(post_plant_min_duration_seconds=4, post_plant_cluster_distance=6),
+        )
+
+        spacing = [
+            event for event in events
+            if event["structured_context_json"]["ruleId"] == "post_plant_spacing_with_bomb_event"
+        ]
+        self.assertEqual(len(spacing), 1)
+        context = spacing[0]["structured_context_json"]
+        self.assertEqual(context["relatedEventIds"], ["plant-a"])
+        self.assertEqual(context["bombTick"], 500)
+        self.assertEqual(context["evidenceTicks"], [500, 700, 900])
+        self.assertEqual(context["nearbyCount"], 3)
+
+    def test_mock_replay_analysis_remains_stable_with_v3_rules(self) -> None:
+        from app.services.mock_replay_service import build_mock_replay
+
+        replay, _ = build_mock_replay("mock-v3")
+
+        events = analyze_replay(replay)
+
+        self.assertLessEqual(len(events), RuleConfig().max_events_total)
+        self.assertTrue(all(event["structured_context_json"].get("ruleId") for event in events))
+
 
 def replay_fixture(
     *,
@@ -306,6 +431,7 @@ def replay_fixture(
     frames: list[dict[str, object]],
     rounds: list[dict[str, object]] | None = None,
     extra_players: list[dict[str, object]] | None = None,
+    events: list[dict[str, object]] | None = None,
 ) -> dict[str, object]:
     return {
         "demoId": "demo-rules",
@@ -321,6 +447,7 @@ def replay_fixture(
         "frames": frames,
         "kills": kills,
         "deaths": kills,
+        "events": events or [],
     }
 
 
@@ -364,6 +491,29 @@ def planted_frame(
         "roundNumber": 1,
         "players": players,
         "bombState": {"status": "planted", "x": bomb[0], "y": bomb[1], "site": "A"},
+    }
+
+
+def replay_event(
+    event_id: str,
+    event_type: str,
+    tick: int,
+    *,
+    player_id: str | None = None,
+    player_name: str | None = None,
+    side: str | None = None,
+    round_number: int = 1,
+) -> dict[str, object]:
+    return {
+        "id": event_id,
+        "type": event_type,
+        "tick": tick,
+        "roundNumber": round_number,
+        "playerId": player_id,
+        "playerName": player_name,
+        "side": side,
+        "label": event_type.replace("_", " ").title(),
+        "metadata": {},
     }
 
 

@@ -47,6 +47,8 @@ Tactical map additions must go through the centralized map config in `backend/ap
 
 Parser data-quality additions must keep the replay contract backward compatible. Old replay blobs without `events` should load as `events: []`, parser event extraction should stay best-effort, and one missing event family must not fail the entire parse. Do not store raw parser dataframes, huge raw event dumps, or large media/demo artifacts in PostgreSQL or replay blobs.
 
+Rules analyzer additions must also tolerate missing parser event families. Keep rules deterministic and explainable, include compact evidence metadata such as `ruleId`, `involvedPlayerIds`, `evidenceTicks`, and `relatedEventIds` when parser events are used, and do not introduce OpenAI or AI prose generation into analyzer rules.
+
 ## Commit & Pull Request Guidelines
 
 This checkout does not include Git history, so use concise imperative commits such as `Add mock render job status API`. Pull requests should include: purpose, changed backend/frontend surfaces, verification commands run, screenshots for UI changes, and any known limitations.

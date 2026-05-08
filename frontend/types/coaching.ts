@@ -1,4 +1,4 @@
-export type CoachingCategory = "objective" | "positioning" | "trading" | "timing";
+export type CoachingCategory = "objective" | "positioning" | "trading" | "timing" | "utility";
 export type CoachingSeverity = "info" | "low" | "medium" | "high" | "critical";
 
 export interface CoachingEvent {

@@ -24,6 +24,9 @@ class RuleConfig:
     post_plant_min_players: int = 3
     retake_site_distance: float = 12.0
     retake_desync_seconds: float = 4.0
+    execute_utility_window_seconds: float = 12.0
+    min_execute_utility_events: int = 2
+    post_plant_utility_grace_seconds: float = 6.0
 
 
 DEFAULT_RULE_CONFIG = RuleConfig()
@@ -33,6 +36,14 @@ ISOLATED_ENTRY_DISTANCE = DEFAULT_RULE_CONFIG.isolated_teammate_distance
 POOR_SPACING_NEAREST_DISTANCE = DEFAULT_RULE_CONFIG.poor_spacing_max_distance
 POOR_SPACING_STACKED_DISTANCE = DEFAULT_RULE_CONFIG.poor_spacing_min_distance
 MAX_EVENTS_PER_RULE = 8
+BOMB_PLANTED_EVENT_TYPE = "bomb_planted"
+UTILITY_EVENT_TYPES = {"smoke", "flash", "molotov", "he"}
+UTILITY_LABELS = {
+    "flash": "Flash",
+    "he": "HE",
+    "molotov": "Molotov",
+    "smoke": "Smoke",
+}
 
 _SEVERITY_ORDER = {
     "critical": 0,
@@ -350,6 +361,252 @@ def find_post_plant_spread_issues(
     return events
 
 
+def find_weak_utility_before_execute(
+    replay: dict[str, Any],
+    config: RuleConfig = DEFAULT_RULE_CONFIG,
+) -> list[CoachingEventCandidate]:
+    context = ReplayContext(replay)
+    events: list[CoachingEventCandidate] = []
+    window_ticks = int(context.tick_rate * config.execute_utility_window_seconds)
+
+    for plant_event in context.bomb_plant_events():
+        plant_tick = _event_tick(plant_event)
+        if plant_tick is None:
+            continue
+        round_number = context.round_for_tick(plant_tick, plant_event.get("roundNumber"))
+        if (
+            _round_rule_count(events, round_number, "weak_utility_before_execute")
+            >= config.max_events_per_round_per_rule
+        ):
+            continue
+
+        round_utility_events = [
+            event for event in context.utility_events_for_round(round_number) if _t_side_or_unknown(event)
+        ]
+        if not round_utility_events:
+            continue
+
+        window_start_tick = plant_tick - window_ticks
+        execute_utility_events = [
+            event
+            for event in round_utility_events
+            if (event_tick := _event_tick(event)) is not None and window_start_tick <= event_tick <= plant_tick
+        ]
+        if len(execute_utility_events) >= config.min_execute_utility_events:
+            continue
+
+        related_events = [plant_event, *execute_utility_events]
+        evidence_ticks = sorted(
+            tick
+            for tick in [_event_tick(plant_event), *[_event_tick(event) for event in execute_utility_events]]
+            if tick is not None
+        )
+        utility_types = _unique_values(_event_type(event) for event in execute_utility_events)
+        player_id = _event_player_id(plant_event) or "unknown"
+        player_name = _event_player_name(plant_event) or player_id
+        events.append(
+            _event(
+                replay,
+                rule_id="weak_utility_before_execute",
+                round_number=round_number,
+                player_id=player_id,
+                player_name=player_name,
+                tick_start=plant_tick,
+                tick_end=plant_tick,
+                category="utility",
+                severity="medium",
+                title="Execute lacked utility before the plant",
+                message=(
+                    f"The plant happened with {len(execute_utility_events)} utility event"
+                    f"{'' if len(execute_utility_events) == 1 else 's'} in the prior "
+                    f"{_format_seconds(config.execute_utility_window_seconds)} seconds."
+                ),
+                involved_player_ids=[
+                    player_id,
+                    *[_event_player_id(event) for event in execute_utility_events],
+                ],
+                evidence_ticks=evidence_ticks,
+                metadata={
+                    "relatedEventIds": _related_event_ids(related_events),
+                    "bombTick": plant_tick,
+                    "bombEventType": _event_type(plant_event),
+                    "bombEventLabel": _event_label(plant_event),
+                    "utilityCount": len(execute_utility_events),
+                    "requiredUtilityCount": int(config.min_execute_utility_events),
+                    "utilityTypes": utility_types,
+                    "windowSeconds": _format_number(config.execute_utility_window_seconds),
+                },
+                confidence=0.64,
+            )
+        )
+
+    return events
+
+
+def find_late_post_plant_utility(
+    replay: dict[str, Any],
+    config: RuleConfig = DEFAULT_RULE_CONFIG,
+) -> list[CoachingEventCandidate]:
+    context = ReplayContext(replay)
+    events: list[CoachingEventCandidate] = []
+    grace_ticks = int(context.tick_rate * config.post_plant_utility_grace_seconds)
+
+    for plant_event in context.bomb_plant_events():
+        plant_tick = _event_tick(plant_event)
+        if plant_tick is None:
+            continue
+        round_number = context.round_for_tick(plant_tick, plant_event.get("roundNumber"))
+        if (
+            _round_rule_count(events, round_number, "late_post_plant_utility")
+            >= config.max_events_per_round_per_rule
+        ):
+            continue
+
+        round_utility_events = [
+            event for event in context.utility_events_for_round(round_number) if _t_side_or_unknown(event)
+        ]
+        if not round_utility_events:
+            continue
+
+        post_plant_events = [
+            event
+            for event in round_utility_events
+            if (event_tick := _event_tick(event)) is not None and event_tick > plant_tick
+        ]
+        if not post_plant_events:
+            continue
+        first_utility = min(post_plant_events, key=lambda event: _event_tick(event) or plant_tick)
+        utility_tick = _event_tick(first_utility)
+        if utility_tick is None or utility_tick - plant_tick <= grace_ticks:
+            continue
+
+        delay_seconds = (utility_tick - plant_tick) / context.tick_rate
+        utility_type = _event_type(first_utility)
+        player_id = _event_player_id(first_utility) or _event_player_id(plant_event) or "unknown"
+        player_name = _event_player_name(first_utility) or _event_player_name(plant_event) or player_id
+        events.append(
+            _event(
+                replay,
+                rule_id="late_post_plant_utility",
+                round_number=round_number,
+                player_id=player_id,
+                player_name=player_name,
+                tick_start=utility_tick,
+                tick_end=utility_tick,
+                category="utility",
+                severity="medium",
+                title="Post-plant utility arrived late",
+                message=(
+                    f"The first post-plant utility came {_format_seconds(delay_seconds)} seconds after the plant."
+                ),
+                involved_player_ids=[_event_player_id(plant_event), player_id],
+                evidence_ticks=[plant_tick, utility_tick],
+                metadata={
+                    "relatedEventIds": _related_event_ids([plant_event, first_utility]),
+                    "bombTick": plant_tick,
+                    "bombEventType": _event_type(plant_event),
+                    "bombEventLabel": _event_label(plant_event),
+                    "utilityType": utility_type,
+                    "utilityLabel": _utility_label(first_utility),
+                    "windowSeconds": _format_number(delay_seconds),
+                    "graceWindowSeconds": _format_number(config.post_plant_utility_grace_seconds),
+                },
+                confidence=0.61,
+            )
+        )
+
+    return events
+
+
+def find_post_plant_spacing_with_bomb_event(
+    replay: dict[str, Any],
+    config: RuleConfig = DEFAULT_RULE_CONFIG,
+) -> list[CoachingEventCandidate]:
+    context = ReplayContext(replay)
+    events: list[CoachingEventCandidate] = []
+    min_duration_ticks = int(context.tick_rate * config.post_plant_min_duration_seconds)
+    frames_by_round = context.frames_by_round()
+
+    for plant_event in context.bomb_plant_events():
+        plant_tick = _event_tick(plant_event)
+        if plant_tick is None:
+            continue
+        round_number = context.round_for_tick(plant_tick, plant_event.get("roundNumber"))
+        if (
+            _round_rule_count(events, round_number, "post_plant_spacing_with_bomb_event")
+            >= config.max_events_per_round_per_rule
+        ):
+            continue
+
+        segment: list[dict[str, Any]] = []
+        for frame in frames_by_round.get(round_number, []):
+            frame_tick = _int_or_none(frame.get("tick")) or 0
+            if frame_tick < plant_tick:
+                continue
+            if not _planted_bomb_position(frame):
+                segment = []
+                continue
+
+            alive_t = [
+                player
+                for player in frame.get("players", [])
+                if player.get("side") == "T" and _alive(player) and _has_xy(player)
+            ]
+            if len(alive_t) < config.post_plant_min_players:
+                segment = []
+                continue
+
+            max_pair_distance = _max_pair_distance(alive_t)
+            if max_pair_distance is None or max_pair_distance > config.post_plant_cluster_distance:
+                segment = []
+                continue
+
+            segment.append(frame)
+            start_tick = _int_or_none(segment[0].get("tick")) or frame_tick
+            end_tick = _int_or_none(segment[-1].get("tick")) or frame_tick
+            if end_tick - start_tick < min_duration_ticks:
+                continue
+
+            focus_player = alive_t[0]
+            evidence_ticks = [_int_or_none(item.get("tick")) or 0 for item in segment]
+            site = _event_site(plant_event) or _bomb_site(segment[-1])
+            events.append(
+                _event(
+                    replay,
+                    rule_id="post_plant_spacing_with_bomb_event",
+                    round_number=round_number,
+                    player_id=_player_id(focus_player),
+                    player_name=_player_name(focus_player),
+                    tick_start=start_tick,
+                    tick_end=end_tick,
+                    category="objective",
+                    severity="high",
+                    title="Post-plant spacing stayed clustered after bomb event",
+                    message=(
+                        f"{len(alive_t)} Ts stayed clustered for "
+                        f"{(end_tick - start_tick) / context.tick_rate:.1f} seconds after the bomb plant event."
+                    ),
+                    involved_player_ids=[_player_id(player) for player in alive_t],
+                    evidence_ticks=evidence_ticks,
+                    metadata={
+                        "relatedEventIds": _related_event_ids([plant_event]),
+                        "bombTick": plant_tick,
+                        "bombEventType": _event_type(plant_event),
+                        "bombEventLabel": _event_label(plant_event),
+                        "site": site,
+                        "nearbyCount": len(alive_t),
+                        "distance": round(max_pair_distance, 2),
+                        "clusterDistance": config.post_plant_cluster_distance,
+                        "windowSeconds": _format_number((end_tick - start_tick) / context.tick_rate),
+                    },
+                    confidence=0.69,
+                )
+            )
+            break
+
+    return events
+
+
 def find_retake_desyncs(
     replay: dict[str, Any],
     config: RuleConfig = DEFAULT_RULE_CONFIG,
@@ -438,6 +695,10 @@ class ReplayContext:
             [item for item in replay.get("deaths", self.kills) if isinstance(item, dict)],
             key=lambda item: _int_or_none(item.get("tick")) or 0,
         )
+        self.events = sorted(
+            [item for item in replay.get("events", []) if isinstance(item, dict)],
+            key=lambda item: _int_or_none(item.get("tick")) or 0,
+        )
         self.round_by_number = {
             int(item.get("roundNumber", 1)): item
             for item in self.rounds
@@ -506,6 +767,22 @@ class ReplayContext:
             round_number = self.round_for_tick(tick, frame.get("roundNumber"))
             grouped.setdefault(round_number, []).append(frame)
         return grouped
+
+    def bomb_plant_events(self) -> list[dict[str, Any]]:
+        return [
+            event
+            for event in self.events
+            if _event_type(event) == BOMB_PLANTED_EVENT_TYPE and _event_tick(event) is not None
+        ]
+
+    def utility_events_for_round(self, round_number: int) -> list[dict[str, Any]]:
+        return [
+            event
+            for event in self.events
+            if _event_type(event) in UTILITY_EVENT_TYPES
+            and (event_tick := _event_tick(event)) is not None
+            and self.round_for_tick(event_tick, event.get("roundNumber")) == round_number
+        ]
 
 
 def _has_trade(
@@ -673,6 +950,72 @@ def _bomb_site(frame: dict[str, Any]) -> str | None:
     if isinstance(bomb_state, dict) and bomb_state.get("site"):
         return str(bomb_state["site"])
     return None
+
+
+def _event_type(event: dict[str, Any]) -> str | None:
+    event_type = event.get("type")
+    if not isinstance(event_type, str):
+        return None
+    return event_type.strip().lower() or None
+
+
+def _event_tick(event: dict[str, Any]) -> int | None:
+    return _int_or_none(event.get("tick"))
+
+
+def _event_id(event: dict[str, Any]) -> str | None:
+    return _optional_str(event.get("id"))
+
+
+def _event_label(event: dict[str, Any]) -> str | None:
+    label = _optional_str(event.get("label"))
+    if label:
+        return label
+    event_type = _event_type(event)
+    if event_type == BOMB_PLANTED_EVENT_TYPE:
+        return "Bomb planted"
+    if event_type in UTILITY_LABELS:
+        return UTILITY_LABELS[event_type]
+    return None
+
+
+def _event_player_id(event: dict[str, Any]) -> str | None:
+    return _optional_str(event.get("playerId"))
+
+
+def _event_player_name(event: dict[str, Any]) -> str | None:
+    return _optional_str(event.get("playerName"))
+
+
+def _event_side(event: dict[str, Any]) -> str | None:
+    side = _optional_str(event.get("side"))
+    return side if side in {"T", "CT"} else None
+
+
+def _event_site(event: dict[str, Any]) -> str | None:
+    site = _optional_str(event.get("site"))
+    if site:
+        return site
+    metadata = event.get("metadata")
+    if isinstance(metadata, dict):
+        return _optional_str(metadata.get("site"))
+    return None
+
+
+def _utility_label(event: dict[str, Any]) -> str | None:
+    return _event_label(event)
+
+
+def _t_side_or_unknown(event: dict[str, Any]) -> bool:
+    return _event_side(event) in {None, "T"}
+
+
+def _related_event_ids(events: Iterable[dict[str, Any]]) -> list[str]:
+    return [
+        event_id
+        for event_id in _unique_values(_event_id(event) for event in events)
+        if isinstance(event_id, str)
+    ]
 
 
 def _alive(player: dict[str, Any]) -> bool:
