@@ -9,6 +9,7 @@ import { CoachingPanel } from "@/components/coaching/CoachingPanel";
 import { FirstPersonReplay } from "@/components/replay/FirstPersonReplay";
 import { RenderOperatorPanel } from "@/components/replay/RenderOperatorPanel";
 import { ReplayViewer } from "@/components/replay/ReplayViewer";
+import { RoundReviewPanel } from "@/components/replay/RoundReviewPanel";
 import { Timeline } from "@/components/replay/Timeline";
 import { VideoSetupPanel } from "@/components/replay/VideoSetupPanel";
 import {
@@ -397,6 +398,14 @@ export default function DemoDetailPage() {
                     variant="featured"
                   />
                 </div>
+                <RoundReviewPanel
+                  replay={replay}
+                  coachingEvents={events}
+                  currentTick={currentTick}
+                  selectedRound={selectedRound}
+                  onSelectRound={changeRound}
+                  onSeek={seek}
+                />
                 <div className="review-support-grid">
                   <RenderOperatorPanel
                     video={replay.video}

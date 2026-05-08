@@ -115,6 +115,23 @@ The demo detail coaching panel is a review tool for deterministic event rows, no
 - Compact parser event markers on the timeline for kills, bomb plant/defuse/explode, and utility events. These sit in their own marker row so they do not cover the slider or coaching markers.
 - Event-level `Generate Clip for this event`, which calls the existing `render_clip` API and refreshes the Render Operator panel state.
 
+## Round Review UX V1
+
+Demo Detail includes a compact round review panel between the tactical map and render/operator tools. It is a derived frontend view over replay `rounds`, compact parser `events`, and stored coaching events; it does not require backend or parser changes.
+
+The round review panel supports:
+
+- A dense round list showing round number, winner side, tick range, kill count, bomb event count, utility event count, coaching event count, selected state, and current-round state.
+- A selected-round summary showing winner side, start tick, live/freeze-end tick, end tick, first kill tick/player, bomb plant tick/site, and counts for kills, utility, and coaching events.
+- Quick jumps for round start, live start, first kill, and bomb plant. Missing first-kill or plant data disables only that jump.
+- Shared synchronization with the existing Demo Detail state: selecting a round updates the replay tick, and timeline seeks, coaching card seeks, and parser marker seeks continue updating the selected round.
+
+Known limitations:
+
+- Round review counts depend on compact parser events. If a demo lacks a kill, bomb, or utility event family, the affected count or quick jump is empty rather than inferred from raw parser data.
+- First-kill and bomb-plant labels use best-effort parser event metadata.
+- Round list counts are compact scan aids, not strategic scoring or AI-generated analysis.
+
 Known limitations:
 
 - Parser frames are sampled, not full tick density, so distances and timing are approximate.

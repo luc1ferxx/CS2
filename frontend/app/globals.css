@@ -323,6 +323,214 @@ button {
   align-items: stretch;
 }
 
+.round-review-panel {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+}
+
+.round-review-header,
+.round-review-summary-main,
+.round-review-item-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.round-review-header h2,
+.round-review-summary-main h3 {
+  margin: 0;
+}
+
+.round-review-header h2 {
+  font-size: 17px;
+}
+
+.round-review-header p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.round-review-header-pills,
+.round-jump-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.round-review-summary {
+  display: grid;
+  gap: 12px;
+}
+
+.round-review-summary-main {
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(9, 13, 16, 0.32);
+}
+
+.round-review-summary-main > div {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 9px;
+}
+
+.round-review-summary-main h3 {
+  min-width: 0;
+  font-size: 15px;
+  line-height: 1.25;
+}
+
+.round-duration {
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.round-outcome-pill,
+.round-side-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--line);
+  background: rgba(9, 13, 16, 0.46);
+  font-weight: 850;
+}
+
+.round-outcome-pill {
+  width: 32px;
+  min-width: 32px;
+  height: 28px;
+  border-radius: 7px;
+  font-size: 12px;
+}
+
+.round-side-chip {
+  min-width: 30px;
+  height: 22px;
+  border-radius: 6px;
+  font-size: 11px;
+}
+
+.round-outcome-pill.t,
+.round-side-chip.t {
+  color: var(--amber);
+  border-color: rgba(244, 183, 64, 0.34);
+  background: var(--amber-soft);
+}
+
+.round-outcome-pill.ct,
+.round-side-chip.ct {
+  color: var(--teal);
+  border-color: rgba(40, 199, 193, 0.34);
+  background: var(--teal-soft);
+}
+
+.round-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(116px, 1fr));
+  gap: 8px;
+}
+
+.round-summary-metric {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 9px 10px;
+  border: 1px solid rgba(54, 80, 93, 0.58);
+  border-radius: 7px;
+  background: rgba(21, 31, 40, 0.58);
+}
+
+.round-summary-metric span {
+  color: var(--muted-2);
+  font-size: 11px;
+  font-weight: 760;
+  text-transform: uppercase;
+}
+
+.round-summary-metric strong {
+  min-width: 0;
+  color: var(--text);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.round-jump-actions {
+  justify-content: flex-start;
+}
+
+.round-jump-button {
+  min-width: 0;
+}
+
+.round-review-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(118px, 1fr));
+  gap: 8px;
+}
+
+.round-review-item {
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(21, 31, 40, 0.74);
+  color: var(--text);
+  text-align: left;
+}
+
+.round-review-item:hover,
+.round-review-item:focus-visible {
+  border-color: var(--line-strong);
+  outline: none;
+}
+
+.round-review-item.selected {
+  border-color: rgba(40, 199, 193, 0.62);
+  background: rgba(40, 199, 193, 0.08);
+}
+
+.round-review-item.current {
+  box-shadow: inset 0 0 0 1px rgba(244, 183, 64, 0.3);
+}
+
+.round-review-item strong {
+  font-size: 13px;
+}
+
+.round-review-ticks {
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.round-review-counts {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 4px;
+  margin-top: 8px;
+}
+
+.round-review-counts span {
+  min-width: 0;
+  padding: 3px 4px;
+  border-radius: 5px;
+  background: rgba(9, 13, 16, 0.42);
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 760;
+  text-align: center;
+}
+
 .detail-top {
   display: flex;
   justify-content: space-between;
@@ -1703,7 +1911,8 @@ button {
 
   .render-operator-header,
   .video-setup-header,
-  .calibration-actions {
+  .calibration-actions,
+  .round-review-header {
     align-items: flex-start;
     flex-direction: column;
   }
@@ -1717,6 +1926,7 @@ button {
   }
 
   .coaching-header-pills,
+  .round-review-header-pills,
   .event-card-actions {
     justify-content: flex-start;
   }
