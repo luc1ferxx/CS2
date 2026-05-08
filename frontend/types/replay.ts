@@ -35,6 +35,39 @@ export interface BombState {
   site?: string;
 }
 
+export type ReplayMapConfidence = "calibrated" | "approximate" | "fallback";
+
+export type ReplayMapTransform =
+  | {
+      type: "overview";
+      posX: number;
+      posY: number;
+      scale: number;
+      imageSize: number;
+    }
+  | {
+      type: "bounds";
+      minX: number;
+      maxX: number;
+      minY: number;
+      maxY: number;
+    }
+  | {
+      type: "dynamicBounds";
+    };
+
+export interface ReplayMapMetadata {
+  mapName: string;
+  displayName: string;
+  radarImagePath: string | null;
+  secondaryRadarImagePath?: string | null;
+  calibrated: boolean;
+  confidence: ReplayMapConfidence;
+  attribution: string;
+  source: string | null;
+  transform: ReplayMapTransform;
+}
+
 export interface ReplayFrame {
   tick: number;
   timeSeconds: number;
@@ -61,6 +94,7 @@ export interface ReplayVideo {
 export interface ReplayData {
   demoId: string;
   mapName: string;
+  mapMetadata?: ReplayMapMetadata;
   tickRate: number;
   video: ReplayVideo;
   rounds: ReplayRound[];

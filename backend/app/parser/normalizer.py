@@ -3,22 +3,17 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
+from app.parser.map_config import map_metadata_for, world_to_radar_percent
+
 SIDE_COLORS = {"T": "#f5b542", "CT": "#2ed3d0"}
-MAP_OVERVIEWS = {
-    "de_dust2": {
-        "pos_x": -2476.0,
-        "pos_y": 3239.0,
-        "scale": 4.4,
-        "size": 1024.0,
-    }
-}
 
 
 def normalize_parser_output(demo_id: str, parsed: dict[str, Any]) -> dict[str, Any]:
     tick_rate = int(parsed.get("tickRate") or 64)
+    map_name = str(parsed.get("mapName") or "unknown")
     rounds = _normalize_rounds(parsed.get("rounds") or [], parsed.get("frames") or [])
     players = _normalize_players(parsed.get("players") or [], parsed.get("frames") or [])
-    frames = _normalize_frames(parsed.get("frames") or [], rounds, str(parsed.get("mapName") or "unknown"))
+    frames = _normalize_frames(parsed.get("frames") or [], rounds, map_name)
     if not frames:
         raise ValueError("Parser produced no player position frames")
 
@@ -27,7 +22,8 @@ def normalize_parser_output(demo_id: str, parsed: dict[str, Any]) -> dict[str, A
 
     return {
         "demoId": demo_id,
-        "mapName": str(parsed.get("mapName") or "unknown"),
+        "mapName": map_name,
+        "mapMetadata": map_metadata_for(map_name),
         "tickRate": tick_rate,
         "video": {
             "status": "ready",
@@ -119,7 +115,6 @@ def _normalize_frames(
     map_name: str,
 ) -> list[dict[str, Any]]:
     bounds = _position_bounds(raw_frames)
-    overview = MAP_OVERVIEWS.get(map_name)
     normalized = []
     for frame in sorted(raw_frames, key=lambda item: int(item.get("tick", 0))):
         tick = int(frame.get("tick", 0))
@@ -129,7 +124,7 @@ def _normalize_frames(
                 "timeSeconds": float(frame.get("timeSeconds", 0)),
                 "roundNumber": int(frame.get("roundNumber") or _round_for_tick(tick, rounds)),
                 "players": [
-                    _normalize_frame_player(player, bounds, overview)
+                    _normalize_frame_player(player, bounds, map_name)
                     for player in frame.get("players", [])
                     if _has_position(player)
                 ],
@@ -142,7 +137,7 @@ def _normalize_frames(
 def _normalize_frame_player(
     player: dict[str, Any],
     bounds: dict[str, float],
-    overview: dict[str, float] | None,
+    map_name: str,
 ) -> dict[str, Any]:
     player_id = str(player.get("id") or player.get("steamid") or player.get("name") or "unknown")
     side = _normalize_side(player.get("side") or player.get("team")) or "T"
@@ -154,7 +149,7 @@ def _normalize_frame_player(
         "id": player_id,
         "name": str(player.get("name") or player_id),
         "side": side,
-        **_normalize_position(float(player["x"]), float(player["y"]), bounds, overview),
+        **_normalize_position(float(player["x"]), float(player["y"]), bounds, map_name),
         "alive": alive,
         "hp": max(0, min(100, hp)),
         "hasBomb": bool(player.get("hasBomb", False)),
@@ -184,18 +179,16 @@ def _normalize_position(
     x: float,
     y: float,
     bounds: dict[str, float],
-    overview: dict[str, float] | None,
+    map_name: str,
 ) -> dict[str, float]:
-    if overview is None:
+    radar_point = world_to_radar_percent(map_name, x, y)
+    if radar_point is None:
         return {
             "x": round(_scale(x, bounds["min_x"], bounds["max_x"]), 2),
             "y": round(100 - _scale(y, bounds["min_y"], bounds["max_y"]), 2),
         }
 
-    radar_size = overview["scale"] * overview["size"]
-    radar_x = ((x - overview["pos_x"]) / radar_size) * 100
-    radar_y = ((overview["pos_y"] - y) / radar_size) * 100
-    return {"x": round(_clamp(radar_x), 2), "y": round(_clamp(radar_y), 2)}
+    return {"x": float(radar_point["x"]), "y": float(radar_point["y"])}
 
 
 def _clamp(value: float) -> float:

@@ -2,11 +2,8 @@
 
 import { useMemo } from "react";
 
+import { getTacticalMapPresentation } from "@/lib/map-config";
 import type { ReplayData, ReplayFrame, ReplayFramePlayer } from "@/types/replay";
-
-const MAP_RADAR_IMAGES: Record<string, string> = {
-  de_dust2: "/maps/de_dust2_radar.png"
-};
 
 interface ReplayViewerProps {
   replay: ReplayData;
@@ -30,7 +27,11 @@ export function ReplayViewer({
   const tPlayers = frame.players.filter((player) => player.side === "T");
   const ctPlayers = frame.players.filter((player) => player.side === "CT");
   const round = replay.rounds.find((item) => item.roundNumber === frame.roundNumber);
-  const isDust2 = replay.mapName === "de_dust2";
+  const mapPresentation = useMemo(
+    () => getTacticalMapPresentation(replay),
+    [replay]
+  );
+  const hasRadarImage = Boolean(mapPresentation.radarImagePath);
 
   return (
     <section
@@ -38,20 +39,34 @@ export function ReplayViewer({
       aria-label={variant === "companion" ? "Tactical map companion" : "2D replay viewer"}
     >
       <div className="viewer-header">
-        <span>
-          Tactical Map / Round {frame.roundNumber} / Tick {Math.round(currentTick)}
-        </span>
+        <div className="viewer-header-main">
+          <span>
+            Tactical Map / {mapPresentation.displayName} / Round {frame.roundNumber} / Tick{" "}
+            {Math.round(currentTick)}
+          </span>
+          <span className={`map-calibration-pill ${mapPresentation.confidence}`}>
+            {mapPresentation.confidence}
+          </span>
+        </div>
         <span>{round ? `${round.winnerSide} won round ${round.roundNumber}` : "Mock replay"}</span>
       </div>
 
-      <div className={`map-frame ${isDust2 ? "dust2-map-frame" : ""}`}>
-        <svg viewBox="0 0 100 100" role="img" aria-label={`${replay.mapName} tactical minimap`}>
+      <div className={`map-frame ${hasRadarImage ? "radar-map-frame" : "fallback-map-frame"}`}>
+        <svg
+          viewBox="0 0 100 100"
+          role="img"
+          aria-label={`${mapPresentation.displayName} tactical minimap ${mapPresentation.confidence}`}
+        >
           <defs>
             <pattern id="grid" width="5" height="5" patternUnits="userSpaceOnUse">
               <path d="M 5 0 L 0 0 0 5" fill="none" stroke="#1c2a32" strokeWidth="0.25" />
             </pattern>
           </defs>
-          {isDust2 ? <RadarImageBackground mapName={replay.mapName} /> : <GenericMapBackground />}
+          {mapPresentation.radarImagePath ? (
+            <RadarImageBackground radarUrl={mapPresentation.radarImagePath} />
+          ) : (
+            <GenericMapBackground label={`${mapPresentation.displayName} uncalibrated`} />
+          )}
 
           {frame.players.map((player, index) => (
             <PlayerDot
@@ -80,7 +95,7 @@ export function ReplayViewer({
   );
 }
 
-function GenericMapBackground() {
+function GenericMapBackground({ label }: { label: string }) {
   return (
     <>
       <rect x="0" y="0" width="100" height="100" fill="#0c1318" />
@@ -104,16 +119,22 @@ function GenericMapBackground() {
       <text x="28" y="78" textAnchor="middle" fill="#d6b777" fontSize="7" fontWeight="700">
         B
       </text>
+      <text
+        className="fallback-map-label"
+        x="50"
+        y="12"
+        textAnchor="middle"
+        fill="#9eabb4"
+        fontSize="4"
+        fontWeight="700"
+      >
+        {label}
+      </text>
     </>
   );
 }
 
-function RadarImageBackground({ mapName }: { mapName: string }) {
-  const radarUrl = MAP_RADAR_IMAGES[mapName];
-  if (!radarUrl) {
-    return <GenericMapBackground />;
-  }
-
+function RadarImageBackground({ radarUrl }: { radarUrl: string }) {
   return (
     <image
       className="map-radar-image"

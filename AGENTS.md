@@ -43,6 +43,8 @@ The current render-focused boundary is `render_clip`, not whole-match rendering:
 
 Coaching UI should remain a deterministic review surface for stored rules-based events. Do not turn the coaching panel into an OpenAI/chat workflow unless product scope changes; preserve round grouping, severity/rule/search filtering, tick-linked cards, evidence metadata, timeline markers, and event-level `render_clip` actions.
 
+Tactical map additions must go through the centralized map config in `backend/app/parser/map_config.py` and `frontend/lib/map-config.ts`. Do not hardcode radar image paths, Dust2 transforms, or per-map coordinate math inside `ReplayViewer` or the parser normalizer.
+
 ## Commit & Pull Request Guidelines
 
 This checkout does not include Git history, so use concise imperative commits such as `Add mock render job status API`. Pull requests should include: purpose, changed backend/frontend surfaces, verification commands run, screenshots for UI changes, and any known limitations.

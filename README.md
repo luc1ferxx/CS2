@@ -111,7 +111,7 @@ The demo detail coaching panel is a review tool for deterministic event rows, no
 Known limitations:
 
 - Parser frames are sampled, not full tick density, so distances and timing are approximate.
-- Coordinates are normalized for the tactical map and only Dust2 has map-specific overview calibration today.
+- Tactical map coordinates are map-specific for the supported pool, but only Dust II is calibrated from CS2 overview values today. Mirage, Inferno, Ancient, Nuke, and Anubis use approximate bounds and are labeled as such in the replay UI.
 - Utility, line-of-sight, economy, and economy-aware round context are not modeled yet.
 - Real parser bomb state is currently best-effort. `post_plant_spread_issue` and `retake_desync` run only when replay frames include planted bomb position data; otherwise they skip without failing the parse.
 
@@ -433,7 +433,7 @@ Current support:
 - Best-effort extraction of map, tick rate, rounds, roster, sampled positions, and kill/death rows
 - Existing replay JSON contract, so the current Demo Detail page can open parser output
 - Deterministic rules-based coaching events for first-pass trading, entry spacing, team spacing, post-plant clustering, and retake timing signals
-- `de_dust2` uses the CS2 overview transform (`pos_x=-2476`, `pos_y=3239`, `scale=4.4`) and a real CS2 radar image in `frontend/public/maps/de_dust2_radar.png`
+- Map metadata in replay JSON for tactical map rendering, including radar image path, transform, attribution source, and calibration confidence
 
 Not supported yet:
 
@@ -442,17 +442,31 @@ Not supported yet:
 - Automatic CS2 first-person rendering
 - OpenAI coaching copy
 
-Next parser work should add upload sessions, S3/R2 quarantine storage, stricter zip inspection, parser telemetry, map-specific coordinate calibration, utility extraction, line-of-sight checks, economy context, and more reliable bomb plant/defuse event parsing.
+Next parser work should add upload sessions, S3/R2 quarantine storage, stricter zip inspection, parser telemetry, stronger map-specific coordinate calibration, utility extraction, line-of-sight checks, economy context, and more reliable bomb plant/defuse event parsing.
 
 ## Tactical Map Assets
 
-The replay UI supports map-specific radar backgrounds. `de_dust2` currently uses:
+The replay UI supports map-specific radar backgrounds through centralized map config in `backend/app/parser/map_config.py` and `frontend/lib/map-config.ts`.
 
-- Image: `frontend/public/maps/de_dust2_radar.png`
-- Attribution: `frontend/public/maps/ATTRIBUTION.md`
-- Coordinate transform: `backend/app/parser/normalizer.py`
+Supported maps:
 
-CS2 radar images are square assets from `panorama/images/overheadmaps`; overview values come from `resource/overviews/{map}.txt`. For production, extract these from the operator's CS2 install with Source 2 Viewer or replace them with internally licensed assets, then keep the parser normalizer and frontend map image table in sync.
+| Map | Radar image | Coordinate status |
+| --- | --- | --- |
+| `de_dust2` | `frontend/public/maps/de_dust2_radar.png` | Calibrated with CS2 overview transform (`pos_x=-2476`, `pos_y=3239`, `scale=4.4`) |
+| `de_mirage` | `frontend/public/maps/de_mirage_radar.png` | Approximate bounds |
+| `de_inferno` | `frontend/public/maps/de_inferno_radar.png` | Approximate bounds |
+| `de_ancient` | `frontend/public/maps/de_ancient_radar.png` | Approximate bounds |
+| `de_nuke` | `frontend/public/maps/de_nuke_radar.png` | Approximate bounds; lower radar image is stored for future floor-aware rendering |
+| `de_anubis` | `frontend/public/maps/de_anubis_radar.png` | Approximate bounds |
+
+Unknown maps use a generated fallback grid with `confidence: fallback`; they do not reuse the Dust II radar image or transform. Old replay blobs that only include `mapName` still resolve known map images on the frontend.
+
+Attribution:
+
+- Radar assets: `frontend/public/maps/ATTRIBUTION.md`
+- Backend replay metadata: `mapMetadata` in the replay JSON includes `mapName`, `displayName`, `radarImagePath`, `calibrated`, `confidence`, `source`, and `transform`.
+
+CS2 radar images are square assets from `panorama/images/overheadmaps`; overview values come from `resource/overviews/{map}.txt`. For production, extract these from the operator's CS2 install with Source 2 Viewer or replace them with internally licensed assets, then keep the backend and frontend map config files in sync.
 
 ## Future Phase: External Render Worker
 

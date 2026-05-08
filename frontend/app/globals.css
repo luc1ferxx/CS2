@@ -855,9 +855,48 @@ button {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 10px;
   margin-bottom: 12px;
   color: var(--muted);
   font-size: 13px;
+}
+
+.viewer-header-main {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.map-calibration-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: rgba(9, 13, 16, 0.4);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.map-calibration-pill.calibrated {
+  color: var(--green);
+  border-color: rgba(57, 217, 138, 0.28);
+  background: rgba(57, 217, 138, 0.08);
+}
+
+.map-calibration-pill.approximate {
+  color: var(--amber);
+  border-color: rgba(244, 183, 64, 0.34);
+  background: var(--amber-soft);
+}
+
+.map-calibration-pill.fallback {
+  color: var(--muted);
+  border-color: rgba(105, 120, 132, 0.34);
 }
 
 .map-frame {
@@ -881,12 +920,21 @@ button {
   aspect-ratio: 1;
 }
 
-.dust2-map-frame {
+.radar-map-frame {
   background: #090909;
+}
+
+.fallback-map-frame {
+  background: #0c1318;
 }
 
 .map-radar-image {
   image-rendering: auto;
+}
+
+.fallback-map-label {
+  letter-spacing: 0;
+  text-transform: uppercase;
 }
 
 .tactical-panel {
@@ -1575,13 +1623,23 @@ button {
   }
 
   .tactical-panel .map-frame {
-    gap: 0;
-    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 10px;
   }
 
-  .tactical-panel .map-frame svg,
+  .tactical-panel .map-frame svg {
+    width: min(100%, 286px);
+    grid-column: auto;
+    grid-row: auto;
+    align-self: center;
+  }
+
   .tactical-panel .player-list {
     grid-column: auto;
     grid-row: auto;
+    width: 100%;
+    padding: 0;
   }
 }
