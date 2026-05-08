@@ -392,6 +392,19 @@ export default function DemoDetailPage() {
                     onVideoDurationChange={setDetectedVideoDuration}
                     onVideoTimeChange={setCurrentVideoTime}
                   />
+                  <Timeline
+                    currentTick={currentTick}
+                    selectedRound={selectedRound}
+                    rounds={replay.rounds}
+                    speed={speed}
+                    playing={playing}
+                    events={events}
+                    parserEvents={replay.events ?? []}
+                    onSeek={seek}
+                    onTogglePlay={() => setPlaying((value) => !value)}
+                    onSpeedChange={setSpeed}
+                    onRoundChange={changeRound}
+                  />
                   <ReplayViewer
                     replay={replay}
                     currentTick={currentTick}
@@ -436,20 +449,6 @@ export default function DemoDetailPage() {
                 onGenerateClip={requestRenderClipForEvent}
               />
             </div>
-
-            <Timeline
-              currentTick={currentTick}
-              selectedRound={selectedRound}
-              rounds={replay.rounds}
-              speed={speed}
-              playing={playing}
-              events={events}
-              parserEvents={replay.events ?? []}
-              onSeek={seek}
-              onTogglePlay={() => setPlaying((value) => !value)}
-              onSpeedChange={setSpeed}
-              onRoundChange={changeRound}
-            />
           </>
         )}
       </section>
