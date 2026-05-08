@@ -15,7 +15,7 @@ The current build does not call OpenAI, does not use S3/R2, and does not render 
 - Parser spike: `demoparser2` in the worker container
 - First-person media boundary: replay JSON includes `video` metadata; manually uploaded local `.mp4` files can be bound and calibrated, but no CS2 video is rendered automatically in this mock phase
 - Manual video boundary: local mp4 files in `/data/videos` exposed by the API at `/media/videos/...`
-- Render clip boundary: `POST /demos/{demo_id}/render/clip` creates a compact `demo_jobs.job_type = render_clip` row for a short POV/tick range; the in-repo worker recognizes the job but intentionally fails until an external GPU render worker is connected
+- Render clip boundary: `POST /demos/{demo_id}/render/clip` creates a compact `demo_jobs.job_type = render_clip` row for a short POV/tick range; Render Worker V1 endpoints expose a manifest and callback contract for a future GPU worker
 - Deployment shape: Docker Compose with `frontend`, `api`, `worker`, `postgres`, and `redis`
 
 ## Start
@@ -146,7 +146,8 @@ Current behavior:
 3. The API validates that the demo and replay blob exist, that `tickEnd > tickStart`, and that the requested duration is at most `MAX_RENDER_CLIP_SECONDS` seconds, defaulting to 60.
 4. The API creates a compact `demo_jobs` row with `job_type = render_clip`, `status = queued`, and JSON metadata describing only the event/player/tick range. Large demo, frame, and media payloads stay out of PostgreSQL.
 5. The local worker recognizes `render_clip`, moves the job from `queued` to `rendering`, then marks it `failed` with: `Render clip worker is not connected yet. A Windows/Linux GPU worker must process this job.`
-6. Manual `source = manual_upload` video metadata is left intact. If no manual video is bound, the replay video status may show queued/rendering/failed while the first-person fallback shell stays available.
+6. Render Worker V1 endpoints can expose the job manifest and accept a future worker callback that marks the job completed or failed.
+7. Manual `source = manual_upload` video metadata is left intact on failures. If no manual video is bound, the replay video status may show queued/rendering/failed while the first-person fallback shell stays available.
 
 V1 intentionally fails because the API container must not run CS2, OBS, ffmpeg, OpenAI, or object-storage automation. The failure is the contract marker for a future external render worker, not an application error.
 
@@ -158,6 +159,91 @@ output: mp4/HLS URL, durationSeconds, tickStart, tickEnd, tickRate, source = ren
 ```
 
 The final product should not require users to upload MP4 files. Manual MP4 upload remains only a development and QA bridge for validating media synchronization before the render worker exists.
+
+## Render Worker V1 Contract
+
+Render Worker V1 is an adapter boundary for a future Windows/Linux GPU worker. It still does not launch CS2, record video, call ffmpeg, call OpenAI, or use S3/R2.
+
+The boundary is token-gated for local development with `X-Render-Worker-Token`. The default token is `dev-render-worker-token`; override it with `RENDER_WORKER_TOKEN` outside local development. This is not production authentication.
+
+Manifest endpoint:
+
+```bash
+curl http://localhost:8000/render-worker/jobs/{job_id}/manifest \
+  -H "X-Render-Worker-Token: dev-render-worker-token"
+```
+
+Manifest shape:
+
+```json
+{
+  "manifestVersion": "render_worker_v1",
+  "jobId": "job_123",
+  "demoId": "demo_123",
+  "jobType": "render_clip",
+  "status": "queued",
+  "demoFilePath": "/data/uploads/demo_123/source.dem",
+  "demoStorageKey": "local://uploads/demo_123/source.dem",
+  "originalFilename": "source.dem",
+  "mapName": "de_dust2",
+  "eventId": "event_123",
+  "playerId": "7656119...",
+  "povSteamId": null,
+  "tickStart": 640,
+  "tickEnd": 3200,
+  "tickRate": 64,
+  "roundNumber": 3,
+  "renderPreset": "event_clip_v1"
+}
+```
+
+Result callback:
+
+```bash
+curl -X POST http://localhost:8000/render-worker/jobs/{job_id}/result \
+  -H "X-Render-Worker-Token: dev-render-worker-token" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "status":"completed",
+    "videoUrl":"/media/videos/demo_123/rendered.mp4",
+    "tickStart":640,
+    "tickEnd":3200,
+    "tickRate":64,
+    "timeOriginSeconds":0,
+    "durationSeconds":40,
+    "errorMessage":null
+  }'
+```
+
+Completed output may use `videoUrl` or `localMediaPath`. A `localMediaPath` must either be a `/media/videos/...` URL path or an absolute path under the configured video storage directory. On completion, the API marks the job `completed` and writes replay `video` metadata with `status = ready`, `source = rendered`, the clip URL, tick range, tick rate, duration, and `timeOriginSeconds`.
+
+Failure callback:
+
+```json
+{
+  "status": "failed",
+  "videoUrl": null,
+  "localMediaPath": null,
+  "tickStart": 640,
+  "tickEnd": 3200,
+  "tickRate": 64,
+  "timeOriginSeconds": 0,
+  "durationSeconds": 40,
+  "errorMessage": "Renderer timed out before capture completed"
+}
+```
+
+On failure, the API marks the job `failed` and records the error. Existing `source = manual_upload` video metadata is preserved so QA/manual calibration is not destroyed by a render failure.
+
+Future GPU worker integration should:
+
+1. Poll or claim `render_clip` jobs.
+2. Fetch the manifest through the token-gated endpoint.
+3. Resolve `demoFilePath` or the future object-storage key.
+4. Run CS2 only on controlled Windows/Linux GPU infrastructure.
+5. Render the selected POV/tick range.
+6. Upload or place mp4/HLS output.
+7. POST the result callback so the replay video contract becomes playable by the existing frontend.
 
 ## Manual Video Binding And Sync Calibration
 
@@ -212,6 +298,8 @@ The frontend clamps both directions to keep the first-person video, timeline, ta
 - `POST /demos/{demo_id}/render/mock`
 - `POST /demos/{demo_id}/render/clip`
 - `GET /demos/{demo_id}/render/jobs`
+- `GET /render-worker/jobs/{job_id}/manifest`
+- `POST /render-worker/jobs/{job_id}/result`
 
 ## Development Notes
 
@@ -281,7 +369,7 @@ CS2 radar images are square assets from `panorama/images/overheadmaps`; overview
 
 ## Future Phase: External Render Worker
 
-The current API/worker supports a mock render job and a real `render_clip` job boundary:
+The current API/worker supports a mock render job, a real `render_clip` job boundary, and the Render Worker V1 manifest/callback adapter:
 
 ```text
 POST /demos/{demo_id}/render/mock
@@ -296,6 +384,14 @@ POST /demos/{demo_id}/render/clip
   -> worker sets queued -> rendering -> failed
   -> failure says the Windows/Linux GPU worker is not connected yet
   -> existing manual_upload video metadata is not cleared
+
+GET /render-worker/jobs/{job_id}/manifest
+  -> returns demo file reference, POV, tick range, map, and preset
+
+POST /render-worker/jobs/{job_id}/result
+  -> marks the job completed or failed
+  -> completed updates replay.video so FirstPersonReplay can play the mp4/HLS URL
+  -> failed preserves existing manual_upload metadata
 ```
 
 Do not implement real CS2 automation in the API container. The next media-focused spike should connect a separate GPU worker to claim `render_clip` jobs and write rendered video metadata back to the replay contract.
@@ -341,7 +437,7 @@ GPU render worker
   -> updates video metadata
 ```
 
-### Future Render Worker Contract
+### Legacy Contract Sketch
 
 Input contract:
 

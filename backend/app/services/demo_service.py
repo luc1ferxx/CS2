@@ -1,5 +1,6 @@
 import json
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -12,12 +13,23 @@ from app.models.coaching import CoachingEvent
 from app.models.demo import Demo
 from app.models.job import DemoJob
 from app.schemas.coaching import CoachingEventOut
-from app.schemas.demo import DemoListItem, RenderClipRequest, RenderJobStatus
+from app.schemas.demo import (
+    DemoListItem,
+    RenderClipRequest,
+    RenderJobManifest,
+    RenderJobStatus,
+    RenderWorkerResult,
+)
 from app.services.upload_service import StoredVideoUpload, demo_upload_path, store_demo_upload
 
 
 RENDER_CLIP_JOB_TYPE = "render_clip"
 RENDER_CLIP_DEFAULT_PRESET = "event_clip_v1"
+RENDER_WORKER_MANIFEST_VERSION = "render_worker_v1"
+
+
+def utc_now() -> datetime:
+    return datetime.now(timezone.utc)
 
 
 class DemoService:
@@ -205,6 +217,16 @@ class DemoService:
         )
         return [self.render_job_status(job) for job in jobs]
 
+    def get_render_clip_job(self, job_id: str) -> DemoJob | None:
+        job = (
+            self.db.query(DemoJob)
+            .filter(DemoJob.id == job_id, DemoJob.job_type == RENDER_CLIP_JOB_TYPE)
+            .one_or_none()
+        )
+        if job is None or job.demo is None or job.demo.user_id != settings.dev_user_id:
+            return None
+        return job
+
     def render_job_status(self, job: DemoJob) -> RenderJobStatus:
         return RenderJobStatus(
             job_id=job.id,
@@ -217,6 +239,60 @@ class DemoService:
             started_at=job.started_at,
             finished_at=job.finished_at,
         )
+
+    def render_job_manifest(self, job: DemoJob) -> RenderJobManifest:
+        if job.job_type != RENDER_CLIP_JOB_TYPE:
+            raise ValueError("Only render_clip jobs have render worker manifests")
+
+        demo = job.demo
+        metadata = _job_metadata(job)
+        return RenderJobManifest(
+            manifestVersion=RENDER_WORKER_MANIFEST_VERSION,
+            jobId=job.id,
+            demoId=demo.id,
+            jobType=job.job_type,
+            status=job.status,
+            demoFilePath=str(self.source_demo_path(demo)),
+            demoStorageKey=f"local://uploads/{demo.id}/{demo.original_filename}",
+            originalFilename=demo.original_filename,
+            mapName=demo.map_name,
+            eventId=_optional_str(metadata.get("eventId")),
+            playerId=_optional_str(metadata.get("playerId")),
+            povSteamId=_optional_str(metadata.get("povSteamId")),
+            tickStart=_required_int(metadata, "tickStart"),
+            tickEnd=_required_int(metadata, "tickEnd"),
+            tickRate=_required_int(metadata, "tickRate"),
+            roundNumber=_optional_int(metadata.get("roundNumber")),
+            renderPreset=_optional_str(metadata.get("renderPreset")) or RENDER_CLIP_DEFAULT_PRESET,
+        )
+
+    def apply_render_worker_result(
+        self,
+        job: DemoJob,
+        result: RenderWorkerResult,
+    ) -> dict[str, Any]:
+        if job.job_type != RENDER_CLIP_JOB_TYPE:
+            raise ValueError("Only render_clip jobs accept render worker results")
+
+        normalized_status = result.status.lower()
+        if normalized_status in {"completed", "ready"}:
+            video = self.complete_render_clip_video(job.demo, result)
+            job.status = "completed"
+            job.error_message = None
+        elif normalized_status == "failed":
+            error_message = result.errorMessage or "Render worker reported failure"
+            video = self.update_render_clip_video_status(job.demo, "failed", error_message[:1000])
+            job.status = "failed"
+            job.error_message = error_message[:1000]
+        else:
+            raise ValueError("status must be completed or failed")
+
+        if job.started_at is None:
+            job.started_at = utc_now()
+        job.finished_at = utc_now()
+        self.db.commit()
+        self.db.refresh(job)
+        return video
 
     def replay_blob_path(self, demo_id: str) -> Path:
         return settings.replay_storage_dir / f"{demo_id}.json"
@@ -329,6 +405,39 @@ class DemoService:
             },
         )
 
+    def complete_render_clip_video(
+        self,
+        demo: Demo,
+        result: RenderWorkerResult,
+    ) -> dict[str, Any]:
+        if result.tickRate <= 0:
+            raise ValueError("tickRate must be greater than zero")
+        if result.tickEnd <= result.tickStart:
+            raise ValueError("tickEnd must be greater than tickStart")
+        if result.durationSeconds < 0:
+            raise ValueError("durationSeconds must be zero or greater")
+        if result.timeOriginSeconds < 0:
+            raise ValueError("timeOriginSeconds must be zero or greater")
+
+        video_url = _render_output_url(result)
+        if video_url is None:
+            raise ValueError("completed render output must include videoUrl or localMediaPath")
+
+        return self.update_replay_video(
+            demo,
+            {
+                "status": "ready",
+                "url": video_url,
+                "durationSeconds": result.durationSeconds,
+                "tickStart": result.tickStart,
+                "tickEnd": result.tickEnd,
+                "tickRate": result.tickRate,
+                "source": "rendered",
+                "errorMessage": None,
+                "timeOriginSeconds": result.timeOriginSeconds,
+            },
+        )
+
     def list_coaching_events(self, demo_id: str) -> list[CoachingEventOut]:
         events = (
             self.db.query(CoachingEvent)
@@ -430,3 +539,45 @@ def _job_metadata(job: DemoJob) -> dict[str, Any]:
     except json.JSONDecodeError:
         return {}
     return metadata if isinstance(metadata, dict) else {}
+
+
+def _render_output_url(result: RenderWorkerResult) -> str | None:
+    if result.videoUrl:
+        return result.videoUrl
+
+    if not result.localMediaPath:
+        return None
+
+    if result.localMediaPath.startswith("/media/videos/"):
+        return result.localMediaPath
+
+    local_path = Path(result.localMediaPath)
+    if not local_path.is_absolute():
+        raise ValueError("localMediaPath must be /media/videos/... or an absolute path")
+
+    video_root = settings.video_storage_dir.resolve()
+    try:
+        relative_path = local_path.resolve().relative_to(video_root)
+    except ValueError as exc:
+        raise ValueError("localMediaPath must be inside video storage") from exc
+
+    return f"/media/videos/{relative_path.as_posix()}"
+
+
+def _required_int(metadata: dict[str, Any], key: str) -> int:
+    value = metadata.get(key)
+    if value is None:
+        raise ValueError(f"Render job metadata is missing {key}")
+    return int(value)
+
+
+def _optional_int(value: Any) -> int | None:
+    if value is None:
+        return None
+    return int(value)
+
+
+def _optional_str(value: Any) -> str | None:
+    if value is None:
+        return None
+    return str(value)

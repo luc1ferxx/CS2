@@ -1089,6 +1089,12 @@ button {
   background: var(--red-soft);
 }
 
+.clip-job-pill.completed {
+  color: var(--green);
+  border-color: rgba(57, 217, 138, 0.28);
+  background: rgba(57, 217, 138, 0.08);
+}
+
 .mini-pill {
   display: inline-flex;
   align-items: center;

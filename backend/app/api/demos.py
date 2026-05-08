@@ -1,13 +1,17 @@
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Header, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.core.database import get_db
 from app.schemas.demo import (
     DemoListItem,
     DemoStatus,
     RenderClipRequest,
+    RenderJobManifest,
     RenderJobCreated,
     RenderJobStatus,
+    RenderWorkerResult,
+    RenderWorkerResultAccepted,
     ReplayVideoStatus,
     VideoCalibrationUpdate,
 )
@@ -15,6 +19,13 @@ from app.services.demo_service import DemoService
 from app.services.upload_service import DemoUploadValidationError, store_video_upload
 
 router = APIRouter(tags=["demos"])
+
+
+def require_render_worker_token(
+    x_render_worker_token: str | None = Header(default=None, alias="X-Render-Worker-Token"),
+) -> None:
+    if x_render_worker_token != settings.render_worker_token:
+        raise HTTPException(status_code=401, detail="Invalid render worker token")
 
 
 @router.get("/demos", response_model=list[DemoListItem])
@@ -165,3 +176,51 @@ def list_render_clip_jobs(
     if demo is None:
         raise HTTPException(status_code=404, detail="Demo not found")
     return service.list_render_clip_jobs(demo)
+
+
+@router.get(
+    "/render-worker/jobs/{job_id}/manifest",
+    response_model=RenderJobManifest,
+    tags=["render-worker"],
+)
+def get_render_worker_manifest(
+    job_id: str,
+    _: None = Depends(require_render_worker_token),
+    db: Session = Depends(get_db),
+) -> RenderJobManifest:
+    service = DemoService(db)
+    job = service.get_render_clip_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Render clip job not found")
+
+    try:
+        return service.render_job_manifest(job)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post(
+    "/render-worker/jobs/{job_id}/result",
+    response_model=RenderWorkerResultAccepted,
+    tags=["render-worker"],
+)
+def apply_render_worker_result(
+    job_id: str,
+    result: RenderWorkerResult,
+    _: None = Depends(require_render_worker_token),
+    db: Session = Depends(get_db),
+) -> RenderWorkerResultAccepted:
+    service = DemoService(db)
+    job = service.get_render_clip_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Render clip job not found")
+
+    try:
+        video = service.apply_render_worker_result(job, result)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return RenderWorkerResultAccepted(
+        job=service.render_job_status(job),
+        video=ReplayVideoStatus.model_validate(video),
+    )

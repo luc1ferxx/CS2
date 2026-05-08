@@ -77,6 +77,43 @@ class RenderJobStatus(BaseModel):
     finished_at: datetime | None = None
 
 
+class RenderJobManifest(BaseModel):
+    manifestVersion: str
+    jobId: str
+    demoId: str
+    jobType: str
+    status: str
+    demoFilePath: str
+    demoStorageKey: str | None = None
+    originalFilename: str
+    mapName: str
+    eventId: str | None = None
+    playerId: str | None = None
+    povSteamId: str | None = None
+    tickStart: int
+    tickEnd: int
+    tickRate: int
+    roundNumber: int | None = None
+    renderPreset: str
+
+
+class RenderWorkerResult(BaseModel):
+    status: str
+    videoUrl: str | None = None
+    localMediaPath: str | None = None
+    tickStart: int
+    tickEnd: int
+    tickRate: int
+    timeOriginSeconds: float = 0
+    durationSeconds: float
+    errorMessage: str | None = None
+
+
+class RenderWorkerResultAccepted(BaseModel):
+    job: RenderJobStatus
+    video: ReplayVideoStatus
+
+
 class RenderJobCreated(BaseModel):
     job_id: str
     demo_id: str
