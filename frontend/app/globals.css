@@ -299,7 +299,7 @@ button {
 }
 
 .first-person-detail-grid {
-  grid-template-columns: minmax(0, 1.75fr) minmax(350px, 0.68fr);
+  grid-template-columns: minmax(0, 2fr) minmax(330px, 0.55fr);
 }
 
 .analysis-main-column {
@@ -314,7 +314,7 @@ button {
 }
 
 .review-focus-grid {
-  grid-template-columns: minmax(0, 0.92fr) minmax(500px, 1fr);
+  grid-template-columns: minmax(0, 1fr);
   align-items: stretch;
 }
 
@@ -357,7 +357,7 @@ button {
 }
 
 .first-person-panel {
-  min-height: 548px;
+  min-height: 0;
   padding: 14px;
 }
 
@@ -620,7 +620,8 @@ button {
 
 .first-person-viewport {
   position: relative;
-  min-height: 490px;
+  aspect-ratio: 16 / 9;
+  min-height: 0;
   border: 1px solid var(--line);
   border-radius: 8px;
   overflow: hidden;
@@ -630,14 +631,18 @@ button {
 .first-person-video {
   display: block;
   width: 100%;
-  height: 490px;
+  height: 100%;
+  aspect-ratio: 16 / 9;
   object-fit: cover;
   background: #05080b;
 }
 
 .mock-fps-frame {
   position: relative;
-  min-height: 490px;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  aspect-ratio: 16 / 9;
   overflow: hidden;
   background:
     radial-gradient(circle at 52% 45%, rgba(40, 199, 193, 0.16), transparent 21%),
@@ -968,12 +973,12 @@ button {
   flex: 1;
   flex-direction: column;
   gap: 12px;
-  min-height: 488px;
+  min-height: 590px;
   padding: 14px;
 }
 
 .featured-tactical-panel .map-frame svg {
-  width: min(100%, 536px);
+  width: min(100%, 620px);
   height: auto;
   aspect-ratio: 1;
 }
