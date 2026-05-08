@@ -53,7 +53,7 @@ The real parser path is intentionally narrow:
 6. The worker updates status from `queued` to `parsing` to `analyzing` to `completed`.
 7. The parser tries `demoparser2`, extracts map name, tick rate, rounds, players, sampled player positions, and kill/death events.
 8. The normalizer writes the current replay JSON contract to `/data/replays`.
-9. The worker runs deterministic rules-based coaching v1 and inserts only coaching event rows into PostgreSQL.
+9. The worker runs deterministic rules-based coaching v2 and inserts only coaching event rows into PostgreSQL.
 
 CLI equivalent:
 
@@ -64,7 +64,7 @@ curl -F "file=@sample-demos/the-mongolz-vs-liquid-ancient.dem" \
 
 If `demoparser2` is missing or fails on a demo, the worker marks `demo.status = failed` and writes the parser error to `demo.error_message`. Parser failures do not run the rules analyzer.
 
-## Rules-Based Coaching V1
+## Rules-Based Coaching V2
 
 Real parser output now gets a deterministic, explainable rules pass after replay normalization. This is not OpenAI and does not generate AI prose; each coaching event is built from fixed thresholds and replay facts, then stored in `coaching_events`.
 
@@ -73,17 +73,71 @@ Current rules:
 - `untraded_death`: flags a death when no teammate trades a same-area enemy within 5 seconds.
 - `isolated_entry`: flags the first T death in a round when the nearest teammate is too far away to trade.
 - `poor_spacing`: flags one stretched or overly stacked side spacing moment per round/side.
+- `post_plant_spread_issue`: flags planted-bomb frames where multiple alive Ts stay tightly clustered for several seconds.
+- `retake_desync`: flags planted-bomb frames where CTs reach the bomb area several seconds apart.
 
-The analyzer reads replay JSON `rounds`, `frames`, `players`, `kills`, and `deaths`, but only writes compact coaching event rows. Large frame payloads stay in `/data/replays`.
+The analyzer reads replay JSON `rounds`, `frames`, `players`, `kills`, `deaths`, and frame-level `bombState`, but only writes compact coaching event rows. Large frame payloads stay in `/data/replays`.
+
+Rules are configured through `backend/app/analysis/rules.py::RuleConfig`. The current defaults are:
+
+- `trade_window_seconds = 5`
+- `same_area_distance = 12`
+- `isolated_teammate_distance = 22`
+- `poor_spacing_min_distance = 2.5`
+- `poor_spacing_max_distance = 28`
+- `max_events_per_round_per_rule = 1`
+- `dedupe_tick_window_seconds = 3`
+- `post_plant_cluster_distance = 6`
+- `post_plant_min_duration_seconds = 4`
+- `retake_site_distance = 12`
+- `retake_desync_seconds = 4`
+
+Events are de-duped when the same round, player, category, and near tick would otherwise produce repeated cards. Output is sorted by severity first, then tick, so review starts with the highest-signal issues. Event metadata includes `ruleId`, `involvedPlayerIds`, `evidenceTicks`, and rule-specific fields such as `distance`, `windowSeconds`, and `nearbyCount`.
 
 Known limitations:
 
 - Parser frames are sampled, not full tick density, so distances and timing are approximate.
 - Coordinates are normalized for the tactical map and only Dust2 has map-specific overview calibration today.
-- Utility, line-of-sight, economy, objective state, and full bomb plant/defuse state are not modeled yet.
-- `post_plant_spread_issue` and `retake_desync` are intentionally skipped until parser output includes reliable bomb plant/site and retake entry signals.
+- Utility, line-of-sight, economy, and economy-aware round context are not modeled yet.
+- Real parser bomb state is currently best-effort. `post_plant_spread_issue` and `retake_desync` run only when replay frames include planted bomb position data; otherwise they skip without failing the parse.
+
+## Product Direction: Demo-First Review
+
+The intended user workflow is `.dem` first, not `.dem + mp4`.
+
+Primary user flow:
+
+```text
+user uploads .dem
+  -> backend parses rounds, players, positions, kills, deaths, bomb state
+  -> rules analyzer generates deterministic coaching events
+  -> website immediately shows Web Replay, tactical map, round navigation, timeline, and coaching
+  -> user clicks a coaching event or round
+  -> if a rendered clip already exists, first-person video plays
+  -> if no clip exists, user can request Generate Clip for that event/player/tick range
+```
+
+This means the core product must remain useful immediately after `.dem` upload even when no real video exists. The browser can show tactical replay and coaching from parsed data, but it cannot directly play `.dem` as CS2 first-person video because `.dem` files are game state/event recordings, not video streams.
+
+Real CS2 first-person footage should be an asynchronous enhancement:
+
+```text
+Generate Clip
+  -> create render_clip job with demoId, eventId, playerId, tickStart, tickEnd
+  -> our Windows/Linux GPU render worker downloads the .dem
+  -> worker runs CS2 in our controlled environment
+  -> worker renders the selected POV around the event, for example tick +/- 20 seconds
+  -> worker uploads mp4/HLS to object storage
+  -> API writes video metadata back into the replay/media contract
+  -> frontend plays the generated clip in sync with map and coaching
+```
+
+The render worker must run on infrastructure we control. The web app should not ask for permission to control the user's computer, open their local CS2 client, read local files after upload, or record their screen. Users should only upload `.dem` files and interact with the website.
 
 ## Manual Video Binding And Sync Calibration
+
+Manual mp4 binding is a development and QA bridge, not the target user workflow.
+It exists to validate the media contract, calibration UI, and tick/video synchronization before the GPU render worker is available. Production users should not be expected to record and upload their own mp4 files.
 
 After a demo parse completes, open the demo detail page and use `Video Setup / Sync Calibration`:
 
@@ -152,7 +206,7 @@ Browsers cannot directly play CS2 `.dem` files. A `.dem` is not a video stream, 
 
 The current first-person player is still a mock/player shell when `video.url` is `null`; the frontend renders a styled mock first-person viewport and synchronizes it with the same `currentTick` used by coaching events and the tactical map. For real parsed demos, the tactical map uses sampled real player coordinates. If an operator manually uploads an mp4, the browser plays that mp4 and uses the saved calibration metadata to map video time to demo ticks.
 
-Manual mp4 binding is not automatic CS2 rendering. The API does not run CS2, OBS, ffmpeg, or OpenAI. A local mp4 such as `falcons-vs-furia-m1-dust2.mp4` can be used for validation if it exists in the checkout, but the code does not depend on that file and mp4 files should not be committed.
+Manual mp4 binding is not automatic CS2 rendering. The API does not run CS2, OBS, ffmpeg, or OpenAI. A local mp4 such as `falcons-vs-furia-m1-dust2.mp4` can be used for validation if it exists in the checkout, but the code does not depend on that file and mp4 files should not be committed. Manual clips must be calibrated only to the tick range they actually cover; a 46 second clip cannot represent a full 54 minute demo.
 
 The production path should be:
 
@@ -176,7 +230,7 @@ Current support:
 - `demoparser2==0.41.0`, selected because it has Python 3.12 Linux wheels for the backend Docker image
 - Best-effort extraction of map, tick rate, rounds, roster, sampled positions, and kill/death rows
 - Existing replay JSON contract, so the current Demo Detail page can open parser output
-- Deterministic rules-based coaching events for first-pass trading, entry spacing, and team spacing signals
+- Deterministic rules-based coaching events for first-pass trading, entry spacing, team spacing, post-plant clustering, and retake timing signals
 - `de_dust2` uses the CS2 overview transform (`pos_x=-2476`, `pos_y=3239`, `scale=4.4`) and a real CS2 radar image in `frontend/public/maps/de_dust2_radar.png`
 
 Not supported yet:
@@ -186,7 +240,7 @@ Not supported yet:
 - Automatic CS2 first-person rendering
 - OpenAI coaching copy
 
-Next parser work should add upload sessions, S3/R2 quarantine storage, stricter zip inspection, parser telemetry, map-specific coordinate calibration, and a rules package for positioning, trading, utility, timing, economy, objective, retake, and post-plant events.
+Next parser work should add upload sessions, S3/R2 quarantine storage, stricter zip inspection, parser telemetry, map-specific coordinate calibration, utility extraction, line-of-sight checks, economy context, and more reliable bomb plant/defuse event parsing.
 
 ## Tactical Map Assets
 
@@ -198,7 +252,7 @@ The replay UI supports map-specific radar backgrounds. `de_dust2` currently uses
 
 CS2 radar images are square assets from `panorama/images/overheadmaps`; overview values come from `resource/overviews/{map}.txt`. For production, extract these from the operator's CS2 install with Source 2 Viewer or replace them with internally licensed assets, then keep the parser normalizer and frontend map image table in sync.
 
-## Future Phase: GPU Render Worker Spike
+## Future Phase: Render Clip Worker V1
 
 The current API/worker only supports a mock render job:
 
@@ -211,12 +265,24 @@ POST /demos/{demo_id}/render/mock
   -> FirstPersonReplay keeps using the mock/player shell
 ```
 
-Do not implement real CS2 automation in this MVP. The next media-focused spike after manual video binding should prove one end-to-end render path:
+Do not implement real CS2 automation in the API container. The next media-focused spike should introduce the render job boundary for generated clips, then connect a separate GPU worker later.
+
+The first useful production-shaped render feature should be clip rendering, not whole-match rendering:
+
+1. User uploads only a `.dem`.
+2. Parser and rules analyzer complete Web Replay and coaching.
+3. User clicks `Generate Clip` on a coaching event, or selects a player plus tick range.
+4. API creates a `render_clip` job.
+5. The job input includes `demoId`, optional `eventId`, `povSteamId` or player id, `tickStart`, `tickEnd`, `tickRate`, `mapName`, and render preset.
+6. A separate Windows/Linux GPU worker runs CS2, renders only that POV/tick window, uploads mp4/HLS, and writes `video.url`, `durationSeconds`, `tickStart`, `tickEnd`, `tickRate`, `source = rendered`, and `timeOriginSeconds` metadata.
+7. Frontend plays the generated clip and keeps first-person video, timeline, tactical map, and coaching on the same tick.
+
+When we are ready to prove real rendering, the end-to-end path is:
 
 1. Start from one known `.dem` file.
 2. Run a dedicated Windows or Linux GPU worker with the CS2 client installed.
-3. Use `playdemo` to render a deterministic first-person POV.
-4. Capture and transcode to mp4 or HLS.
+3. Use `playdemo` to render a deterministic first-person POV for one short tick range.
+4. Capture and transcode that clip to mp4 or HLS.
 5. Upload the rendered media to object storage.
 6. Write `video.url`, `durationSeconds`, `tickStart`, `tickEnd`, and `tickRate` into the replay/media metadata contract.
 7. Verify frontend video playback stays synchronized with coaching events and the tactical map.
