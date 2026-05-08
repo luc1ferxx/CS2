@@ -1006,6 +1006,16 @@ button {
   background: rgba(40, 199, 193, 0.08);
 }
 
+.event-card-seek {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+}
+
 .event-card.critical {
   border-left-color: var(--red);
 }
@@ -1051,6 +1061,32 @@ button {
   margin-top: 10px;
   color: var(--muted);
   font-size: 12px;
+}
+
+.event-card-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  flex-wrap: wrap;
+}
+
+.generate-clip-button {
+  margin-left: auto;
+}
+
+.clip-job-pill.queued,
+.clip-job-pill.rendering {
+  color: var(--amber);
+  border-color: rgba(244, 183, 64, 0.34);
+  background: var(--amber-soft);
+}
+
+.clip-job-pill.failed {
+  color: var(--red);
+  border-color: rgba(241, 91, 91, 0.34);
+  background: var(--red-soft);
 }
 
 .mini-pill {

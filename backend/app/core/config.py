@@ -15,6 +15,7 @@ class Settings:
     demo_upload_storage_dir: Path = Path(os.getenv("DEMO_UPLOAD_STORAGE_DIR", "/data/uploads"))
     video_storage_dir: Path = Path(os.getenv("VIDEO_STORAGE_DIR", "/data/videos"))
     dev_user_id: str = os.getenv("DEV_USER_ID", "dev-user")
+    max_render_clip_seconds: int = int(os.getenv("MAX_RENDER_CLIP_SECONDS", "60"))
     cors_origins_raw: str = os.getenv(
         "CORS_ORIGINS",
         "http://localhost:3000,http://127.0.0.1:3000",

@@ -39,7 +39,7 @@ Do not make user-uploaded mp4 a primary product requirement. Manual mp4 upload/c
 
 Do not design flows that require controlling the user's computer, opening their local CS2 client, reading local files after upload, or recording their screen. The browser cannot directly play `.dem` as real CS2 first-person video. If real first-person footage is needed, add a render job boundary for our own Windows/Linux GPU worker to run CS2, render a short player/event clip, upload mp4/HLS, and write video metadata back to the replay contract.
 
-The next render-focused milestone should be `render_clip`, not whole-match rendering: create jobs around a coaching event or selected player/tick range, keep API containers free of CS2/OBS/ffmpeg automation, and leave real GPU execution to a separate worker.
+The current render-focused boundary is `render_clip`, not whole-match rendering: create jobs around a coaching event or selected player/tick range, keep API containers free of CS2/OBS/ffmpeg automation, and leave real GPU execution to a separate worker. The in-repo worker may recognize `render_clip` only to mark it failed with a clear "GPU worker not connected" message until the external worker exists.
 
 ## Commit & Pull Request Guidelines
 

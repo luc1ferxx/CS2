@@ -17,6 +17,7 @@ npm-debug.log*
 
 # Local QA artifacts
 .playwright-mcp/
+.playwright-cli/
 cs2-demo-detail-*.png
 
 # Local demo samples

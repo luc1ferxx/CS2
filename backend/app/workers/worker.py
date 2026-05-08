@@ -14,8 +14,14 @@ from app.models.demo import Demo
 from app.models.job import DemoJob
 from app.parser.demo_parser import parse_demo_file
 from app.parser.normalizer import normalize_parser_output
-from app.services.demo_service import DemoService
+from app.services.demo_service import RENDER_CLIP_JOB_TYPE, DemoService
 from app.services.mock_replay_service import build_mock_replay
+
+
+RENDER_CLIP_NOT_CONNECTED_ERROR = (
+    "Render clip worker is not connected yet. "
+    "A Windows/Linux GPU worker must process this job."
+)
 
 
 def utc_now() -> datetime:
@@ -28,6 +34,9 @@ def process_job(db: Session, job_id: str, demo_id: str) -> None:
     if demo is None or job is None:
         return
 
+    if job.job_type == RENDER_CLIP_JOB_TYPE:
+        process_render_clip_job(db, demo, job)
+        return
     if job.job_type == "mock_render":
         process_mock_render_job(db, demo, job)
         return
@@ -147,6 +156,26 @@ def process_mock_render_job(db: Session, demo: Demo, job: DemoJob) -> None:
     db.commit()
 
 
+def process_render_clip_job(db: Session, demo: Demo, job: DemoJob) -> None:
+    service = DemoService(db)
+
+    if service.load_replay_blob(demo) is None:
+        raise ValueError("Replay blob is not ready")
+
+    job.status = "rendering"
+    job.attempts += 1
+    job.started_at = utc_now()
+    job.error_message = None
+    service.update_render_clip_video_status(demo, "rendering", None)
+    db.commit()
+
+    service.update_render_clip_video_status(demo, "failed", RENDER_CLIP_NOT_CONNECTED_ERROR)
+    job.status = "failed"
+    job.error_message = RENDER_CLIP_NOT_CONNECTED_ERROR
+    job.finished_at = utc_now()
+    db.commit()
+
+
 def fail_job(db: Session, job_id: str, demo_id: str, error: str) -> None:
     demo = db.query(Demo).filter(Demo.id == demo_id).one_or_none()
     job = db.query(DemoJob).filter(DemoJob.id == job_id).one_or_none()
@@ -163,6 +192,12 @@ def fail_job(db: Session, job_id: str, demo_id: str, error: str) -> None:
                     "errorMessage": error[:1000],
                 },
             )
+        except Exception:
+            traceback.print_exc()
+    elif demo is not None and job is not None and job.job_type == RENDER_CLIP_JOB_TYPE:
+        try:
+            service = DemoService(db)
+            service.update_render_clip_video_status(demo, "failed", error[:1000])
         except Exception:
             traceback.print_exc()
     elif demo is not None:

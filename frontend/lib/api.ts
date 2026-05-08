@@ -5,11 +5,44 @@ import type { ReplayData, ReplayVideo } from "@/types/replay";
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
 
-interface RenderJobCreated {
+export interface RenderClipRequest {
+  eventId?: string;
+  playerId?: string;
+  povSteamId?: string;
+  tickStart: number;
+  tickEnd: number;
+  tickRate: number;
+  roundNumber?: number;
+  renderPreset?: string;
+}
+
+export interface RenderClipMetadata {
+  eventId?: string;
+  playerId?: string;
+  povSteamId?: string;
+  tickStart?: number;
+  tickEnd?: number;
+  tickRate?: number;
+  roundNumber?: number;
+  renderPreset?: string;
+  durationSeconds?: number;
+  maxDurationSeconds?: number;
+  [key: string]: unknown;
+}
+
+export interface RenderJobStatus {
   job_id: string;
   demo_id: string;
   job_type: string;
   status: string;
+  metadata: RenderClipMetadata;
+  error_message?: string | null;
+  created_at: string;
+  started_at?: string | null;
+  finished_at?: string | null;
+}
+
+interface RenderJobCreated extends RenderJobStatus {
   video: ReplayVideo;
 }
 
@@ -35,7 +68,7 @@ async function requestJson<T>(
   });
 
   if (!response.ok) {
-    const detail = await response.text();
+    const detail = await responseErrorMessage(response);
     throw new Error(detail || `Request failed with ${response.status}`);
   }
 
@@ -50,7 +83,7 @@ async function requestForm<T>(path: string, formData: FormData): Promise<T> {
   });
 
   if (!response.ok) {
-    const detail = await response.text();
+    const detail = await responseErrorMessage(response);
     throw new Error(detail || `Request failed with ${response.status}`);
   }
 
@@ -103,6 +136,38 @@ export function createMockRenderJob(demoId: string): Promise<RenderJobCreated> {
   return requestJson<RenderJobCreated>(`/demos/${demoId}/render/mock`, { method: "POST" });
 }
 
+export function createRenderClipJob(
+  demoId: string,
+  request: RenderClipRequest
+): Promise<RenderJobCreated> {
+  return requestJson<RenderJobCreated>(`/demos/${demoId}/render/clip`, {
+    method: "POST",
+    body: JSON.stringify(request)
+  });
+}
+
+export function getRenderJobs(demoId: string): Promise<RenderJobStatus[]> {
+  return requestJson<RenderJobStatus[]>(`/demos/${demoId}/render/jobs`);
+}
+
 export function getCoaching(demoId: string): Promise<CoachingEvent[]> {
   return requestJson<CoachingEvent[]>(`/demos/${demoId}/coaching`);
+}
+
+async function responseErrorMessage(response: Response): Promise<string> {
+  const body = await response.text();
+  if (!body) {
+    return "";
+  }
+
+  try {
+    const parsed = JSON.parse(body) as { detail?: unknown };
+    if (typeof parsed.detail === "string") {
+      return parsed.detail;
+    }
+  } catch {
+    return body;
+  }
+
+  return body;
 }

@@ -1,7 +1,7 @@
 import time
 from collections.abc import Generator
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
@@ -30,8 +30,22 @@ def init_db() -> None:
     for attempt in range(1, 31):
         try:
             Base.metadata.create_all(bind=engine)
+            ensure_schema_backfills()
             return
         except OperationalError:
             if attempt == 30:
                 raise
             time.sleep(1)
+
+
+def ensure_schema_backfills() -> None:
+    inspector = inspect(engine)
+    if "demo_jobs" not in inspector.get_table_names():
+        return
+
+    column_names = {column["name"] for column in inspector.get_columns("demo_jobs")}
+    if "metadata_json" not in column_names:
+        with engine.begin() as connection:
+            connection.execute(
+                text("ALTER TABLE demo_jobs ADD COLUMN metadata_json TEXT DEFAULT '{}' NOT NULL")
+            )

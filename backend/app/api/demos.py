@@ -5,7 +5,9 @@ from app.core.database import get_db
 from app.schemas.demo import (
     DemoListItem,
     DemoStatus,
+    RenderClipRequest,
     RenderJobCreated,
+    RenderJobStatus,
     ReplayVideoStatus,
     VideoCalibrationUpdate,
 )
@@ -104,10 +106,62 @@ def create_mock_render_job(
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
+    job_status = service.render_job_status(job)
     return RenderJobCreated(
-        job_id=job.id,
-        demo_id=demo.id,
-        job_type=job.job_type,
-        status=job.status,
+        job_id=job_status.job_id,
+        demo_id=job_status.demo_id,
+        job_type=job_status.job_type,
+        status=job_status.status,
+        metadata=job_status.metadata,
+        error_message=job_status.error_message,
+        created_at=job_status.created_at,
+        started_at=job_status.started_at,
+        finished_at=job_status.finished_at,
         video=ReplayVideoStatus.model_validate(service.get_video_status(demo)),
     )
+
+
+@router.post("/demos/{demo_id}/render/clip", response_model=RenderJobCreated, status_code=201)
+def create_render_clip_job(
+    demo_id: str,
+    request: RenderClipRequest,
+    db: Session = Depends(get_db),
+) -> RenderJobCreated:
+    service = DemoService(db)
+    demo = service.get_demo(demo_id)
+    if demo is None:
+        raise HTTPException(status_code=404, detail="Demo not found")
+    if demo.status != "completed":
+        raise HTTPException(status_code=409, detail="Demo parse must complete before rendering")
+
+    try:
+        job = service.create_render_clip_job(demo, request)
+    except ValueError as exc:
+        status_code = 409 if "Replay blob" in str(exc) else 400
+        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
+
+    job_status = service.render_job_status(job)
+    return RenderJobCreated(
+        job_id=job_status.job_id,
+        demo_id=demo.id,
+        job_type=job_status.job_type,
+        status=job_status.status,
+        metadata=job_status.metadata,
+        error_message=job_status.error_message,
+        created_at=job_status.created_at,
+        started_at=job_status.started_at,
+        finished_at=job_status.finished_at,
+        video=ReplayVideoStatus.model_validate(service.get_video_status(demo)),
+    )
+
+
+@router.get("/demos/{demo_id}/render/jobs", response_model=list[RenderJobStatus])
+def list_render_clip_jobs(
+    demo_id: str,
+    db: Session = Depends(get_db),
+) -> list[RenderJobStatus]:
+    service = DemoService(db)
+    demo = service.get_demo(demo_id)
+    if demo is None:
+        raise HTTPException(status_code=404, detail="Demo not found")
+    return service.list_render_clip_jobs(demo)

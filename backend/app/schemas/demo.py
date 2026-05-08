@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict
 
@@ -53,9 +54,37 @@ class VideoCalibrationUpdate(BaseModel):
     timeOriginSeconds: float | None = None
 
 
+class RenderClipRequest(BaseModel):
+    eventId: str | None = None
+    playerId: str | None = None
+    povSteamId: str | None = None
+    tickStart: int
+    tickEnd: int
+    tickRate: int
+    roundNumber: int | None = None
+    renderPreset: str | None = None
+
+
+class RenderJobStatus(BaseModel):
+    job_id: str
+    demo_id: str
+    job_type: str
+    status: str
+    metadata: dict[str, Any]
+    error_message: str | None = None
+    created_at: datetime
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+
+
 class RenderJobCreated(BaseModel):
     job_id: str
     demo_id: str
     job_type: str
     status: str
+    metadata: dict[str, Any]
+    error_message: str | None = None
+    created_at: datetime
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
     video: ReplayVideoStatus

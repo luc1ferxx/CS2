@@ -15,6 +15,7 @@ The current build does not call OpenAI, does not use S3/R2, and does not render 
 - Parser spike: `demoparser2` in the worker container
 - First-person media boundary: replay JSON includes `video` metadata; manually uploaded local `.mp4` files can be bound and calibrated, but no CS2 video is rendered automatically in this mock phase
 - Manual video boundary: local mp4 files in `/data/videos` exposed by the API at `/media/videos/...`
+- Render clip boundary: `POST /demos/{demo_id}/render/clip` creates a compact `demo_jobs.job_type = render_clip` row for a short POV/tick range; the in-repo worker recognizes the job but intentionally fails until an external GPU render worker is connected
 - Deployment shape: Docker Compose with `frontend`, `api`, `worker`, `postgres`, and `redis`
 
 ## Start
@@ -134,6 +135,30 @@ Generate Clip
 
 The render worker must run on infrastructure we control. The web app should not ask for permission to control the user's computer, open their local CS2 client, read local files after upload, or record their screen. Users should only upload `.dem` files and interact with the website.
 
+## Render Clip Job V1
+
+Render Clip Job V1 is a backend/frontend boundary only. It does not render real CS2 footage yet.
+
+Current behavior:
+
+1. A user clicks `Generate Clip` on a coaching event or requests a clip around the selected tick.
+2. The frontend sends `POST /demos/{demo_id}/render/clip` with optional `eventId`, optional `playerId` or `povSteamId`, `tickStart`, `tickEnd`, `tickRate`, optional `roundNumber`, and optional `renderPreset`.
+3. The API validates that the demo and replay blob exist, that `tickEnd > tickStart`, and that the requested duration is at most `MAX_RENDER_CLIP_SECONDS` seconds, defaulting to 60.
+4. The API creates a compact `demo_jobs` row with `job_type = render_clip`, `status = queued`, and JSON metadata describing only the event/player/tick range. Large demo, frame, and media payloads stay out of PostgreSQL.
+5. The local worker recognizes `render_clip`, moves the job from `queued` to `rendering`, then marks it `failed` with: `Render clip worker is not connected yet. A Windows/Linux GPU worker must process this job.`
+6. Manual `source = manual_upload` video metadata is left intact. If no manual video is bound, the replay video status may show queued/rendering/failed while the first-person fallback shell stays available.
+
+V1 intentionally fails because the API container must not run CS2, OBS, ffmpeg, OpenAI, or object-storage automation. The failure is the contract marker for a future external render worker, not an application error.
+
+Future worker contract:
+
+```text
+input:  .dem source, POV player or Steam ID, tickStart, tickEnd, tickRate, renderPreset
+output: mp4/HLS URL, durationSeconds, tickStart, tickEnd, tickRate, source = rendered, timeOriginSeconds/calibration metadata
+```
+
+The final product should not require users to upload MP4 files. Manual MP4 upload remains only a development and QA bridge for validating media synchronization before the render worker exists.
+
 ## Manual Video Binding And Sync Calibration
 
 Manual mp4 binding is a development and QA bridge, not the target user workflow.
@@ -185,6 +210,8 @@ The frontend clamps both directions to keep the first-person video, timeline, ta
 - `POST /demos/{demo_id}/video/upload`
 - `POST /demos/{demo_id}/video/calibration`
 - `POST /demos/{demo_id}/render/mock`
+- `POST /demos/{demo_id}/render/clip`
+- `GET /demos/{demo_id}/render/jobs`
 
 ## Development Notes
 
@@ -252,9 +279,9 @@ The replay UI supports map-specific radar backgrounds. `de_dust2` currently uses
 
 CS2 radar images are square assets from `panorama/images/overheadmaps`; overview values come from `resource/overviews/{map}.txt`. For production, extract these from the operator's CS2 install with Source 2 Viewer or replace them with internally licensed assets, then keep the parser normalizer and frontend map image table in sync.
 
-## Future Phase: Render Clip Worker V1
+## Future Phase: External Render Worker
 
-The current API/worker only supports a mock render job:
+The current API/worker supports a mock render job and a real `render_clip` job boundary:
 
 ```text
 POST /demos/{demo_id}/render/mock
@@ -263,9 +290,15 @@ POST /demos/{demo_id}/render/mock
   -> worker sets queued -> rendering -> ready
   -> replay.video.url remains null
   -> FirstPersonReplay keeps using the mock/player shell
+
+POST /demos/{demo_id}/render/clip
+  -> creates demo_jobs.job_type = render_clip with compact tick-range metadata
+  -> worker sets queued -> rendering -> failed
+  -> failure says the Windows/Linux GPU worker is not connected yet
+  -> existing manual_upload video metadata is not cleared
 ```
 
-Do not implement real CS2 automation in the API container. The next media-focused spike should introduce the render job boundary for generated clips, then connect a separate GPU worker later.
+Do not implement real CS2 automation in the API container. The next media-focused spike should connect a separate GPU worker to claim `render_clip` jobs and write rendered video metadata back to the replay contract.
 
 The first useful production-shaped render feature should be clip rendering, not whole-match rendering:
 
@@ -336,6 +369,7 @@ Output contract:
   "tickStart": 0,
   "tickEnd": 2240,
   "tickRate": 64,
+  "timeOriginSeconds": 0,
   "source": "rendered",
   "errorMessage": null
 }

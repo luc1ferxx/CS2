@@ -12,12 +12,16 @@ import { Timeline } from "@/components/replay/Timeline";
 import { VideoSetupPanel } from "@/components/replay/VideoSetupPanel";
 import {
   createMockRenderJob,
+  createRenderClipJob,
   getCoaching,
   getDemoStatus,
   getDemoVideo,
+  getRenderJobs,
   getReplay,
   saveVideoCalibration,
   uploadDemoVideo,
+  type RenderClipRequest,
+  type RenderJobStatus,
   type VideoCalibrationUpdate
 } from "@/lib/api";
 import type { CoachingEvent } from "@/types/coaching";
@@ -38,6 +42,9 @@ export default function DemoDetailPage() {
   const [selectedPlayerId, setSelectedPlayerId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [renderRequesting, setRenderRequesting] = useState(false);
+  const [clipRequestingEventId, setClipRequestingEventId] = useState<string | null>(null);
+  const [tickClipRequesting, setTickClipRequesting] = useState(false);
+  const [renderJobs, setRenderJobs] = useState<RenderJobStatus[]>([]);
   const [currentVideoTime, setCurrentVideoTime] = useState(0);
   const [detectedVideoDuration, setDetectedVideoDuration] = useState<number | null>(null);
 
@@ -53,14 +60,27 @@ export default function DemoDetailPage() {
     }
   }, [demoId]);
 
+  const loadRenderJobs = useCallback(async () => {
+    try {
+      const nextJobs = await getRenderJobs(demoId);
+      setRenderJobs(nextJobs);
+      return nextJobs;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load render jobs");
+      return [];
+    }
+  }, [demoId]);
+
   const loadReplay = useCallback(async () => {
     try {
-      const [nextReplay, nextEvents] = await Promise.all([
+      const [nextReplay, nextEvents, nextRenderJobs] = await Promise.all([
         getReplay(demoId),
-        getCoaching(demoId)
+        getCoaching(demoId),
+        getRenderJobs(demoId)
       ]);
       setReplay(nextReplay);
       setEvents(nextEvents);
+      setRenderJobs(nextRenderJobs);
       const initialTick = nextReplay.video.url
         ? nextReplay.video.tickStart
         : nextReplay.rounds[0]?.startTick ?? 0;
@@ -111,6 +131,20 @@ export default function DemoDetailPage() {
     () => replay?.rounds.find((round) => round.roundNumber === selectedRound),
     [replay?.rounds, selectedRound]
   );
+  const renderJobByEventId = useMemo(() => {
+    const jobsByEventId = new Map<string, RenderJobStatus>();
+    for (const job of renderJobs) {
+      const eventId = job.metadata.eventId;
+      if (typeof eventId === "string" && !jobsByEventId.has(eventId)) {
+        jobsByEventId.set(eventId, job);
+      }
+    }
+    return jobsByEventId;
+  }, [renderJobs]);
+  const latestRenderClipJob = renderJobs[0] ?? null;
+  const hasActiveRenderClipJob = renderJobs.some(
+    (job) => job.status === "queued" || job.status === "rendering"
+  );
 
   const videoStatus = replay?.video.status;
 
@@ -141,6 +175,19 @@ export default function DemoDetailPage() {
 
     return () => window.clearInterval(intervalId);
   }, [loadVideoStatus, videoStatus]);
+
+  useEffect(() => {
+    if (!hasActiveRenderClipJob) {
+      return;
+    }
+
+    const intervalId = window.setInterval(() => {
+      void loadRenderJobs();
+      void loadVideoStatus();
+    }, 1200);
+
+    return () => window.clearInterval(intervalId);
+  }, [hasActiveRenderClipJob, loadRenderJobs, loadVideoStatus]);
 
   useEffect(() => {
     if (!playing || !replay || !selectedRoundData || replay.video.url) {
@@ -195,6 +242,57 @@ export default function DemoDetailPage() {
       setError(err instanceof Error ? err.message : "Failed to create mock render job");
     } finally {
       setRenderRequesting(false);
+    }
+  }
+
+  async function requestRenderClipForEvent(event: CoachingEvent) {
+    if (!replay) {
+      return;
+    }
+
+    setClipRequestingEventId(event.id);
+    try {
+      const response = await createRenderClipJob(demoId, buildEventClipRequest(replay, event));
+      const { video, ...jobStatus } = response;
+      setReplay((currentReplay) =>
+        currentReplay ? { ...currentReplay, video } : currentReplay
+      );
+      setRenderJobs((currentJobs) => [
+        jobStatus,
+        ...currentJobs.filter((job) => job.job_id !== jobStatus.job_id)
+      ]);
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to create render clip job");
+    } finally {
+      setClipRequestingEventId(null);
+    }
+  }
+
+  async function requestRenderClipAtCurrentTick() {
+    if (!replay) {
+      return;
+    }
+
+    setTickClipRequesting(true);
+    try {
+      const response = await createRenderClipJob(
+        demoId,
+        buildTickClipRequest(replay, currentTick, selectedRound, selectedPlayerId)
+      );
+      const { video, ...jobStatus } = response;
+      setReplay((currentReplay) =>
+        currentReplay ? { ...currentReplay, video } : currentReplay
+      );
+      setRenderJobs((currentJobs) => [
+        jobStatus,
+        ...currentJobs.filter((job) => job.job_id !== jobStatus.job_id)
+      ]);
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to create render clip job");
+    } finally {
+      setTickClipRequesting(false);
     }
   }
 
@@ -260,7 +358,10 @@ export default function DemoDetailPage() {
                   playing={playing}
                   speed={speed}
                   renderRequesting={renderRequesting}
+                  renderClipRequesting={tickClipRequesting}
+                  latestRenderClipJob={latestRenderClipJob}
                   onRequestMockRender={requestMockRender}
+                  onRequestRenderClip={requestRenderClipAtCurrentTick}
                   onSeekTick={seek}
                   onVideoDurationChange={setDetectedVideoDuration}
                   onVideoTimeChange={setCurrentVideoTime}
@@ -284,7 +385,10 @@ export default function DemoDetailPage() {
                 events={events}
                 currentTick={currentTick}
                 selectedRound={selectedRound}
+                renderJobByEventId={renderJobByEventId}
+                requestingEventId={clipRequestingEventId}
                 onSeek={seek}
+                onGenerateClip={requestRenderClipForEvent}
               />
             </div>
 
@@ -309,4 +413,73 @@ export default function DemoDetailPage() {
 
 function findRoundForTick(rounds: ReplayData["rounds"], tick: number) {
   return rounds.find((round) => tick >= round.startTick && tick <= round.endTick);
+}
+
+function buildEventClipRequest(replay: ReplayData, event: CoachingEvent): RenderClipRequest {
+  const tickRate = replay.tickRate || replay.video.tickRate || 64;
+  const range = clipRangeForTick(replay, event.tick_start, event.round_number, tickRate);
+  return {
+    eventId: event.id,
+    playerId: eventPlayerId(event),
+    tickStart: range.tickStart,
+    tickEnd: range.tickEnd,
+    tickRate,
+    roundNumber: event.round_number,
+    renderPreset: "event_clip_v1"
+  };
+}
+
+function buildTickClipRequest(
+  replay: ReplayData,
+  currentTick: number,
+  selectedRound: number,
+  selectedPlayerId: string | null
+): RenderClipRequest {
+  const tickRate = replay.tickRate || replay.video.tickRate || 64;
+  const range = clipRangeForTick(replay, currentTick, selectedRound, tickRate);
+  return {
+    playerId: selectedPlayerId ?? undefined,
+    tickStart: range.tickStart,
+    tickEnd: range.tickEnd,
+    tickRate,
+    roundNumber: selectedRound,
+    renderPreset: "selected_tick_v1"
+  };
+}
+
+function clipRangeForTick(
+  replay: ReplayData,
+  tick: number,
+  roundNumber: number,
+  tickRate: number
+) {
+  const paddingTicks = tickRate * 20;
+  const round = replay.rounds.find((item) => item.roundNumber === roundNumber);
+  const firstRound = replay.rounds[0];
+  const lastRound = replay.rounds[replay.rounds.length - 1];
+  const minTick = round?.startTick ?? firstRound?.startTick ?? 0;
+  const maxTick = round?.endTick ?? lastRound?.endTick ?? tick + paddingTicks;
+  const tickStart = Math.max(minTick, Math.round(tick - paddingTicks));
+  const tickEnd = Math.min(maxTick, Math.round(tick + paddingTicks));
+
+  if (tickEnd > tickStart) {
+    return { tickStart, tickEnd };
+  }
+
+  return {
+    tickStart: Math.max(minTick, Math.round(tick)),
+    tickEnd: Math.min(maxTick, Math.round(tick + tickRate))
+  };
+}
+
+function eventPlayerId(event: CoachingEvent): string | undefined {
+  const involvedPlayerIds = event.structured_context_json.involvedPlayerIds;
+  if (
+    Array.isArray(involvedPlayerIds) &&
+    involvedPlayerIds.length > 0 &&
+    typeof involvedPlayerIds[0] === "string"
+  ) {
+    return involvedPlayerIds[0];
+  }
+  return event.player_id || undefined;
 }

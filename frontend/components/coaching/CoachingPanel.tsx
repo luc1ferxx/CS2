@@ -1,20 +1,27 @@
 "use client";
 
 import type { CoachingEvent } from "@/types/coaching";
+import type { RenderJobStatus } from "@/lib/api";
 import { CoachingEventCard } from "./CoachingEventCard";
 
 interface CoachingPanelProps {
   events: CoachingEvent[];
   currentTick: number;
   selectedRound: number;
+  renderJobByEventId: Map<string, RenderJobStatus>;
+  requestingEventId: string | null;
   onSeek: (tick: number) => void;
+  onGenerateClip: (event: CoachingEvent) => void;
 }
 
 export function CoachingPanel({
   events,
   currentTick,
   selectedRound,
-  onSeek
+  renderJobByEventId,
+  requestingEventId,
+  onSeek,
+  onGenerateClip
 }: CoachingPanelProps) {
   const roundEvents = events.filter((event) => event.round_number === selectedRound);
   const activeEventIds = new Set(
@@ -41,7 +48,10 @@ export function CoachingPanel({
               key={event.id}
               event={event}
               active={activeEventIds.has(event.id)}
+              renderJob={renderJobByEventId.get(event.id)}
+              clipRequesting={requestingEventId === event.id}
               onSeek={onSeek}
+              onGenerateClip={onGenerateClip}
             />
           ))
         )}

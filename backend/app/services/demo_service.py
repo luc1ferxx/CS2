@@ -12,8 +12,12 @@ from app.models.coaching import CoachingEvent
 from app.models.demo import Demo
 from app.models.job import DemoJob
 from app.schemas.coaching import CoachingEventOut
-from app.schemas.demo import DemoListItem
+from app.schemas.demo import DemoListItem, RenderClipRequest, RenderJobStatus
 from app.services.upload_service import StoredVideoUpload, demo_upload_path, store_demo_upload
+
+
+RENDER_CLIP_JOB_TYPE = "render_clip"
+RENDER_CLIP_DEFAULT_PRESET = "event_clip_v1"
 
 
 class DemoService:
@@ -142,6 +146,78 @@ class DemoService:
         )
         return job
 
+    def create_render_clip_job(self, demo: Demo, request: RenderClipRequest) -> DemoJob:
+        replay = self.load_replay_blob(demo)
+        if replay is None:
+            raise ValueError("Replay blob is not ready")
+
+        if request.tickRate <= 0:
+            raise ValueError("tickRate must be greater than zero")
+        if request.tickEnd <= request.tickStart:
+            raise ValueError("tickEnd must be greater than tickStart")
+
+        max_duration_seconds = settings.max_render_clip_seconds
+        duration_seconds = (request.tickEnd - request.tickStart) / request.tickRate
+        if duration_seconds > max_duration_seconds:
+            raise ValueError(
+                f"Render clip duration must be {max_duration_seconds} seconds or less"
+            )
+
+        metadata = _compact_render_clip_metadata(
+            request,
+            duration_seconds=duration_seconds,
+            max_duration_seconds=max_duration_seconds,
+        )
+
+        job_id = str(uuid.uuid4())
+        job = DemoJob(
+            id=job_id,
+            demo_id=demo.id,
+            job_type=RENDER_CLIP_JOB_TYPE,
+            status="queued",
+            attempts=0,
+            metadata_json=json.dumps(metadata, separators=(",", ":")),
+        )
+        self.db.add(job)
+        self.update_render_clip_video_status(demo, "queued", None)
+        self.db.commit()
+        self.db.refresh(job)
+
+        get_redis_client().lpush(
+            settings.redis_queue_name,
+            json.dumps(
+                {
+                    "job_id": job_id,
+                    "demo_id": demo.id,
+                    "job_type": RENDER_CLIP_JOB_TYPE,
+                }
+            ),
+        )
+        return job
+
+    def list_render_clip_jobs(self, demo: Demo) -> list[RenderJobStatus]:
+        jobs = (
+            self.db.query(DemoJob)
+            .filter(DemoJob.demo_id == demo.id, DemoJob.job_type == RENDER_CLIP_JOB_TYPE)
+            .order_by(desc(DemoJob.created_at))
+            .limit(20)
+            .all()
+        )
+        return [self.render_job_status(job) for job in jobs]
+
+    def render_job_status(self, job: DemoJob) -> RenderJobStatus:
+        return RenderJobStatus(
+            job_id=job.id,
+            demo_id=job.demo_id,
+            job_type=job.job_type,
+            status=job.status,
+            metadata=_job_metadata(job),
+            error_message=job.error_message,
+            created_at=job.created_at,
+            started_at=job.started_at,
+            finished_at=job.finished_at,
+        )
+
     def replay_blob_path(self, demo_id: str) -> Path:
         return settings.replay_storage_dir / f"{demo_id}.json"
 
@@ -232,6 +308,27 @@ class DemoService:
         self.write_replay_blob(demo.id, replay)
         return replay["video"]
 
+    def update_render_clip_video_status(
+        self,
+        demo: Demo,
+        status: str,
+        error_message: str | None,
+    ) -> dict[str, Any]:
+        current_video = self.get_video_status(demo)
+        if current_video.get("source") == "manual_upload":
+            return current_video
+
+        return self.update_replay_video(
+            demo,
+            {
+                **current_video,
+                "status": status,
+                "source": "rendered",
+                "url": None,
+                "errorMessage": error_message,
+            },
+        )
+
     def list_coaching_events(self, demo_id: str) -> list[CoachingEventOut]:
         events = (
             self.db.query(CoachingEvent)
@@ -299,3 +396,37 @@ def _positive_int_or_default(value: Any, default: int) -> int:
         return default
     parsed = int(value)
     return parsed if parsed > 0 else default
+
+
+def _compact_render_clip_metadata(
+    request: RenderClipRequest,
+    *,
+    duration_seconds: float,
+    max_duration_seconds: int,
+) -> dict[str, Any]:
+    metadata: dict[str, Any] = {
+        "tickStart": request.tickStart,
+        "tickEnd": request.tickEnd,
+        "tickRate": request.tickRate,
+        "durationSeconds": round(duration_seconds, 3),
+        "maxDurationSeconds": max_duration_seconds,
+        "renderPreset": request.renderPreset or RENDER_CLIP_DEFAULT_PRESET,
+    }
+    optional_fields = {
+        "eventId": request.eventId,
+        "playerId": request.playerId,
+        "povSteamId": request.povSteamId,
+        "roundNumber": request.roundNumber,
+    }
+    for key, value in optional_fields.items():
+        if value is not None:
+            metadata[key] = value
+    return metadata
+
+
+def _job_metadata(job: DemoJob) -> dict[str, Any]:
+    try:
+        metadata = json.loads(job.metadata_json or "{}")
+    except json.JSONDecodeError:
+        return {}
+    return metadata if isinstance(metadata, dict) else {}
