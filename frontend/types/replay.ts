@@ -7,6 +7,7 @@ export interface ReplayRound {
   freezeEndTick: number;
   endTick: number;
   winnerSide: PlayerSide;
+  winnerReason?: string;
 }
 
 export interface ReplayPlayer {
@@ -91,6 +92,31 @@ export interface ReplayVideo {
   timeOriginSeconds: number;
 }
 
+export type ReplayEventType =
+  | "kill"
+  | "death"
+  | "bomb_planted"
+  | "bomb_defused"
+  | "bomb_exploded"
+  | "smoke"
+  | "flash"
+  | "molotov"
+  | "he";
+
+export interface ReplayEvent {
+  id: string;
+  type: ReplayEventType;
+  tick: number;
+  roundNumber: number;
+  playerId?: string | null;
+  playerName?: string | null;
+  side?: PlayerSide | null;
+  x?: number | null;
+  y?: number | null;
+  label: string;
+  metadata?: Record<string, unknown>;
+}
+
 export interface ReplayData {
   demoId: string;
   mapName: string;
@@ -100,5 +126,6 @@ export interface ReplayData {
   rounds: ReplayRound[];
   players: ReplayPlayer[];
   frames: ReplayFrame[];
+  events: ReplayEvent[];
   generatedAt: string;
 }

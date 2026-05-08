@@ -433,6 +433,7 @@ export default function DemoDetailPage() {
               speed={speed}
               playing={playing}
               events={events}
+              parserEvents={replay.events ?? []}
               onSeek={seek}
               onTogglePlay={() => setPlaying((value) => !value)}
               onSpeedChange={setSpeed}

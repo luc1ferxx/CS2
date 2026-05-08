@@ -3,7 +3,8 @@
 import { useMemo } from "react";
 
 import { getTacticalMapPresentation } from "@/lib/map-config";
-import type { ReplayData, ReplayFrame, ReplayFramePlayer } from "@/types/replay";
+import { parserEventPresentationForType, recentMapParserEvents } from "@/lib/replay-events";
+import type { ReplayData, ReplayEvent, ReplayFrame, ReplayFramePlayer } from "@/types/replay";
 
 interface ReplayViewerProps {
   replay: ReplayData;
@@ -42,6 +43,10 @@ export function ReplayViewer({
     variant === "featured" || variant === "companion"
       ? "Tactical map companion"
       : "2D replay viewer";
+  const nearbyParserEvents = useMemo(
+    () => recentMapParserEvents(replay.events ?? [], frame.roundNumber, currentTick, replay.tickRate),
+    [currentTick, frame.roundNumber, replay.events, replay.tickRate]
+  );
 
   return (
     <section
@@ -94,6 +99,10 @@ export function ReplayViewer({
               <circle r="4" fill="none" stroke="#f4b740" strokeDasharray="1 1" />
             </g>
           ) : null}
+
+          {nearbyParserEvents.map((event) => (
+            <ParserEventMapMarker key={event.id} event={event} />
+          ))}
         </svg>
 
         <div className="player-list">
@@ -102,6 +111,26 @@ export function ReplayViewer({
         </div>
       </div>
     </section>
+  );
+}
+
+function ParserEventMapMarker({ event }: { event: ReplayEvent }) {
+  if (typeof event.x !== "number" || typeof event.y !== "number") {
+    return null;
+  }
+  const presentation = parserEventPresentationForType(event.type);
+
+  return (
+    <g
+      className={`parser-map-event ${presentation.tone}`}
+      transform={`translate(${event.x} ${event.y})`}
+    >
+      <circle r="3.2" />
+      <text y="1.3" textAnchor="middle" pointerEvents="none">
+        {presentation.shortLabel}
+      </text>
+      <title>{`${event.label} at tick ${event.tick}`}</title>
+    </g>
   );
 }
 

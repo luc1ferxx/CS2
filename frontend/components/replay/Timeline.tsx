@@ -3,8 +3,9 @@
 import { Pause, Play } from "lucide-react";
 
 import { timelineMarkersForRound } from "@/lib/coaching-review";
+import { timelineParserEventMarkersForRound } from "@/lib/replay-events";
 import type { CoachingEvent } from "@/types/coaching";
-import type { ReplayRound } from "@/types/replay";
+import type { ReplayEvent, ReplayRound } from "@/types/replay";
 import { RoundSelector } from "./RoundSelector";
 
 interface TimelineProps {
@@ -14,6 +15,7 @@ interface TimelineProps {
   speed: number;
   playing: boolean;
   events: CoachingEvent[];
+  parserEvents?: ReplayEvent[];
   onSeek: (tick: number) => void;
   onTogglePlay: () => void;
   onSpeedChange: (speed: number) => void;
@@ -29,6 +31,7 @@ export function Timeline({
   speed,
   playing,
   events,
+  parserEvents = [],
   onSeek,
   onTogglePlay,
   onSpeedChange,
@@ -38,6 +41,12 @@ export function Timeline({
   const minTick = round?.startTick ?? 0;
   const maxTick = round?.endTick ?? 0;
   const markers = timelineMarkersForRound(events, selectedRound, minTick, maxTick);
+  const parserEventMarkers = timelineParserEventMarkersForRound(
+    parserEvents,
+    selectedRound,
+    minTick,
+    maxTick
+  );
 
   return (
     <section className="panel timeline-panel" aria-label="Replay timeline">
@@ -89,6 +98,21 @@ export function Timeline({
                 aria-label={`Jump to ${marker.event.severity} coaching event at tick ${marker.event.tick_start}`}
                 title={`${marker.event.title} at tick ${marker.event.tick_start}`}
               />
+            ))}
+          </div>
+          <div className="parser-event-markers" aria-label="Parser event markers">
+            {parserEventMarkers.map((marker) => (
+              <button
+                key={marker.event.id}
+                className={`parser-event-marker ${marker.presentation.tone}`}
+                style={{ left: `${marker.leftPercent}%` }}
+                type="button"
+                onClick={() => onSeek(marker.seekTick)}
+                aria-label={`Jump to ${marker.presentation.label} parser event at tick ${marker.seekTick}`}
+                title={`${marker.event.label} at tick ${marker.seekTick}`}
+              >
+                {marker.presentation.shortLabel}
+              </button>
             ))}
           </div>
         </div>

@@ -82,6 +82,9 @@ def build_mock_replay(demo_id: str) -> tuple[dict[str, Any], list[dict[str, Any]
         "rounds": rounds,
         "players": players,
         "frames": frames,
+        "kills": _mock_kills(),
+        "deaths": _mock_kills(),
+        "events": _mock_replay_events(),
         "generatedAt": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -244,6 +247,105 @@ def _coaching_events(demo_id: str) -> list[dict[str, Any]]:
                 "recommendation": "Reposition 5-10 seconds earlier when the rotate timing becomes dangerous.",
             },
             "confidence": 0.9,
+        },
+    ]
+
+
+def _mock_kills() -> list[dict[str, Any]]:
+    return [
+        {
+            "tick": 416,
+            "roundNumber": 1,
+            "attackerId": "ct-anchor",
+            "attackerName": "ct.anchor",
+            "attackerSide": "CT",
+            "victimId": "t-entry",
+            "victimName": "aimclub.entry",
+            "victimSide": "T",
+            "weapon": "m4a1",
+        },
+        {
+            "tick": 1088,
+            "roundNumber": 2,
+            "attackerId": "t-trade",
+            "attackerName": "aimclub.trade",
+            "attackerSide": "T",
+            "victimId": "ct-anchor",
+            "victimName": "ct.anchor",
+            "victimSide": "CT",
+            "weapon": "ak47",
+        },
+        {
+            "tick": 1984,
+            "roundNumber": 3,
+            "attackerId": "ct-rifler",
+            "attackerName": "ct.rifler",
+            "attackerSide": "CT",
+            "victimId": "t-lurk",
+            "victimName": "aimclub.lurk",
+            "victimSide": "T",
+            "weapon": "m4a1",
+        },
+    ]
+
+
+def _mock_replay_events() -> list[dict[str, Any]]:
+    return [
+        {
+            "id": "mock-kill-r1",
+            "type": "kill",
+            "tick": 416,
+            "roundNumber": 1,
+            "playerId": "ct-anchor",
+            "playerName": "ct.anchor",
+            "side": "CT",
+            "label": "ct.anchor killed aimclub.entry",
+            "metadata": {
+                "victimId": "t-entry",
+                "victimName": "aimclub.entry",
+                "weapon": "m4a1",
+            },
+        },
+        {
+            "id": "mock-smoke-r1",
+            "type": "smoke",
+            "tick": 512,
+            "roundNumber": 1,
+            "playerId": "t-support",
+            "playerName": "aimclub.flash",
+            "side": "T",
+            "x": 42,
+            "y": 56,
+            "label": "Smoke",
+            "metadata": {},
+        },
+        {
+            "id": "mock-bomb-planted-r2",
+            "type": "bomb_planted",
+            "tick": 1264,
+            "roundNumber": 2,
+            "playerId": "t-support",
+            "playerName": "aimclub.flash",
+            "side": "T",
+            "x": 76,
+            "y": 57,
+            "label": "Bomb planted A",
+            "metadata": {"site": "A"},
+        },
+        {
+            "id": "mock-kill-r3",
+            "type": "kill",
+            "tick": 1984,
+            "roundNumber": 3,
+            "playerId": "ct-rifler",
+            "playerName": "ct.rifler",
+            "side": "CT",
+            "label": "ct.rifler killed aimclub.lurk",
+            "metadata": {
+                "victimId": "t-lurk",
+                "victimName": "aimclub.lurk",
+                "weapon": "m4a1",
+            },
         },
     ]
 

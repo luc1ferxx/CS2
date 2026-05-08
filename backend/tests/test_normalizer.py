@@ -72,6 +72,122 @@ class NormalizerTest(unittest.TestCase):
             self.assertGreaterEqual(player["y"], 0)
             self.assertLessEqual(player["y"], 100)
 
+    def test_replay_events_include_kills_and_best_effort_parser_events(self) -> None:
+        replay = normalize_parser_output(
+            demo_id="demo-events",
+            parsed={
+                "mapName": "de_dust2",
+                "tickRate": 64,
+                "rounds": [
+                    {
+                        "roundNumber": 1,
+                        "startTick": 100,
+                        "freezeEndTick": 164,
+                        "endTick": 500,
+                        "winnerSide": "T",
+                        "winnerReason": "bomb_exploded",
+                    }
+                ],
+                "players": [
+                    {"id": "t-1", "name": "T One", "side": "T"},
+                    {"id": "ct-1", "name": "CT One", "side": "CT"},
+                ],
+                "frames": [
+                    {
+                        "tick": 100,
+                        "roundNumber": 1,
+                        "players": [
+                            {
+                                "id": "t-1",
+                                "name": "T One",
+                                "side": "T",
+                                "x": -1200,
+                                "y": 400,
+                                "alive": True,
+                                "hp": 100,
+                            },
+                            {
+                                "id": "ct-1",
+                                "name": "CT One",
+                                "side": "CT",
+                                "x": -1120,
+                                "y": 420,
+                                "alive": True,
+                                "hp": 100,
+                            },
+                        ],
+                        "bombState": {"status": "planted"},
+                    }
+                ],
+                "kills": [
+                    {
+                        "tick": 180,
+                        "roundNumber": 1,
+                        "attackerId": "t-1",
+                        "attackerName": "T One",
+                        "attackerSide": "T",
+                        "victimId": "ct-1",
+                        "victimName": "CT One",
+                        "victimSide": "CT",
+                        "weapon": "ak47",
+                    }
+                ],
+                "deaths": [],
+                "events": [
+                    {
+                        "type": "bomb_planted",
+                        "tick": 220,
+                        "roundNumber": 1,
+                        "playerId": "t-1",
+                        "playerName": "T One",
+                        "side": "T",
+                        "site": "A",
+                    },
+                    {
+                        "type": "smoke",
+                        "tick": 260,
+                        "roundNumber": 1,
+                        "playerId": "t-1",
+                        "playerName": "T One",
+                        "side": "T",
+                        "x": -1000,
+                        "y": 500,
+                    },
+                    {
+                        "type": "flash",
+                        "tick": 300,
+                        "roundNumber": 1,
+                    },
+                ],
+            },
+        )
+
+        self.assertEqual(replay["rounds"][0]["winnerReason"], "bomb_exploded")
+        events = replay["events"]
+        self.assertEqual([event["type"] for event in events], ["kill", "bomb_planted", "smoke", "flash"])
+        kill = events[0]
+        self.assertEqual(kill["tick"], 180)
+        self.assertEqual(kill["playerId"], "t-1")
+        self.assertEqual(kill["side"], "T")
+        self.assertEqual(kill["metadata"]["victimId"], "ct-1")
+        self.assertEqual(kill["metadata"]["weapon"], "ak47")
+
+        plant = events[1]
+        self.assertEqual(plant["label"], "Bomb planted A")
+        self.assertEqual(plant["metadata"]["site"], "A")
+        self.assertNotIn("x", plant)
+
+        smoke = events[2]
+        self.assertEqual(smoke["label"], "Smoke")
+        self.assertGreaterEqual(smoke["x"], 0)
+        self.assertLessEqual(smoke["x"], 100)
+        self.assertGreaterEqual(smoke["y"], 0)
+        self.assertLessEqual(smoke["y"], 100)
+
+        flash = events[3]
+        self.assertEqual(flash["label"], "Flash")
+        self.assertNotIn("x", flash)
+
 
 if __name__ == "__main__":
     unittest.main()

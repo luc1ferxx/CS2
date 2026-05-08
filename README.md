@@ -53,8 +53,8 @@ The real parser path is intentionally narrow:
 4. The frontend calls `POST /uploads/demo`.
 5. The API validates extension and size, writes the file to `/data/uploads`, creates a `real_parse` job, and enqueues it in Redis.
 6. The worker updates status from `queued` to `parsing` to `analyzing` to `completed`.
-7. The parser tries `demoparser2`, extracts map name, tick rate, rounds, players, sampled player positions, and kill/death events.
-8. The normalizer writes the current replay JSON contract to `/data/replays`.
+7. The parser tries `demoparser2`, extracts map name, tick rate, rounds, players, sampled player positions, kill/death rows, and best-effort bomb/utility events.
+8. The normalizer writes the current replay JSON contract plus compact `events` to `/data/replays`.
 9. The worker runs deterministic rules-based coaching v2 and inserts only coaching event rows into PostgreSQL.
 
 CLI equivalent:
@@ -78,7 +78,7 @@ Current rules:
 - `post_plant_spread_issue`: flags planted-bomb frames where multiple alive Ts stay tightly clustered for several seconds.
 - `retake_desync`: flags planted-bomb frames where CTs reach the bomb area several seconds apart.
 
-The analyzer reads replay JSON `rounds`, `frames`, `players`, `kills`, `deaths`, and frame-level `bombState`, but only writes compact coaching event rows. Large frame payloads stay in `/data/replays`.
+The analyzer reads replay JSON `rounds`, `frames`, `players`, `kills`, `deaths`, and frame-level `bombState`, but only writes compact coaching event rows. Parser `events` are exposed to the replay UI for navigation and context; rules v2 semantics do not consume them yet. Large frame payloads stay in `/data/replays`.
 
 Rules are configured through `backend/app/analysis/rules.py::RuleConfig`. The current defaults are:
 
@@ -106,14 +106,16 @@ The demo detail coaching panel is a review tool for deterministic event rows, no
 - Search across player names, event title, event description, rule id, and rule label.
 - Dense event cards showing severity, rule id/label, round, tick, involved players, short explanation, and evidence metadata such as `distance`, `windowSeconds`, `evidenceTicks`, `nearbyCount`, and `site`.
 - Tick-linked coaching markers on the timeline. Marker position is derived from `tick_start` within the current round and marker color follows severity.
+- Compact parser event markers on the timeline for kills, bomb plant/defuse/explode, and utility events. These sit in their own marker row so they do not cover the slider or coaching markers.
 - Event-level `Generate Clip for this event`, which calls the existing `render_clip` API and refreshes the Render Operator panel state.
 
 Known limitations:
 
 - Parser frames are sampled, not full tick density, so distances and timing are approximate.
 - Tactical map coordinates are map-specific for the supported pool, but only Dust II is calibrated from CS2 overview values today. Mirage, Inferno, Ancient, Nuke, and Anubis use approximate bounds and are labeled as such in the replay UI.
-- Utility, line-of-sight, economy, and economy-aware round context are not modeled yet.
-- Real parser bomb state is currently best-effort. `post_plant_spread_issue` and `retake_desync` run only when replay frames include planted bomb position data; otherwise they skip without failing the parse.
+- Line-of-sight, economy, and economy-aware round context are not modeled yet.
+- Real parser bomb state and utility events are best-effort. Missing bomb/utility event families are tolerated and do not fail a parse. `post_plant_spread_issue` and `retake_desync` run only when replay frames include planted bomb position data; otherwise they skip without failing the parse.
+- Trade tagging in parser `events` is not enabled yet. Existing rules still infer trade windows from kill/death rows during analysis.
 
 ## Product Direction: Demo-First Review
 
@@ -434,6 +436,7 @@ Current support:
 - Existing replay JSON contract, so the current Demo Detail page can open parser output
 - Deterministic rules-based coaching events for first-pass trading, entry spacing, team spacing, post-plant clustering, and retake timing signals
 - Map metadata in replay JSON for tactical map rendering, including radar image path, transform, attribution source, and calibration confidence
+- Parser Data Quality v1 compact replay events in `replay.events`
 
 Not supported yet:
 
@@ -442,7 +445,69 @@ Not supported yet:
 - Automatic CS2 first-person rendering
 - OpenAI coaching copy
 
-Next parser work should add upload sessions, S3/R2 quarantine storage, stricter zip inspection, parser telemetry, stronger map-specific coordinate calibration, utility extraction, line-of-sight checks, economy context, and more reliable bomb plant/defuse event parsing.
+Next parser work should add upload sessions, S3/R2 quarantine storage, stricter zip inspection, parser telemetry, stronger map-specific coordinate calibration, richer utility trajectory/context extraction, line-of-sight checks, economy context, and more reliable bomb plant/defuse event parsing.
+
+## Parser Data Quality V1
+
+Parser Data Quality v1 adds a lightweight, backward-compatible replay event contract. Old replay blobs that do not include `events` are treated as `events: []`; mock replays include representative events so the frontend can use one path.
+
+Replay event shape:
+
+```json
+{
+  "id": "kill-1234-t1-ct1",
+  "type": "kill",
+  "tick": 1234,
+  "roundNumber": 3,
+  "playerId": "7656119...",
+  "playerName": "player.name",
+  "side": "T",
+  "x": 42.5,
+  "y": 61.2,
+  "label": "player.name killed defender",
+  "metadata": {
+    "victimId": "7656119...",
+    "weapon": "ak47"
+  }
+}
+```
+
+Supported event types:
+
+- `kill`
+- `death`
+- `bomb_planted`
+- `bomb_defused`
+- `bomb_exploded`
+- `smoke`
+- `flash`
+- `molotov`
+- `he`
+
+Reliable fields today:
+
+- `tick`
+- `roundNumber` when round metadata or `total_rounds_played` is available
+- kill attacker/victim IDs and names where `player_death` exposes them
+- round start/end ticks where `round_start` and `round_end` are available
+- player positions from sampled tick frames
+
+Best-effort fields:
+
+- `freezeEndTick`, winner side, and winner reason because event availability varies by demo/parser output
+- bomb plant/defuse/explode site/player/position
+- utility thrower and landing position
+- kill assister, headshot, weapon, and side metadata
+- map event positions, which are transformed through centralized map config when source coordinates are available
+
+Current demoparser2 limitations:
+
+- Event families may be absent or use different field names across demos.
+- Utility and bomb events can be missing while player frames and kill rows still parse correctly.
+- Trade metadata is not emitted in `replay.events`; rules v2 still performs its own best-effort trade-window inference from kill/death rows.
+- Full tick density is not stored. Replay frames remain sampled and compact.
+
+Parser/normalizer behavior must stay tolerant: one missing event family should not fail the whole demo parse, and large raw parser dataframes or unbounded JSON must not be stored in PostgreSQL or replay blobs.
 
 ## Tactical Map Assets
 

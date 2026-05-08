@@ -953,6 +953,41 @@ button {
   image-rendering: auto;
 }
 
+.parser-map-event {
+  pointer-events: none;
+}
+
+.parser-map-event circle {
+  fill: rgba(9, 13, 16, 0.86);
+  stroke-width: 0.8;
+}
+
+.parser-map-event text {
+  fill: #061014;
+  font-size: 2.9px;
+  font-weight: 900;
+}
+
+.parser-map-event.combat circle {
+  stroke: var(--red);
+  fill: #f15b5b;
+}
+
+.parser-map-event.objective circle {
+  stroke: #ffe0a0;
+  fill: var(--amber);
+}
+
+.parser-map-event.utility circle {
+  stroke: #bdf4ef;
+  fill: var(--teal);
+}
+
+.parser-map-event.damage circle {
+  stroke: #ffd2a8;
+  fill: #f08842;
+}
+
 .fallback-map-label {
   letter-spacing: 0;
   text-transform: uppercase;
@@ -1135,6 +1170,11 @@ button {
   height: 16px;
 }
 
+.parser-event-markers {
+  position: relative;
+  height: 18px;
+}
+
 .event-marker {
   position: absolute;
   top: 2px;
@@ -1169,6 +1209,47 @@ button {
 .event-marker.low,
 .event-marker.info {
   background: var(--teal);
+}
+
+.parser-event-marker {
+  position: absolute;
+  top: 1px;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 16px;
+  padding: 0;
+  transform: translateX(-9px);
+  border: 1px solid rgba(238, 244, 246, 0.18);
+  border-radius: 6px;
+  color: #061014;
+  font-size: 10px;
+  font-weight: 900;
+  line-height: 1;
+  box-shadow: 0 0 0 2px rgba(9, 13, 16, 0.82);
+}
+
+.parser-event-marker:hover,
+.parser-event-marker:focus-visible {
+  outline: none;
+  transform: translateX(-9px) scale(1.12);
+  border-color: rgba(238, 244, 246, 0.72);
+}
+
+.parser-event-marker.combat {
+  background: var(--red);
+}
+
+.parser-event-marker.objective {
+  background: var(--amber);
+}
+
+.parser-event-marker.utility {
+  background: var(--teal);
+}
+
+.parser-event-marker.damage {
+  background: #f08842;
 }
 
 .coaching-panel {

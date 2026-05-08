@@ -42,13 +42,61 @@ def parse_demo_file(source_path: Path) -> dict[str, Any]:
         "round_start",
         other=["total_rounds_played"],
     )
+    round_freeze_end_records = _parse_event_records(
+        parser,
+        "round_freeze_end",
+        other=["total_rounds_played"],
+    )
     round_end_records = _parse_event_records(
         parser,
         "round_end",
         other=["total_rounds_played"],
     )
+    bomb_planted_records = _parse_event_records(
+        parser,
+        "bomb_planted",
+        player=["X", "Y", "team_num"],
+        other=["total_rounds_played", "site"],
+    )
+    bomb_defused_records = _parse_event_records(
+        parser,
+        "bomb_defused",
+        player=["X", "Y", "team_num"],
+        other=["total_rounds_played", "site"],
+    )
+    bomb_exploded_records = _parse_event_records(
+        parser,
+        "bomb_exploded",
+        other=["total_rounds_played", "site"],
+    )
+    utility_records = {
+        "smoke": _parse_first_event_records(
+            parser,
+            ["smokegrenade_detonate"],
+            player=["X", "Y", "team_num"],
+            other=["total_rounds_played"],
+        ),
+        "flash": _parse_first_event_records(
+            parser,
+            ["flashbang_detonate"],
+            player=["X", "Y", "team_num"],
+            other=["total_rounds_played"],
+        ),
+        "molotov": _parse_first_event_records(
+            parser,
+            ["molotov_detonate", "inferno_startburn"],
+            player=["X", "Y", "team_num"],
+            other=["total_rounds_played"],
+        ),
+        "he": _parse_first_event_records(
+            parser,
+            ["hegrenade_detonate"],
+            player=["X", "Y", "team_num"],
+            other=["total_rounds_played"],
+        ),
+    }
 
-    rounds = _build_rounds(round_start_records, round_end_records, header, tick_rate)
+    rounds = _build_rounds(round_start_records, round_freeze_end_records, round_end_records, header, tick_rate)
     sample_ticks = _sample_ticks(rounds, death_records, header, tick_rate)
     tick_records = _parse_tick_records(parser, sample_ticks)
     if not tick_records:
@@ -57,6 +105,10 @@ def parse_demo_file(source_path: Path) -> dict[str, Any]:
     players = _merge_players(player_records, tick_records)
     frames = _build_frames(tick_records, rounds, tick_rate)
     kills = _build_kills(death_records)
+    events = [
+        *_build_bomb_events(bomb_planted_records, bomb_defused_records, bomb_exploded_records),
+        *_build_utility_events(utility_records),
+    ]
 
     return {
         "mapName": map_name,
@@ -66,6 +118,7 @@ def parse_demo_file(source_path: Path) -> dict[str, Any]:
         "frames": frames,
         "kills": kills,
         "deaths": kills,
+        "events": events,
     }
 
 
@@ -116,6 +169,14 @@ def _parse_event_records(parser: Any, event_name: str, **kwargs: Any) -> list[di
     return []
 
 
+def _parse_first_event_records(parser: Any, event_names: list[str], **kwargs: Any) -> list[dict[str, Any]]:
+    for event_name in event_names:
+        records = _parse_event_records(parser, event_name, **kwargs)
+        if records:
+            return records
+    return []
+
+
 def _parse_tick_records(parser: Any, sample_ticks: list[int]) -> list[dict[str, Any]]:
     prop_sets = [
         ["X", "Y", "Z", "health", "is_alive", "team_num", "has_bomb"],
@@ -133,6 +194,7 @@ def _parse_tick_records(parser: Any, sample_ticks: list[int]) -> list[dict[str, 
 
 def _build_rounds(
     starts: list[dict[str, Any]],
+    freeze_ends: list[dict[str, Any]],
     ends: list[dict[str, Any]],
     header: dict[str, Any],
     tick_rate: int,
@@ -140,6 +202,10 @@ def _build_rounds(
     start_ticks = sorted({int(item.get("tick", 0)) for item in starts if item.get("tick") is not None})
     end_records = sorted(
         [item for item in ends if item.get("tick") is not None],
+        key=lambda item: int(item.get("tick", 0)),
+    )
+    freeze_records = sorted(
+        [item for item in freeze_ends if item.get("tick") is not None],
         key=lambda item: int(item.get("tick", 0)),
     )
     end_ticks = [int(item.get("tick", 0)) for item in end_records]
@@ -162,6 +228,7 @@ def _build_rounds(
         if matching_end <= start_tick:
             continue
         winner = "CT"
+        winner_reason = None
         for end_record in end_records:
             if int(end_record.get("tick", 0)) == matching_end:
                 winner = _side_from_value(
@@ -169,27 +236,59 @@ def _build_rounds(
                     or end_record.get("winner_side")
                     or end_record.get("winnerSide")
                 ) or "CT"
+                winner_reason = _optional_str(
+                    end_record.get("reason")
+                    or end_record.get("round_end_reason")
+                    or end_record.get("winner_reason")
+                    or end_record.get("winnerReason")
+                )
                 break
+        freeze_end_tick = _freeze_end_tick_for_round(index, start_tick, matching_end, freeze_records)
         rounds.append(
             _round(
                 index,
                 start_tick,
-                min(matching_end, start_tick + 15 * tick_rate),
+                min(matching_end, freeze_end_tick if freeze_end_tick is not None else start_tick + 15 * tick_rate),
                 matching_end,
                 winner,
+                winner_reason,
             )
         )
     return rounds
 
 
-def _round(number: int, start_tick: int, freeze_end_tick: int, end_tick: int, winner: str) -> dict[str, Any]:
-    return {
+def _round(
+    number: int,
+    start_tick: int,
+    freeze_end_tick: int,
+    end_tick: int,
+    winner: str,
+    winner_reason: str | None = None,
+) -> dict[str, Any]:
+    round_info = {
         "roundNumber": number,
         "startTick": start_tick,
         "freezeEndTick": freeze_end_tick,
         "endTick": end_tick,
         "winnerSide": winner,
     }
+    if winner_reason:
+        round_info["winnerReason"] = winner_reason
+    return round_info
+
+
+def _freeze_end_tick_for_round(
+    round_number: int,
+    start_tick: int,
+    end_tick: int,
+    freeze_records: list[dict[str, Any]],
+) -> int | None:
+    for record in freeze_records:
+        tick = int(record.get("tick", 0))
+        record_round = _round_number_from_record(record)
+        if record_round == round_number and start_tick <= tick <= end_tick:
+            return tick
+    return None
 
 
 def _sample_ticks(
@@ -306,12 +405,119 @@ def _build_kills(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "roundNumber": int(record.get("total_rounds_played") or 0) + 1,
                 "attackerId": _optional_str(record.get("attacker_steamid")),
                 "attackerName": _optional_str(record.get("attacker_name")),
+                "attackerSide": _side_from_value(
+                    record.get("attacker_team")
+                    or record.get("attacker_team_name")
+                    or record.get("attacker_team_num")
+                ),
                 "victimId": _optional_str(record.get("user_steamid")),
                 "victimName": _optional_str(record.get("user_name")),
+                "victimSide": _side_from_value(
+                    record.get("user_team")
+                    or record.get("user_team_name")
+                    or record.get("user_team_num")
+                    or record.get("team_num")
+                ),
+                "assisterId": _optional_str(record.get("assister_steamid")),
+                "assisterName": _optional_str(record.get("assister_name")),
                 "weapon": _optional_str(record.get("weapon")),
+                "headshot": _optional_bool(record.get("headshot")),
             }
         )
     return kills
+
+
+def _build_bomb_events(
+    planted: list[dict[str, Any]],
+    defused: list[dict[str, Any]],
+    exploded: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    events = [
+        *[
+            _parser_event(
+                record,
+                "bomb_planted",
+                f"Bomb planted {site}" if (site := _optional_str(record.get("site"))) else "Bomb planted",
+            )
+            for record in planted
+        ],
+        *[_parser_event(record, "bomb_defused", "Bomb defused") for record in defused],
+        *[_parser_event(record, "bomb_exploded", "Bomb exploded") for record in exploded],
+    ]
+    return sorted(events, key=lambda item: int(item.get("tick", 0)))
+
+
+def _build_utility_events(records_by_type: dict[str, list[dict[str, Any]]]) -> list[dict[str, Any]]:
+    labels = {
+        "smoke": "Smoke",
+        "flash": "Flash",
+        "molotov": "Molotov",
+        "he": "HE",
+    }
+    events: list[dict[str, Any]] = []
+    for event_type, records in records_by_type.items():
+        for record in records:
+            events.append(_parser_event(record, event_type, labels[event_type]))
+    return sorted(events, key=lambda item: int(item.get("tick", 0)))
+
+
+def _parser_event(record: dict[str, Any], event_type: str, label: str) -> dict[str, Any]:
+    tick = int(record.get("tick", 0))
+    event = {
+        "id": f"{event_type}-{tick}-{_optional_str(record.get('user_steamid')) or _optional_str(record.get('player_steamid')) or 'event'}",
+        "type": event_type,
+        "tick": tick,
+        "roundNumber": _round_number_from_record(record),
+        "playerId": _optional_str(record.get("user_steamid") or record.get("player_steamid")),
+        "playerName": _optional_str(record.get("user_name") or record.get("player_name")),
+        "side": _side_from_value(
+            record.get("team")
+            or record.get("team_name")
+            or record.get("team_num")
+            or record.get("team_number")
+            or record.get("user_team_name")
+        ),
+        "label": label,
+        "metadata": _compact_metadata(record, ["site", "weapon"]),
+    }
+    position = _event_position(record)
+    if position is not None:
+        event["x"] = position[0]
+        event["y"] = position[1]
+    return {key: value for key, value in event.items() if value is not None}
+
+
+def _round_number_from_record(record: dict[str, Any]) -> int:
+    if record.get("roundNumber") is not None:
+        return int(record["roundNumber"])
+    if record.get("round_number") is not None:
+        return int(record["round_number"])
+    return int(record.get("total_rounds_played") or 0) + 1
+
+
+def _event_position(record: dict[str, Any]) -> tuple[float, float] | None:
+    x_value = _first_finite_value(record, ["x", "X", "grenade_x", "entity_x", "player_x"])
+    y_value = _first_finite_value(record, ["y", "Y", "grenade_y", "entity_y", "player_y"])
+    if x_value is None or y_value is None:
+        return None
+    return x_value, y_value
+
+
+def _first_finite_value(record: dict[str, Any], keys: list[str]) -> float | None:
+    for key in keys:
+        value = record.get(key)
+        if _finite(value):
+            return float(value)
+    return None
+
+
+def _compact_metadata(record: dict[str, Any], keys: list[str]) -> dict[str, Any]:
+    metadata: dict[str, Any] = {}
+    for key in keys:
+        value = record.get(key)
+        if value is not None and value != "":
+            metadata[key] = value
+    return metadata
 
 
 def _round_for_tick(tick: int, rounds: list[dict[str, Any]]) -> int:
@@ -401,3 +607,9 @@ def _records(value: Any) -> list[dict[str, Any]]:
 
 def _optional_str(value: Any) -> str | None:
     return None if value is None else str(value)
+
+
+def _optional_bool(value: Any) -> bool | None:
+    if value is None:
+        return None
+    return bool(value)

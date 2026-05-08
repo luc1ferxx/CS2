@@ -475,6 +475,7 @@ class DemoService:
         return [CoachingEventOut.model_validate(event) for event in events]
 
     def _with_replay_contract_defaults(self, replay: dict[str, Any]) -> dict[str, Any]:
+        replay["events"] = replay["events"] if isinstance(replay.get("events"), list) else []
         if "video" in replay:
             replay["video"] = self._with_video_contract_defaults(replay["video"], replay)
             return replay
