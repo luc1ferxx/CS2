@@ -31,12 +31,14 @@ services:
       REDIS_QUEUE_NAME: cs2-demo-jobs
       REPLAY_STORAGE_DIR: /data/replays
       DEMO_UPLOAD_STORAGE_DIR: /data/uploads
+      VIDEO_STORAGE_DIR: /data/videos
       CORS_ORIGINS: http://localhost:3000,http://127.0.0.1:3000
     ports:
       - "8000:8000"
     volumes:
       - replay-data:/data/replays
       - upload-data:/data/uploads
+      - video-data:/data/videos
     depends_on:
       postgres:
         condition: service_healthy
@@ -53,9 +55,11 @@ services:
       REDIS_QUEUE_NAME: cs2-demo-jobs
       REPLAY_STORAGE_DIR: /data/replays
       DEMO_UPLOAD_STORAGE_DIR: /data/uploads
+      VIDEO_STORAGE_DIR: /data/videos
     volumes:
       - replay-data:/data/replays
       - upload-data:/data/uploads
+      - video-data:/data/videos
     depends_on:
       postgres:
         condition: service_healthy
@@ -77,3 +81,4 @@ volumes:
   postgres-data:
   replay-data:
   upload-data:
+  video-data:

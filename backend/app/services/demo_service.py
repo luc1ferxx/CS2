@@ -13,7 +13,7 @@ from app.models.demo import Demo
 from app.models.job import DemoJob
 from app.schemas.coaching import CoachingEventOut
 from app.schemas.demo import DemoListItem
-from app.services.upload_service import demo_upload_path, store_demo_upload
+from app.services.upload_service import StoredVideoUpload, demo_upload_path, store_demo_upload
 
 
 class DemoService:
@@ -170,11 +170,59 @@ class DemoService:
                 "tickRate": demo.tick_rate,
                 "source": "mock",
                 "errorMessage": None,
+                "timeOriginSeconds": 0,
             }
         video = replay["video"]
         if isinstance(video, dict):
             return video
         raise ValueError("Invalid replay video contract")
+
+    def attach_manual_video(self, demo: Demo, stored_video: StoredVideoUpload) -> dict[str, Any]:
+        current_video = self.get_video_status(demo)
+        return self.update_replay_video(
+            demo,
+            {
+                **current_video,
+                "status": "ready",
+                "url": stored_video.url,
+                "source": "manual_upload",
+                "errorMessage": None,
+            },
+        )
+
+    def update_video_calibration(
+        self,
+        demo: Demo,
+        *,
+        duration_seconds: float | None = None,
+        tick_start: int | None = None,
+        tick_end: int | None = None,
+        tick_rate: int | None = None,
+        time_origin_seconds: float | None = None,
+    ) -> dict[str, Any]:
+        current_video = self.get_video_status(demo)
+        next_video = {**current_video}
+
+        if duration_seconds is not None:
+            if duration_seconds < 0:
+                raise ValueError("durationSeconds must be zero or greater")
+            next_video["durationSeconds"] = duration_seconds
+        if tick_start is not None:
+            next_video["tickStart"] = tick_start
+        if tick_end is not None:
+            next_video["tickEnd"] = tick_end
+        if tick_rate is not None:
+            if tick_rate <= 0:
+                raise ValueError("tickRate must be greater than zero")
+            next_video["tickRate"] = tick_rate
+        if time_origin_seconds is not None:
+            if time_origin_seconds < 0:
+                raise ValueError("timeOriginSeconds must be zero or greater")
+            next_video["timeOriginSeconds"] = time_origin_seconds
+
+        if int(next_video["tickEnd"]) < int(next_video["tickStart"]):
+            raise ValueError("tickEnd must be greater than or equal to tickStart")
+        return self.update_replay_video(demo, next_video)
 
     def update_replay_video(self, demo: Demo, video: dict[str, Any]) -> dict[str, Any]:
         replay = self.load_replay_blob(demo)
@@ -218,21 +266,36 @@ class DemoService:
         replay: dict[str, Any],
     ) -> dict[str, Any]:
         rounds = replay.get("rounds", [])
-        tick_rate = int(video.get("tickRate") or replay.get("tickRate", 64))
-        tick_start = int(video.get("tickStart") or (rounds[0]["startTick"] if rounds else 0))
-        tick_end = int(video.get("tickEnd") or (rounds[-1]["endTick"] if rounds else tick_start))
+        tick_rate = _positive_int_or_default(video.get("tickRate"), int(replay.get("tickRate", 64)))
+        tick_start = _int_or_default(video.get("tickStart"), int(rounds[0]["startTick"]) if rounds else 0)
+        tick_end = _int_or_default(video.get("tickEnd"), int(rounds[-1]["endTick"]) if rounds else tick_start)
         duration_seconds = video.get("durationSeconds")
         if duration_seconds is None:
             duration_seconds = round((tick_end - tick_start) / tick_rate, 2)
+        time_origin_seconds = float(video.get("timeOriginSeconds", 0) or 0)
 
         return {
             **video,
             "status": video.get("status", "pending"),
             "url": video.get("url"),
-            "durationSeconds": duration_seconds,
+            "durationSeconds": max(0, float(duration_seconds)),
             "tickStart": tick_start,
             "tickEnd": tick_end,
             "tickRate": tick_rate,
             "source": video.get("source", "mock"),
             "errorMessage": video.get("errorMessage"),
+            "timeOriginSeconds": max(0, time_origin_seconds),
         }
+
+
+def _int_or_default(value: Any, default: int) -> int:
+    if value is None:
+        return default
+    return int(value)
+
+
+def _positive_int_or_default(value: Any, default: int) -> int:
+    if value is None:
+        return default
+    parsed = int(value)
+    return parsed if parsed > 0 else default

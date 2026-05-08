@@ -38,6 +38,7 @@ def normalize_parser_output(demo_id: str, parsed: dict[str, Any]) -> dict[str, A
             "tickRate": tick_rate,
             "source": "mock",
             "errorMessage": None,
+            "timeOriginSeconds": 0,
         },
         "rounds": rounds,
         "players": players,

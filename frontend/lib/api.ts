@@ -13,6 +13,14 @@ interface RenderJobCreated {
   video: ReplayVideo;
 }
 
+export interface VideoCalibrationUpdate {
+  durationSeconds?: number;
+  tickStart?: number;
+  tickEnd?: number;
+  tickRate?: number;
+  timeOriginSeconds?: number;
+}
+
 async function requestJson<T>(
   path: string,
   init?: RequestInit
@@ -73,6 +81,22 @@ export function getReplay(demoId: string): Promise<ReplayData> {
 
 export function getDemoVideo(demoId: string): Promise<ReplayVideo> {
   return requestJson<ReplayVideo>(`/demos/${demoId}/video`);
+}
+
+export function uploadDemoVideo(demoId: string, file: File): Promise<ReplayVideo> {
+  const formData = new FormData();
+  formData.append("file", file);
+  return requestForm<ReplayVideo>(`/demos/${demoId}/video/upload`, formData);
+}
+
+export function saveVideoCalibration(
+  demoId: string,
+  calibration: VideoCalibrationUpdate
+): Promise<ReplayVideo> {
+  return requestJson<ReplayVideo>(`/demos/${demoId}/video/calibration`, {
+    method: "POST",
+    body: JSON.stringify(calibration)
+  });
 }
 
 export function createMockRenderJob(demoId: string): Promise<RenderJobCreated> {

@@ -9,7 +9,17 @@ import { CoachingPanel } from "@/components/coaching/CoachingPanel";
 import { FirstPersonReplay } from "@/components/replay/FirstPersonReplay";
 import { ReplayViewer } from "@/components/replay/ReplayViewer";
 import { Timeline } from "@/components/replay/Timeline";
-import { createMockRenderJob, getCoaching, getDemoStatus, getDemoVideo, getReplay } from "@/lib/api";
+import { VideoSetupPanel } from "@/components/replay/VideoSetupPanel";
+import {
+  createMockRenderJob,
+  getCoaching,
+  getDemoStatus,
+  getDemoVideo,
+  getReplay,
+  saveVideoCalibration,
+  uploadDemoVideo,
+  type VideoCalibrationUpdate
+} from "@/lib/api";
 import type { CoachingEvent } from "@/types/coaching";
 import type { DemoStatus } from "@/types/demo";
 import type { ReplayData } from "@/types/replay";
@@ -28,6 +38,8 @@ export default function DemoDetailPage() {
   const [selectedPlayerId, setSelectedPlayerId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [renderRequesting, setRenderRequesting] = useState(false);
+  const [currentVideoTime, setCurrentVideoTime] = useState(0);
+  const [detectedVideoDuration, setDetectedVideoDuration] = useState<number | null>(null);
 
   const loadStatus = useCallback(async () => {
     try {
@@ -55,6 +67,8 @@ export default function DemoDetailPage() {
       const initialRound = findRoundForTick(nextReplay.rounds, initialTick) ?? nextReplay.rounds[0];
       setSelectedRound(initialRound?.roundNumber ?? 1);
       setCurrentTick(initialTick);
+      setCurrentVideoTime(nextReplay.video.timeOriginSeconds ?? 0);
+      setDetectedVideoDuration(null);
       setSelectedPlayerId(nextReplay.players[0]?.id ?? null);
       setError(null);
     } catch (err) {
@@ -184,6 +198,24 @@ export default function DemoDetailPage() {
     }
   }
 
+  async function uploadManualVideo(file: File) {
+    const video = await uploadDemoVideo(demoId, file);
+    setDetectedVideoDuration(null);
+    setCurrentVideoTime(video.timeOriginSeconds ?? 0);
+    setReplay((currentReplay) =>
+      currentReplay ? { ...currentReplay, video } : currentReplay
+    );
+    setError(null);
+  }
+
+  async function saveManualVideoCalibration(calibration: VideoCalibrationUpdate) {
+    const video = await saveVideoCalibration(demoId, calibration);
+    setReplay((currentReplay) =>
+      currentReplay ? { ...currentReplay, video } : currentReplay
+    );
+    setError(null);
+  }
+
   return (
     <main className="app-shell">
       <header className="topbar">
@@ -230,6 +262,15 @@ export default function DemoDetailPage() {
                   renderRequesting={renderRequesting}
                   onRequestMockRender={requestMockRender}
                   onSeekTick={seek}
+                  onVideoDurationChange={setDetectedVideoDuration}
+                  onVideoTimeChange={setCurrentVideoTime}
+                />
+                <VideoSetupPanel
+                  currentVideoTime={currentVideoTime}
+                  detectedDurationSeconds={detectedVideoDuration}
+                  video={replay.video}
+                  onSaveCalibration={saveManualVideoCalibration}
+                  onUploadVideo={uploadManualVideo}
                 />
                 <ReplayViewer
                   replay={replay}

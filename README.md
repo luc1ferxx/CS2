@@ -13,7 +13,8 @@ The current build does not call OpenAI, does not use S3/R2, and does not render 
 - Replay blob boundary: local JSON files in `/data/replays` shared by the API and worker containers
 - Demo upload boundary: local files in `/data/uploads` shared by the API and worker containers
 - Parser spike: `demoparser2` in the worker container
-- First-person media boundary: replay JSON includes `video` metadata, but no real video is rendered in this mock phase
+- First-person media boundary: replay JSON includes `video` metadata; manually uploaded local `.mp4` files can be bound and calibrated, but no CS2 video is rendered automatically in this mock phase
+- Manual video boundary: local mp4 files in `/data/videos` exposed by the API at `/media/videos/...`
 - Deployment shape: Docker Compose with `frontend`, `api`, `worker`, `postgres`, and `redis`
 
 ## Start
@@ -62,6 +63,41 @@ curl -F "file=@sample-demos/the-mongolz-vs-liquid-ancient.dem" \
 
 If `demoparser2` is missing or fails on a demo, the worker marks `demo.status = failed` and writes the parser error to `demo.error_message`. This spike does not yet generate coaching events from real rule analysis.
 
+## Manual Video Binding And Sync Calibration
+
+After a demo parse completes, open the demo detail page and use `Video Setup / Sync Calibration`:
+
+1. Upload a manually prepared `.mp4`.
+2. The frontend calls `POST /demos/{demo_id}/video/upload`.
+3. The API validates `.mp4` extension and size, stores the file under `/data/videos/{demo_id}/`, and writes only media metadata into the replay JSON blob.
+4. The video becomes playable through `/media/videos/{demo_id}/{file}` and `GET /demos/{demo_id}/video` returns `source = manual_upload` and `status = ready`.
+5. Enter `timeOriginSeconds`, `tickStart`, and `tickEnd`, or click `Use current video time as tickStart origin`.
+6. Click `Save Calibration`, which calls `POST /demos/{demo_id}/video/calibration` and updates the replay JSON `video` metadata.
+
+CLI equivalent for video upload:
+
+```bash
+curl -F "file=@falcons-vs-furia-m1-dust2.mp4" \
+  http://localhost:8000/demos/{demo_id}/video/upload
+```
+
+CLI equivalent for calibration:
+
+```bash
+curl -X POST http://localhost:8000/demos/{demo_id}/video/calibration \
+  -H "Content-Type: application/json" \
+  -d '{"timeOriginSeconds":12.5,"tickStart":12345,"tickEnd":54321}'
+```
+
+The tick/video mapping is:
+
+```text
+tickToVideoTime(tick) = timeOriginSeconds + (tick - tickStart) / tickRate
+videoTimeToTick(time) = tickStart + (time - timeOriginSeconds) * tickRate
+```
+
+The frontend clamps both directions to keep the first-person video, timeline, tactical map, and coaching panel on the same tick. Old replay blobs that do not include `timeOriginSeconds` are treated as `0`.
+
 ## API
 
 - `GET /health`
@@ -72,6 +108,8 @@ If `demoparser2` is missing or fails on a demo, the worker marks `demo.status = 
 - `GET /demos/{demo_id}/replay`
 - `GET /demos/{demo_id}/coaching`
 - `GET /demos/{demo_id}/video`
+- `POST /demos/{demo_id}/video/upload`
+- `POST /demos/{demo_id}/video/calibration`
 - `POST /demos/{demo_id}/render/mock`
 
 ## Development Notes
@@ -86,13 +124,15 @@ PostgreSQL stores only metadata and indexed coaching events:
 
 Replay frame data is treated as blob-style storage and written to shared JSON files. Uploaded demos are also local files in the Docker volume during this spike. This keeps the boundary ready for S3/R2 later and avoids putting large tick payloads in PostgreSQL.
 
-Video files are not stored in PostgreSQL. The current replay contract only carries media metadata such as `video.status`, `video.url`, `video.durationSeconds`, tick range, tick rate, source, and optional `errorMessage`. Real mp4/HLS assets should live in object storage later.
+Video files are not stored in PostgreSQL. Local manual mp4 files live under `/data/videos` in Docker Compose. The current replay contract only carries media metadata such as `video.status`, `video.url`, `video.durationSeconds`, tick range, tick rate, source, optional `errorMessage`, and `timeOriginSeconds`. Real mp4/HLS assets should live in object storage later.
 
 ## First-person Playback Reality Check
 
 Browsers cannot directly play CS2 `.dem` files. A `.dem` is not a video stream, and this MVP does not try to render CS2 first-person gameplay in the browser.
 
-The current first-person player is still a mock/player shell. If `video.url` is `null`, the frontend renders a styled mock first-person viewport and synchronizes it with the same `currentTick` used by coaching events and the tactical map. For real parsed demos, the tactical map uses sampled real player coordinates, but the first-person viewport is not real CS2 video.
+The current first-person player is still a mock/player shell when `video.url` is `null`; the frontend renders a styled mock first-person viewport and synchronizes it with the same `currentTick` used by coaching events and the tactical map. For real parsed demos, the tactical map uses sampled real player coordinates. If an operator manually uploads an mp4, the browser plays that mp4 and uses the saved calibration metadata to map video time to demo ticks.
+
+Manual mp4 binding is not automatic CS2 rendering. The API does not run CS2, OBS, ffmpeg, or OpenAI. A local mp4 such as `falcons-vs-furia-m1-dust2.mp4` can be used for validation if it exists in the checkout, but the code does not depend on that file and mp4 files should not be committed.
 
 The production path should be:
 
@@ -123,7 +163,7 @@ Not supported yet:
 - `.rar` extraction
 - Full tick-by-tick replay at original demo density
 - Rule-generated coaching events for real demos
-- Real first-person video
+- Automatic CS2 first-person rendering
 - OpenAI coaching copy
 
 Next parser work should add upload sessions, S3/R2 quarantine storage, stricter zip inspection, parser telemetry, map-specific coordinate calibration, and a rules package for positioning, trading, utility, timing, economy, objective, retake, and post-plant events.
@@ -138,7 +178,7 @@ The replay UI supports map-specific radar backgrounds. `de_dust2` currently uses
 
 CS2 radar images are square assets from `panorama/images/overheadmaps`; overview values come from `resource/overviews/{map}.txt`. For production, extract these from the operator's CS2 install with Source 2 Viewer or replace them with internally licensed assets, then keep the parser normalizer and frontend map image table in sync.
 
-## Next Phase: Render Worker Spike
+## Future Phase: GPU Render Worker Spike
 
 The current API/worker only supports a mock render job:
 
@@ -151,7 +191,7 @@ POST /demos/{demo_id}/render/mock
   -> FirstPersonReplay keeps using the mock/player shell
 ```
 
-Do not implement real CS2 automation in this MVP. The next media-focused spike should prove one end-to-end render path:
+Do not implement real CS2 automation in this MVP. The next media-focused spike after manual video binding should prove one end-to-end render path:
 
 1. Start from one known `.dem` file.
 2. Run a dedicated Windows or Linux GPU worker with the CS2 client installed.

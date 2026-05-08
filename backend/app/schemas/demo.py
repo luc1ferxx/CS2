@@ -42,6 +42,15 @@ class ReplayVideoStatus(BaseModel):
     tickRate: int
     source: str
     errorMessage: str | None = None
+    timeOriginSeconds: float = 0
+
+
+class VideoCalibrationUpdate(BaseModel):
+    durationSeconds: float | None = None
+    tickStart: int | None = None
+    tickEnd: int | None = None
+    tickRate: int | None = None
+    timeOriginSeconds: float | None = None
 
 
 class RenderJobCreated(BaseModel):

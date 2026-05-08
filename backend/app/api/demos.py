@@ -1,9 +1,16 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.schemas.demo import DemoListItem, DemoStatus, RenderJobCreated, ReplayVideoStatus
+from app.schemas.demo import (
+    DemoListItem,
+    DemoStatus,
+    RenderJobCreated,
+    ReplayVideoStatus,
+    VideoCalibrationUpdate,
+)
 from app.services.demo_service import DemoService
+from app.services.upload_service import DemoUploadValidationError, store_video_upload
 
 router = APIRouter(tags=["demos"])
 
@@ -28,6 +35,56 @@ def get_demo_video(demo_id: str, db: Session = Depends(get_db)) -> ReplayVideoSt
     if demo is None:
         raise HTTPException(status_code=404, detail="Demo not found")
     return ReplayVideoStatus.model_validate(service.get_video_status(demo))
+
+
+@router.post("/demos/{demo_id}/video/upload", response_model=ReplayVideoStatus)
+async def upload_demo_video(
+    demo_id: str,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+) -> ReplayVideoStatus:
+    service = DemoService(db)
+    demo = service.get_demo(demo_id)
+    if demo is None:
+        raise HTTPException(status_code=404, detail="Demo not found")
+    if demo.status != "completed":
+        raise HTTPException(status_code=409, detail="Demo parse must complete before video upload")
+
+    try:
+        stored_video = await store_video_upload(demo.id, file)
+        video = service.attach_manual_video(demo, stored_video)
+    except DemoUploadValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    return ReplayVideoStatus.model_validate(video)
+
+
+@router.post("/demos/{demo_id}/video/calibration", response_model=ReplayVideoStatus)
+def update_demo_video_calibration(
+    demo_id: str,
+    calibration: VideoCalibrationUpdate,
+    db: Session = Depends(get_db),
+) -> ReplayVideoStatus:
+    service = DemoService(db)
+    demo = service.get_demo(demo_id)
+    if demo is None:
+        raise HTTPException(status_code=404, detail="Demo not found")
+
+    try:
+        video = service.update_video_calibration(
+            demo,
+            duration_seconds=calibration.durationSeconds,
+            tick_start=calibration.tickStart,
+            tick_end=calibration.tickEnd,
+            tick_rate=calibration.tickRate,
+            time_origin_seconds=calibration.timeOriginSeconds,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    return ReplayVideoStatus.model_validate(video)
 
 
 @router.post("/demos/{demo_id}/render/mock", response_model=RenderJobCreated, status_code=201)

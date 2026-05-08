@@ -44,7 +44,7 @@ export interface ReplayFrame {
 }
 
 export type ReplayVideoStatus = "pending" | "queued" | "rendering" | "ready" | "failed";
-export type ReplayVideoSource = "mock" | "rendered";
+export type ReplayVideoSource = "manual_upload" | "mock" | "rendered";
 
 export interface ReplayVideo {
   status: ReplayVideoStatus;
@@ -55,6 +55,7 @@ export interface ReplayVideo {
   tickRate: number;
   source: ReplayVideoSource;
   errorMessage?: string | null;
+  timeOriginSeconds: number;
 }
 
 export interface ReplayData {

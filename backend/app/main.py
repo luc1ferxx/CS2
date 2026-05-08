@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 
 from app.api import coaching, demos, replay, uploads
@@ -22,11 +23,17 @@ app.include_router(demos.router)
 app.include_router(uploads.router)
 app.include_router(replay.router)
 app.include_router(coaching.router)
+app.mount(
+    "/media/videos",
+    StaticFiles(directory=settings.video_storage_dir, check_dir=False),
+    name="videos",
+)
 
 
 @app.on_event("startup")
 def on_startup() -> None:
     init_db()
+    settings.video_storage_dir.mkdir(parents=True, exist_ok=True)
 
 
 @app.get("/health")

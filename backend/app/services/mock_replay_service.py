@@ -77,6 +77,7 @@ def build_mock_replay(demo_id: str) -> tuple[dict[str, Any], list[dict[str, Any]
             "tickRate": tick_rate,
             "source": "mock",
             "errorMessage": None,
+            "timeOriginSeconds": 0,
         },
         "rounds": rounds,
         "players": players,

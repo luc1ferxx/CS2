@@ -345,6 +345,112 @@ button {
   padding: 14px;
 }
 
+.video-setup-panel {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+}
+
+.video-setup-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.video-setup-header h2 {
+  margin: 0 0 5px;
+  font-size: 16px;
+  line-height: 1.2;
+}
+
+.video-setup-header span,
+.video-metadata-grid dt,
+.calibration-grid span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.disabled-label {
+  cursor: not-allowed;
+  opacity: 0.54;
+}
+
+.video-metadata-grid {
+  display: grid;
+  grid-template-columns: minmax(180px, 1.4fr) repeat(3, minmax(110px, 0.7fr));
+  gap: 12px;
+  margin: 0;
+  padding: 10px 0;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+
+.video-metadata-grid div {
+  min-width: 0;
+}
+
+.video-metadata-grid dt {
+  margin-bottom: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.video-metadata-grid dd {
+  margin: 0;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.metadata-url {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.calibration-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(110px, 1fr));
+  gap: 10px;
+}
+
+.calibration-grid label {
+  display: grid;
+  gap: 6px;
+}
+
+.setup-input {
+  width: 100%;
+  min-height: 34px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface-2);
+  color: var(--text);
+  padding: 0 10px;
+}
+
+.calibration-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.setup-message,
+.setup-error {
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.setup-message {
+  color: var(--green);
+}
+
+.setup-error {
+  color: var(--red);
+}
+
 .first-person-header {
   display: flex;
   justify-content: space-between;
@@ -996,6 +1102,17 @@ button {
   .render-actions {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .video-setup-header,
+  .calibration-actions {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .video-metadata-grid,
+  .calibration-grid {
+    grid-template-columns: 1fr;
   }
 
   .render-status-overlay {

@@ -3,7 +3,8 @@
 import { Crosshair, RadioTower, Video } from "lucide-react";
 import { useEffect, useMemo, useRef } from "react";
 
-import { tickToVideoTime, videoTimeToTick } from "@/lib/replay-time";
+import { resolveMediaUrl } from "@/lib/media-url";
+import { tickToVideoTime, videoTimeRange, videoTimeToTick } from "@/lib/replay-time";
 import type { ReplayData, ReplayFrame } from "@/types/replay";
 
 interface FirstPersonReplayProps {
@@ -14,6 +15,8 @@ interface FirstPersonReplayProps {
   renderRequesting: boolean;
   onRequestMockRender: () => void;
   onSeekTick: (tick: number) => void;
+  onVideoDurationChange?: (durationSeconds: number) => void;
+  onVideoTimeChange?: (seconds: number) => void;
 }
 
 export function FirstPersonReplay({
@@ -23,17 +26,28 @@ export function FirstPersonReplay({
   speed,
   renderRequesting,
   onRequestMockRender,
-  onSeekTick
+  onSeekTick,
+  onVideoDurationChange,
+  onVideoTimeChange
 }: FirstPersonReplayProps) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const lastSyncedTickRef = useRef<number | null>(null);
   const frame = useMemo(() => getFrameForTick(replay.frames, currentTick), [currentTick, replay.frames]);
+  const videoSource = resolveMediaUrl(replay.video.url);
+  const timeRange = videoTimeRange(replay.video);
   const videoTime = tickToVideoTime(currentTick, replay.video);
-  const progress = Math.min(1, Math.max(0, videoTime / Math.max(1, replay.video.durationSeconds)));
+  const progress = Math.min(
+    1,
+    Math.max(0, (videoTime - timeRange.start) / Math.max(1, timeRange.end - timeRange.start))
+  );
+
+  useEffect(() => {
+    onVideoTimeChange?.(videoTime);
+  }, [onVideoTimeChange, videoTime]);
 
   useEffect(() => {
     const element = videoRef.current;
-    if (!element || !replay.video.url) {
+    if (!element || !videoSource) {
       return;
     }
 
@@ -47,16 +61,17 @@ export function FirstPersonReplay({
     } else {
       element.pause();
     }
-  }, [playing, replay.video.url, speed, videoTime]);
+  }, [playing, speed, videoSource, videoTime]);
 
   useEffect(() => {
     const element = videoRef.current;
-    if (!element || !replay.video.url || !playing) {
+    if (!element || !videoSource || !playing) {
       return;
     }
 
     let animationFrameId = 0;
     const syncTickFromVideo = () => {
+      onVideoTimeChange?.(element.currentTime);
       const nextTick = videoTimeToTick(element.currentTime, replay.video);
       const lastSyncedTick = lastSyncedTickRef.current;
       if (lastSyncedTick === null || Math.abs(nextTick - lastSyncedTick) >= 1) {
@@ -68,7 +83,7 @@ export function FirstPersonReplay({
 
     animationFrameId = window.requestAnimationFrame(syncTickFromVideo);
     return () => window.cancelAnimationFrame(animationFrameId);
-  }, [onSeekTick, playing, replay.video]);
+  }, [onSeekTick, onVideoTimeChange, playing, replay.video, videoSource]);
 
   return (
     <section className="panel first-person-panel" aria-label="First-person replay player">
@@ -76,7 +91,7 @@ export function FirstPersonReplay({
         <div>
           <h2>First-person Replay</h2>
           <span>
-            {replay.video.url ? "Rendered video" : "Mock first-person render"} /{" "}
+            {videoSource ? videoLabel(replay.video.source) : "Mock first-person render"} /{" "}
             {formatTime(videoTime)} / Tick {Math.round(currentTick)}
           </span>
         </div>
@@ -98,14 +113,22 @@ export function FirstPersonReplay({
       </div>
 
       <div className="first-person-viewport">
-        {replay.video.url ? (
+        {videoSource ? (
           <video
             ref={videoRef}
             className="first-person-video"
-            src={replay.video.url}
+            src={videoSource}
             muted
             playsInline
+            preload="metadata"
+            onLoadedMetadata={(event) => {
+              const duration = event.currentTarget.duration;
+              if (Number.isFinite(duration) && duration > 0) {
+                onVideoDurationChange?.(duration);
+              }
+            }}
             onTimeUpdate={(event) => {
+              onVideoTimeChange?.(event.currentTarget.currentTime);
               const nextTick = videoTimeToTick(event.currentTarget.currentTime, replay.video);
               if (Math.abs(nextTick - currentTick) > 1) {
                 lastSyncedTickRef.current = nextTick;
@@ -204,6 +227,10 @@ function getFrameForTick(frames: ReplayFrame[], tick: number): ReplayFrame {
     selected = frame;
   }
   return selected;
+}
+
+function videoLabel(source: ReplayData["video"]["source"]): string {
+  return source === "manual_upload" ? "Manual video" : "Rendered video";
 }
 
 function formatTime(seconds: number): string {
