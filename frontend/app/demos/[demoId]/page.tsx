@@ -283,6 +283,7 @@ export default function DemoDetailPage() {
         ...currentJobs.filter((job) => job.job_id !== jobStatus.job_id)
       ]);
       setError(null);
+      void refreshRenderOperatorState();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to create render clip job");
     } finally {
@@ -411,6 +412,7 @@ export default function DemoDetailPage() {
               </div>
               <CoachingPanel
                 events={events}
+                players={replay.players}
                 currentTick={currentTick}
                 selectedRound={selectedRound}
                 renderJobByEventId={renderJobByEventId}

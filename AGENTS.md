@@ -41,6 +41,8 @@ Do not design flows that require controlling the user's computer, opening their 
 
 The current render-focused boundary is `render_clip`, not whole-match rendering: create jobs around a coaching event or selected player/tick range, keep API containers free of CS2/OBS/ffmpeg automation, and leave real GPU execution to a separate worker. Render Worker V1 should stay a manifest/callback adapter: future GPU workers can fetch a compact job manifest and post completed/failed output, while the in-repo worker may still mark unprocessed `render_clip` jobs failed with a clear "GPU worker not connected" message. The app may expose compact internal operator status for these jobs. The `render-worker/` skeleton may use a dev fake mp4 to prove the adapter chain, and the CS2 manual adapter may generate operator instructions, local status artifacts, and callback metadata, but it must not add real CS2/Steam/OBS/ffmpeg automation or auto-control a local game client.
 
+Coaching UI should remain a deterministic review surface for stored rules-based events. Do not turn the coaching panel into an OpenAI/chat workflow unless product scope changes; preserve round grouping, severity/rule/search filtering, tick-linked cards, evidence metadata, timeline markers, and event-level `render_clip` actions.
+
 ## Commit & Pull Request Guidelines
 
 This checkout does not include Git history, so use concise imperative commits such as `Add mock render job status API`. Pull requests should include: purpose, changed backend/frontend surfaces, verification commands run, screenshots for UI changes, and any known limitations.

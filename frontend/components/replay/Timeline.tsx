@@ -2,6 +2,7 @@
 
 import { Pause, Play } from "lucide-react";
 
+import { timelineMarkersForRound } from "@/lib/coaching-review";
 import type { CoachingEvent } from "@/types/coaching";
 import type { ReplayRound } from "@/types/replay";
 import { RoundSelector } from "./RoundSelector";
@@ -36,7 +37,7 @@ export function Timeline({
   const round = rounds.find((item) => item.roundNumber === selectedRound) ?? rounds[0];
   const minTick = round?.startTick ?? 0;
   const maxTick = round?.endTick ?? 0;
-  const durationTicks = Math.max(1, maxTick - minTick);
+  const markers = timelineMarkersForRound(events, selectedRound, minTick, maxTick);
 
   return (
     <section className="panel timeline-panel" aria-label="Replay timeline">
@@ -77,19 +78,18 @@ export function Timeline({
             onChange={(event) => onSeek(Number(event.target.value))}
             aria-label="Seek replay"
           />
-          <div className="event-markers" aria-hidden="true">
-            {events
-              .filter((event) => event.round_number === selectedRound)
-              .map((event) => {
-                const left = ((event.tick_start - minTick) / durationTicks) * 100;
-                return (
-                  <span
-                    key={event.id}
-                    className={`event-marker ${event.severity}`}
-                    style={{ left: `${Math.max(0, Math.min(100, left))}%` }}
-                  />
-                );
-              })}
+          <div className="event-markers" aria-label="Coaching event markers">
+            {markers.map((marker) => (
+              <button
+                key={marker.event.id}
+                className={`event-marker ${marker.event.severity}`}
+                style={{ left: `${marker.leftPercent}%` }}
+                type="button"
+                onClick={() => onSeek(marker.event.tick_start)}
+                aria-label={`Jump to ${marker.event.severity} coaching event at tick ${marker.event.tick_start}`}
+                title={`${marker.event.title} at tick ${marker.event.tick_start}`}
+              />
+            ))}
           </div>
         </div>
 

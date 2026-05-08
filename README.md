@@ -96,6 +96,18 @@ Rules are configured through `backend/app/analysis/rules.py::RuleConfig`. The cu
 
 Events are de-duped when the same round, player, category, and near tick would otherwise produce repeated cards. Output is sorted by severity first, then tick, so review starts with the highest-signal issues. Event metadata includes `ruleId`, `involvedPlayerIds`, `evidenceTicks`, and rule-specific fields such as `distance`, `windowSeconds`, and `nearbyCount`.
 
+## Coaching Review UI V2
+
+The demo detail coaching panel is a review tool for deterministic event rows, not an OpenAI chat surface. It supports:
+
+- Round-grouped coaching events across the full demo, with the selected round highlighted.
+- Severity filtering for `all`, `high`, `medium`, and `low` where `critical` is included with high and `info` is included with low.
+- Rule filtering for current rules such as `untraded_death`, `isolated_entry`, `poor_spacing`, `post_plant_spread`, and `retake_desync`. The UI treats stored `post_plant_spread_issue` rows as the `post_plant_spread` filter.
+- Search across player names, event title, event description, rule id, and rule label.
+- Dense event cards showing severity, rule id/label, round, tick, involved players, short explanation, and evidence metadata such as `distance`, `windowSeconds`, `evidenceTicks`, `nearbyCount`, and `site`.
+- Tick-linked coaching markers on the timeline. Marker position is derived from `tick_start` within the current round and marker color follows severity.
+- Event-level `Generate Clip for this event`, which calls the existing `render_clip` API and refreshes the Render Operator panel state.
+
 Known limitations:
 
 - Parser frames are sampled, not full tick density, so distances and timing are approximate.
