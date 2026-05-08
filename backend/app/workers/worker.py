@@ -159,6 +159,9 @@ def process_mock_render_job(db: Session, demo: Demo, job: DemoJob) -> None:
 def process_render_clip_job(db: Session, demo: Demo, job: DemoJob) -> None:
     service = DemoService(db)
 
+    if job.status != "queued":
+        return
+
     if service.load_replay_blob(demo) is None:
         raise ValueError("Replay blob is not ready")
 

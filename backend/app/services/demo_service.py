@@ -227,6 +227,19 @@ class DemoService:
             return None
         return job
 
+    def next_render_clip_job(self, statuses: tuple[str, ...] = ("queued", "pending")) -> DemoJob | None:
+        return (
+            self.db.query(DemoJob)
+            .join(Demo, DemoJob.demo_id == Demo.id)
+            .filter(
+                Demo.user_id == settings.dev_user_id,
+                DemoJob.job_type == RENDER_CLIP_JOB_TYPE,
+                DemoJob.status.in_(statuses),
+            )
+            .order_by(DemoJob.created_at.asc())
+            .first()
+        )
+
     def render_job_status(self, job: DemoJob) -> RenderJobStatus:
         return RenderJobStatus(
             job_id=job.id,

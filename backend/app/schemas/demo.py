@@ -114,6 +114,14 @@ class RenderWorkerResultAccepted(BaseModel):
     video: ReplayVideoStatus
 
 
+class RenderWorkerMediaUpload(BaseModel):
+    jobId: str
+    demoId: str
+    videoUrl: str
+    originalFilename: str
+    sizeBytes: int
+
+
 class RenderJobCreated(BaseModel):
     job_id: str
     demo_id: str

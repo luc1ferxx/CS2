@@ -16,6 +16,7 @@ The current build does not call OpenAI, does not use S3/R2, and does not render 
 - First-person media boundary: replay JSON includes `video` metadata; manually uploaded local `.mp4` files can be bound and calibrated, but no CS2 video is rendered automatically in this mock phase
 - Manual video boundary: local mp4 files in `/data/videos` exposed by the API at `/media/videos/...`
 - Render clip boundary: `POST /demos/{demo_id}/render/clip` creates a compact `demo_jobs.job_type = render_clip` row for a short POV/tick range; Render Worker V1 endpoints expose a manifest and callback contract for a future GPU worker
+- Render worker runner skeleton: `render-worker/runner.py` can fetch manifests, dry-run a plan, upload a dev fake mp4, and call the existing completed/failed callback without launching CS2/Steam/OBS/ffmpeg
 - Deployment shape: Docker Compose with `frontend`, `api`, `worker`, `postgres`, and `redis`
 
 ## Start
@@ -173,6 +174,15 @@ curl http://localhost:8000/render-worker/jobs/{job_id}/manifest \
   -H "X-Render-Worker-Token: dev-render-worker-token"
 ```
 
+Next queued manifest endpoint:
+
+```bash
+curl http://localhost:8000/render-worker/jobs/next \
+  -H "X-Render-Worker-Token: dev-render-worker-token"
+```
+
+If no queued `render_clip` job exists, this returns `204 No Content`.
+
 Manifest shape:
 
 ```json
@@ -217,6 +227,16 @@ curl -X POST http://localhost:8000/render-worker/jobs/{job_id}/result \
 
 Completed output may use `videoUrl` or `localMediaPath`. A `localMediaPath` must either be a `/media/videos/...` URL path or an absolute path under the configured video storage directory. On completion, the API marks the job `completed` and writes replay `video` metadata with `status = ready`, `source = rendered`, the clip URL, tick range, tick rate, duration, and `timeOriginSeconds`.
 
+Dev media upload endpoint:
+
+```bash
+curl -X POST http://localhost:8000/render-worker/jobs/{job_id}/media \
+  -H "X-Render-Worker-Token: dev-render-worker-token" \
+  -F "file=@dev-placeholder.mp4"
+```
+
+This stores a small local mp4 under `/data/videos/{demo_id}/` and returns a `/media/videos/...` URL for the result callback. It does not store video bytes in PostgreSQL and does not change replay metadata by itself.
+
 Failure callback:
 
 ```json
@@ -244,6 +264,35 @@ Future GPU worker integration should:
 5. Render the selected POV/tick range.
 6. Upload or place mp4/HLS output.
 7. POST the result callback so the replay video contract becomes playable by the existing frontend.
+
+## Render Worker Runner Skeleton
+
+`render-worker/runner.py` is a local/dev skeleton for the future external GPU worker. It uses the same token-gated Render Worker V1 API and deliberately performs no real rendering.
+
+Environment:
+
+```bash
+export API_BASE_URL=http://localhost:8000
+export RENDER_WORKER_TOKEN=dev-render-worker-token
+export WORK_DIR=.render-worker-work
+export POLL_INTERVAL_SECONDS=5
+export DEV_FAKE_VIDEO_PATH=/absolute/path/to/dev-placeholder.mp4
+```
+
+Commands:
+
+```bash
+python3 render-worker/runner.py dry-run {job_id}
+python3 render-worker/runner.py dry-run
+python3 render-worker/runner.py process-job {job_id}
+python3 render-worker/runner.py poll-once
+```
+
+`dry-run` fetches a manifest and writes a local manifest snapshot under `WORK_DIR`, then prints the plan without upload or callback. `process-job` fetches one known manifest. `poll-once` asks the API for the next queued `render_clip` manifest.
+
+If `DEV_FAKE_VIDEO_PATH` points at an existing local `.mp4`, the runner uploads it to the dev media endpoint and posts a completed result callback with the returned `/media/videos/...` URL. The frontend then plays that URL through the existing `FirstPersonReplay` branch. If `DEV_FAKE_VIDEO_PATH` is missing or invalid, the runner posts a failed callback explaining that the real renderer is not connected; existing `manual_upload` video metadata is preserved by the API.
+
+See `render-worker/README.md` for the full skeleton workflow and replacement path for a real controlled GPU adapter.
 
 ## Manual Video Binding And Sync Calibration
 
@@ -298,7 +347,9 @@ The frontend clamps both directions to keep the first-person video, timeline, ta
 - `POST /demos/{demo_id}/render/mock`
 - `POST /demos/{demo_id}/render/clip`
 - `GET /demos/{demo_id}/render/jobs`
+- `GET /render-worker/jobs/next`
 - `GET /render-worker/jobs/{job_id}/manifest`
+- `POST /render-worker/jobs/{job_id}/media`
 - `POST /render-worker/jobs/{job_id}/result`
 
 ## Development Notes
@@ -387,6 +438,13 @@ POST /demos/{demo_id}/render/clip
 
 GET /render-worker/jobs/{job_id}/manifest
   -> returns demo file reference, POV, tick range, map, and preset
+
+GET /render-worker/jobs/next
+  -> returns the oldest queued render_clip manifest, or 204 when none exists
+
+POST /render-worker/jobs/{job_id}/media
+  -> dev-only mp4 ingestion for a skeleton/fake render output
+  -> stores bytes under /data/videos, not in Postgres
 
 POST /render-worker/jobs/{job_id}/result
   -> marks the job completed or failed

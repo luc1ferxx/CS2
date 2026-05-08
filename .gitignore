@@ -19,6 +19,8 @@ npm-debug.log*
 .playwright-mcp/
 .playwright-cli/
 cs2-demo-detail-*.png
+.render-worker-work/
+render-worker/work/
 
 # Local demo samples
 sample-demos/

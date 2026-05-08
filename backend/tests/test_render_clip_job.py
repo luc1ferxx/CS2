@@ -166,6 +166,49 @@ class RenderClipJobTest(unittest.TestCase):
                 self.assertEqual(video["url"], "/media/videos/demo-render-manual-video/clip.mp4")
                 self.assertEqual(video["timeOriginSeconds"], 1.25)
 
+    def test_stub_worker_skips_render_clip_job_already_completed_by_external_worker(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            with replay_storage_dir(Path(directory)):
+                db = self.Session()
+                demo = add_completed_demo(db, "demo-render-already-completed")
+                service = DemoService(db)
+                service.write_replay_blob(
+                    demo.id,
+                    replay_contract(
+                        demo.id,
+                        video={
+                            "status": "ready",
+                            "url": "/media/videos/demo-render-already-completed/rendered.mp4",
+                            "durationSeconds": 20,
+                            "tickStart": 0,
+                            "tickEnd": 1280,
+                            "tickRate": 64,
+                            "source": "rendered",
+                            "errorMessage": None,
+                            "timeOriginSeconds": 0,
+                        },
+                    ),
+                )
+                job = DemoJob(
+                    id="render-job-already-completed",
+                    demo_id=demo.id,
+                    job_type="render_clip",
+                    status="completed",
+                    metadata_json=json.dumps(render_job_metadata(0, 1280)),
+                )
+                db.add(job)
+                db.commit()
+
+                process_render_clip_job(db, demo, job)
+
+                db.refresh(job)
+                video = service.get_video_status(demo)
+                self.assertEqual(job.status, "completed")
+                self.assertIsNone(job.error_message)
+                self.assertEqual(video["status"], "ready")
+                self.assertEqual(video["source"], "rendered")
+                self.assertEqual(video["url"], "/media/videos/demo-render-already-completed/rendered.mp4")
+
     def test_render_worker_manifest_includes_demo_and_clip_contract(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             with replay_storage_dir(Path(directory)), patch(
@@ -204,6 +247,54 @@ class RenderClipJobTest(unittest.TestCase):
                 self.assertEqual(manifest.tickRate, 64)
                 self.assertEqual(manifest.roundNumber, 2)
                 self.assertEqual(manifest.renderPreset, "first_person_1080p30")
+
+    def test_next_render_clip_job_returns_oldest_queued_job(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            with replay_storage_dir(Path(directory)):
+                db = self.Session()
+                demo = add_completed_demo(db, "demo-render-next-job")
+                service = DemoService(db)
+                service.write_replay_blob(demo.id, replay_contract(demo.id))
+                db.add_all(
+                    [
+                        DemoJob(
+                            id="render-job-failed",
+                            demo_id=demo.id,
+                            job_type="render_clip",
+                            status="failed",
+                            metadata_json=json.dumps(render_job_metadata(256, 512)),
+                        ),
+                        DemoJob(
+                            id="mock-render-queued",
+                            demo_id=demo.id,
+                            job_type="mock_render",
+                            status="queued",
+                        ),
+                        DemoJob(
+                            id="render-job-queued-oldest",
+                            demo_id=demo.id,
+                            job_type="render_clip",
+                            status="queued",
+                            metadata_json=json.dumps(render_job_metadata(640, 1280)),
+                        ),
+                        DemoJob(
+                            id="render-job-queued-newest",
+                            demo_id=demo.id,
+                            job_type="render_clip",
+                            status="queued",
+                            metadata_json=json.dumps(render_job_metadata(1280, 1920)),
+                        ),
+                    ]
+                )
+                db.commit()
+
+                job = service.next_render_clip_job()
+
+                self.assertIsNotNone(job)
+                self.assertEqual(job.id, "render-job-queued-oldest")
+                manifest = service.render_job_manifest(job)
+                self.assertEqual(manifest.jobId, "render-job-queued-oldest")
+                self.assertEqual(manifest.tickStart, 640)
 
     def test_render_worker_completed_result_updates_rendered_video_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -355,6 +446,16 @@ def replay_contract(demo_id: str, video: dict | None = None) -> dict:
         "players": [],
         "frames": [],
         "generatedAt": "2026-05-08T00:00:00Z",
+    }
+
+
+def render_job_metadata(tick_start: int, tick_end: int) -> dict:
+    return {
+        "tickStart": tick_start,
+        "tickEnd": tick_end,
+        "tickRate": 64,
+        "durationSeconds": round((tick_end - tick_start) / 64, 3),
+        "renderPreset": "event_clip_v1",
     }
 
 

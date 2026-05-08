@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, File, Header, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Header, HTTPException, Response, UploadFile
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -12,6 +12,7 @@ from app.schemas.demo import (
     RenderJobStatus,
     RenderWorkerResult,
     RenderWorkerResultAccepted,
+    RenderWorkerMediaUpload,
     ReplayVideoStatus,
     VideoCalibrationUpdate,
 )
@@ -179,6 +180,26 @@ def list_render_clip_jobs(
 
 
 @router.get(
+    "/render-worker/jobs/next",
+    response_model=RenderJobManifest,
+    tags=["render-worker"],
+)
+def get_next_render_worker_manifest(
+    _: None = Depends(require_render_worker_token),
+    db: Session = Depends(get_db),
+) -> RenderJobManifest | Response:
+    service = DemoService(db)
+    job = service.next_render_clip_job()
+    if job is None:
+        return Response(status_code=204)
+
+    try:
+        return service.render_job_manifest(job)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.get(
     "/render-worker/jobs/{job_id}/manifest",
     response_model=RenderJobManifest,
     tags=["render-worker"],
@@ -197,6 +218,36 @@ def get_render_worker_manifest(
         return service.render_job_manifest(job)
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post(
+    "/render-worker/jobs/{job_id}/media",
+    response_model=RenderWorkerMediaUpload,
+    tags=["render-worker"],
+)
+async def upload_render_worker_media(
+    job_id: str,
+    file: UploadFile = File(...),
+    _: None = Depends(require_render_worker_token),
+    db: Session = Depends(get_db),
+) -> RenderWorkerMediaUpload:
+    service = DemoService(db)
+    job = service.get_render_clip_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Render clip job not found")
+
+    try:
+        stored_video = await store_video_upload(job.demo_id, file)
+    except DemoUploadValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return RenderWorkerMediaUpload(
+        jobId=job.id,
+        demoId=job.demo_id,
+        videoUrl=stored_video.url,
+        originalFilename=stored_video.original_filename,
+        sizeBytes=stored_video.size_bytes,
+    )
 
 
 @router.post(
