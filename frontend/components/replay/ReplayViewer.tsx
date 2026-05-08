@@ -10,7 +10,7 @@ interface ReplayViewerProps {
   currentTick: number;
   selectedPlayerId: string | null;
   onSelectPlayer: (playerId: string) => void;
-  variant?: "full" | "companion";
+  variant?: "full" | "featured" | "companion";
 }
 
 export function ReplayViewer({
@@ -32,11 +32,21 @@ export function ReplayViewer({
     [replay]
   );
   const hasRadarImage = Boolean(mapPresentation.radarImagePath);
+  const layoutClass =
+    variant === "featured"
+      ? "featured-tactical-panel"
+      : variant === "companion"
+        ? "tactical-panel"
+        : "";
+  const ariaLabel =
+    variant === "featured" || variant === "companion"
+      ? "Tactical map companion"
+      : "2D replay viewer";
 
   return (
     <section
-      className={`panel replay-panel ${variant === "companion" ? "tactical-panel" : ""}`}
-      aria-label={variant === "companion" ? "Tactical map companion" : "2D replay viewer"}
+      className={`panel replay-panel ${layoutClass}`}
+      aria-label={ariaLabel}
     >
       <div className="viewer-header">
         <div className="viewer-header-main">

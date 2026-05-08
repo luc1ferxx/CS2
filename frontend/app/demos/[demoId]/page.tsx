@@ -374,41 +374,45 @@ export default function DemoDetailPage() {
           <>
             <div className="detail-grid first-person-detail-grid">
               <div className="analysis-main-column">
-                <FirstPersonReplay
-                  replay={replay}
-                  currentTick={currentTick}
-                  playing={playing}
-                  speed={speed}
-                  renderRequesting={renderRequesting}
-                  renderClipRequesting={tickClipRequesting}
-                  latestRenderClipJob={latestRenderClipJob}
-                  onRequestMockRender={requestMockRender}
-                  onRequestRenderClip={requestRenderClipAtCurrentTick}
-                  onSeekTick={seek}
-                  onVideoDurationChange={setDetectedVideoDuration}
-                  onVideoTimeChange={setCurrentVideoTime}
-                />
-                <RenderOperatorPanel
-                  video={replay.video}
-                  latestJob={latestRenderClipJob}
-                  jobCount={renderJobs.length}
-                  refreshing={renderJobsRefreshing}
-                  onRefresh={() => void refreshRenderOperatorState()}
-                />
-                <VideoSetupPanel
-                  currentVideoTime={currentVideoTime}
-                  detectedDurationSeconds={detectedVideoDuration}
-                  video={replay.video}
-                  onSaveCalibration={saveManualVideoCalibration}
-                  onUploadVideo={uploadManualVideo}
-                />
-                <ReplayViewer
-                  replay={replay}
-                  currentTick={currentTick}
-                  selectedPlayerId={selectedPlayerId}
-                  onSelectPlayer={setSelectedPlayerId}
-                  variant="companion"
-                />
+                <div className="review-focus-grid">
+                  <FirstPersonReplay
+                    replay={replay}
+                    currentTick={currentTick}
+                    playing={playing}
+                    speed={speed}
+                    renderRequesting={renderRequesting}
+                    renderClipRequesting={tickClipRequesting}
+                    latestRenderClipJob={latestRenderClipJob}
+                    onRequestMockRender={requestMockRender}
+                    onRequestRenderClip={requestRenderClipAtCurrentTick}
+                    onSeekTick={seek}
+                    onVideoDurationChange={setDetectedVideoDuration}
+                    onVideoTimeChange={setCurrentVideoTime}
+                  />
+                  <ReplayViewer
+                    replay={replay}
+                    currentTick={currentTick}
+                    selectedPlayerId={selectedPlayerId}
+                    onSelectPlayer={setSelectedPlayerId}
+                    variant="featured"
+                  />
+                </div>
+                <div className="review-support-grid">
+                  <RenderOperatorPanel
+                    video={replay.video}
+                    latestJob={latestRenderClipJob}
+                    jobCount={renderJobs.length}
+                    refreshing={renderJobsRefreshing}
+                    onRefresh={() => void refreshRenderOperatorState()}
+                  />
+                  <VideoSetupPanel
+                    currentVideoTime={currentVideoTime}
+                    detectedDurationSeconds={detectedVideoDuration}
+                    video={replay.video}
+                    onSaveCalibration={saveManualVideoCalibration}
+                    onUploadVideo={uploadManualVideo}
+                  />
+                </div>
               </div>
               <CoachingPanel
                 events={events}

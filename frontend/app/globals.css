@@ -307,6 +307,22 @@ button {
   gap: 14px;
 }
 
+.review-focus-grid,
+.review-support-grid {
+  display: grid;
+  gap: 14px;
+}
+
+.review-focus-grid {
+  grid-template-columns: minmax(0, 0.92fr) minmax(500px, 1fr);
+  align-items: stretch;
+}
+
+.review-support-grid {
+  grid-template-columns: 1fr;
+  align-items: stretch;
+}
+
 .detail-top {
   display: flex;
   justify-content: space-between;
@@ -941,6 +957,45 @@ button {
   min-height: 0;
 }
 
+.featured-tactical-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 548px;
+}
+
+.featured-tactical-panel .map-frame {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 488px;
+  padding: 14px;
+}
+
+.featured-tactical-panel .map-frame svg {
+  width: min(100%, 536px);
+  height: auto;
+  aspect-ratio: 1;
+}
+
+.featured-tactical-panel .player-list {
+  position: static;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  width: 100%;
+  padding: 0;
+}
+
+.featured-tactical-panel .side-roster {
+  min-width: 0;
+}
+
+.featured-tactical-panel .roster-row {
+  padding: 6px 8px;
+  font-size: 11px;
+}
+
 .tactical-panel .map-frame {
   display: grid;
   grid-template-columns: 170px minmax(0, 1fr);
@@ -1535,6 +1590,11 @@ button {
     grid-template-columns: 1fr;
   }
 
+  .review-focus-grid,
+  .review-support-grid {
+    grid-template-columns: 1fr;
+  }
+
   .timeline-controls {
     grid-template-columns: 1fr;
   }
@@ -1641,5 +1701,35 @@ button {
     grid-row: auto;
     width: 100%;
     padding: 0;
+  }
+}
+
+@media (max-width: 1240px) and (min-width: 981px) {
+  .review-focus-grid,
+  .review-support-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .featured-tactical-panel .map-frame svg {
+    width: min(100%, 560px);
+  }
+}
+
+@media (max-width: 620px) {
+  .featured-tactical-panel {
+    min-height: 0;
+  }
+
+  .featured-tactical-panel .map-frame {
+    min-height: 0;
+  }
+
+  .featured-tactical-panel .map-frame svg {
+    width: 100%;
+    min-height: 0;
+  }
+
+  .featured-tactical-panel .player-list {
+    grid-template-columns: 1fr;
   }
 }
