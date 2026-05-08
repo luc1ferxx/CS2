@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session
 
+from app.analysis.analyzer import analyze_replay
 from app.core.config import settings
 from app.core.database import SessionLocal, init_db
 from app.core.redis import get_redis_client
@@ -89,15 +90,17 @@ def process_real_parse_job(db: Session, demo: Demo, job: DemoJob) -> None:
 
     replay = normalize_parser_output(demo.id, parsed)
     replay_storage_key = service.write_replay_blob(demo.id, replay)
+    events = analyze_replay(replay)
 
     db.query(CoachingEvent).filter(CoachingEvent.demo_id == demo.id).delete()
+    db.add_all(CoachingEvent(**event) for event in events)
 
     demo.status = "completed"
     demo.name = f"{replay['mapName']} parser spike {demo.id[:8]}"
     demo.map_name = replay["mapName"]
     demo.tick_rate = replay["tickRate"]
     demo.round_count = len(replay["rounds"])
-    demo.coaching_event_count = 0
+    demo.coaching_event_count = len(events)
     demo.replay_storage_key = replay_storage_key
     demo.completed_at = utc_now()
     demo.error_message = None

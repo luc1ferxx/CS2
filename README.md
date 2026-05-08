@@ -53,6 +53,7 @@ The real parser path is intentionally narrow:
 6. The worker updates status from `queued` to `parsing` to `analyzing` to `completed`.
 7. The parser tries `demoparser2`, extracts map name, tick rate, rounds, players, sampled player positions, and kill/death events.
 8. The normalizer writes the current replay JSON contract to `/data/replays`.
+9. The worker runs deterministic rules-based coaching v1 and inserts only coaching event rows into PostgreSQL.
 
 CLI equivalent:
 
@@ -61,7 +62,26 @@ curl -F "file=@sample-demos/the-mongolz-vs-liquid-ancient.dem" \
   http://localhost:8000/uploads/demo
 ```
 
-If `demoparser2` is missing or fails on a demo, the worker marks `demo.status = failed` and writes the parser error to `demo.error_message`. This spike does not yet generate coaching events from real rule analysis.
+If `demoparser2` is missing or fails on a demo, the worker marks `demo.status = failed` and writes the parser error to `demo.error_message`. Parser failures do not run the rules analyzer.
+
+## Rules-Based Coaching V1
+
+Real parser output now gets a deterministic, explainable rules pass after replay normalization. This is not OpenAI and does not generate AI prose; each coaching event is built from fixed thresholds and replay facts, then stored in `coaching_events`.
+
+Current rules:
+
+- `untraded_death`: flags a death when no teammate trades a same-area enemy within 5 seconds.
+- `isolated_entry`: flags the first T death in a round when the nearest teammate is too far away to trade.
+- `poor_spacing`: flags one stretched or overly stacked side spacing moment per round/side.
+
+The analyzer reads replay JSON `rounds`, `frames`, `players`, `kills`, and `deaths`, but only writes compact coaching event rows. Large frame payloads stay in `/data/replays`.
+
+Known limitations:
+
+- Parser frames are sampled, not full tick density, so distances and timing are approximate.
+- Coordinates are normalized for the tactical map and only Dust2 has map-specific overview calibration today.
+- Utility, line-of-sight, economy, objective state, and full bomb plant/defuse state are not modeled yet.
+- `post_plant_spread_issue` and `retake_desync` are intentionally skipped until parser output includes reliable bomb plant/site and retake entry signals.
 
 ## Manual Video Binding And Sync Calibration
 
@@ -156,13 +176,13 @@ Current support:
 - `demoparser2==0.41.0`, selected because it has Python 3.12 Linux wheels for the backend Docker image
 - Best-effort extraction of map, tick rate, rounds, roster, sampled positions, and kill/death rows
 - Existing replay JSON contract, so the current Demo Detail page can open parser output
+- Deterministic rules-based coaching events for first-pass trading, entry spacing, and team spacing signals
 - `de_dust2` uses the CS2 overview transform (`pos_x=-2476`, `pos_y=3239`, `scale=4.4`) and a real CS2 radar image in `frontend/public/maps/de_dust2_radar.png`
 
 Not supported yet:
 
 - `.rar` extraction
 - Full tick-by-tick replay at original demo density
-- Rule-generated coaching events for real demos
 - Automatic CS2 first-person rendering
 - OpenAI coaching copy
 
