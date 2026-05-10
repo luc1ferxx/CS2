@@ -8,6 +8,7 @@ class DemoListItem(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
+    owner_id: str
     name: str
     original_filename: str
     map_name: str
@@ -30,6 +31,7 @@ class DemoStatus(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
+    owner_id: str
     name: str | None = None
     original_filename: str | None = None
     status: str

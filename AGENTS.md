@@ -54,6 +54,8 @@ Demo Detail round workflows should remain review-tool focused. Round list, summa
 
 Dashboard is a working Demo Library, not a marketing page. Library changes should keep search, status/map filtering, sorting, upload polling, rename, and soft archive flows utilitarian and dense. Prefer soft archive over destructive delete, keep archived demos directly openable by ID, and keep large upload, replay, and media files out of PostgreSQL.
 
+Auth / local user boundary is dev-only. Backend demo, upload, manual video, replay/coaching read, library mutation, and user-facing render job APIs should remain scoped by `owner_id`, resolved from default `DEV_USER_ID=dev-user` or the local test header `X-Dev-User-Id`. Do not treat this as production authentication, and do not add sessions, OAuth, JWT, password login, or account management UI in this mock phase. Future production auth should replace the helper with Clerk, Auth0, Supabase Auth, or another identity provider and map the authenticated subject to `owner_id`.
+
 Tactical map additions must go through the centralized map config in `backend/app/parser/map_config.py` and `frontend/lib/map-config.ts`. Do not hardcode radar image paths, Dust2 transforms, or per-map coordinate math inside `ReplayViewer` or the parser normalizer.
 
 Parser data-quality additions must keep the replay contract backward compatible. Old replay blobs without `events` should load as `events: []`, parser event extraction should stay best-effort, and one missing event family must not fail the entire parse. Do not store raw parser dataframes, huge raw event dumps, or large media/demo artifacts in PostgreSQL or replay blobs.
@@ -66,4 +68,4 @@ This checkout does not include Git history, so use concise imperative commits su
 
 ## Security & Configuration Tips
 
-Treat `.dem` and archive uploads as untrusted. Do not add real CS2 automation, OpenAI calls, OBS/ffmpeg capture, or object storage credentials to this mock phase unless the README scope changes. Keep secrets out of source and prefer environment variables in Compose or deployment config.
+Treat `.dem` and archive uploads as untrusted. Do not add real CS2 automation, OpenAI calls, OBS/ffmpeg capture, production auth secrets, or object storage credentials to this mock phase unless the README scope changes. Keep secrets out of source and prefer environment variables in Compose or deployment config.

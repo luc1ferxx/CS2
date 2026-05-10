@@ -49,6 +49,67 @@ def ensure_schema_backfills() -> None:
                 connection.execute(
                     text("ALTER TABLE demos ADD COLUMN archived BOOLEAN DEFAULT FALSE NOT NULL")
                 )
+            demo_column_names.add("archived")
+        if "owner_id" not in demo_column_names:
+            with engine.begin() as connection:
+                connection.execute(text("ALTER TABLE demos ADD COLUMN owner_id VARCHAR(64)"))
+                if "user_id" in demo_column_names:
+                    connection.execute(
+                        text(
+                            "UPDATE demos "
+                            "SET owner_id = COALESCE(NULLIF(user_id, ''), :default_owner) "
+                            "WHERE owner_id IS NULL OR owner_id = ''"
+                        ),
+                        {"default_owner": settings.dev_user_id},
+                    )
+                else:
+                    connection.execute(
+                        text(
+                            "UPDATE demos "
+                            "SET owner_id = :default_owner "
+                            "WHERE owner_id IS NULL OR owner_id = ''"
+                        ),
+                        {"default_owner": settings.dev_user_id},
+                    )
+                if engine.dialect.name == "postgresql":
+                    connection.execute(text("ALTER TABLE demos ALTER COLUMN owner_id SET NOT NULL"))
+            demo_column_names.add("owner_id")
+        else:
+            with engine.begin() as connection:
+                connection.execute(
+                    text(
+                        "UPDATE demos "
+                        "SET owner_id = :default_owner "
+                        "WHERE owner_id IS NULL OR owner_id = ''"
+                    ),
+                    {"default_owner": settings.dev_user_id},
+                )
+
+        if "user_id" not in demo_column_names:
+            with engine.begin() as connection:
+                connection.execute(text("ALTER TABLE demos ADD COLUMN user_id VARCHAR(64)"))
+                connection.execute(
+                    text(
+                        "UPDATE demos "
+                        "SET user_id = COALESCE(NULLIF(owner_id, ''), :default_owner) "
+                        "WHERE user_id IS NULL OR user_id = ''"
+                    ),
+                    {"default_owner": settings.dev_user_id},
+                )
+            demo_column_names.add("user_id")
+        else:
+            with engine.begin() as connection:
+                connection.execute(
+                    text(
+                        "UPDATE demos "
+                        "SET user_id = COALESCE(NULLIF(owner_id, ''), :default_owner) "
+                        "WHERE user_id IS NULL OR user_id = ''"
+                    ),
+                    {"default_owner": settings.dev_user_id},
+                )
+
+        with engine.begin() as connection:
+            connection.execute(text("CREATE INDEX IF NOT EXISTS ix_demos_owner_id ON demos (owner_id)"))
 
     if "demo_jobs" not in table_names:
         return

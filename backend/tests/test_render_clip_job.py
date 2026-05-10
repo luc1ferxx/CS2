@@ -554,7 +554,8 @@ class FakeRedis:
 def add_completed_demo(db, demo_id: str) -> Demo:
     demo = Demo(
         id=demo_id,
-        user_id=settings.dev_user_id,
+        owner_id=settings.dev_user_id,
+        legacy_user_id=settings.dev_user_id,
         name=f"Demo {demo_id}",
         original_filename=f"{demo_id}.dem",
         map_name="de_dust2",

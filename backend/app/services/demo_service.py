@@ -7,6 +7,7 @@ from typing import Any
 from sqlalchemy import asc, desc, func, or_
 from sqlalchemy.orm import Session
 
+from app.core.auth import normalize_owner_id
 from app.core.config import settings
 from app.core.redis import get_redis_client
 from app.models.coaching import CoachingEvent
@@ -33,8 +34,9 @@ def utc_now() -> datetime:
 
 
 class DemoService:
-    def __init__(self, db: Session):
+    def __init__(self, db: Session, owner_id: str | None = None):
         self.db = db
+        self.owner_id = normalize_owner_id(owner_id)
 
     def list_demos(
         self,
@@ -46,7 +48,7 @@ class DemoService:
         order: str | None = None,
         include_archived: bool = False,
     ) -> list[DemoListItem]:
-        query = self.db.query(Demo).filter(Demo.user_id == settings.dev_user_id)
+        query = self.db.query(Demo).filter(Demo.owner_id == self.owner_id)
 
         if not include_archived:
             query = query.filter(Demo.archived.is_(False))
@@ -95,7 +97,7 @@ class DemoService:
     def get_demo(self, demo_id: str) -> Demo | None:
         return (
             self.db.query(Demo)
-            .filter(Demo.id == demo_id, Demo.user_id == settings.dev_user_id)
+            .filter(Demo.id == demo_id, Demo.owner_id == self.owner_id)
             .one_or_none()
         )
 
@@ -133,7 +135,8 @@ class DemoService:
 
         demo = Demo(
             id=demo_id,
-            user_id=settings.dev_user_id,
+            owner_id=self.owner_id,
+            legacy_user_id=self.owner_id,
             name=f"Mock Match {demo_id[:8]}",
             original_filename=f"mock_demo_{demo_id[:8]}.dem",
             map_name="de_inferno",
@@ -169,7 +172,8 @@ class DemoService:
 
         demo = Demo(
             id=demo_id,
-            user_id=settings.dev_user_id,
+            owner_id=self.owner_id,
+            legacy_user_id=self.owner_id,
             name=f"Uploaded Demo {demo_id[:8]}",
             original_filename=stored_upload.original_filename,
             map_name="unknown",
@@ -306,7 +310,7 @@ class DemoService:
             .filter(DemoJob.id == job_id, DemoJob.job_type == RENDER_CLIP_JOB_TYPE)
             .one_or_none()
         )
-        if job is None or job.demo is None or job.demo.user_id != settings.dev_user_id:
+        if job is None or job.demo is None:
             return None
         return job
 
@@ -315,7 +319,6 @@ class DemoService:
             self.db.query(DemoJob)
             .join(Demo, DemoJob.demo_id == Demo.id)
             .filter(
-                Demo.user_id == settings.dev_user_id,
                 DemoJob.job_type == RENDER_CLIP_JOB_TYPE,
                 DemoJob.status.in_(statuses),
             )

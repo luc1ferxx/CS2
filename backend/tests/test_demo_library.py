@@ -145,7 +145,8 @@ def add_demo(
     timestamp = created_at or datetime(2026, 5, 8, tzinfo=timezone.utc)
     demo = Demo(
         id=demo_id,
-        user_id=settings.dev_user_id,
+        owner_id=settings.dev_user_id,
+        legacy_user_id=settings.dev_user_id,
         name=name,
         original_filename=original_filename,
         map_name=map_name,

@@ -14,7 +14,8 @@ class Demo(Base):
     __tablename__ = "demos"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
-    user_id: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
+    owner_id: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
+    legacy_user_id: Mapped[str | None] = mapped_column("user_id", String(64), index=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     original_filename: Mapped[str] = mapped_column(String(255), nullable=False)
     map_name: Mapped[str] = mapped_column(String(64), nullable=False)

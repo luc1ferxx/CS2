@@ -2,13 +2,14 @@
 
 这是一个网站型 CS2 demo 复盘与规则教练原型。当前项目重点已经从单纯 mock 流程推进到“真实 `.dem` 解析 spike + Demo Library + 回放复盘界面 + deterministic coaching + render clip 合约”。
 
-当前版本仍然是本地 mock MVP：没有登录系统、没有 OpenAI 调用、没有对象存储、没有真实 CS2 自动渲染。它的核心价值是验证产品边界、replay 数据契约、规则分析结果、前端复盘体验，以及后续外部 GPU render worker 的 API 交接方式。
+当前版本仍然是本地 mock MVP：没有生产登录系统、没有 OpenAI 调用、没有对象存储、没有真实 CS2 自动渲染。它只有一个 dev-only local owner boundary，用来把 demo/upload/render 管理动作先按 owner 隔离，方便后续替换成生产身份系统。它的核心价值是验证产品边界、replay 数据契约、规则分析结果、前端复盘体验，以及后续外部 GPU render worker 的 API 交接方式。
 
 ## 当前状态
 
 已经具备的能力：
 
 - Docker Compose 本地栈：`frontend`、`api`、`worker`、`postgres`、`redis`。
+- Dev-only owner boundary：默认 `DEV_USER_ID=dev-user`，测试或本地调试可用 `X-Dev-User-Id` 模拟不同 owner；这不是生产认证。
 - `/dashboard` Demo Library：搜索、状态/地图筛选、排序、上传轮询、重命名、软归档、渲染状态摘要。
 - Mock demo flow：快速生成合成 replay、coaching events 和 mock first-person shell。
 - Real demo parser spike：上传 `.dem` 或包含 `.dem` 的 `.zip`，后端队列异步解析。
@@ -23,6 +24,7 @@
 
 明确没有做的事情：
 
+- 不实现真实登录、OAuth、JWT、密码、账号管理 UI，且不集成第三方 auth provider。
 - 不在 API 或 worker 容器里启动 CS2、Steam、OBS、ffmpeg。
 - 不控制用户电脑、不读取用户上传后的本地文件、不录屏。
 - 不把用户上传 MP4 设计成主产品路径。
@@ -51,7 +53,7 @@ user uploads .dem
 ```text
 frontend (Next.js)
   -> FastAPI API
-    -> PostgreSQL metadata: demos, demo_jobs, coaching_events
+    -> PostgreSQL metadata: owner-scoped demos, demo_jobs, coaching_events
     -> Redis queue: parse/render job dispatch
     -> local replay blobs: /data/replays/*.json
     -> local uploads: /data/uploads/{demo_id}/...
@@ -63,6 +65,16 @@ frontend (Next.js)
 ```
 
 PostgreSQL 只存可索引的元数据和 coaching event rows。Replay frames、parser event contract、video metadata 都在 replay JSON blob 内；上传 demo 和视频文件放在 Docker volumes 中，后续可以替换为 S3/R2 或其它对象存储。
+
+## Dev-Only Owner Boundary
+
+API 里的 demo、upload、manual video、coaching/replay read、library mutation 和 user-facing render job actions 都按当前 local owner 做隔离。默认 owner 是 `dev-user`，可用 `DEV_USER_ID` 覆盖。为了让本地测试能模拟多用户边界，请求也可以带：
+
+```bash
+X-Dev-User-Id: owner-a
+```
+
+这是开发期边界，不是生产 authentication/authorization。它没有 session、OAuth、JWT、密码登录或账号管理 UI。生产化时应将这个 helper 替换为 Clerk、Auth0、Supabase Auth 或同类 identity provider 的 authenticated user id，并继续使用 `owner_id` 作为 demo ownership 字段。
 
 ## 项目结构
 
@@ -174,6 +186,7 @@ CLI 示例：
 
 ```bash
 curl -F "file=@sample.dem" http://localhost:8000/uploads/demo
+curl -H "X-Dev-User-Id: owner-a" -F "file=@sample.dem" http://localhost:8000/uploads/demo
 ```
 
 ### 4. Demo Detail Review
@@ -468,7 +481,8 @@ Key environment variables:
 
 ## Current Limitations
 
-- 没有真实认证和授权；所有 demo 归属固定 dev user。
+- 没有真实认证和授权；当前只有 `DEV_USER_ID` / `X-Dev-User-Id` 驱动的 dev-only owner boundary。
+- 生产 auth replacement path 仍待实现，建议接入 Clerk、Auth0、Supabase Auth 或其它 identity provider，并把 authenticated user id 映射到 `owner_id`。
 - 本地文件和 Docker volumes 替代对象存储。
 - Parser frame 是采样数据，不是完整 tick density。
 - `demoparser2` 对不同 demo 的 event family 和字段可用性不稳定；normalizer 必须继续容错。

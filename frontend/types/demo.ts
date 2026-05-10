@@ -7,6 +7,7 @@ export type DemoProcessingStatus =
 
 export interface DemoSummary {
   id: string;
+  owner_id: string;
   name: string;
   original_filename: string;
   map_name: string;
@@ -27,6 +28,7 @@ export interface DemoSummary {
 
 export interface DemoStatus {
   id: string;
+  owner_id: string;
   name: string | null;
   original_filename: string | null;
   status: DemoProcessingStatus;

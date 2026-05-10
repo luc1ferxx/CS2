@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, Response, UploadFile
 from sqlalchemy.orm import Session
 
+from app.core.auth import get_current_owner_id
 from app.core.config import settings
 from app.core.database import get_db
 from app.schemas.demo import (
@@ -39,8 +40,9 @@ def list_demos(
     order: str | None = None,
     include_archived: bool = Query(default=False, alias="includeArchived"),
     db: Session = Depends(get_db),
+    owner_id: str = Depends(get_current_owner_id),
 ) -> list[DemoListItem]:
-    return DemoService(db).list_demos(
+    return DemoService(db, owner_id=owner_id).list_demos(
         search=search,
         status=status,
         map_name=map_name,
@@ -55,8 +57,9 @@ def update_demo(
     demo_id: str,
     update: DemoUpdate,
     db: Session = Depends(get_db),
+    owner_id: str = Depends(get_current_owner_id),
 ) -> DemoListItem:
-    service = DemoService(db)
+    service = DemoService(db, owner_id=owner_id)
     try:
         demo = service.update_demo(demo_id, name=update.name, archived=update.archived)
     except ValueError as exc:
@@ -67,8 +70,12 @@ def update_demo(
 
 
 @router.post("/demos/{demo_id}/archive", response_model=DemoListItem)
-def archive_demo(demo_id: str, db: Session = Depends(get_db)) -> DemoListItem:
-    service = DemoService(db)
+def archive_demo(
+    demo_id: str,
+    db: Session = Depends(get_db),
+    owner_id: str = Depends(get_current_owner_id),
+) -> DemoListItem:
+    service = DemoService(db, owner_id=owner_id)
     demo = service.archive_demo(demo_id)
     if demo is None:
         raise HTTPException(status_code=404, detail="Demo not found")
@@ -83,16 +90,24 @@ def render_job_created_response(
 
 
 @router.get("/demos/{demo_id}/status", response_model=DemoStatus)
-def get_demo_status(demo_id: str, db: Session = Depends(get_db)) -> DemoStatus:
-    demo = DemoService(db).get_demo(demo_id)
+def get_demo_status(
+    demo_id: str,
+    db: Session = Depends(get_db),
+    owner_id: str = Depends(get_current_owner_id),
+) -> DemoStatus:
+    demo = DemoService(db, owner_id=owner_id).get_demo(demo_id)
     if demo is None:
         raise HTTPException(status_code=404, detail="Demo not found")
     return DemoStatus.model_validate(demo)
 
 
 @router.get("/demos/{demo_id}/video", response_model=ReplayVideoStatus)
-def get_demo_video(demo_id: str, db: Session = Depends(get_db)) -> ReplayVideoStatus:
-    service = DemoService(db)
+def get_demo_video(
+    demo_id: str,
+    db: Session = Depends(get_db),
+    owner_id: str = Depends(get_current_owner_id),
+) -> ReplayVideoStatus:
+    service = DemoService(db, owner_id=owner_id)
     demo = service.get_demo(demo_id)
     if demo is None:
         raise HTTPException(status_code=404, detail="Demo not found")
@@ -104,8 +119,9 @@ async def upload_demo_video(
     demo_id: str,
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
+    owner_id: str = Depends(get_current_owner_id),
 ) -> ReplayVideoStatus:
-    service = DemoService(db)
+    service = DemoService(db, owner_id=owner_id)
     demo = service.get_demo(demo_id)
     if demo is None:
         raise HTTPException(status_code=404, detail="Demo not found")
@@ -128,8 +144,9 @@ def update_demo_video_calibration(
     demo_id: str,
     calibration: VideoCalibrationUpdate,
     db: Session = Depends(get_db),
+    owner_id: str = Depends(get_current_owner_id),
 ) -> ReplayVideoStatus:
-    service = DemoService(db)
+    service = DemoService(db, owner_id=owner_id)
     demo = service.get_demo(demo_id)
     if demo is None:
         raise HTTPException(status_code=404, detail="Demo not found")
@@ -153,8 +170,9 @@ def update_demo_video_calibration(
 def create_mock_render_job(
     demo_id: str,
     db: Session = Depends(get_db),
+    owner_id: str = Depends(get_current_owner_id),
 ) -> RenderJobCreated:
-    service = DemoService(db)
+    service = DemoService(db, owner_id=owner_id)
     demo = service.get_demo(demo_id)
     if demo is None:
         raise HTTPException(status_code=404, detail="Demo not found")
@@ -178,8 +196,9 @@ def create_render_clip_job(
     demo_id: str,
     request: RenderClipRequest,
     db: Session = Depends(get_db),
+    owner_id: str = Depends(get_current_owner_id),
 ) -> RenderJobCreated:
-    service = DemoService(db)
+    service = DemoService(db, owner_id=owner_id)
     demo = service.get_demo(demo_id)
     if demo is None:
         raise HTTPException(status_code=404, detail="Demo not found")
@@ -203,8 +222,9 @@ def create_render_clip_job(
 def list_render_clip_jobs(
     demo_id: str,
     db: Session = Depends(get_db),
+    owner_id: str = Depends(get_current_owner_id),
 ) -> list[RenderJobStatus]:
-    service = DemoService(db)
+    service = DemoService(db, owner_id=owner_id)
     demo = service.get_demo(demo_id)
     if demo is None:
         raise HTTPException(status_code=404, detail="Demo not found")
