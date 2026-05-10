@@ -6,6 +6,7 @@ This repository is a mock MVP for a website-based CS2 demo AI coach.
 
 - `frontend/`: Next.js + TypeScript app. App Router pages live in `frontend/app/`; shared UI is in `frontend/components/`; API helpers are in `frontend/lib/`; shared frontend types are in `frontend/types/`; static assets are in `frontend/public/`.
 - `backend/`: FastAPI service and worker code. Routes are in `backend/app/api/`; SQLAlchemy models in `backend/app/models/`; Pydantic schemas in `backend/app/schemas/`; business logic in `backend/app/services/`; Redis worker entrypoint in `backend/app/workers/worker.py`.
+- `render-worker/`: standalone Render Worker V1 skeleton. `runner.py` drives fake-video and manual-operator adapter flows without launching CS2, Steam, OBS, or ffmpeg.
 - `docker-compose.yml`: local stack for `frontend`, `api`, `worker`, `postgres`, and `redis`.
 - `README.md`: product scope, mock flow, API list, and next-phase parser/render notes.
 
@@ -18,6 +19,12 @@ This repository is a mock MVP for a website-based CS2 demo AI coach.
 - `cd frontend && npm run typecheck`: run TypeScript checks without emitting files.
 - `cd frontend && npm run build`: verify the production Next.js build.
 - `python3 -m compileall backend/app`: quick backend syntax/import sanity check.
+- `PYTHONPATH=backend python3 -m unittest discover backend/tests`: run backend unit tests.
+- `python3 -m compileall render-worker`: quick render-worker syntax/import sanity check.
+- `python3 -m unittest discover render-worker/tests`: run render-worker unit tests.
+- `python3 render-worker/runner.py dry-run {job_id}`: inspect a render job manifest and adapter plan without posting callbacks.
+- `python3 render-worker/runner.py prepare-job --job-id {job_id} --adapter cs2-manual`: generate manual operator manifest, instructions, expected output, and status files.
+- `python3 render-worker/runner.py complete-prepared-job --job-id {job_id} --video-path /absolute/path/to/clip.mp4`: upload a prepared operator MP4 and submit the completed callback.
 
 ## Coding Style & Naming Conventions
 
