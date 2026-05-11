@@ -10,12 +10,18 @@ SIDE_COLORS = {"T": "#f5b542", "CT": "#2ed3d0"}
 
 
 def normalize_parser_output(demo_id: str, parsed: dict[str, Any]) -> dict[str, Any]:
-    tick_rate = int(parsed.get("tickRate") or 64)
+    tick_rate = _positive_int_or_default(parsed.get("tickRate"), 64)
     map_name = str(parsed.get("mapName") or "unknown")
-    rounds = _normalize_rounds(parsed.get("rounds") or [], parsed.get("frames") or [])
-    players = _normalize_players(parsed.get("players") or [], parsed.get("frames") or [])
-    bounds = _position_bounds(parsed.get("frames") or [])
-    frames = _normalize_frames(parsed.get("frames") or [], rounds, map_name, bounds)
+    raw_rounds = _dict_list(parsed.get("rounds"))
+    raw_players = _dict_list(parsed.get("players"))
+    raw_frames = _dict_list(parsed.get("frames"))
+    raw_kills = _dict_list(parsed.get("kills"))
+    raw_deaths = _dict_list(parsed.get("deaths"))
+    raw_events = _dict_list(parsed.get("events"))
+    rounds = _normalize_rounds(raw_rounds, raw_frames)
+    players = _normalize_players(raw_players, raw_frames)
+    bounds = _position_bounds(raw_frames)
+    frames = _normalize_frames(raw_frames, rounds, map_name, bounds)
     if not frames:
         raise ValueError("Parser produced no player position frames")
 
@@ -42,11 +48,11 @@ def normalize_parser_output(demo_id: str, parsed: dict[str, Any]) -> dict[str, A
         "rounds": rounds,
         "players": players,
         "frames": frames,
-        "kills": list(parsed.get("kills") or []),
-        "deaths": list(parsed.get("deaths") or []),
+        "kills": raw_kills,
+        "deaths": raw_deaths,
         "events": normalize_contract_events(
-            parsed.get("events") or [],
-            parsed.get("kills") or [],
+            raw_events,
+            raw_kills,
             rounds,
             position_normalizer=_event_position_normalizer(map_name, bounds),
         ),
@@ -254,3 +260,17 @@ def _normalize_side(value: Any) -> str | None:
     if value == 2:
         return "T"
     return None
+
+
+def _dict_list(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    return [dict(item) for item in value if isinstance(item, dict)]
+
+
+def _positive_int_or_default(value: Any, default: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    return parsed if parsed > 0 else default
