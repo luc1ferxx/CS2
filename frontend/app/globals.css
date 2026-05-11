@@ -539,6 +539,111 @@ button {
   gap: 14px;
 }
 
+.replay-diagnostics-panel {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 14px;
+  padding: 14px;
+}
+
+.replay-diagnostics-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.replay-diagnostics-header h2 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.replay-diagnostics-header p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.replay-contract-version {
+  max-width: 220px;
+  overflow-wrap: anywhere;
+}
+
+.replay-contract-version.current {
+  color: var(--green);
+  border-color: rgba(57, 217, 138, 0.28);
+  background: rgba(57, 217, 138, 0.08);
+}
+
+.replay-contract-version.legacy {
+  color: var(--amber);
+  border-color: rgba(244, 183, 64, 0.34);
+  background: var(--amber-soft);
+}
+
+.replay-diagnostics-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(122px, 1fr));
+  gap: 8px;
+}
+
+.diagnostic-metric {
+  min-width: 0;
+  padding: 9px 10px;
+  border: 1px solid rgba(54, 80, 93, 0.58);
+  border-radius: 7px;
+  background: rgba(9, 13, 16, 0.34);
+}
+
+.diagnostic-metric span {
+  display: block;
+  color: var(--muted-2);
+  font-size: 11px;
+  font-weight: 760;
+  text-transform: uppercase;
+}
+
+.diagnostic-metric strong {
+  display: block;
+  min-width: 0;
+  margin-top: 4px;
+  color: var(--text);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.diagnostic-metric.active strong {
+  color: var(--amber);
+}
+
+.diagnostic-metric.ready strong {
+  color: var(--green);
+}
+
+.diagnostic-metric.failed strong {
+  color: var(--red);
+}
+
+.replay-diagnostics-warnings {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.replay-diagnostics-warnings li {
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid rgba(244, 183, 64, 0.25);
+  border-radius: 7px;
+  background: rgba(244, 183, 64, 0.08);
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
 .review-focus-grid,
 .review-support-grid {
   display: grid;
@@ -596,6 +701,25 @@ button {
 .round-review-summary {
   display: grid;
   gap: 12px;
+}
+
+.round-review-empty {
+  display: grid;
+  gap: 5px;
+  padding: 13px 12px;
+  border: 1px dashed rgba(105, 120, 132, 0.45);
+  border-radius: 8px;
+  background: rgba(9, 13, 16, 0.26);
+}
+
+.round-review-empty strong {
+  font-size: 13px;
+}
+
+.round-review-empty span {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.42;
 }
 
 .round-review-summary-main {
@@ -1090,6 +1214,26 @@ button {
     linear-gradient(180deg, #17212a 0%, #101820 42%, #080c10 100%);
 }
 
+.empty-replay-frame {
+  display: grid;
+  place-content: center;
+  gap: 7px;
+  padding: 24px;
+  text-align: center;
+}
+
+.empty-replay-frame strong {
+  font-size: 16px;
+}
+
+.empty-replay-frame p {
+  max-width: 420px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
 .mock-fps-sky {
   position: absolute;
   inset: 0 0 52%;
@@ -1375,6 +1519,31 @@ button {
   background: #0c1318;
 }
 
+.map-empty-state {
+  position: absolute;
+  left: 50%;
+  bottom: 16px;
+  display: grid;
+  gap: 4px;
+  width: min(320px, calc(100% - 32px));
+  padding: 10px 12px;
+  transform: translateX(-50%);
+  border: 1px solid rgba(105, 120, 132, 0.44);
+  border-radius: 8px;
+  background: rgba(9, 13, 16, 0.78);
+  text-align: center;
+}
+
+.map-empty-state strong {
+  font-size: 13px;
+}
+
+.map-empty-state span {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.38;
+}
+
 .map-frame svg {
   display: block;
   width: min(100%, 536px);
@@ -1601,6 +1770,17 @@ button {
   gap: 8px;
 }
 
+.timeline-empty-state {
+  min-height: 42px;
+  padding: 11px 12px;
+  border: 1px dashed rgba(105, 120, 132, 0.44);
+  border-radius: 8px;
+  background: rgba(9, 13, 16, 0.26);
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
 .timeline-slider {
   width: 100%;
   accent-color: var(--teal);
@@ -1800,6 +1980,17 @@ button {
   gap: 14px;
   padding: 12px 14px 14px;
   overflow: auto;
+}
+
+.coaching-empty-state {
+  padding: 28px 16px;
+  border: 1px dashed rgba(105, 120, 132, 0.44);
+  border-radius: 8px;
+  background: rgba(9, 13, 16, 0.24);
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.42;
+  text-align: center;
 }
 
 .coaching-round-group {

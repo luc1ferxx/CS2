@@ -65,6 +65,7 @@ def build_mock_replay(demo_id: str) -> tuple[dict[str, Any], list[dict[str, Any]
             )
 
     replay = {
+        "contractVersion": "replay_contract_v1",
         "demoId": demo_id,
         "mapName": "de_inferno",
         "tickRate": tick_rate,

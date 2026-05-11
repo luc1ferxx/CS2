@@ -111,7 +111,12 @@ export function RoundReviewPanel({
             ))}
           </div>
         </div>
-      ) : null}
+      ) : (
+        <div className="round-review-empty">
+          <strong>No round data</strong>
+          <span>Round summaries and quick jumps are unavailable for this replay contract.</span>
+        </div>
+      )}
 
       <div className="round-review-list" aria-label="Round list">
         {model.rounds.map((round) => (

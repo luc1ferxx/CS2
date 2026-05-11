@@ -89,6 +89,18 @@ class AuthOwnerBoundaryApiTest(unittest.TestCase):
 
         self.assertEqual(response.status_code, 404)
 
+    def test_replay_cannot_read_another_owners_demo(self) -> None:
+        with self.Session() as db:
+            other_demo = add_demo(db, "demo-owner-b", OWNER_B)
+            DemoService(db, owner_id=OWNER_B).write_replay_blob(
+                other_demo.id,
+                replay_contract(other_demo.id),
+            )
+
+        response = self.client.get("/demos/demo-owner-b/replay", headers=owner_headers(OWNER_A))
+
+        self.assertEqual(response.status_code, 404)
+
     def test_archived_demo_is_hidden_from_list_but_openable_by_owner(self) -> None:
         with self.Session() as db:
             archived = add_demo(db, "demo-owner-a-archived", OWNER_A, archived=True)
@@ -111,6 +123,33 @@ class AuthOwnerBoundaryApiTest(unittest.TestCase):
         self.assertTrue(status_response.json()["archived"])
         self.assertEqual(replay_response.status_code, 200)
         self.assertEqual(replay_response.json()["demoId"], "demo-owner-a-archived")
+
+    def test_replay_response_includes_legacy_contract_diagnostics(self) -> None:
+        with self.Session() as db:
+            demo = add_demo(db, "demo-owner-a-legacy", OWNER_A)
+            service = DemoService(db, owner_id=OWNER_A)
+            service.write_replay_blob(
+                demo.id,
+                {
+                    "demoId": demo.id,
+                    "mapName": "de_inferno",
+                    "tickRate": 64,
+                    "rounds": [{"roundNumber": 1, "startTick": 0, "endTick": 640}],
+                    "players": [],
+                    "frames": [],
+                    "generatedAt": "2026-05-08T00:00:00Z",
+                },
+            )
+
+        response = self.client.get("/demos/demo-owner-a-legacy/replay", headers=owner_headers(OWNER_A))
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["events"], [])
+        self.assertEqual(body["diagnostics"]["contractVersion"], "legacy")
+        self.assertTrue(body["diagnostics"]["normalizedLegacy"])
+        self.assertEqual(body["diagnostics"]["parserEventCount"], 0)
+        self.assertIn("events", body["diagnostics"]["missingFields"])
 
     def test_rename_cannot_modify_another_owners_demo(self) -> None:
         with self.Session() as db:

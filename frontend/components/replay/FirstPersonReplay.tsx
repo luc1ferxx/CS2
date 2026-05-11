@@ -166,14 +166,20 @@ export function FirstPersonReplay({
             }}
           />
         ) : (
-          <MockFirstPersonFrame frame={frame} progress={progress} />
+          frame ? (
+            <MockFirstPersonFrame frame={frame} progress={progress} />
+          ) : (
+            <EmptyFirstPersonFrame />
+          )
         )}
 
         <div className="first-person-hud">
-          <span className="hud-chip">
-            <RadioTower size={13} />
-            R{frame.roundNumber}
-          </span>
+          {frame ? (
+            <span className="hud-chip">
+              <RadioTower size={13} />
+              R{frame.roundNumber}
+            </span>
+          ) : null}
           <span className="hud-chip">{speed}x</span>
           <span className="hud-chip">{playing ? "Playing" : "Paused"}</span>
         </div>
@@ -205,6 +211,15 @@ function RenderStatusOverlay({ video }: { video: ReplayData["video"] }) {
       <span>{video.source}</span>
       <strong>{video.status}</strong>
       <p>{messageByStatus[video.status]}</p>
+    </div>
+  );
+}
+
+function EmptyFirstPersonFrame() {
+  return (
+    <div className="mock-fps-frame empty-replay-frame">
+      <strong>No frame data</strong>
+      <p>Parser frame data is unavailable, so the mock first-person shell cannot draw player state.</p>
     </div>
   );
 }
@@ -248,7 +263,10 @@ function MockFirstPersonFrame({
   );
 }
 
-function getFrameForTick(frames: ReplayFrame[], tick: number): ReplayFrame {
+function getFrameForTick(frames: ReplayFrame[], tick: number): ReplayFrame | null {
+  if (frames.length === 0) {
+    return null;
+  }
   let selected = frames[0];
   for (const frame of frames) {
     if (frame.tick > tick) {

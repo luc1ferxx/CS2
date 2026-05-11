@@ -30,8 +30,16 @@ const EVENT_PRESENTATION: Record<ReplayEventType, ParserEventPresentation> = {
   round_end: { label: "Round end", tone: "objective", shortLabel: "R" }
 };
 
-export function parserEventPresentationForType(type: ReplayEventType): ParserEventPresentation {
-  return EVENT_PRESENTATION[type];
+const FALLBACK_PRESENTATION: ParserEventPresentation = {
+  label: "Event",
+  tone: "objective",
+  shortLabel: "E"
+};
+
+export function parserEventPresentationForType(
+  type: ReplayEventType | string
+): ParserEventPresentation {
+  return EVENT_PRESENTATION[type as ReplayEventType] ?? FALLBACK_PRESENTATION;
 }
 
 export function timelineParserEventMarkersForRound(

@@ -111,7 +111,11 @@ export function CoachingPanel({
 
       <div className="coaching-body">
         {reviewModel.roundGroups.length === 0 ? (
-          <div className="loading-panel">No coaching events match these filters.</div>
+          <div className="coaching-empty-state">
+            {reviewModel.totalCount === 0
+              ? "No coaching events were generated for this replay."
+              : "No coaching events match these filters."}
+          </div>
         ) : (
           reviewModel.roundGroups.map((roundGroup) => (
             <section

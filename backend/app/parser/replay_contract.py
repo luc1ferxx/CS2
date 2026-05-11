@@ -18,6 +18,12 @@ PARSER_EVENT_TYPES = {
     "round_start",
     "round_end",
 }
+EVENT_FAMILY_TYPES = {
+    "combat": {"kill", "death"},
+    "damage": {"damage", "he", "molotov"},
+    "objective": {"bomb_planted", "bomb_defused", "bomb_exploded", "round_start", "round_end"},
+    "utility": {"smoke", "flash"},
+}
 EVENT_LABELS = {
     "bomb_defused": "Bomb defused",
     "bomb_exploded": "Bomb exploded",
@@ -40,7 +46,8 @@ PositionNormalizer = Callable[[dict[str, Any]], dict[str, float] | None]
 
 
 def normalize_replay_contract(replay: dict[str, Any]) -> dict[str, Any]:
-    normalized = dict(replay if isinstance(replay, dict) else {})
+    raw = replay if isinstance(replay, dict) else {}
+    normalized = dict(raw)
     tick_rate = _positive_int_or_default(normalized.get("tickRate"), 64)
     rounds = _normalize_rounds(normalized.get("rounds"))
     frames = _dict_list(normalized.get("frames"))
@@ -63,6 +70,8 @@ def normalize_replay_contract(replay: dict[str, Any]) -> dict[str, Any]:
     )
     normalized["video"] = _normalize_video(normalized.get("video"), tick_rate, tick_start, tick_end)
     normalized["generatedAt"] = str(normalized.get("generatedAt") or datetime.now(timezone.utc).isoformat())
+    normalized["contractVersion"] = _contract_version(raw)
+    normalized["diagnostics"] = _replay_diagnostics(raw, normalized)
     return normalized
 
 
@@ -220,6 +229,58 @@ def _tick_bounds(rounds: list[dict[str, Any]], frames: list[dict[str, Any]]) -> 
     if not valid_ticks:
         return 0, 0
     return min(valid_ticks), max(valid_ticks)
+
+
+def _contract_version(raw: dict[str, Any]) -> str:
+    version = _optional_str(raw.get("contractVersion")) or _optional_str(raw.get("version"))
+    return version.strip() if version and version.strip() else "legacy"
+
+
+def _replay_diagnostics(raw: dict[str, Any], normalized: dict[str, Any]) -> dict[str, Any]:
+    missing_fields = [
+        field
+        for field in ("events", "rounds", "players", "frames", "video")
+        if field not in raw
+    ]
+    degraded_fields = [
+        field
+        for field in ("rounds", "players", "frames", "events")
+        if field in raw and not isinstance(raw.get(field), list)
+    ]
+    if "video" in raw and not isinstance(raw.get("video"), dict):
+        degraded_fields.append("video")
+
+    events = _dict_list(normalized.get("events"))
+    family_counts = _event_family_counts(events)
+    return {
+        "contractVersion": normalized["contractVersion"],
+        "normalizedLegacy": bool(
+            normalized["contractVersion"] == "legacy"
+            or missing_fields
+            or degraded_fields
+        ),
+        "parserEventCount": len(events),
+        "roundCount": len(_dict_list(normalized.get("rounds"))),
+        "playerCount": len(_dict_list(normalized.get("players"))),
+        "frameCount": len(_dict_list(normalized.get("frames"))),
+        "missingFields": missing_fields,
+        "degradedFields": degraded_fields,
+        "eventFamilyCounts": family_counts,
+        "missingEventFamilies": [
+            family for family, count in family_counts.items() if count == 0
+        ],
+    }
+
+
+def _event_family_counts(events: list[dict[str, Any]]) -> dict[str, int]:
+    counts = {family: 0 for family in EVENT_FAMILY_TYPES}
+    for event in events:
+        event_type = _optional_str(event.get("type"))
+        for family, event_types in EVENT_FAMILY_TYPES.items():
+            if event_type in event_types:
+                counts[family] += 1
+                break
+    return counts
 
 
 def _attach_position(

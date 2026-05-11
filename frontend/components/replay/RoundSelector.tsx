@@ -13,6 +13,14 @@ export function RoundSelector({
   selectedRound,
   onSelectRound
 }: RoundSelectorProps) {
+  if (rounds.length === 0) {
+    return (
+      <select className="round-select" value="" disabled aria-label="Select round">
+        <option value="">No rounds</option>
+      </select>
+    );
+  }
+
   return (
     <select
       className="round-select"

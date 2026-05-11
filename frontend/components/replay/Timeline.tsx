@@ -47,6 +47,7 @@ export function Timeline({
     minTick,
     maxTick
   );
+  const hasRounds = rounds.length > 0;
 
   return (
     <section className="panel timeline-panel" aria-label="Replay timeline">
@@ -56,6 +57,7 @@ export function Timeline({
             className="icon-button"
             type="button"
             onClick={onTogglePlay}
+            disabled={!hasRounds}
             aria-label={playing ? "Pause replay" : "Play replay"}
           >
             {playing ? <Pause size={18} /> : <Play size={18} />}
@@ -77,44 +79,50 @@ export function Timeline({
         </select>
 
         <div className="range-wrap">
-          <input
-            className="timeline-slider"
-            type="range"
-            min={minTick}
-            max={maxTick}
-            step={1}
-            value={Math.min(maxTick, Math.max(minTick, currentTick))}
-            onChange={(event) => onSeek(Number(event.target.value))}
-            aria-label="Seek replay"
-          />
-          <div className="event-markers" aria-label="Coaching event markers">
-            {markers.map((marker) => (
-              <button
-                key={marker.event.id}
-                className={`event-marker ${marker.event.severity}`}
-                style={{ left: `${marker.leftPercent}%` }}
-                type="button"
-                onClick={() => onSeek(marker.event.tick_start)}
-                aria-label={`Jump to ${marker.event.severity} coaching event at tick ${marker.event.tick_start}`}
-                title={`${marker.event.title} at tick ${marker.event.tick_start}`}
+          {hasRounds ? (
+            <>
+              <input
+                className="timeline-slider"
+                type="range"
+                min={minTick}
+                max={maxTick}
+                step={1}
+                value={Math.min(maxTick, Math.max(minTick, currentTick))}
+                onChange={(event) => onSeek(Number(event.target.value))}
+                aria-label="Seek replay"
               />
-            ))}
-          </div>
-          <div className="parser-event-markers" aria-label="Parser event markers">
-            {parserEventMarkers.map((marker) => (
-              <button
-                key={marker.event.id}
-                className={`parser-event-marker ${marker.presentation.tone}`}
-                style={{ left: `${marker.leftPercent}%` }}
-                type="button"
-                onClick={() => onSeek(marker.seekTick)}
-                aria-label={`Jump to ${marker.presentation.label} parser event at tick ${marker.seekTick}`}
-                title={`${marker.event.label} at tick ${marker.seekTick}`}
-              >
-                {marker.presentation.shortLabel}
-              </button>
-            ))}
-          </div>
+              <div className="event-markers" aria-label="Coaching event markers">
+                {markers.map((marker) => (
+                  <button
+                    key={marker.event.id}
+                    className={`event-marker ${marker.event.severity}`}
+                    style={{ left: `${marker.leftPercent}%` }}
+                    type="button"
+                    onClick={() => onSeek(marker.event.tick_start)}
+                    aria-label={`Jump to ${marker.event.severity} coaching event at tick ${marker.event.tick_start}`}
+                    title={`${marker.event.title} at tick ${marker.event.tick_start}`}
+                  />
+                ))}
+              </div>
+              <div className="parser-event-markers" aria-label="Parser event markers">
+                {parserEventMarkers.map((marker) => (
+                  <button
+                    key={marker.event.id}
+                    className={`parser-event-marker ${marker.presentation.tone}`}
+                    style={{ left: `${marker.leftPercent}%` }}
+                    type="button"
+                    onClick={() => onSeek(marker.seekTick)}
+                    aria-label={`Jump to ${marker.presentation.label} parser event at tick ${marker.seekTick}`}
+                    title={`${marker.event.label} at tick ${marker.seekTick}`}
+                  >
+                    {marker.presentation.shortLabel}
+                  </button>
+                ))}
+              </div>
+            </>
+          ) : (
+            <div className="timeline-empty-state">No round timeline is available for this replay.</div>
+          )}
         </div>
 
         <RoundSelector

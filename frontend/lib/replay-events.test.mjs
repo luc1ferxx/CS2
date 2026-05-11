@@ -68,6 +68,11 @@ const parserEvents = [
     tone: "objective",
     shortLabel: "R"
   });
+  assert.deepEqual(normalize(parserEventPresentationForType("unknown_event")), {
+    label: "Event",
+    tone: "objective",
+    shortLabel: "E"
+  });
 }
 
 {

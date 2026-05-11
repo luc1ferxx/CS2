@@ -167,6 +167,22 @@ const events = [
 }
 
 {
+  const reviewEvent = buildCoachingReviewModel(events, players, {
+    severity: "all",
+    rule: "weak_utility_before_execute",
+    search: ""
+  }).roundGroups[0].events[0];
+
+  assert.equal(reviewEvent.ruleId, "weak_utility_before_execute");
+  assert.deepEqual(normalize(reviewEvent.involvedPlayers), ["entry.one"]);
+  assert.deepEqual(normalize(reviewEvent.evidence.slice(0, 3)), [
+    { label: "relatedEventIds", value: "plant-a, smoke-early" },
+    { label: "windowSeconds", value: "12" },
+    { label: "evidenceTicks", value: "3100" }
+  ]);
+}
+
+{
   const summary = evidenceSummaryForEvent(events[0]);
   assert.deepEqual(normalize(summary), [
     { label: "distance", value: "26.42" },

@@ -27,6 +27,7 @@ import {
   type VideoCalibrationUpdate
 } from "@/lib/api";
 import { isRenderActiveStatus } from "@/lib/demo-library";
+import { buildReplayDiagnostics, type ReplayDetailDiagnostics } from "@/lib/replay-diagnostics";
 import type { CoachingEvent } from "@/types/coaching";
 import type { DemoStatus } from "@/types/demo";
 import type { ReplayData } from "@/types/replay";
@@ -147,6 +148,10 @@ export default function DemoDetailPage() {
   }, [renderJobs]);
   const latestRenderClipJob = renderJobs[0] ?? null;
   const hasActiveRenderClipJob = renderJobs.some((job) => isRenderActiveStatus(job.status));
+  const detailDiagnostics = useMemo(
+    () => (replay ? buildReplayDiagnostics(replay, events, renderJobs) : null),
+    [events, renderJobs, replay]
+  );
 
   const videoStatus = replay?.video.status;
 
@@ -374,6 +379,7 @@ export default function DemoDetailPage() {
           </div>
         ) : (
           <>
+            {detailDiagnostics ? <ReplayDiagnosticsPanel diagnostics={detailDiagnostics} /> : null}
             <div className="detail-grid first-person-detail-grid">
               <div className="analysis-main-column">
                 <div className="review-focus-grid">
@@ -452,6 +458,58 @@ export default function DemoDetailPage() {
         )}
       </section>
     </main>
+  );
+}
+
+function ReplayDiagnosticsPanel({ diagnostics }: { diagnostics: ReplayDetailDiagnostics }) {
+  return (
+    <section className="panel replay-diagnostics-panel" aria-label="Replay contract diagnostics">
+      <div className="replay-diagnostics-header">
+        <div>
+          <h2>Replay Contract</h2>
+          <p>
+            {diagnostics.normalizedLegacy
+              ? "Legacy or degraded contract normalized for review"
+              : "Contract data loaded"}
+          </p>
+        </div>
+        <span className={`mini-pill replay-contract-version ${diagnostics.normalizedLegacy ? "legacy" : "current"}`}>
+          {diagnostics.contractVersion}
+        </span>
+      </div>
+      <div className="replay-diagnostics-grid">
+        <DiagnosticMetric label="Parser events" value={diagnostics.counts.parserEvents} />
+        <DiagnosticMetric label="Coaching" value={diagnostics.counts.coachingEvents} />
+        <DiagnosticMetric label="Rounds" value={diagnostics.counts.rounds} />
+        <DiagnosticMetric label="Players" value={diagnostics.counts.players} />
+        <DiagnosticMetric label="Frames" value={diagnostics.counts.frames} />
+        <DiagnosticMetric label="Render" value={diagnostics.renderState.label} tone={diagnostics.renderState.tone} />
+      </div>
+      {diagnostics.warnings.length > 0 ? (
+        <ul className="replay-diagnostics-warnings">
+          {diagnostics.warnings.map((warning) => (
+            <li key={warning}>{warning}</li>
+          ))}
+        </ul>
+      ) : null}
+    </section>
+  );
+}
+
+function DiagnosticMetric({
+  label,
+  value,
+  tone
+}: {
+  label: string;
+  value: number | string;
+  tone?: ReplayDetailDiagnostics["renderState"]["tone"];
+}) {
+  return (
+    <div className={`diagnostic-metric ${tone ?? ""}`}>
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
   );
 }
 

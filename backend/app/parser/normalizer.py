@@ -23,6 +23,7 @@ def normalize_parser_output(demo_id: str, parsed: dict[str, Any]) -> dict[str, A
     tick_end = int(rounds[-1]["endTick"]) if rounds else int(frames[-1]["tick"])
 
     return {
+        "contractVersion": "replay_contract_v1",
         "demoId": demo_id,
         "mapName": map_name,
         "mapMetadata": map_metadata_for(map_name),

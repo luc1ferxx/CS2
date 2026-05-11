@@ -25,9 +25,11 @@ export function ReplayViewer({
     () => getInterpolatedFrameForTick(replay.frames, currentTick),
     [currentTick, replay.frames]
   );
-  const tPlayers = frame.players.filter((player) => player.side === "T");
-  const ctPlayers = frame.players.filter((player) => player.side === "CT");
-  const round = replay.rounds.find((item) => item.roundNumber === frame.roundNumber);
+  const framePlayers = frame?.players ?? [];
+  const currentRoundNumber = frame?.roundNumber ?? replay.rounds[0]?.roundNumber ?? 1;
+  const tPlayers = framePlayers.filter((player) => player.side === "T");
+  const ctPlayers = framePlayers.filter((player) => player.side === "CT");
+  const round = replay.rounds.find((item) => item.roundNumber === currentRoundNumber);
   const mapPresentation = useMemo(
     () => getTacticalMapPresentation(replay),
     [replay]
@@ -44,8 +46,8 @@ export function ReplayViewer({
       ? "Tactical map companion"
       : "2D replay viewer";
   const nearbyParserEvents = useMemo(
-    () => recentMapParserEvents(replay.events ?? [], frame.roundNumber, currentTick, replay.tickRate),
-    [currentTick, frame.roundNumber, replay.events, replay.tickRate]
+    () => recentMapParserEvents(replay.events ?? [], currentRoundNumber, currentTick, replay.tickRate),
+    [currentRoundNumber, currentTick, replay.events, replay.tickRate]
   );
 
   return (
@@ -56,7 +58,7 @@ export function ReplayViewer({
       <div className="viewer-header">
         <div className="viewer-header-main">
           <span>
-            Tactical Map / {mapPresentation.displayName} / Round {frame.roundNumber} / Tick{" "}
+            Tactical Map / {mapPresentation.displayName} / Round {currentRoundNumber} / Tick{" "}
             {Math.round(currentTick)}
           </span>
           <span className={`map-calibration-pill ${mapPresentation.confidence}`}>
@@ -83,7 +85,7 @@ export function ReplayViewer({
             <GenericMapBackground label={`${mapPresentation.displayName} uncalibrated`} />
           )}
 
-          {frame.players.map((player, index) => (
+          {framePlayers.map((player, index) => (
             <PlayerDot
               key={player.id}
               player={player}
@@ -93,7 +95,7 @@ export function ReplayViewer({
             />
           ))}
 
-          {frame.bombState.status === "planted" && frame.bombState.x && frame.bombState.y ? (
+          {frame?.bombState.status === "planted" && frame.bombState.x && frame.bombState.y ? (
             <g transform={`translate(${frame.bombState.x} ${frame.bombState.y})`}>
               <rect x="-2" y="-2" width="4" height="4" rx="0.6" fill="#f4b740" />
               <circle r="4" fill="none" stroke="#f4b740" strokeDasharray="1 1" />
@@ -109,6 +111,12 @@ export function ReplayViewer({
           <Roster title="T Side" players={tPlayers} />
           <Roster title="CT Side" players={ctPlayers} />
         </div>
+        {!frame ? (
+          <div className="map-empty-state">
+            <strong>No frame data</strong>
+            <span>Tactical positions are unavailable for this replay contract.</span>
+          </div>
+        ) : null}
       </div>
     </section>
   );
@@ -256,7 +264,10 @@ function Roster({
   );
 }
 
-function getInterpolatedFrameForTick(frames: ReplayFrame[], tick: number): ReplayFrame {
+function getInterpolatedFrameForTick(frames: ReplayFrame[], tick: number): ReplayFrame | null {
+  if (frames.length === 0) {
+    return null;
+  }
   const firstFrame = frames[0];
   if (tick <= firstFrame.tick) {
     return firstFrame;

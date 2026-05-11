@@ -125,8 +125,28 @@ export interface ReplayEvent {
   metadata?: Record<string, unknown>;
 }
 
+export type ReplayEmptyState =
+  | "no-rounds"
+  | "no-parser-events"
+  | "no-coaching-events"
+  | "no-frames";
+
+export interface ReplayContractDiagnostics {
+  contractVersion: string;
+  normalizedLegacy: boolean;
+  parserEventCount: number;
+  roundCount: number;
+  playerCount: number;
+  frameCount: number;
+  missingFields: string[];
+  degradedFields: string[];
+  eventFamilyCounts: Record<string, number>;
+  missingEventFamilies: string[];
+}
+
 export interface ReplayData {
   demoId: string;
+  contractVersion?: string;
   mapName: string;
   mapMetadata?: ReplayMapMetadata;
   tickRate: number;
@@ -136,4 +156,5 @@ export interface ReplayData {
   frames: ReplayFrame[];
   events: ReplayEvent[];
   generatedAt: string;
+  diagnostics?: ReplayContractDiagnostics | null;
 }
