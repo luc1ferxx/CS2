@@ -73,12 +73,35 @@ export function demoStatusLabel(status: DemoProcessingStatus): string {
   return STATUS_LABELS[status] ?? status;
 }
 
+export function ingestionPhaseLabel(demo: DemoSummary): string {
+  const phase = demo.ingestion?.phase;
+  if (!phase) {
+    return demoStatusLabel(demo.status);
+  }
+  if (phase === "ready") {
+    return "ready";
+  }
+  if (phase === "uploaded") {
+    return "uploaded";
+  }
+  return phase;
+}
+
+export function parseFailureReason(demo: DemoSummary): string | null {
+  return demo.ingestion?.failure?.message ?? demo.error_message ?? null;
+}
+
+export function canRetryParse(demo: DemoSummary): boolean {
+  return Boolean(demo.ingestion?.retryable);
+}
+
 export function isRenderActiveStatus(status: string | null | undefined): boolean {
   return typeof status === "string" && ACTIVE_RENDER_STATUSES.has(status);
 }
 
 export function isDemoLibraryActive(demo: DemoSummary): boolean {
   return (
+    Boolean(demo.ingestion?.active) ||
     ACTIVE_DEMO_STATUSES.has(demo.status) ||
     isRenderActiveStatus(demo.latest_render_status) ||
     isRenderActiveStatus(demo.video_status)
@@ -113,6 +136,11 @@ function searchableDemoFields(demo: DemoSummary): string[] {
     demo.map_name,
     demo.status,
     demoStatusLabel(demo.status),
+    ingestionPhaseLabel(demo),
+    demo.ingestion?.stale ? "stale" : "",
+    canRetryParse(demo) ? "retry retryable" : "",
+    demo.ingestion?.jobStatus ?? "",
+    parseFailureReason(demo) ?? "",
     renderStatusLabel(demo),
     demo.created_at,
     demo.updated_at,

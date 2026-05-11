@@ -16,7 +16,10 @@ from app.models.job import DemoJob
 from app.parser.replay_contract import normalize_replay_contract
 from app.schemas.coaching import CoachingEventOut
 from app.schemas.demo import (
+    DemoIngestionStatus,
     DemoListItem,
+    DemoStatus,
+    ParseFailureMetadata,
     RenderClipRequest,
     RenderJobManifest,
     RenderJobStatus,
@@ -27,9 +30,13 @@ from app.services.upload_service import StoredVideoUpload, demo_upload_key, stor
 
 
 RENDER_CLIP_JOB_TYPE = "render_clip"
+PARSE_JOB_TYPES = ("real_parse", "mock_parse")
 RENDER_CLIP_DEFAULT_PRESET = "event_clip_v1"
 RENDER_WORKER_MANIFEST_VERSION = "render_worker_v1"
 DEMO_STATUS_ORDER = ("queued", "parsing", "analyzing", "completed", "failed")
+ACTIVE_DEMO_STATUSES = {"queued", "parsing", "analyzing"}
+ACTIVE_PARSE_JOB_STATUSES = {"queued", "pending", "processing"}
+STALE_PARSE_AFTER_SECONDS = 15 * 60
 DEMO_STATUS_SEARCH_ALIASES = {
     "uploaded": "queued",
     "upload": "queued",
@@ -128,7 +135,13 @@ class DemoService:
                 "video_source": _optional_str(video.get("source")),
                 "video_url": _optional_str(video.get("url")),
                 "latest_render_status": latest_render_job.status if latest_render_job else None,
+                "ingestion": self.demo_ingestion_status(demo),
             }
+        )
+
+    def demo_status(self, demo: Demo) -> DemoStatus:
+        return DemoStatus.model_validate(demo).model_copy(
+            update={"ingestion": self.demo_ingestion_status(demo)}
         )
 
     def get_demo(self, demo_id: str) -> Demo | None:
@@ -200,7 +213,7 @@ class DemoService:
             json.dumps({"job_id": job_id, "demo_id": demo_id}),
         )
 
-        return DemoListItem.model_validate(demo)
+        return self.demo_list_item(demo)
 
     async def create_real_demo(self, upload: Any) -> DemoListItem:
         demo_id = str(uuid.uuid4())
@@ -238,7 +251,223 @@ class DemoService:
             json.dumps({"job_id": job_id, "demo_id": demo_id}),
         )
 
-        return DemoListItem.model_validate(demo)
+        return self.demo_list_item(demo)
+
+    def latest_parse_job(self, demo: Demo) -> DemoJob | None:
+        return (
+            self.db.query(DemoJob)
+            .filter(DemoJob.demo_id == demo.id, DemoJob.job_type.in_(PARSE_JOB_TYPES))
+            .order_by(desc(DemoJob.created_at), desc(DemoJob.id))
+            .first()
+        )
+
+    def demo_ingestion_status(self, demo: Demo) -> DemoIngestionStatus:
+        job = self.latest_parse_job(demo)
+        updated_at = _aware_datetime(
+            getattr(demo, "updated_at", None)
+            or getattr(demo, "created_at", None)
+            or utc_now()
+        )
+        active = demo.status in ACTIVE_DEMO_STATUSES or (
+            job is not None and job.status in ACTIVE_PARSE_JOB_STATUSES
+        )
+        retryable = self._parse_retryable(demo, job)
+        attempt_count = int(job.attempts) if job is not None else 0
+        failure = (
+            self._parse_failure_metadata(demo, job, retryable=retryable, attempt_count=attempt_count)
+            if demo.status == "failed" or (job is not None and job.status == "failed")
+            else None
+        )
+        stale_since = _aware_datetime(
+            (job.started_at if job is not None else None)
+            or updated_at
+            or (job.created_at if job is not None else None)
+        )
+        stale = active and (utc_now() - stale_since).total_seconds() > STALE_PARSE_AFTER_SECONDS
+
+        return DemoIngestionStatus(
+            phase=_ingestion_phase(demo.status),
+            active=active,
+            stale=stale,
+            retryable=retryable,
+            attemptCount=attempt_count,
+            jobId=job.id if job is not None else None,
+            jobType=job.job_type if job is not None else None,
+            jobStatus=job.status if job is not None else None,
+            hasSourceDemo=bool(getattr(demo, "source_storage_key", None)),
+            updatedAt=updated_at,
+            startedAt=(
+                _aware_datetime(job.started_at)
+                if job is not None and job.started_at is not None
+                else None
+            ),
+            finishedAt=(
+                _aware_datetime(job.finished_at)
+                if job is not None and job.finished_at is not None
+                else None
+            ),
+            failure=failure,
+        )
+
+    def retry_parse_job(self, demo: Demo) -> DemoListItem:
+        if demo.status != "failed":
+            raise ValueError("Only failed parse jobs can be retried")
+        source_storage_key = getattr(demo, "source_storage_key", None)
+        if not source_storage_key:
+            raise ValueError("Uploaded source demo is not available for retry")
+        try:
+            source_exists = self.storage.exists(source_storage_key)
+        except (OSError, StorageKeyError):
+            source_exists = False
+        if not source_exists:
+            raise ValueError("Uploaded source demo artifact is missing")
+
+        latest_job = self.latest_parse_job(demo)
+        if latest_job is not None and latest_job.status in ACTIVE_PARSE_JOB_STATUSES:
+            raise ValueError("Parse is already active")
+
+        job_id = str(uuid.uuid4())
+        job = DemoJob(
+            id=job_id,
+            demo_id=demo.id,
+            job_type="real_parse",
+            status="queued",
+            attempts=0,
+        )
+        demo.status = "queued"
+        demo.error_message = None
+        demo.completed_at = None
+        self.db.add(job)
+        self.db.commit()
+        self.db.refresh(demo)
+
+        get_redis_client().lpush(
+            settings.redis_queue_name,
+            json.dumps({"job_id": job_id, "demo_id": demo.id}),
+        )
+        return self.demo_list_item(demo)
+
+    def claim_parse_job(self, demo: Demo, job: DemoJob) -> None:
+        self._ensure_parse_job(job)
+        job.status = "processing"
+        job.attempts += 1
+        job.started_at = utc_now()
+        job.finished_at = None
+        job.error_message = None
+        job.metadata_json = _metadata_json({**_job_metadata(job), "phase": "parsing"})
+        demo.status = "parsing"
+        demo.error_message = None
+        self.db.commit()
+
+    def mark_parse_analyzing(self, demo: Demo, job: DemoJob) -> None:
+        self._ensure_parse_job(job)
+        demo.status = "analyzing"
+        job.metadata_json = _metadata_json({**_job_metadata(job), "phase": "analyzing"})
+        self.db.commit()
+
+    def complete_parse_job(
+        self,
+        demo: Demo,
+        job: DemoJob,
+        replay: dict[str, Any],
+        events: list[dict[str, Any]],
+        *,
+        name: str | None = None,
+    ) -> None:
+        self._ensure_parse_job(job)
+        replay_storage_key = self.write_replay_blob(demo.id, replay)
+
+        self.db.query(CoachingEvent).filter(CoachingEvent.demo_id == demo.id).delete()
+        self.db.add_all(CoachingEvent(**event) for event in events)
+
+        demo.status = "completed"
+        if name is not None:
+            demo.name = name
+        demo.map_name = replay["mapName"]
+        demo.tick_rate = replay["tickRate"]
+        demo.round_count = len(replay["rounds"])
+        demo.coaching_event_count = len(events)
+        demo.replay_storage_key = replay_storage_key
+        demo.completed_at = utc_now()
+        demo.error_message = None
+
+        job.status = "completed"
+        job.finished_at = utc_now()
+        job.error_message = None
+        job.metadata_json = _metadata_json({**_job_metadata(job), "phase": "ready"})
+        self.db.commit()
+
+    def fail_parse_job(self, demo: Demo, job: DemoJob, error: str) -> None:
+        self._ensure_parse_job(job)
+        failed_at = utc_now()
+        short_message = _compact_failure_message(error)
+        failure_metadata = {
+            "errorCode": "PARSER_FAILED",
+            "message": short_message,
+            "failedAt": failed_at.isoformat(),
+            "updatedAt": failed_at.isoformat(),
+        }
+        metadata = _job_metadata(job)
+        metadata["failure"] = failure_metadata
+        metadata["phase"] = "failed"
+
+        demo.status = "failed"
+        demo.error_message = short_message
+        job.status = "failed"
+        job.error_message = short_message
+        job.finished_at = failed_at
+        job.metadata_json = _metadata_json(metadata)
+        self.db.commit()
+
+    def _ensure_parse_job(self, job: DemoJob) -> None:
+        if job.job_type not in PARSE_JOB_TYPES:
+            raise ValueError("Only parse jobs support parser status transitions")
+
+    def _parse_retryable(self, demo: Demo, job: DemoJob | None) -> bool:
+        if demo.status != "failed":
+            return False
+        if job is not None and job.status in ACTIVE_PARSE_JOB_STATUSES:
+            return False
+        source_storage_key = getattr(demo, "source_storage_key", None)
+        if not source_storage_key:
+            return False
+        try:
+            return self.storage.exists(source_storage_key)
+        except (OSError, StorageKeyError):
+            return False
+
+    def _parse_failure_metadata(
+        self,
+        demo: Demo,
+        job: DemoJob | None,
+        *,
+        retryable: bool,
+        attempt_count: int,
+    ) -> ParseFailureMetadata:
+        metadata = _job_metadata(job) if job is not None else {}
+        stored_failure = metadata.get("failure") if isinstance(metadata.get("failure"), dict) else {}
+        message = _compact_failure_message(
+            _optional_str(stored_failure.get("message"))
+            or (job.error_message if job is not None else None)
+            or demo.error_message
+            or "Parser failed"
+        )
+        failed_at = _parse_datetime(_optional_str(stored_failure.get("failedAt")))
+        if failed_at is None and job is not None:
+            failed_at = job.finished_at
+        failed_at = _aware_datetime(failed_at) if failed_at is not None else None
+        updated_at = _parse_datetime(_optional_str(stored_failure.get("updatedAt")))
+        if updated_at is None:
+            updated_at = demo.updated_at or failed_at or utc_now()
+
+        return ParseFailureMetadata(
+            errorCode=_optional_str(stored_failure.get("errorCode")) or "PARSER_FAILED",
+            message=message,
+            failedAt=failed_at,
+            updatedAt=_aware_datetime(updated_at),
+            retryable=retryable,
+            attemptCount=attempt_count,
+        )
 
     def source_demo_path(self, demo: Demo) -> Path:
         return self.storage.path_for_key(self.source_demo_storage_key(demo))
@@ -678,6 +907,44 @@ def _int_or_default(value: Any, default: int) -> int:
     if value is None:
         return default
     return int(value)
+
+
+def _ingestion_phase(status: str) -> str:
+    if status == "queued":
+        return "uploaded"
+    if status == "completed":
+        return "ready"
+    return status
+
+
+def _compact_failure_message(message: str | None, *, max_length: int = 240) -> str:
+    first_line = next((line.strip() for line in (message or "").splitlines() if line.strip()), "")
+    compact = first_line or "Parser failed"
+    if len(compact) <= max_length:
+        return compact
+    return f"{compact[: max_length - 3].rstrip()}..."
+
+
+def _metadata_json(metadata: dict[str, Any]) -> str:
+    return json.dumps(metadata, separators=(",", ":"))
+
+
+def _aware_datetime(value: datetime | None) -> datetime:
+    if value is None:
+        return utc_now()
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value
+
+
+def _parse_datetime(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return _aware_datetime(parsed)
 
 
 def _positive_int_or_default(value: Any, default: int) -> int:

@@ -4,6 +4,31 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 
 
+class ParseFailureMetadata(BaseModel):
+    errorCode: str
+    message: str
+    failedAt: datetime | None = None
+    updatedAt: datetime
+    retryable: bool
+    attemptCount: int
+
+
+class DemoIngestionStatus(BaseModel):
+    phase: str
+    active: bool
+    stale: bool
+    retryable: bool
+    attemptCount: int
+    jobId: str | None = None
+    jobType: str | None = None
+    jobStatus: str | None = None
+    hasSourceDemo: bool
+    updatedAt: datetime
+    startedAt: datetime | None = None
+    finishedAt: datetime | None = None
+    failure: ParseFailureMetadata | None = None
+
+
 class DemoListItem(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -25,6 +50,7 @@ class DemoListItem(BaseModel):
     video_source: str | None = None
     video_url: str | None = None
     latest_render_status: str | None = None
+    ingestion: DemoIngestionStatus | None = None
 
 
 class DemoStatus(BaseModel):
@@ -42,6 +68,7 @@ class DemoStatus(BaseModel):
     error_message: str | None
     updated_at: datetime
     completed_at: datetime | None
+    ingestion: DemoIngestionStatus | None = None
 
 
 class DemoUpdate(BaseModel):

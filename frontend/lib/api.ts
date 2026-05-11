@@ -156,6 +156,10 @@ export function archiveDemo(demoId: string): Promise<DemoSummary> {
   return requestJson<DemoSummary>(`/demos/${demoId}/archive`, { method: "POST" });
 }
 
+export function retryDemoParse(demoId: string): Promise<DemoSummary> {
+  return requestJson<DemoSummary>(`/demos/${demoId}/parse/retry`, { method: "POST" });
+}
+
 export function getReplay(demoId: string): Promise<ReplayData> {
   return requestJson<ReplayData>(`/demos/${demoId}/replay`);
 }

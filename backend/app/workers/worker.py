@@ -9,7 +9,6 @@ from app.analysis.analyzer import analyze_replay
 from app.core.config import settings
 from app.core.database import SessionLocal, init_db
 from app.core.redis import get_redis_client
-from app.models.coaching import CoachingEvent
 from app.models.demo import Demo
 from app.models.job import DemoJob
 from app.parser.demo_parser import parse_demo_file
@@ -50,74 +49,36 @@ def process_job(db: Session, job_id: str, demo_id: str) -> None:
 
 
 def process_mock_parse_job(db: Session, demo: Demo, job: DemoJob) -> None:
-    job.status = "processing"
-    job.attempts += 1
-    job.started_at = utc_now()
-    demo.status = "parsing"
-    db.commit()
+    service = DemoService(db)
+    service.claim_parse_job(demo, job)
 
     time.sleep(1.2)
 
-    demo.status = "analyzing"
-    db.commit()
+    service.mark_parse_analyzing(demo, job)
     time.sleep(1.2)
 
     replay, events = build_mock_replay(demo.id)
-    replay_storage_key = DemoService(db).write_replay_blob(demo.id, replay)
-
-    db.query(CoachingEvent).filter(CoachingEvent.demo_id == demo.id).delete()
-    db.add_all(CoachingEvent(**event) for event in events)
-
-    demo.status = "completed"
-    demo.map_name = replay["mapName"]
-    demo.tick_rate = replay["tickRate"]
-    demo.round_count = len(replay["rounds"])
-    demo.coaching_event_count = len(events)
-    demo.replay_storage_key = replay_storage_key
-    demo.completed_at = utc_now()
-    demo.error_message = None
-
-    job.status = "completed"
-    job.finished_at = utc_now()
-    job.error_message = None
-    db.commit()
+    service.complete_parse_job(demo, job, replay, events)
 
 
 def process_real_parse_job(db: Session, demo: Demo, job: DemoJob) -> None:
     service = DemoService(db)
 
-    job.status = "processing"
-    job.attempts += 1
-    job.started_at = utc_now()
-    demo.status = "parsing"
-    db.commit()
+    service.claim_parse_job(demo, job)
 
     parsed = parse_demo_file(service.source_demo_path(demo))
 
-    demo.status = "analyzing"
-    db.commit()
+    service.mark_parse_analyzing(demo, job)
 
     replay = normalize_parser_output(demo.id, parsed)
-    replay_storage_key = service.write_replay_blob(demo.id, replay)
     events = analyze_replay(replay)
-
-    db.query(CoachingEvent).filter(CoachingEvent.demo_id == demo.id).delete()
-    db.add_all(CoachingEvent(**event) for event in events)
-
-    demo.status = "completed"
-    demo.name = f"{replay['mapName']} parser spike {demo.id[:8]}"
-    demo.map_name = replay["mapName"]
-    demo.tick_rate = replay["tickRate"]
-    demo.round_count = len(replay["rounds"])
-    demo.coaching_event_count = len(events)
-    demo.replay_storage_key = replay_storage_key
-    demo.completed_at = utc_now()
-    demo.error_message = None
-
-    job.status = "completed"
-    job.finished_at = utc_now()
-    job.error_message = None
-    db.commit()
+    service.complete_parse_job(
+        demo,
+        job,
+        replay,
+        events,
+        name=f"{replay['mapName']} parser spike {demo.id[:8]}",
+    )
 
 
 def process_mock_render_job(db: Session, demo: Demo, job: DemoJob) -> None:
@@ -203,6 +164,9 @@ def fail_job(db: Session, job_id: str, demo_id: str, error: str) -> None:
             service.update_render_clip_video_status(demo, "failed", error[:1000])
         except Exception:
             traceback.print_exc()
+    elif demo is not None and job is not None and job.job_type in {"real_parse", "mock_parse"}:
+        DemoService(db).fail_parse_job(demo, job, error)
+        return
     elif demo is not None:
         demo.status = "failed"
         demo.error_message = error[:1000]

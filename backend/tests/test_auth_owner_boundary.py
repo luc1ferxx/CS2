@@ -43,7 +43,8 @@ class AuthOwnerBoundaryApiTest(unittest.TestCase):
         object.__setattr__(settings, "demo_upload_storage_dir", root / "uploads")
         object.__setattr__(settings, "video_storage_dir", root / "videos")
 
-        self.redis_patch = patch("app.services.demo_service.get_redis_client", return_value=FakeRedis())
+        self.fake_redis = FakeRedis()
+        self.redis_patch = patch("app.services.demo_service.get_redis_client", return_value=self.fake_redis)
         self.redis_patch.start()
 
         self.app = FastAPI()
@@ -244,6 +245,110 @@ class AuthOwnerBoundaryApiTest(unittest.TestCase):
         self.assertEqual(calibration_response.status_code, 404)
         self.assertEqual(list(settings.video_storage_dir.rglob("*")), [])
 
+    def test_retry_parse_requeues_failed_uploaded_demo_for_owner(self) -> None:
+        with self.Session() as db:
+            demo = add_demo(
+                db,
+                "demo-owner-a-failed",
+                OWNER_A,
+                status="failed",
+                source_storage_key="local://uploads/demo-owner-a-failed/source.dem",
+            )
+            DemoService(db, owner_id=OWNER_A).storage.write_bytes(demo.source_storage_key, b"demo-bytes")
+            add_job(db, "old-parse-job", demo.id, "real_parse", status="failed", attempts=1)
+
+        response = self.client.post(
+            "/demos/demo-owner-a-failed/parse/retry",
+            headers=owner_headers(OWNER_A),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["id"], "demo-owner-a-failed")
+        self.assertEqual(body["status"], "queued")
+        self.assertEqual(body["ingestion"]["phase"], "uploaded")
+        self.assertEqual(body["ingestion"]["jobType"], "real_parse")
+        self.assertEqual(body["ingestion"]["jobStatus"], "queued")
+        self.assertFalse(body["ingestion"]["retryable"])
+        self.assertEqual(len(self.fake_redis.payloads), 1)
+        payload = json.loads(self.fake_redis.payloads[0])
+        self.assertEqual(payload["demo_id"], "demo-owner-a-failed")
+
+        with self.Session() as db:
+            demo = db.query(Demo).filter(Demo.id == "demo-owner-a-failed").one()
+            jobs = (
+                db.query(DemoJob)
+                .filter(DemoJob.demo_id == demo.id, DemoJob.job_type == "real_parse")
+                .order_by(DemoJob.created_at.asc())
+                .all()
+            )
+            self.assertEqual(demo.source_storage_key, "local://uploads/demo-owner-a-failed/source.dem")
+            self.assertEqual(demo.error_message, None)
+            self.assertEqual([job.status for job in jobs], ["failed", "queued"])
+            self.assertEqual(jobs[-1].attempts, 0)
+            self.assertEqual(payload["job_id"], jobs[-1].id)
+            self.assertEqual(list(settings.video_storage_dir.rglob("*")), [])
+
+    def test_retry_parse_cannot_modify_another_owners_demo(self) -> None:
+        with self.Session() as db:
+            demo = add_demo(
+                db,
+                "demo-owner-b-failed",
+                OWNER_B,
+                status="failed",
+                source_storage_key="local://uploads/demo-owner-b-failed/source.dem",
+            )
+            DemoService(db, owner_id=OWNER_B).storage.write_bytes(demo.source_storage_key, b"demo-bytes")
+            add_job(db, "owner-b-old-parse", demo.id, "real_parse", status="failed", attempts=1)
+
+        response = self.client.post(
+            "/demos/demo-owner-b-failed/parse/retry",
+            headers=owner_headers(OWNER_A),
+        )
+
+        self.assertEqual(response.status_code, 404)
+        with self.Session() as db:
+            self.assertEqual(db.query(DemoJob).count(), 1)
+        self.assertEqual(self.fake_redis.payloads, [])
+
+    def test_retry_parse_rejects_invalid_state_and_missing_source_artifact(self) -> None:
+        with self.Session() as db:
+            completed = add_demo(
+                db,
+                "demo-owner-a-completed",
+                OWNER_A,
+                status="completed",
+                source_storage_key="local://uploads/demo-owner-a-completed/source.dem",
+            )
+            service = DemoService(db, owner_id=OWNER_A)
+            service.storage.write_bytes(completed.source_storage_key, b"demo-bytes")
+            missing_source = add_demo(
+                db,
+                "demo-owner-a-missing-source",
+                OWNER_A,
+                status="failed",
+                source_storage_key="local://uploads/demo-owner-a-missing-source/source.dem",
+            )
+            add_job(db, "completed-parse-job", completed.id, "real_parse", status="completed", attempts=1)
+            add_job(db, "missing-source-job", missing_source.id, "real_parse", status="failed", attempts=1)
+
+        completed_response = self.client.post(
+            "/demos/demo-owner-a-completed/parse/retry",
+            headers=owner_headers(OWNER_A),
+        )
+        missing_source_response = self.client.post(
+            "/demos/demo-owner-a-missing-source/parse/retry",
+            headers=owner_headers(OWNER_A),
+        )
+
+        self.assertEqual(completed_response.status_code, 409)
+        self.assertEqual(missing_source_response.status_code, 409)
+        self.assertIn("failed parse", completed_response.json()["detail"].lower())
+        self.assertIn("source demo", missing_source_response.json()["detail"].lower())
+        with self.Session() as db:
+            self.assertEqual(db.query(DemoJob).count(), 2)
+        self.assertEqual(self.fake_redis.payloads, [])
+
 
 class OwnerBackfillTest(unittest.TestCase):
     def test_old_user_id_rows_receive_owner_id_backfill(self) -> None:
@@ -296,6 +401,7 @@ def add_demo(
     name: str | None = None,
     status: str = "completed",
     archived: bool = False,
+    source_storage_key: str | None = None,
 ) -> Demo:
     timestamp = datetime(2026, 5, 8, tzinfo=timezone.utc)
     demo = Demo(
@@ -310,6 +416,7 @@ def add_demo(
         coaching_event_count=1,
         status=status,
         archived=archived,
+        source_storage_key=source_storage_key,
         replay_storage_key=f"local://replays/{demo_id}.json" if status == "completed" else None,
         created_at=timestamp,
         updated_at=timestamp,
@@ -318,6 +425,28 @@ def add_demo(
     db.commit()
     db.refresh(demo)
     return demo
+
+
+def add_job(
+    db,
+    job_id: str,
+    demo_id: str,
+    job_type: str,
+    *,
+    status: str,
+    attempts: int,
+) -> DemoJob:
+    job = DemoJob(
+        id=job_id,
+        demo_id=demo_id,
+        job_type=job_type,
+        status=status,
+        attempts=attempts,
+    )
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+    return job
 
 
 def replay_contract(demo_id: str) -> dict:

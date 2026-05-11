@@ -5,6 +5,31 @@ export type DemoProcessingStatus =
   | "completed"
   | "failed";
 
+export interface ParseFailureMetadata {
+  errorCode: string;
+  message: string;
+  failedAt: string | null;
+  updatedAt: string;
+  retryable: boolean;
+  attemptCount: number;
+}
+
+export interface DemoIngestionStatus {
+  phase: string;
+  active: boolean;
+  stale: boolean;
+  retryable: boolean;
+  attemptCount: number;
+  jobId: string | null;
+  jobType: string | null;
+  jobStatus: string | null;
+  hasSourceDemo: boolean;
+  updatedAt: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+  failure: ParseFailureMetadata | null;
+}
+
 export interface DemoSummary {
   id: string;
   owner_id: string;
@@ -24,6 +49,7 @@ export interface DemoSummary {
   video_source: string | null;
   video_url: string | null;
   latest_render_status: string | null;
+  ingestion: DemoIngestionStatus | null;
 }
 
 export interface DemoStatus {
@@ -39,4 +65,5 @@ export interface DemoStatus {
   error_message: string | null;
   updated_at: string;
   completed_at: string | null;
+  ingestion: DemoIngestionStatus | null;
 }

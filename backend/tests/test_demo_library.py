@@ -1,5 +1,5 @@
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
 from sqlalchemy import create_engine
@@ -7,15 +7,18 @@ from sqlalchemy.orm import sessionmaker
 
 from app.core.config import settings
 from app.core.database import Base
-from app.models import Demo
+from app.models import Demo, DemoJob
 from app.services.demo_service import DemoService
 
 
 class DemoLibraryTest(unittest.TestCase):
     def setUp(self) -> None:
-        engine = create_engine("sqlite:///:memory:")
-        Base.metadata.create_all(bind=engine)
-        self.Session = sessionmaker(bind=engine, autocommit=False, autoflush=False)
+        self.engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
+        Base.metadata.create_all(bind=self.engine)
+        self.Session = sessionmaker(bind=self.engine, autocommit=False, autoflush=False)
+
+    def tearDown(self) -> None:
+        self.engine.dispose()
 
     def test_list_demos_hides_archived_by_default_and_can_include_them(self) -> None:
         db = self.Session()
@@ -158,6 +161,105 @@ class DemoLibraryTest(unittest.TestCase):
         self.assertEqual(listed[0].status, "queued")
         self.assertEqual(len(redis_factory.return_value.payloads), 1)
 
+    def test_list_item_includes_compact_ingestion_snapshot_for_active_upload(self) -> None:
+        db = self.Session()
+        timestamp = datetime.now(timezone.utc)
+        demo = add_demo(
+            db,
+            "demo-active-upload",
+            "Active Upload",
+            "active.dem",
+            "unknown",
+            status="queued",
+            created_at=timestamp,
+            updated_at=timestamp,
+            source_storage_key="local://uploads/demo-active-upload/active.dem",
+        )
+        add_parse_job(db, demo.id, "real_parse", status="queued", attempts=0)
+        service = DemoService(db)
+
+        item = service.demo_list_item(demo)
+
+        self.assertEqual(item.ingestion.phase, "uploaded")
+        self.assertTrue(item.ingestion.active)
+        self.assertFalse(item.ingestion.stale)
+        self.assertFalse(item.ingestion.retryable)
+        self.assertEqual(item.ingestion.attemptCount, 0)
+        self.assertEqual(item.ingestion.jobType, "real_parse")
+        self.assertEqual(item.ingestion.jobStatus, "queued")
+        self.assertTrue(item.ingestion.hasSourceDemo)
+        self.assertIsNone(item.ingestion.failure)
+
+    def test_failed_parse_ingestion_snapshot_has_compact_failure_metadata(self) -> None:
+        db = self.Session()
+        timestamp = datetime(2026, 5, 8, tzinfo=timezone.utc)
+        demo = add_demo(
+            db,
+            "demo-parse-failed",
+            "Failed Parse",
+            "failed.dem",
+            "unknown",
+            status="failed",
+            created_at=timestamp,
+            updated_at=timestamp + timedelta(minutes=4),
+            source_storage_key="local://uploads/demo-parse-failed/failed.dem",
+            error_message="Parser exploded while reading demo\nTraceback should not leak into the compact snapshot",
+        )
+        failed_at = timestamp + timedelta(minutes=3)
+        add_parse_job(
+            db,
+            demo.id,
+            "real_parse",
+            status="failed",
+            attempts=2,
+            error_message="Parser exploded while reading demo\nTraceback should not leak",
+            finished_at=failed_at,
+        )
+        service = DemoService(db)
+
+        item = service.demo_list_item(demo)
+
+        self.assertEqual(item.ingestion.phase, "failed")
+        self.assertFalse(item.ingestion.active)
+        self.assertEqual(item.ingestion.attemptCount, 2)
+        self.assertIsNotNone(item.ingestion.failure)
+        self.assertEqual(item.ingestion.failure.errorCode, "PARSER_FAILED")
+        self.assertEqual(item.ingestion.failure.message, "Parser exploded while reading demo")
+        self.assertEqual(item.ingestion.failure.failedAt, failed_at)
+        self.assertEqual(item.ingestion.failure.updatedAt, timestamp + timedelta(minutes=4))
+        self.assertFalse(item.ingestion.failure.retryable)
+        self.assertEqual(item.ingestion.failure.attemptCount, 2)
+
+    def test_active_parse_snapshot_marks_stale_when_status_is_old(self) -> None:
+        db = self.Session()
+        old_timestamp = datetime.now(timezone.utc) - timedelta(minutes=30)
+        demo = add_demo(
+            db,
+            "demo-stale-parse",
+            "Stale Parse",
+            "stale.dem",
+            "unknown",
+            status="parsing",
+            created_at=old_timestamp,
+            updated_at=old_timestamp,
+            source_storage_key="local://uploads/demo-stale-parse/stale.dem",
+        )
+        add_parse_job(
+            db,
+            demo.id,
+            "real_parse",
+            status="processing",
+            attempts=1,
+            started_at=old_timestamp,
+        )
+        service = DemoService(db)
+
+        item = service.demo_list_item(demo)
+
+        self.assertEqual(item.ingestion.phase, "parsing")
+        self.assertTrue(item.ingestion.active)
+        self.assertTrue(item.ingestion.stale)
+
 
 class FakeRedis:
     def __init__(self) -> None:
@@ -177,6 +279,9 @@ def add_demo(
     status: str = "completed",
     archived: bool = False,
     created_at: datetime | None = None,
+    updated_at: datetime | None = None,
+    source_storage_key: str | None = None,
+    error_message: str | None = None,
 ) -> Demo:
     timestamp = created_at or datetime(2026, 5, 8, tzinfo=timezone.utc)
     demo = Demo(
@@ -192,13 +297,42 @@ def add_demo(
         status=status,
         archived=archived,
         created_at=timestamp,
-        updated_at=timestamp,
+        updated_at=updated_at or timestamp,
+        source_storage_key=source_storage_key,
+        error_message=error_message,
         replay_storage_key=f"local://replays/{demo_id}.json" if status == "completed" else None,
     )
     db.add(demo)
     db.commit()
     db.refresh(demo)
     return demo
+
+
+def add_parse_job(
+    db,
+    demo_id: str,
+    job_type: str,
+    *,
+    status: str,
+    attempts: int,
+    started_at: datetime | None = None,
+    finished_at: datetime | None = None,
+    error_message: str | None = None,
+) -> DemoJob:
+    job = DemoJob(
+        id=f"{demo_id}-{job_type}-{status}",
+        demo_id=demo_id,
+        job_type=job_type,
+        status=status,
+        attempts=attempts,
+        started_at=started_at,
+        finished_at=finished_at,
+        error_message=error_message,
+    )
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+    return job
 
 
 if __name__ == "__main__":

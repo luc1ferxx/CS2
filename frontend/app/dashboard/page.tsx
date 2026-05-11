@@ -17,12 +17,15 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 
 import { DemoUploader } from "@/components/upload/DemoUploader";
-import { archiveDemo, createDemoUpload, createMockUpload, listDemos, updateDemo } from "@/lib/api";
+import { archiveDemo, createDemoUpload, createMockUpload, listDemos, retryDemoParse, updateDemo } from "@/lib/api";
 import {
+  canRetryParse,
   demoLibraryFilterOptions,
   countActiveLibraryDemos,
   demoStatusLabel,
   filterAndSortDemos,
+  ingestionPhaseLabel,
+  parseFailureReason,
   renderStatusLabel,
   type DemoLibraryFilters
 } from "@/lib/demo-library";
@@ -167,6 +170,22 @@ export default function DashboardPage() {
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to archive demo");
+    } finally {
+      setBusyDemoId(null);
+    }
+  }
+
+  async function handleRetryParse(demo: DemoSummary) {
+    setBusyDemoId(demo.id);
+    invalidateLibraryLoads();
+    try {
+      const updated = await retryDemoParse(demo.id);
+      invalidateLibraryLoads();
+      setDemos((current) => current.map((item) => (item.id === updated.id ? updated : item)));
+      setNotice(`Retry queued: ${updated.name}`);
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to retry parse");
     } finally {
       setBusyDemoId(null);
     }
@@ -384,7 +403,10 @@ export default function DashboardPage() {
                     </td>
                     <td data-label="Status">
                       <StatusBadge status={demo.status} />
-                      {demo.error_message ? <p className="library-error-text">{demo.error_message}</p> : null}
+                      <IngestionMeta demo={demo} />
+                      {parseFailureReason(demo) ? (
+                        <p className="library-error-text">{parseFailureReason(demo)}</p>
+                      ) : null}
                     </td>
                     <td data-label="Render">
                       <span className={`mini-pill library-render-pill ${demo.latest_render_status ?? demo.video_status ?? "pending"}`}>
@@ -412,6 +434,17 @@ export default function DashboardPage() {
                           <Pencil size={14} />
                           Rename
                         </button>
+                        {canRetryParse(demo) ? (
+                          <button
+                            className="secondary-button compact-button"
+                            type="button"
+                            onClick={() => void handleRetryParse(demo)}
+                            disabled={busyDemoId === demo.id}
+                          >
+                            <RefreshCcw size={14} />
+                            Retry
+                          </button>
+                        ) : null}
                         <button
                           className="secondary-button compact-button"
                           type="button"
@@ -452,6 +485,26 @@ function StatusBadge({ status }: { status: DemoProcessingStatus }) {
       {demoStatusLabel(status)}
     </span>
   );
+}
+
+function IngestionMeta({ demo }: { demo: DemoSummary }) {
+  const ingestion = demo.ingestion;
+  if (!ingestion) {
+    return null;
+  }
+
+  const labels = [ingestionPhaseLabel(demo)];
+  if (ingestion.active) {
+    labels.push("active");
+  }
+  if (ingestion.stale) {
+    labels.push("stale");
+  }
+  if (ingestion.attemptCount > 0) {
+    labels.push(`attempt ${ingestion.attemptCount}`);
+  }
+
+  return <p className="library-ingestion-meta">{labels.join(" / ")}</p>;
 }
 
 function formatDate(value: string) {

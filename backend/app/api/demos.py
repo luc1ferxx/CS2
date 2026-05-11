@@ -82,6 +82,22 @@ def archive_demo(
     return service.demo_list_item(demo)
 
 
+@router.post("/demos/{demo_id}/parse/retry", response_model=DemoListItem)
+def retry_demo_parse(
+    demo_id: str,
+    db: Session = Depends(get_db),
+    owner_id: str = Depends(get_current_owner_id),
+) -> DemoListItem:
+    service = DemoService(db, owner_id=owner_id)
+    demo = service.get_demo(demo_id)
+    if demo is None:
+        raise HTTPException(status_code=404, detail="Demo not found")
+    try:
+        return service.retry_parse_job(demo)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
 def render_job_created_response(
     job_status: RenderJobStatus,
     video: ReplayVideoStatus,
@@ -95,10 +111,11 @@ def get_demo_status(
     db: Session = Depends(get_db),
     owner_id: str = Depends(get_current_owner_id),
 ) -> DemoStatus:
-    demo = DemoService(db, owner_id=owner_id).get_demo(demo_id)
+    service = DemoService(db, owner_id=owner_id)
+    demo = service.get_demo(demo_id)
     if demo is None:
         raise HTTPException(status_code=404, detail="Demo not found")
-    return DemoStatus.model_validate(demo)
+    return service.demo_status(demo)
 
 
 @router.get("/demos/{demo_id}/video", response_model=ReplayVideoStatus)

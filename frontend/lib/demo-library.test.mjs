@@ -35,10 +35,13 @@ function loadTypeScriptModule(relativePath) {
 }
 
 const {
+  canRetryParse,
   countActiveLibraryDemos,
   demoLibraryFilterOptions,
   filterAndSortDemos,
+  ingestionPhaseLabel,
   isRenderActiveStatus,
+  parseFailureReason,
   renderStatusLabel
 } = loadTypeScriptModule("./demo-library.ts");
 
@@ -163,6 +166,69 @@ const demos = [
 }
 
 {
+  const failedParse = demo({
+    id: "failed-parse",
+    name: "Failed Parse",
+    status: "failed",
+    latest_render_status: null,
+    video_status: null,
+    ingestion: ingestion({
+      phase: "failed",
+      retryable: true,
+      attemptCount: 2,
+      failure: {
+        errorCode: "PARSER_FAILED",
+        message: "Parser timed out while reading demo",
+        failedAt: "2026-05-08T00:03:00Z",
+        updatedAt: "2026-05-08T00:04:00Z",
+        retryable: true,
+        attemptCount: 2
+      }
+    })
+  });
+
+  assert.equal(ingestionPhaseLabel(failedParse), "failed");
+  assert.equal(parseFailureReason(failedParse), "Parser timed out while reading demo");
+  assert.equal(canRetryParse(failedParse), true);
+}
+
+{
+  const result = filterAndSortDemos(
+    [
+      demo({
+        id: "failed-parse",
+        name: "Failed Parse",
+        status: "failed",
+        latest_render_status: null,
+        video_status: null,
+        ingestion: ingestion({
+          phase: "failed",
+          retryable: true,
+          failure: {
+            errorCode: "PARSER_FAILED",
+            message: "Parser timed out while reading demo",
+            failedAt: "2026-05-08T00:03:00Z",
+            updatedAt: "2026-05-08T00:04:00Z",
+            retryable: true,
+            attemptCount: 1
+          }
+        })
+      })
+    ],
+    {
+      search: "timed retry",
+      status: "all",
+      map: "all",
+      sort: "recent",
+      order: "desc",
+      includeArchived: false
+    }
+  );
+
+  assert.deepEqual(normalize(result.map((item) => item.id)), ["failed-parse"]);
+}
+
+{
   assert.equal(isRenderActiveStatus("queued"), true);
   assert.equal(isRenderActiveStatus("processing"), true);
   assert.equal(isRenderActiveStatus("rendering"), true);
@@ -172,9 +238,10 @@ const demos = [
       demo({ id: "uploaded", status: "queued", latest_render_status: null }),
       demo({ id: "rendering", status: "completed", latest_render_status: "processing" }),
       demo({ id: "video-rendering", status: "completed", latest_render_status: null, video_status: "rendering" }),
+      demo({ id: "ingestion-active", status: "completed", latest_render_status: null, video_status: null, ingestion: ingestion({ phase: "parsing", active: true }) }),
       demo({ id: "done", status: "completed", latest_render_status: "completed" })
     ]),
-    3
+    4
   );
 }
 
@@ -196,7 +263,26 @@ function demo(overrides) {
     video_status: valueOrDefault(overrides, "video_status", "ready"),
     video_source: valueOrDefault(overrides, "video_source", "mock"),
     video_url: valueOrDefault(overrides, "video_url", null),
-    latest_render_status: valueOrDefault(overrides, "latest_render_status", null)
+    latest_render_status: valueOrDefault(overrides, "latest_render_status", null),
+    ingestion: valueOrDefault(overrides, "ingestion", ingestion({ phase: overrides.status === "failed" ? "failed" : "ready" }))
+  };
+}
+
+function ingestion(overrides) {
+  return {
+    phase: overrides.phase ?? "ready",
+    active: overrides.active ?? ["uploaded", "parsing", "analyzing"].includes(overrides.phase),
+    stale: overrides.stale ?? false,
+    retryable: overrides.retryable ?? false,
+    attemptCount: overrides.attemptCount ?? 0,
+    jobId: overrides.jobId ?? null,
+    jobType: overrides.jobType ?? null,
+    jobStatus: overrides.jobStatus ?? null,
+    hasSourceDemo: overrides.hasSourceDemo ?? false,
+    updatedAt: overrides.updatedAt ?? "2026-05-08T00:00:00Z",
+    startedAt: overrides.startedAt ?? null,
+    finishedAt: overrides.finishedAt ?? null,
+    failure: overrides.failure ?? null
   };
 }
 
