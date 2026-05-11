@@ -113,6 +113,7 @@ class RenderJobManifest(BaseModel):
     status: str
     demoFilePath: str
     demoStorageKey: str | None = None
+    replayStorageKey: str | None = None
     originalFilename: str
     mapName: str
     eventId: str | None = None

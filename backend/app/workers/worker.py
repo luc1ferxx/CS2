@@ -19,8 +19,8 @@ from app.services.mock_replay_service import build_mock_replay
 
 
 RENDER_CLIP_NOT_CONNECTED_ERROR = (
-    "Render clip worker is not connected yet. "
-    "A Windows/Linux GPU worker must process this job."
+    "GPU worker not connected for render_clip. "
+    "A separate Windows/Linux GPU worker or manual operator must process this job."
 )
 
 

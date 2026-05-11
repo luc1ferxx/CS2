@@ -45,8 +45,7 @@ export function FirstPersonReplay({
   const videoTime = tickToVideoTime(currentTick, replay.video);
   const clipJobBusy =
     renderClipRequesting ||
-    latestRenderClipJob?.status === "queued" ||
-    latestRenderClipJob?.status === "rendering";
+    isActiveRenderJobStatus(latestRenderClipJob?.status);
   const progress = Math.min(
     1,
     Math.max(0, (videoTime - timeRange.start) / Math.max(1, timeRange.end - timeRange.start))
@@ -206,6 +205,10 @@ function RenderStatusOverlay({ video }: { video: ReplayData["video"] }) {
       <p>{messageByStatus[video.status]}</p>
     </div>
   );
+}
+
+function isActiveRenderJobStatus(status: string | null | undefined): boolean {
+  return status === "queued" || status === "processing" || status === "rendering";
 }
 
 function MockFirstPersonFrame({

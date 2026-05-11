@@ -237,6 +237,7 @@ def list_render_clip_jobs(
     tags=["render-worker"],
 )
 def get_next_render_worker_manifest(
+    claim: bool = True,
     _: None = Depends(require_render_worker_token),
     db: Session = Depends(get_db),
 ) -> RenderJobManifest | Response:
@@ -246,6 +247,8 @@ def get_next_render_worker_manifest(
         return Response(status_code=204)
 
     try:
+        if claim:
+            job = service.claim_render_clip_job(job)
         return service.render_job_manifest(job)
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -258,6 +261,7 @@ def get_next_render_worker_manifest(
 )
 def get_render_worker_manifest(
     job_id: str,
+    claim: bool = True,
     _: None = Depends(require_render_worker_token),
     db: Session = Depends(get_db),
 ) -> RenderJobManifest:
@@ -267,6 +271,8 @@ def get_render_worker_manifest(
         raise HTTPException(status_code=404, detail="Render clip job not found")
 
     try:
+        if claim:
+            job = service.claim_render_clip_job(job)
         return service.render_job_manifest(job)
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc

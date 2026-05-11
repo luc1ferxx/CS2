@@ -36,6 +36,7 @@ class RenderWorkerRunnerTest(unittest.TestCase):
 
         self.assertEqual(result.action, "dry-run")
         self.assertEqual(client.fetched_job_ids, ["render-job-dry-run"])
+        self.assertEqual(client.fetch_claims, [False])
         self.assertEqual(client.posted_results, [])
         self.assertIn("real renderer is not connected", result.message)
 
@@ -55,6 +56,7 @@ class RenderWorkerRunnerTest(unittest.TestCase):
         self.assertEqual(result.action, "dry-run")
         self.assertEqual(result.job_id, "render-job-next")
         self.assertEqual(client.next_fetches, 1)
+        self.assertEqual(client.next_claims, [False])
         self.assertEqual(client.posted_results, [])
 
     def test_missing_fake_video_posts_failed_callback(self) -> None:
@@ -71,6 +73,7 @@ class RenderWorkerRunnerTest(unittest.TestCase):
             result = self.runner.process_job(config, "render-job-missing-video", client=client)
 
         self.assertEqual(result.action, "failed")
+        self.assertEqual(client.fetch_claims, [True])
         self.assertEqual(len(client.posted_results), 1)
         job_id, payload = client.posted_results[0]
         self.assertEqual(job_id, "render-job-missing-video")
@@ -100,6 +103,7 @@ class RenderWorkerRunnerTest(unittest.TestCase):
             result = self.runner.process_job(config, "render-job-fake-video", client=client)
 
         self.assertEqual(result.action, "completed")
+        self.assertEqual(client.fetch_claims, [True])
         self.assertEqual(client.uploaded_media, [("render-job-fake-video", fake_video)])
         self.assertEqual(len(client.posted_results), 1)
         job_id, payload = client.posted_results[0]
@@ -137,6 +141,7 @@ class RenderWorkerRunnerTest(unittest.TestCase):
 
         self.assertEqual(result.action, "prepared")
         self.assertEqual(client.fetched_job_ids, ["render-job-prepare"])
+        self.assertEqual(client.fetch_claims, [True])
 
     def test_complete_prepared_job_command_function_callbacks_with_existing_output(self) -> None:
         client = FakeClient(
@@ -179,16 +184,20 @@ class FakeClient:
         self.manifest = manifest
         self.uploaded_video_url = uploaded_video_url
         self.fetched_job_ids: list[str] = []
+        self.fetch_claims: list[bool] = []
         self.next_fetches = 0
+        self.next_claims: list[bool] = []
         self.uploaded_media: list[tuple[str, Path]] = []
         self.posted_results: list[tuple[str, dict]] = []
 
-    def fetch_manifest(self, job_id: str) -> dict:
+    def fetch_manifest(self, job_id: str, *, claim: bool = True) -> dict:
         self.fetched_job_ids.append(job_id)
+        self.fetch_claims.append(claim)
         return self.manifest
 
-    def fetch_next_manifest(self) -> dict | None:
+    def fetch_next_manifest(self, *, claim: bool = True) -> dict | None:
         self.next_fetches += 1
+        self.next_claims.append(claim)
         return self.manifest
 
     def upload_media(self, job_id: str, media_path: Path) -> str:

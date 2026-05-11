@@ -27,10 +27,10 @@ DEFAULT_POLL_INTERVAL_SECONDS = 5
 
 
 class WorkerClient(Protocol):
-    def fetch_manifest(self, job_id: str) -> dict[str, Any]:
+    def fetch_manifest(self, job_id: str, *, claim: bool = True) -> dict[str, Any]:
         ...
 
-    def fetch_next_manifest(self) -> dict[str, Any] | None:
+    def fetch_next_manifest(self, *, claim: bool = True) -> dict[str, Any] | None:
         ...
 
     def upload_media(self, job_id: str, media_path: Path) -> str:
@@ -77,14 +77,17 @@ class RenderWorkerApiClient:
     def __init__(self, config: RunnerConfig):
         self.config = config
 
-    def fetch_manifest(self, job_id: str) -> dict[str, Any]:
-        status, payload = self._request_json("GET", f"/render-worker/jobs/{job_id}/manifest")
+    def fetch_manifest(self, job_id: str, *, claim: bool = True) -> dict[str, Any]:
+        status, payload = self._request_json(
+            "GET",
+            f"/render-worker/jobs/{job_id}/manifest?claim={_bool_query(claim)}",
+        )
         if status != 200 or not isinstance(payload, dict):
             raise RuntimeError(f"Unexpected manifest response for {job_id}: HTTP {status}")
         return payload
 
-    def fetch_next_manifest(self) -> dict[str, Any] | None:
-        status, payload = self._request_json("GET", "/render-worker/jobs/next")
+    def fetch_next_manifest(self, *, claim: bool = True) -> dict[str, Any] | None:
+        status, payload = self._request_json("GET", f"/render-worker/jobs/next?claim={_bool_query(claim)}")
         if status == 204:
             return None
         if status != 200 or not isinstance(payload, dict):
@@ -180,7 +183,7 @@ def process_job(
     dry_run: bool = False,
 ) -> WorkerRunResult:
     worker_client = client or RenderWorkerApiClient(config)
-    manifest = worker_client.fetch_manifest(job_id)
+    manifest = worker_client.fetch_manifest(job_id, claim=not dry_run)
     return process_manifest(config, manifest, client=worker_client, dry_run=dry_run)
 
 
@@ -191,7 +194,7 @@ def poll_once(
     dry_run: bool = False,
 ) -> WorkerRunResult:
     worker_client = client or RenderWorkerApiClient(config)
-    manifest = worker_client.fetch_next_manifest()
+    manifest = worker_client.fetch_next_manifest(claim=not dry_run)
     if manifest is None:
         return WorkerRunResult(
             action="no-job",
@@ -233,7 +236,7 @@ def prepare_job(
     if adapter_name != "cs2-manual":
         raise ValueError("prepare-job currently supports only --adapter cs2-manual")
     worker_client = client or RenderWorkerApiClient(config)
-    manifest = worker_client.fetch_manifest(job_id)
+    manifest = worker_client.fetch_manifest(job_id, claim=True)
     return cs2_manual_adapter(config).prepare(manifest)
 
 
@@ -263,6 +266,10 @@ def cs2_manual_adapter(config: RunnerConfig) -> CS2ManualAdapter:
         work_dir=config.work_dir,
         output_filename_template=config.cs2_manual_output_filename,
     )
+
+
+def _bool_query(value: bool) -> str:
+    return "true" if value else "false"
 
 
 def write_manifest_snapshot(config: RunnerConfig, manifest: dict[str, Any]) -> Path:

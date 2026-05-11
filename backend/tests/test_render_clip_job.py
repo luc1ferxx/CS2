@@ -53,8 +53,13 @@ class RenderClipJobTest(unittest.TestCase):
                 self.assertEqual(job.status, "queued")
                 self.assertEqual(metadata["eventId"], "event-1")
                 self.assertEqual(metadata["playerId"], "player-1")
+                self.assertEqual(metadata["demoStorageKey"], f"local://uploads/{demo.id}/{demo.original_filename}")
+                self.assertEqual(metadata["replayStorageKey"], f"local://replays/{demo.id}.json")
                 self.assertEqual(metadata["durationSeconds"], 40)
                 self.assertEqual(metadata["maxDurationSeconds"], 60)
+                self.assertNotIn("demoFilePath", metadata)
+                self.assertNotIn("localMediaPath", metadata)
+                self.assertNotIn("videoUrl", metadata)
                 self.assertEqual(queued_payload["job_id"], job.id)
                 self.assertEqual(queued_payload["demo_id"], demo.id)
                 self.assertEqual(queued_payload["job_type"], "render_clip")
@@ -161,10 +166,39 @@ class RenderClipJobTest(unittest.TestCase):
                 video = service.get_video_status(demo)
                 self.assertEqual(job.status, "failed")
                 self.assertEqual(job.error_message, RENDER_CLIP_NOT_CONNECTED_ERROR)
+                self.assertIn("GPU worker not connected", job.error_message)
                 self.assertEqual(video["status"], "ready")
                 self.assertEqual(video["source"], "manual_upload")
                 self.assertEqual(video["url"], "/media/videos/demo-render-manual-video/clip.mp4")
                 self.assertEqual(video["timeOriginSeconds"], 1.25)
+
+    def test_claim_render_clip_job_marks_rendering_once(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            with replay_storage_dir(Path(directory)), patch(
+                "app.services.demo_service.get_redis_client",
+                return_value=FakeRedis(),
+            ):
+                db = self.Session()
+                demo = add_completed_demo(db, "demo-render-claim")
+                service = DemoService(db)
+                service.write_replay_blob(demo.id, replay_contract(demo.id))
+                job = service.create_render_clip_job(
+                    demo,
+                    RenderClipRequest(tickStart=640, tickEnd=1280, tickRate=64),
+                )
+
+                claimed = service.claim_render_clip_job(job)
+                claimed_again = service.claim_render_clip_job(claimed)
+                video = service.get_video_status(demo)
+
+                self.assertEqual(claimed.status, "rendering")
+                self.assertEqual(claimed.attempts, 1)
+                self.assertIsNotNone(claimed.started_at)
+                self.assertIsNone(claimed.finished_at)
+                self.assertEqual(claimed_again.attempts, 1)
+                self.assertEqual(video["status"], "rendering")
+                self.assertEqual(video["source"], "rendered")
+                self.assertIsNone(video["errorMessage"])
 
     def test_stub_worker_skips_render_clip_job_already_completed_by_external_worker(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -239,6 +273,7 @@ class RenderClipJobTest(unittest.TestCase):
                 self.assertEqual(manifest.demoId, demo.id)
                 self.assertEqual(manifest.demoFilePath, f"/data/uploads/{demo.id}/{demo.original_filename}")
                 self.assertEqual(manifest.demoStorageKey, f"local://uploads/{demo.id}/{demo.original_filename}")
+                self.assertEqual(manifest.replayStorageKey, f"local://replays/{demo.id}.json")
                 self.assertEqual(manifest.mapName, "de_dust2")
                 self.assertEqual(manifest.eventId, "event-1")
                 self.assertEqual(manifest.povSteamId, "76561190000000001")
@@ -247,6 +282,27 @@ class RenderClipJobTest(unittest.TestCase):
                 self.assertEqual(manifest.tickRate, 64)
                 self.assertEqual(manifest.roundNumber, 2)
                 self.assertEqual(manifest.renderPreset, "first_person_1080p30")
+
+    def test_render_worker_manifest_can_claim_job_for_processing(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            with replay_storage_dir(Path(directory)), patch(
+                "app.services.demo_service.get_redis_client",
+                return_value=FakeRedis(),
+            ):
+                db = self.Session()
+                demo = add_completed_demo(db, "demo-render-manifest-claim")
+                service = DemoService(db)
+                service.write_replay_blob(demo.id, replay_contract(demo.id))
+                job = service.create_render_clip_job(
+                    demo,
+                    RenderClipRequest(tickStart=640, tickEnd=1280, tickRate=64),
+                )
+
+                claimed = service.claim_render_clip_job(job)
+                manifest = service.render_job_manifest(claimed)
+
+                self.assertEqual(manifest.status, "rendering")
+                self.assertEqual(claimed.status, "rendering")
 
     def test_next_render_clip_job_returns_oldest_queued_job(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -541,6 +597,52 @@ class RenderClipJobTest(unittest.TestCase):
                 self.assertEqual(video["source"], "manual_upload")
                 self.assertEqual(video["url"], "/media/videos/demo-render-callback-failed/manual.mp4")
                 self.assertEqual(video["timeOriginSeconds"], 2)
+
+    def test_terminal_render_job_rejects_later_callbacks(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            with replay_storage_dir(Path(directory)), patch(
+                "app.services.demo_service.get_redis_client",
+                return_value=FakeRedis(),
+            ):
+                db = self.Session()
+                demo = add_completed_demo(db, "demo-render-terminal-callback")
+                service = DemoService(db)
+                service.write_replay_blob(demo.id, replay_contract(demo.id))
+                job = service.create_render_clip_job(
+                    demo,
+                    RenderClipRequest(tickStart=100, tickEnd=740, tickRate=64),
+                )
+                service.apply_render_worker_result(
+                    job,
+                    RenderWorkerResult(
+                        status="completed",
+                        videoUrl="/media/videos/demo-render-terminal-callback/rendered.mp4",
+                        tickStart=100,
+                        tickEnd=740,
+                        tickRate=64,
+                        durationSeconds=10,
+                    ),
+                )
+
+                with self.assertRaisesRegex(ValueError, "already completed"):
+                    service.apply_render_worker_result(
+                        job,
+                        RenderWorkerResult(
+                            status="failed",
+                            tickStart=100,
+                            tickEnd=740,
+                            tickRate=64,
+                            durationSeconds=10,
+                            errorMessage="late failure",
+                        ),
+                    )
+
+                db.refresh(job)
+                video = service.get_video_status(demo)
+                self.assertEqual(job.status, "completed")
+                self.assertIsNone(job.error_message)
+                self.assertEqual(video["status"], "ready")
+                self.assertEqual(video["source"], "rendered")
 
 
 class FakeRedis:

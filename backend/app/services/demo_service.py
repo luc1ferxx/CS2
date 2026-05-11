@@ -277,6 +277,8 @@ class DemoService:
             request,
             duration_seconds=duration_seconds,
             max_duration_seconds=max_duration_seconds,
+            demo_storage_key=self.source_demo_storage_key(demo),
+            replay_storage_key=getattr(demo, "replay_storage_key", None) or self.replay_blob_key(demo.id),
         )
 
         job_id = str(uuid.uuid4())
@@ -314,6 +316,25 @@ class DemoService:
             .all()
         )
         return [self.render_job_status(job) for job in jobs]
+
+    def claim_render_clip_job(self, job: DemoJob) -> DemoJob:
+        if job.job_type != RENDER_CLIP_JOB_TYPE:
+            raise ValueError("Only render_clip jobs can be claimed by render workers")
+        if job.status in {"completed", "failed"}:
+            raise ValueError(f"Render job is already {job.status}")
+        if job.status not in {"queued", "pending"}:
+            return job
+
+        job.status = "rendering"
+        job.attempts += 1
+        if job.started_at is None:
+            job.started_at = utc_now()
+        job.finished_at = None
+        job.error_message = None
+        self.update_render_clip_video_status(job.demo, "rendering", None)
+        self.db.commit()
+        self.db.refresh(job)
+        return job
 
     def _latest_render_clip_job(self, demo: Demo) -> DemoJob | None:
         return (
@@ -385,7 +406,8 @@ class DemoService:
             jobType=job.job_type,
             status=job.status,
             demoFilePath=str(self.source_demo_path(demo)),
-            demoStorageKey=self.source_demo_storage_key(demo),
+            demoStorageKey=_optional_str(metadata.get("demoStorageKey")) or self.source_demo_storage_key(demo),
+            replayStorageKey=_optional_str(metadata.get("replayStorageKey")) or getattr(demo, "replay_storage_key", None),
             originalFilename=demo.original_filename,
             mapName=demo.map_name,
             eventId=_optional_str(metadata.get("eventId")),
@@ -405,6 +427,8 @@ class DemoService:
     ) -> dict[str, Any]:
         if job.job_type != RENDER_CLIP_JOB_TYPE:
             raise ValueError("Only render_clip jobs accept render worker results")
+        if job.status in {"completed", "failed"}:
+            raise ValueError(f"Render job is already {job.status}")
 
         normalized_status = result.status.lower()
         if normalized_status in {"completed", "ready"}:
@@ -643,6 +667,8 @@ def _compact_render_clip_metadata(
     *,
     duration_seconds: float,
     max_duration_seconds: int,
+    demo_storage_key: str,
+    replay_storage_key: str,
 ) -> dict[str, Any]:
     metadata: dict[str, Any] = {
         "tickStart": request.tickStart,
@@ -650,6 +676,8 @@ def _compact_render_clip_metadata(
         "tickRate": request.tickRate,
         "durationSeconds": round(duration_seconds, 3),
         "maxDurationSeconds": max_duration_seconds,
+        "demoStorageKey": demo_storage_key,
+        "replayStorageKey": replay_storage_key,
         "renderPreset": request.renderPreset or RENDER_CLIP_DEFAULT_PRESET,
     }
     optional_fields = {

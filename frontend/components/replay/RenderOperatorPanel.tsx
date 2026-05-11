@@ -128,9 +128,9 @@ function operatorState(video: ReplayVideo, latestJob: RenderJobStatus | null) {
     } as const;
   }
 
-  if (latestJob?.status === "rendering") {
+  if (latestJob?.status === "processing" || latestJob?.status === "rendering") {
     return {
-      label: "Waiting for worker output",
+      label: latestJob.status === "processing" ? "Processing" : "Waiting for worker output",
       nextAction: "For manual probing, run prepare-job, place the MP4 at the expected output path, then complete it.",
       tone: "waiting"
     } as const;
