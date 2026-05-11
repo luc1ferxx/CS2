@@ -39,6 +39,15 @@ services:
       - replay-data:/data/replays
       - upload-data:/data/uploads
       - video-data:/data/videos
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python -c \"import json, sys, urllib.request; data = json.load(urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5)); sys.exit(0 if data.get('status') == 'ok' else 1)\"",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 20
     depends_on:
       postgres:
         condition: service_healthy
@@ -75,7 +84,8 @@ services:
     ports:
       - "3000:3000"
     depends_on:
-      - api
+      api:
+        condition: service_healthy
 
 volumes:
   postgres-data:

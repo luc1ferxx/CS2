@@ -124,6 +124,8 @@ API 健康检查：
 curl http://localhost:8000/health
 ```
 
+`/health` 会返回 API、PostgreSQL、Redis、worker dependency 配置和本地 storage path 的 compact readiness payload；`status=degraded` 表示至少一个依赖不可用或关键 worker 配置缺失。
+
 单独运行 frontend：
 
 ```bash
@@ -131,7 +133,13 @@ cd frontend
 npm run dev
 ```
 
-常用验证命令：
+一键本地验证：
+
+```bash
+./scripts/verify.sh
+```
+
+该脚本会按顺序运行 backend compile、backend unit tests、render-worker compile、render-worker unit tests、frontend lint、frontend typecheck 和 frontend build。也可以单独运行常用命令：
 
 ```bash
 cd frontend
@@ -144,6 +152,8 @@ npm run build
 python3 -m compileall backend/app
 PYTHONPATH=backend python3 -m unittest discover backend/tests
 ```
+
+部署准备、runtime env 和 smoke checklist 见 `docs/deployment_readiness_v1.md`。
 
 ## 主要流程
 
@@ -464,20 +474,44 @@ Render worker:
 
 ## Configuration
 
-Key environment variables:
+完整部署准备说明见 `docs/deployment_readiness_v1.md`。关键环境变量：
 
-| Name | Default |
-| --- | --- |
-| `DATABASE_URL` | `postgresql+psycopg2://cs2coach:cs2coach@localhost:5432/cs2coach` |
-| `REDIS_URL` | `redis://localhost:6379/0` |
-| `REDIS_QUEUE_NAME` | `cs2-demo-jobs` |
-| `REPLAY_STORAGE_DIR` | `/data/replays` |
-| `DEMO_UPLOAD_STORAGE_DIR` | `/data/uploads` |
-| `VIDEO_STORAGE_DIR` | `/data/videos` |
-| `DEV_USER_ID` | `dev-user` |
-| `MAX_RENDER_CLIP_SECONDS` | `60` |
-| `RENDER_WORKER_TOKEN` | `dev-render-worker-token` |
-| `CORS_ORIGINS` | `http://localhost:3000,http://127.0.0.1:3000` |
+| Name | Default | Used by |
+| --- | --- | --- |
+| `NEXT_PUBLIC_API_BASE_URL` | `http://localhost:8000` | frontend browser API/media URL |
+| `CORS_ORIGINS` | `http://localhost:3000,http://127.0.0.1:3000` | backend API |
+| `DATABASE_URL` | `postgresql+psycopg2://cs2coach:cs2coach@localhost:5432/cs2coach` | API, worker |
+| `REDIS_URL` | `redis://localhost:6379/0` | API, worker |
+| `REDIS_QUEUE_NAME` | `cs2-demo-jobs` | API, worker |
+| `REPLAY_STORAGE_DIR` | `/data/replays` | API, worker |
+| `DEMO_UPLOAD_STORAGE_DIR` | `/data/uploads` | API, worker |
+| `VIDEO_STORAGE_DIR` | `/data/videos` | API, worker |
+| `DEV_USER_ID` | `dev-user` | backend API |
+| `MAX_RENDER_CLIP_SECONDS` | `60` | backend API |
+| `RENDER_WORKER_TOKEN` | `dev-render-worker-token` | API, render-worker |
+| `API_BASE_URL` | `http://localhost:8000` | render-worker runner |
+| `WORK_DIR` | `.render-worker-work` | render-worker runner |
+| `POLL_INTERVAL_SECONDS` | `5` | render-worker runner |
+| `DEV_FAKE_VIDEO_PATH` | unset | render-worker fake adapter |
+| `CS2_INSTALL_DIR` | unset | render-worker manual adapter |
+| `STEAM_USER_DATA_DIR` | unset | render-worker manual adapter |
+| `CS2_MANUAL_OUTPUT_FILENAME` | `{job_id}.mp4` | render-worker manual adapter |
+
+Docker Compose uses service names inside containers (`postgres`, `redis`) and host-facing URLs for the browser (`NEXT_PUBLIC_API_BASE_URL=http://localhost:8000`). Do not commit production secrets.
+
+## Deploy Smoke Checklist
+
+Minimal local smoke for a clean environment:
+
+1. `docker compose up --build`
+2. `curl http://localhost:8000/health`
+3. Open `http://localhost:3000/dashboard`
+4. Create a mock upload and wait for completion
+5. Upload a real `.dem` or `.zip` if a sample is available
+6. Open a demo detail page
+7. Use round review quick jumps and confirm replay, tactical map, timeline, parser markers, and coaching cards stay synchronized
+8. Click `Generate Clip`
+9. Confirm render job status appears in the UI and `/demos/{demo_id}/render/jobs`
 
 ## Current Limitations
 
