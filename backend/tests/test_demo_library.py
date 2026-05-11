@@ -82,6 +82,42 @@ class DemoLibraryTest(unittest.TestCase):
         self.assertEqual([item.id for item in by_name], [dust_late.id, dust_early.id])
         self.assertEqual([item.id for item in by_recent], [dust_late.id, dust_early.id, "demo-mirage"])
 
+    def test_list_demos_searches_visible_status_and_id_fields(self) -> None:
+        db = self.Session()
+        add_demo(
+            db,
+            "demo-visible-failed",
+            "Inferno Review",
+            "inferno.dem",
+            "de_inferno",
+            status="failed",
+        )
+        add_demo(db, "demo-visible-ready", "Nuke Review", "nuke.dem", "de_nuke")
+        service = DemoService(db)
+
+        failed = service.list_demos(search="failed")
+        ready = service.list_demos(search="ready")
+        dust_ready = service.list_demos(search="nuke ready")
+        by_id = service.list_demos(search="visible-ready")
+
+        self.assertEqual([item.id for item in failed], ["demo-visible-failed"])
+        self.assertEqual([item.id for item in ready], ["demo-visible-ready"])
+        self.assertEqual([item.id for item in dust_ready], ["demo-visible-ready"])
+        self.assertEqual([item.id for item in by_id], ["demo-visible-ready"])
+
+    def test_list_demos_uses_deterministic_tiebreakers_for_equal_sort_fields(self) -> None:
+        db = self.Session()
+        timestamp = datetime(2026, 5, 10, tzinfo=timezone.utc)
+        add_demo(db, "demo-tie-b", "Same Name", "b.dem", "de_dust2", created_at=timestamp)
+        add_demo(db, "demo-tie-a", "Same Name", "a.dem", "de_dust2", created_at=timestamp)
+        service = DemoService(db)
+
+        by_name = service.list_demos(sort="name", order="asc")
+        by_recent = service.list_demos(sort="recent", order="desc")
+
+        self.assertEqual([item.id for item in by_name], ["demo-tie-a", "demo-tie-b"])
+        self.assertEqual([item.id for item in by_recent], ["demo-tie-a", "demo-tie-b"])
+
     def test_update_demo_renames_demo_and_rejects_blank_name(self) -> None:
         db = self.Session()
         demo = add_demo(db, "demo-rename", "Old Name", "old.dem", "de_nuke")

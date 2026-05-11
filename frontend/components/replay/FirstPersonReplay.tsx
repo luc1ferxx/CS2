@@ -3,9 +3,10 @@
 import { Crosshair, RadioTower, Scissors, Video } from "lucide-react";
 import { useEffect, useMemo, useRef } from "react";
 
+import type { RenderJobStatus } from "@/lib/api";
+import { isRenderActiveStatus } from "@/lib/demo-library";
 import { resolveMediaUrl } from "@/lib/media-url";
 import { tickToVideoTime, videoTimeRange, videoTimeToTick } from "@/lib/replay-time";
-import type { RenderJobStatus } from "@/lib/api";
 import type { ReplayData, ReplayFrame } from "@/types/replay";
 
 interface FirstPersonReplayProps {
@@ -45,7 +46,7 @@ export function FirstPersonReplay({
   const videoTime = tickToVideoTime(currentTick, replay.video);
   const clipJobBusy =
     renderClipRequesting ||
-    isActiveRenderJobStatus(latestRenderClipJob?.status);
+    isRenderActiveStatus(latestRenderClipJob?.status);
   const progress = Math.min(
     1,
     Math.max(0, (videoTime - timeRange.start) / Math.max(1, timeRange.end - timeRange.start))
@@ -132,7 +133,7 @@ export function FirstPersonReplay({
             className="secondary-button compact-button"
             type="button"
             onClick={onRequestMockRender}
-            disabled={renderRequesting || replay.video.status === "queued" || replay.video.status === "rendering"}
+            disabled={renderRequesting || isRenderActiveStatus(replay.video.status)}
             title="Create a mock render job without running CS2"
           >
             Mock Render Job
@@ -193,6 +194,7 @@ function RenderStatusOverlay({ video }: { video: ReplayData["video"] }) {
   const messageByStatus: Record<string, string> = {
     pending: "No render job has been queued yet. The interactive mock shell remains synced.",
     queued: "Render job queued. A GPU worker would pick up the selected tick range later.",
+    processing: "Render job processing. No CS2 client or recorder is running in this MVP.",
     rendering: "Render job in progress. No CS2 client or recorder is running in this MVP.",
     ready: "Render metadata is ready, but no video URL exists yet, so the mock shell stays active.",
     failed: video.errorMessage ?? "Render job failed."
@@ -205,10 +207,6 @@ function RenderStatusOverlay({ video }: { video: ReplayData["video"] }) {
       <p>{messageByStatus[video.status]}</p>
     </div>
   );
-}
-
-function isActiveRenderJobStatus(status: string | null | undefined): boolean {
-  return status === "queued" || status === "processing" || status === "rendering";
 }
 
 function MockFirstPersonFrame({

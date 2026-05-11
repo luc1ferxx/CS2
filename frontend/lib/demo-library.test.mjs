@@ -35,8 +35,10 @@ function loadTypeScriptModule(relativePath) {
 }
 
 const {
+  countActiveLibraryDemos,
   demoLibraryFilterOptions,
   filterAndSortDemos,
+  isRenderActiveStatus,
   renderStatusLabel
 } = loadTypeScriptModule("./demo-library.ts");
 
@@ -64,6 +66,15 @@ const demos = [
     map_name: "de_mirage",
     status: "failed",
     created_at: "2026-05-02T00:00:00Z"
+  }),
+  demo({
+    id: "render-processing",
+    name: "Nuke Render",
+    original_filename: "nuke.dem",
+    map_name: "de_nuke",
+    status: "completed",
+    created_at: "2026-05-04T00:00:00Z",
+    latest_render_status: "processing"
   })
 ];
 
@@ -90,12 +101,12 @@ const demos = [
     includeArchived: false
   });
 
-  assert.deepEqual(normalize(result.map((item) => item.id)), ["dust-new", "failed", "dust-old"]);
+  assert.deepEqual(normalize(result.map((item) => item.id)), ["render-processing", "dust-new", "failed", "dust-old"]);
 }
 
 {
   const result = filterAndSortDemos(demos, {
-    search: "inferno",
+    search: "render processing",
     status: "all",
     map: "all",
     sort: "recent",
@@ -103,20 +114,68 @@ const demos = [
     includeArchived: true
   });
 
-  assert.deepEqual(normalize(result.map((item) => item.id)), ["archived"]);
+  assert.deepEqual(normalize(result.map((item) => item.id)), ["render-processing"]);
+}
+
+{
+  const result = filterAndSortDemos(demos, {
+    search: "dust ready",
+    status: "all",
+    map: "all",
+    sort: "name",
+    order: "asc",
+    includeArchived: false
+  });
+
+  assert.deepEqual(normalize(result.map((item) => item.id)), ["dust-old", "dust-new"]);
 }
 
 {
   const options = demoLibraryFilterOptions(demos);
 
-  assert.deepEqual(normalize(options.maps), ["de_dust2", "de_inferno", "de_mirage"]);
-  assert.deepEqual(normalize(options.statuses), ["completed", "failed"]);
+  assert.deepEqual(normalize(options.maps), ["de_dust2", "de_inferno", "de_mirage", "de_nuke"]);
+  assert.deepEqual(normalize(options.statuses), ["queued", "parsing", "analyzing", "completed", "failed"]);
 }
 
 {
   assert.equal(renderStatusLabel(demo({ video_status: "ready", video_source: "manual_upload" })), "manual ready");
   assert.equal(renderStatusLabel(demo({ latest_render_status: "failed", video_status: "failed" })), "render failed");
   assert.equal(renderStatusLabel(demo({ video_status: null, latest_render_status: null })), "not requested");
+}
+
+{
+  const unstable = [
+    demo({ id: "tie-b", name: "Same Name", original_filename: "b.dem", created_at: "not-a-date" }),
+    demo({ id: "tie-a", name: "Same Name", original_filename: "a.dem", created_at: "not-a-date" }),
+    demo({ id: "valid", name: "Valid", created_at: "2026-05-05T00:00:00Z" })
+  ];
+
+  const result = filterAndSortDemos(unstable, {
+    search: "",
+    status: "all",
+    map: "all",
+    sort: "recent",
+    order: "desc",
+    includeArchived: true
+  });
+
+  assert.deepEqual(normalize(result.map((item) => item.id)), ["valid", "tie-a", "tie-b"]);
+}
+
+{
+  assert.equal(isRenderActiveStatus("queued"), true);
+  assert.equal(isRenderActiveStatus("processing"), true);
+  assert.equal(isRenderActiveStatus("rendering"), true);
+  assert.equal(isRenderActiveStatus("failed"), false);
+  assert.equal(
+    countActiveLibraryDemos([
+      demo({ id: "uploaded", status: "queued", latest_render_status: null }),
+      demo({ id: "rendering", status: "completed", latest_render_status: "processing" }),
+      demo({ id: "video-rendering", status: "completed", latest_render_status: null, video_status: "rendering" }),
+      demo({ id: "done", status: "completed", latest_render_status: "completed" })
+    ]),
+    3
+  );
 }
 
 function demo(overrides) {

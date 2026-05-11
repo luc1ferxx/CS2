@@ -26,6 +26,7 @@ import {
   type RenderJobStatus,
   type VideoCalibrationUpdate
 } from "@/lib/api";
+import { isRenderActiveStatus } from "@/lib/demo-library";
 import type { CoachingEvent } from "@/types/coaching";
 import type { DemoStatus } from "@/types/demo";
 import type { ReplayData } from "@/types/replay";
@@ -145,9 +146,7 @@ export default function DemoDetailPage() {
     return jobsByEventId;
   }, [renderJobs]);
   const latestRenderClipJob = renderJobs[0] ?? null;
-  const hasActiveRenderClipJob = renderJobs.some(
-    (job) => job.status === "queued" || job.status === "rendering"
-  );
+  const hasActiveRenderClipJob = renderJobs.some((job) => isRenderActiveStatus(job.status));
 
   const videoStatus = replay?.video.status;
 
@@ -187,7 +186,7 @@ export default function DemoDetailPage() {
   }, [demoId]);
 
   useEffect(() => {
-    if (videoStatus !== "queued" && videoStatus !== "rendering") {
+    if (!isRenderActiveStatus(videoStatus)) {
       return;
     }
 

@@ -14,19 +14,20 @@ import {
   Search,
   X
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 
 import { DemoUploader } from "@/components/upload/DemoUploader";
 import { archiveDemo, createDemoUpload, createMockUpload, listDemos, updateDemo } from "@/lib/api";
 import {
   demoLibraryFilterOptions,
+  countActiveLibraryDemos,
+  demoStatusLabel,
   filterAndSortDemos,
   renderStatusLabel,
   type DemoLibraryFilters
 } from "@/lib/demo-library";
 import type { DemoProcessingStatus, DemoSummary } from "@/types/demo";
 
-const ACTIVE_STATUSES: DemoProcessingStatus[] = ["queued", "parsing", "analyzing"];
 const DEFAULT_FILTERS: DemoLibraryFilters = {
   search: "",
   status: "all",
@@ -46,16 +47,31 @@ export default function DashboardPage() {
   const [renameValue, setRenameValue] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const loadRequestIdRef = useRef(0);
+
+  const invalidateLibraryLoads = useCallback(() => {
+    loadRequestIdRef.current += 1;
+  }, []);
 
   const loadDemos = useCallback(async () => {
+    const requestId = loadRequestIdRef.current + 1;
+    loadRequestIdRef.current = requestId;
     try {
       const nextDemos = await listDemos({ includeArchived: filters.includeArchived });
+      if (requestId !== loadRequestIdRef.current) {
+        return;
+      }
       setDemos(nextDemos);
       setError(null);
     } catch (err) {
+      if (requestId !== loadRequestIdRef.current) {
+        return;
+      }
       setError(err instanceof Error ? err.message : "Failed to load demos");
     } finally {
-      setLoading(false);
+      if (requestId === loadRequestIdRef.current) {
+        setLoading(false);
+      }
     }
   }, [filters.includeArchived]);
 
@@ -67,10 +83,7 @@ export default function DashboardPage() {
     return () => window.clearInterval(intervalId);
   }, [loadDemos]);
 
-  const activeJobs = useMemo(
-    () => demos.filter((demo) => ACTIVE_STATUSES.includes(demo.status)).length,
-    [demos]
-  );
+  const activeJobs = useMemo(() => countActiveLibraryDemos(demos), [demos]);
   const failedDemos = useMemo(
     () => demos.filter((demo) => demo.status === "failed").length,
     [demos]
@@ -116,8 +129,10 @@ export default function DashboardPage() {
   async function saveRename(event: FormEvent<HTMLFormElement>, demo: DemoSummary) {
     event.preventDefault();
     setBusyDemoId(demo.id);
+    invalidateLibraryLoads();
     try {
       const updated = await updateDemo(demo.id, { name: renameValue });
+      invalidateLibraryLoads();
       setDemos((current) => current.map((item) => (item.id === updated.id ? updated : item)));
       setNotice(`Renamed demo to ${updated.name}`);
       setRenamingDemoId(null);
@@ -139,8 +154,10 @@ export default function DashboardPage() {
     }
 
     setBusyDemoId(demo.id);
+    invalidateLibraryLoads();
     try {
       const archived = await archiveDemo(demo.id);
+      invalidateLibraryLoads();
       setDemos((current) =>
         filters.includeArchived
           ? current.map((item) => (item.id === archived.id ? archived : item))
@@ -215,7 +232,7 @@ export default function DashboardPage() {
               <option value="all">All statuses</option>
               {filterOptions.statuses.map((status) => (
                 <option key={status} value={status}>
-                  {status}
+                  {demoStatusLabel(status)}
                 </option>
               ))}
             </select>
@@ -432,7 +449,7 @@ function StatusBadge({ status }: { status: DemoProcessingStatus }) {
   return (
     <span className={`status-badge ${status}`}>
       <Icon size={14} className={status === "completed" ? "" : "spin-icon"} />
-      {status}
+      {demoStatusLabel(status)}
     </span>
   );
 }

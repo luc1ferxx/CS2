@@ -88,6 +88,29 @@ class AuthOwnerBoundaryApiTest(unittest.TestCase):
 
         self.assertEqual(response.status_code, 404)
 
+    def test_archived_demo_is_hidden_from_list_but_openable_by_owner(self) -> None:
+        with self.Session() as db:
+            archived = add_demo(db, "demo-owner-a-archived", OWNER_A, archived=True)
+            service = DemoService(db, owner_id=OWNER_A)
+            service.write_replay_blob(archived.id, replay_contract(archived.id))
+
+        list_response = self.client.get("/demos", headers=owner_headers(OWNER_A))
+        status_response = self.client.get(
+            "/demos/demo-owner-a-archived/status",
+            headers=owner_headers(OWNER_A),
+        )
+        replay_response = self.client.get(
+            "/demos/demo-owner-a-archived/replay",
+            headers=owner_headers(OWNER_A),
+        )
+
+        self.assertEqual(list_response.status_code, 200)
+        self.assertEqual(list_response.json(), [])
+        self.assertEqual(status_response.status_code, 200)
+        self.assertTrue(status_response.json()["archived"])
+        self.assertEqual(replay_response.status_code, 200)
+        self.assertEqual(replay_response.json()["demoId"], "demo-owner-a-archived")
+
     def test_rename_cannot_modify_another_owners_demo(self) -> None:
         with self.Session() as db:
             add_demo(db, "demo-owner-b", OWNER_B, name="Original Name")

@@ -4,6 +4,7 @@ import { ChevronsRight, Scissors } from "lucide-react";
 
 import type { ReviewEvent } from "@/lib/coaching-review";
 import type { RenderJobStatus } from "@/lib/api";
+import { isRenderActiveStatus } from "@/lib/demo-library";
 import type { CoachingEvent } from "@/types/coaching";
 
 interface CoachingEventCardProps {
@@ -24,7 +25,7 @@ export function CoachingEventCard({
   onGenerateClip
 }: CoachingEventCardProps) {
   const { event } = reviewEvent;
-  const clipBusy = clipRequesting || renderJob?.status === "queued" || renderJob?.status === "rendering";
+  const clipBusy = clipRequesting || isRenderActiveStatus(renderJob?.status);
 
   return (
     <article

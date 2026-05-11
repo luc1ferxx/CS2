@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import asc, desc, func, or_
+from sqlalchemy import asc, case, desc, func, or_
 from sqlalchemy.orm import Session
 
 from app.core.auth import normalize_owner_id
@@ -29,6 +29,13 @@ from app.services.upload_service import StoredVideoUpload, demo_upload_key, stor
 RENDER_CLIP_JOB_TYPE = "render_clip"
 RENDER_CLIP_DEFAULT_PRESET = "event_clip_v1"
 RENDER_WORKER_MANIFEST_VERSION = "render_worker_v1"
+DEMO_STATUS_ORDER = ("queued", "parsing", "analyzing", "completed", "failed")
+DEMO_STATUS_SEARCH_ALIASES = {
+    "uploaded": "queued",
+    "upload": "queued",
+    "ready": "completed",
+    "complete": "completed",
+}
 
 
 def utc_now() -> datetime:
@@ -67,31 +74,49 @@ class DemoService:
 
         normalized_search = (search or "").strip().lower()
         if normalized_search:
-            like_search = f"%{normalized_search}%"
-            query = query.filter(
-                or_(
+            for search_token in normalized_search.split():
+                like_search = f"%{search_token}%"
+                search_terms = [
+                    func.lower(Demo.id).like(like_search),
                     func.lower(Demo.name).like(like_search),
                     func.lower(Demo.original_filename).like(like_search),
                     func.lower(Demo.map_name).like(like_search),
-                )
-            )
+                    func.lower(Demo.status).like(like_search),
+                    func.lower(Demo.error_message).like(like_search),
+                ]
+                status_alias = DEMO_STATUS_SEARCH_ALIASES.get(search_token)
+                if status_alias:
+                    search_terms.append(Demo.status == status_alias)
+                query = query.filter(or_(*search_terms))
 
         if status and status != "all":
             query = query.filter(Demo.status == status)
         if map_name and map_name != "all":
             query = query.filter(Demo.map_name == map_name)
 
+        status_sort = case(
+            *[(Demo.status == item, index) for index, item in enumerate(DEMO_STATUS_ORDER)],
+            else_=len(DEMO_STATUS_ORDER),
+        )
         sort_column = {
             "recent": Demo.created_at,
             "created": Demo.created_at,
             "updated": Demo.updated_at,
-            "name": Demo.name,
-            "map": Demo.map_name,
-            "status": Demo.status,
+            "name": func.lower(Demo.name),
+            "map": func.lower(Demo.map_name),
+            "status": status_sort,
         }.get(sort, Demo.created_at)
         normalized_order = order or ("desc" if sort in {"recent", "created", "updated"} else "asc")
         direction = desc if normalized_order == "desc" else asc
-        demos = query.order_by(direction(sort_column), desc(Demo.created_at)).all()
+        demos = (
+            query.order_by(
+                direction(sort_column),
+                asc(func.lower(Demo.name)),
+                asc(func.lower(Demo.original_filename)),
+                asc(Demo.id),
+            )
+            .all()
+        )
         return [self.demo_list_item(demo) for demo in demos]
 
     def demo_list_item(self, demo: Demo) -> DemoListItem:
