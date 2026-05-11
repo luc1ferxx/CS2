@@ -37,6 +37,7 @@ def on_startup() -> None:
         settings.replay_storage_dir,
         settings.demo_upload_storage_dir,
         settings.video_storage_dir,
+        settings.summary_storage_dir,
     ):
         storage_dir.mkdir(parents=True, exist_ok=True)
 
@@ -77,8 +78,10 @@ def health() -> dict[str, object]:
         "redis": redis_ok,
         "workerDependencies": worker_dependencies,
         "storage": {
+            "artifactStorageRoot": str(settings.artifact_storage_root),
             "replayStorageDir": str(settings.replay_storage_dir),
             "demoUploadStorageDir": str(settings.demo_upload_storage_dir),
             "videoStorageDir": str(settings.video_storage_dir),
+            "summaryStorageDir": str(settings.summary_storage_dir),
         },
     }

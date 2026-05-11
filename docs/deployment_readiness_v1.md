@@ -23,11 +23,24 @@ This project is deployable as a mock MVP for demos and internal review. It is no
 
 | Variable | Default | Used by | Notes |
 | --- | --- | --- | --- |
+| `ARTIFACT_STORAGE_ROOT` | `/data` | API, worker | Base root for the local filesystem storage adapter. Per-category variables below override individual roots. |
 | `REPLAY_STORAGE_DIR` | `/data/replays` | API, worker | Stores replay JSON blobs. |
 | `DEMO_UPLOAD_STORAGE_DIR` | `/data/uploads` | API, worker | Stores uploaded `.dem` and `.zip` files. Treat every upload as untrusted input. |
 | `VIDEO_STORAGE_DIR` | `/data/videos` | API, worker | Stores manual or render-worker MP4 outputs served under `/media/videos`. |
+| `SUMMARY_STORAGE_DIR` | `/data/summaries` | API, worker | Reserved for compact generated summary artifacts. |
 
-Local paths and Docker volumes are acceptable for the mock MVP and local demos. Production should replace these paths with object storage such as S3/R2 plus upload quarantine and lifecycle rules.
+Local paths and Docker volumes are acceptable for the mock MVP and local demos. Production should replace the local adapter with object storage such as S3/R2 plus upload quarantine and lifecycle rules.
+
+Artifact storage keys use stable application-level categories:
+
+| Category | Key shape | Contents |
+| --- | --- | --- |
+| uploads | `local://uploads/{demo_id}/{safe_filename}` | Uploaded `.dem` or `.zip` source files. |
+| replays | `local://replays/{demo_id}.json` | Replay contract JSON blobs. |
+| summaries | `local://summaries/{demo_id}/{safe_filename}` | Reserved compact summary artifacts. |
+| videos | `local://videos/{demo_id}/{safe_filename}` | Manual uploads and render-worker media outputs served under `/media/videos/...`. |
+
+PostgreSQL should store compact metadata and storage keys only. Large `.dem`, replay JSON, raw parser dumps, and video files stay in artifact storage.
 
 ### Dev Owner Boundary
 
@@ -68,9 +81,11 @@ Production auth should replace the local helper with a real identity provider an
     "maxRenderClipSeconds": 60
   },
   "storage": {
+    "artifactStorageRoot": "/data",
     "replayStorageDir": "/data/replays",
     "demoUploadStorageDir": "/data/uploads",
-    "videoStorageDir": "/data/videos"
+    "videoStorageDir": "/data/videos",
+    "summaryStorageDir": "/data/summaries"
   }
 }
 ```
@@ -110,6 +125,7 @@ curl http://localhost:8000/health
 - `api` waits for healthy PostgreSQL and Redis, exposes `/health`, and has a Compose health check.
 - `frontend` waits for the API service health check before starting.
 - The default Compose frontend still uses `NEXT_PUBLIC_API_BASE_URL=http://localhost:8000` because browser requests originate from the host browser, not from the container network.
+- The local storage adapter writes uploads, replay blobs, summaries, and videos under `/data` by default. Keep the adapter boundary when replacing local storage with S3/R2 later.
 
 ## Deployable Boundaries
 
@@ -117,6 +133,7 @@ Ready for mock MVP deployment:
 
 - Demo Library upload, search, status/map filtering, sorting, rename, and soft archive flows.
 - Mock upload and real `.dem`/`.zip` upload into local or mounted storage.
+- Storage-key backed uploads, replay blobs, and media URLs through the local storage adapter.
 - Async parse queue using Redis plus backend worker.
 - Replay contract JSON blobs and deterministic rules-based coaching rows.
 - Demo detail review: round navigation, timeline markers, tactical map sync, coaching cards, manual video calibration, and render job status UI.

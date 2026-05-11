@@ -83,6 +83,7 @@ export type ReplayVideoSource = "manual_upload" | "mock" | "rendered";
 export interface ReplayVideo {
   status: ReplayVideoStatus;
   url: string | null;
+  storageKey?: string | null;
   durationSeconds: number;
   tickStart: number;
   tickEnd: number;

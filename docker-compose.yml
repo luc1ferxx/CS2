@@ -29,9 +29,11 @@ services:
       DATABASE_URL: postgresql+psycopg2://cs2coach:cs2coach@postgres:5432/cs2coach
       REDIS_URL: redis://redis:6379/0
       REDIS_QUEUE_NAME: cs2-demo-jobs
+      ARTIFACT_STORAGE_ROOT: /data
       REPLAY_STORAGE_DIR: /data/replays
       DEMO_UPLOAD_STORAGE_DIR: /data/uploads
       VIDEO_STORAGE_DIR: /data/videos
+      SUMMARY_STORAGE_DIR: /data/summaries
       CORS_ORIGINS: http://localhost:3000,http://127.0.0.1:3000
     ports:
       - "8000:8000"
@@ -39,6 +41,7 @@ services:
       - replay-data:/data/replays
       - upload-data:/data/uploads
       - video-data:/data/videos
+      - summary-data:/data/summaries
     healthcheck:
       test:
         [
@@ -62,13 +65,16 @@ services:
       DATABASE_URL: postgresql+psycopg2://cs2coach:cs2coach@postgres:5432/cs2coach
       REDIS_URL: redis://redis:6379/0
       REDIS_QUEUE_NAME: cs2-demo-jobs
+      ARTIFACT_STORAGE_ROOT: /data
       REPLAY_STORAGE_DIR: /data/replays
       DEMO_UPLOAD_STORAGE_DIR: /data/uploads
       VIDEO_STORAGE_DIR: /data/videos
+      SUMMARY_STORAGE_DIR: /data/summaries
     volumes:
       - replay-data:/data/replays
       - upload-data:/data/uploads
       - video-data:/data/videos
+      - summary-data:/data/summaries
     depends_on:
       postgres:
         condition: service_healthy
@@ -92,3 +98,4 @@ volumes:
   replay-data:
   upload-data:
   video-data:
+  summary-data:

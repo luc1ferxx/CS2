@@ -297,6 +297,7 @@ async def upload_render_worker_media(
         jobId=job.id,
         demoId=job.demo_id,
         videoUrl=stored_video.url,
+        storageKey=stored_video.storage_key,
         originalFilename=stored_video.original_filename,
         sizeBytes=stored_video.size_bytes,
     )

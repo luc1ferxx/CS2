@@ -148,6 +148,10 @@ class AuthOwnerBoundaryApiTest(unittest.TestCase):
             self.assertEqual(mock_demo.legacy_user_id, OWNER_A)
             self.assertEqual(real_demo.owner_id, OWNER_B)
             self.assertEqual(real_demo.legacy_user_id, OWNER_B)
+            self.assertEqual(
+                real_demo.source_storage_key,
+                f"local://uploads/{real_demo.id}/owner-b.dem",
+            )
 
     def test_render_clip_cannot_be_created_for_another_owners_demo(self) -> None:
         with self.Session() as db:

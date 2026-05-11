@@ -64,7 +64,16 @@ frontend (Next.js)
     -> external process that calls token-gated render-worker API
 ```
 
-PostgreSQL 只存可索引的元数据和 coaching event rows。Replay frames、parser event contract、video metadata 都在 replay JSON blob 内；上传 demo 和视频文件放在 Docker volumes 中，后续可以替换为 S3/R2 或其它对象存储。
+PostgreSQL 只存可索引的元数据、storage key 和 coaching event rows。Replay frames、parser event contract、video metadata 都在 replay JSON blob 内；上传 demo、replay artifact 和视频文件放在 Docker volumes 中，后续可以替换为 S3/R2 或其它对象存储。
+
+Artifact storage 通过 `backend/app/services/storage.py` 统一出入口。默认是 local filesystem implementation，root 为 `ARTIFACT_STORAGE_ROOT=/data`，分类 key 形如：
+
+- `local://uploads/{demo_id}/{safe_filename}`
+- `local://replays/{demo_id}.json`
+- `local://summaries/{demo_id}/{safe_filename}`
+- `local://videos/{demo_id}/{uuid_safe_filename}`
+
+不要把 `.dem`、replay JSON、大视频或 raw parser dump 存入 PostgreSQL。未来替换 S3/R2 时，应保留这些应用层 key 语义，把 local implementation 换成 object storage adapter，而不是把 cloud credentials 或 bucket-specific code 散落到 API routes、worker 或 parser 里。
 
 ## Dev-Only Owner Boundary
 
@@ -92,7 +101,7 @@ backend/
   app/models/             SQLAlchemy models
   app/parser/             demoparser2 adapter, normalizer, map config
   app/schemas/            Pydantic response/request models
-  app/services/           demo/upload/replay/video/render job services
+  app/services/           demo/upload/replay/video/render job and storage services
   app/workers/worker.py   Redis queue worker entrypoint
   tests/                  backend unit tests
 
@@ -483,9 +492,11 @@ Render worker:
 | `DATABASE_URL` | `postgresql+psycopg2://cs2coach:cs2coach@localhost:5432/cs2coach` | API, worker |
 | `REDIS_URL` | `redis://localhost:6379/0` | API, worker |
 | `REDIS_QUEUE_NAME` | `cs2-demo-jobs` | API, worker |
+| `ARTIFACT_STORAGE_ROOT` | `/data` | API, worker |
 | `REPLAY_STORAGE_DIR` | `/data/replays` | API, worker |
 | `DEMO_UPLOAD_STORAGE_DIR` | `/data/uploads` | API, worker |
 | `VIDEO_STORAGE_DIR` | `/data/videos` | API, worker |
+| `SUMMARY_STORAGE_DIR` | `/data/summaries` | API, worker |
 | `DEV_USER_ID` | `dev-user` | backend API |
 | `MAX_RENDER_CLIP_SECONDS` | `60` | backend API |
 | `RENDER_WORKER_TOKEN` | `dev-render-worker-token` | API, render-worker |
@@ -497,7 +508,7 @@ Render worker:
 | `STEAM_USER_DATA_DIR` | unset | render-worker manual adapter |
 | `CS2_MANUAL_OUTPUT_FILENAME` | `{job_id}.mp4` | render-worker manual adapter |
 
-Docker Compose uses service names inside containers (`postgres`, `redis`) and host-facing URLs for the browser (`NEXT_PUBLIC_API_BASE_URL=http://localhost:8000`). Do not commit production secrets.
+Docker Compose uses service names inside containers (`postgres`, `redis`) and host-facing URLs for the browser (`NEXT_PUBLIC_API_BASE_URL=http://localhost:8000`). Artifact directories default under `ARTIFACT_STORAGE_ROOT=/data`, with per-category overrides for local development. Do not commit production secrets or object storage credentials.
 
 ## Deploy Smoke Checklist
 
@@ -517,7 +528,7 @@ Minimal local smoke for a clean environment:
 
 - 没有真实认证和授权；当前只有 `DEV_USER_ID` / `X-Dev-User-Id` 驱动的 dev-only owner boundary。
 - 生产 auth replacement path 仍待实现，建议接入 Clerk、Auth0、Supabase Auth 或其它 identity provider，并把 authenticated user id 映射到 `owner_id`。
-- 本地文件和 Docker volumes 替代对象存储。
+- 本地文件和 Docker volumes 通过 local storage adapter 替代对象存储。
 - Parser frame 是采样数据，不是完整 tick density。
 - `demoparser2` 对不同 demo 的 event family 和字段可用性不稳定；normalizer 必须继续容错。
 - Bomb/utility events 是 best-effort；缺失时 UI count、quick jump 或 event-backed rules 可能为空。

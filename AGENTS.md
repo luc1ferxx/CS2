@@ -5,7 +5,7 @@
 This repository is a mock MVP for a website-based CS2 demo AI coach.
 
 - `frontend/`: Next.js + TypeScript app. App Router pages live in `frontend/app/`; shared UI is in `frontend/components/`; API helpers are in `frontend/lib/`; shared frontend types are in `frontend/types/`; static assets are in `frontend/public/`.
-- `backend/`: FastAPI service and worker code. Routes are in `backend/app/api/`; SQLAlchemy models in `backend/app/models/`; Pydantic schemas in `backend/app/schemas/`; business logic in `backend/app/services/`; Redis worker entrypoint in `backend/app/workers/worker.py`.
+- `backend/`: FastAPI service and worker code. Routes are in `backend/app/api/`; SQLAlchemy models in `backend/app/models/`; Pydantic schemas in `backend/app/schemas/`; business logic and artifact storage helpers are in `backend/app/services/`; Redis worker entrypoint is in `backend/app/workers/worker.py`.
 - `render-worker/`: standalone Render Worker V1 skeleton. `runner.py` drives fake-video and manual-operator adapter flows without launching CS2, Steam, OBS, or ffmpeg.
 - `docker-compose.yml`: local stack for `frontend`, `api`, `worker`, `postgres`, and `redis`.
 - `README.md`: product scope, mock flow, API list, and next-phase parser/render notes.
@@ -61,6 +61,8 @@ Tactical map additions must go through the centralized map config in `backend/ap
 Parser data-quality additions must keep the replay contract backward compatible. Old replay blobs without `events` should load as `events: []`, parser event extraction should stay best-effort, and one missing event family must not fail the entire parse. Do not store raw parser dataframes, huge raw event dumps, or large media/demo artifacts in PostgreSQL or replay blobs.
 
 Rules analyzer additions must also tolerate missing parser event families. Keep rules deterministic and explainable, include compact evidence metadata such as `ruleId`, `involvedPlayerIds`, `evidenceTicks`, and `relatedEventIds` when parser events are used, and do not introduce OpenAI or AI prose generation into analyzer rules.
+
+Artifact storage additions must go through `backend/app/services/storage.py`. The default implementation is local filesystem storage rooted at `ARTIFACT_STORAGE_ROOT=/data`, with storage keys such as `local://uploads/{demo_id}/{filename}`, `local://replays/{demo_id}.json`, and `local://videos/{demo_id}/{filename}`. Keep PostgreSQL limited to metadata and storage keys. Do not add S3/R2 credentials, cloud SDKs, or direct writes to upload/replay/video directories outside the storage service unless it is temporary parser scratch space.
 
 ## Commit & Pull Request Guidelines
 

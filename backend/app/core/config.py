@@ -3,6 +3,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
+DEFAULT_ARTIFACT_STORAGE_ROOT = Path(os.getenv("ARTIFACT_STORAGE_ROOT", "/data"))
+
+
 @dataclass(frozen=True)
 class Settings:
     database_url: str = os.getenv(
@@ -11,9 +14,19 @@ class Settings:
     )
     redis_url: str = os.getenv("REDIS_URL", "redis://localhost:6379/0")
     redis_queue_name: str = os.getenv("REDIS_QUEUE_NAME", "cs2-demo-jobs")
-    replay_storage_dir: Path = Path(os.getenv("REPLAY_STORAGE_DIR", "/data/replays"))
-    demo_upload_storage_dir: Path = Path(os.getenv("DEMO_UPLOAD_STORAGE_DIR", "/data/uploads"))
-    video_storage_dir: Path = Path(os.getenv("VIDEO_STORAGE_DIR", "/data/videos"))
+    artifact_storage_root: Path = DEFAULT_ARTIFACT_STORAGE_ROOT
+    replay_storage_dir: Path = Path(
+        os.getenv("REPLAY_STORAGE_DIR", str(DEFAULT_ARTIFACT_STORAGE_ROOT / "replays"))
+    )
+    demo_upload_storage_dir: Path = Path(
+        os.getenv("DEMO_UPLOAD_STORAGE_DIR", str(DEFAULT_ARTIFACT_STORAGE_ROOT / "uploads"))
+    )
+    video_storage_dir: Path = Path(
+        os.getenv("VIDEO_STORAGE_DIR", str(DEFAULT_ARTIFACT_STORAGE_ROOT / "videos"))
+    )
+    summary_storage_dir: Path = Path(
+        os.getenv("SUMMARY_STORAGE_DIR", str(DEFAULT_ARTIFACT_STORAGE_ROOT / "summaries"))
+    )
     dev_user_id: str = os.getenv("DEV_USER_ID", "dev-user")
     max_render_clip_seconds: int = int(os.getenv("MAX_RENDER_CLIP_SECONDS", "60"))
     render_worker_token: str = os.getenv("RENDER_WORKER_TOKEN", "dev-render-worker-token")

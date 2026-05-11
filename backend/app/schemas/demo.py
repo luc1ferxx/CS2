@@ -52,6 +52,7 @@ class DemoUpdate(BaseModel):
 class ReplayVideoStatus(BaseModel):
     status: str
     url: str | None
+    storageKey: str | None = None
     durationSeconds: float
     tickStart: int
     tickEnd: int
@@ -127,6 +128,7 @@ class RenderJobManifest(BaseModel):
 class RenderWorkerResult(BaseModel):
     status: str
     videoUrl: str | None = None
+    storageKey: str | None = None
     localMediaPath: str | None = None
     tickStart: int
     tickEnd: int
@@ -145,6 +147,7 @@ class RenderWorkerMediaUpload(BaseModel):
     jobId: str
     demoId: str
     videoUrl: str
+    storageKey: str
     originalFilename: str
     sizeBytes: int
 

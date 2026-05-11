@@ -108,6 +108,19 @@ def ensure_schema_backfills() -> None:
                     {"default_owner": settings.dev_user_id},
                 )
 
+        if "source_storage_key" not in demo_column_names:
+            with engine.begin() as connection:
+                connection.execute(text("ALTER TABLE demos ADD COLUMN source_storage_key VARCHAR(512)"))
+                if {"id", "original_filename"}.issubset(demo_column_names):
+                    connection.execute(
+                        text(
+                            "UPDATE demos "
+                            "SET source_storage_key = 'local://uploads/' || id || '/' || original_filename "
+                            "WHERE source_storage_key IS NULL OR source_storage_key = ''"
+                        )
+                    )
+            demo_column_names.add("source_storage_key")
+
         with engine.begin() as connection:
             connection.execute(text("CREATE INDEX IF NOT EXISTS ix_demos_owner_id ON demos (owner_id)"))
 

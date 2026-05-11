@@ -20,9 +20,11 @@ class HealthEndpointTest(unittest.TestCase):
         self.assertIs(payload["workerDependencies"]["redisQueueConfigured"], True)
         self.assertIs(payload["workerDependencies"]["renderWorkerTokenConfigured"], True)
         self.assertEqual(payload["workerDependencies"]["maxRenderClipSeconds"], 60)
+        self.assertIn("artifactStorageRoot", payload["storage"])
         self.assertIn("replayStorageDir", payload["storage"])
         self.assertIn("demoUploadStorageDir", payload["storage"])
         self.assertIn("videoStorageDir", payload["storage"])
+        self.assertIn("summaryStorageDir", payload["storage"])
 
     def test_health_degrades_when_dependency_check_fails(self) -> None:
         with patch("app.main.SessionLocal", return_value=FailingSession()), patch(

@@ -21,7 +21,8 @@ from app.schemas.demo import (
     RenderJobStatus,
     RenderWorkerResult,
 )
-from app.services.upload_service import StoredVideoUpload, demo_upload_path, store_demo_upload
+from app.services.storage import LocalStorageService, StorageKeyError
+from app.services.upload_service import StoredVideoUpload, demo_upload_key, store_demo_upload
 
 
 RENDER_CLIP_JOB_TYPE = "render_clip"
@@ -34,9 +35,19 @@ def utc_now() -> datetime:
 
 
 class DemoService:
-    def __init__(self, db: Session, owner_id: str | None = None):
+    def __init__(
+        self,
+        db: Session,
+        owner_id: str | None = None,
+        storage: LocalStorageService | None = None,
+    ):
         self.db = db
         self.owner_id = normalize_owner_id(owner_id)
+        self._storage = storage
+
+    @property
+    def storage(self) -> LocalStorageService:
+        return self._storage or LocalStorageService.from_settings()
 
     def list_demos(
         self,
@@ -176,6 +187,7 @@ class DemoService:
             legacy_user_id=self.owner_id,
             name=f"Uploaded Demo {demo_id[:8]}",
             original_filename=stored_upload.original_filename,
+            source_storage_key=stored_upload.storage_key,
             map_name="unknown",
             tick_rate=64,
             round_count=0,
@@ -203,7 +215,13 @@ class DemoService:
         return DemoListItem.model_validate(demo)
 
     def source_demo_path(self, demo: Demo) -> Path:
-        return demo_upload_path(demo.id, demo.original_filename)
+        return self.storage.path_for_key(self.source_demo_storage_key(demo))
+
+    def source_demo_storage_key(self, demo: Demo) -> str:
+        return getattr(demo, "source_storage_key", None) or demo_upload_key(
+            demo.id,
+            demo.original_filename,
+        )
 
     def create_mock_render_job(self, demo: Demo) -> DemoJob:
         replay = self.load_replay_blob(demo)
@@ -366,7 +384,7 @@ class DemoService:
             jobType=job.job_type,
             status=job.status,
             demoFilePath=str(self.source_demo_path(demo)),
-            demoStorageKey=f"local://uploads/{demo.id}/{demo.original_filename}",
+            demoStorageKey=self.source_demo_storage_key(demo),
             originalFilename=demo.original_filename,
             mapName=demo.map_name,
             eventId=_optional_str(metadata.get("eventId")),
@@ -408,20 +426,23 @@ class DemoService:
         return video
 
     def replay_blob_path(self, demo_id: str) -> Path:
-        return settings.replay_storage_dir / f"{demo_id}.json"
+        return self.storage.path_for_key(self.replay_blob_key(demo_id))
+
+    def replay_blob_key(self, demo_id: str) -> str:
+        return self.storage.replay_key(demo_id)
 
     def write_replay_blob(self, demo_id: str, replay: dict[str, Any]) -> str:
-        settings.replay_storage_dir.mkdir(parents=True, exist_ok=True)
-        path = self.replay_blob_path(demo_id)
-        path.write_text(json.dumps(replay, separators=(",", ":")), encoding="utf-8")
-        return f"local://replays/{demo_id}.json"
+        storage_key = self.replay_blob_key(demo_id)
+        self.storage.write_json(storage_key, replay)
+        return storage_key
 
     def load_replay_blob(self, demo: Demo) -> dict[str, object] | None:
-        path = self.replay_blob_path(demo.id)
-        if not path.exists():
-            return None
-        replay = json.loads(path.read_text(encoding="utf-8"))
-        return self._with_replay_contract_defaults(replay)
+        keys = [getattr(demo, "replay_storage_key", None), self.replay_blob_key(demo.id)]
+        for storage_key in dict.fromkeys(key for key in keys if key):
+            if self.storage.exists(storage_key):
+                replay = self.storage.read_json(storage_key)
+                return self._with_replay_contract_defaults(replay)
+        return None
 
     def get_video_status(self, demo: Demo) -> dict[str, Any]:
         replay = self.load_replay_blob(demo)
@@ -460,6 +481,7 @@ class DemoService:
                 **current_video,
                 "status": "ready",
                 "url": stored_video.url,
+                "storageKey": stored_video.storage_key,
                 "source": "manual_upload",
                 "errorMessage": None,
             },
@@ -542,15 +564,16 @@ class DemoService:
         if result.timeOriginSeconds < 0:
             raise ValueError("timeOriginSeconds must be zero or greater")
 
-        video_url = _render_output_url(result)
-        if video_url is None:
+        video_reference = _render_output_reference(result, self.storage)
+        if video_reference is None:
             raise ValueError("completed render output must include videoUrl or localMediaPath")
 
         return self.update_replay_video(
             demo,
             {
                 "status": "ready",
-                "url": video_url,
+                "url": video_reference["url"],
+                "storageKey": video_reference["storageKey"],
                 "durationSeconds": result.durationSeconds,
                 "tickStart": result.tickStart,
                 "tickEnd": result.tickEnd,
@@ -665,27 +688,34 @@ def _job_metadata(job: DemoJob) -> dict[str, Any]:
     return metadata if isinstance(metadata, dict) else {}
 
 
-def _render_output_url(result: RenderWorkerResult) -> str | None:
+def _render_output_reference(
+    result: RenderWorkerResult,
+    storage: LocalStorageService,
+) -> dict[str, str] | None:
+    if result.storageKey:
+        video_url = storage.media_url(result.storageKey)
+        if result.videoUrl and result.videoUrl != video_url:
+            raise ValueError("videoUrl does not match storageKey")
+        return {"url": video_url, "storageKey": result.storageKey}
+
     if result.videoUrl:
-        return result.videoUrl
+        storage_key = storage.storage_key_from_media_url(result.videoUrl)
+        return {"url": result.videoUrl, "storageKey": storage_key}
 
     if not result.localMediaPath:
         return None
 
     if result.localMediaPath.startswith("/media/videos/"):
-        return result.localMediaPath
+        storage_key = storage.storage_key_from_media_url(result.localMediaPath)
+        return {"url": result.localMediaPath, "storageKey": storage_key}
 
     local_path = Path(result.localMediaPath)
-    if not local_path.is_absolute():
-        raise ValueError("localMediaPath must be /media/videos/... or an absolute path")
-
-    video_root = settings.video_storage_dir.resolve()
     try:
-        relative_path = local_path.resolve().relative_to(video_root)
-    except ValueError as exc:
-        raise ValueError("localMediaPath must be inside video storage") from exc
-
-    return f"/media/videos/{relative_path.as_posix()}"
+        video_url = storage.media_url_for_local_path(local_path)
+        storage_key = storage.storage_key_from_media_url(video_url)
+    except StorageKeyError as exc:
+        raise ValueError(str(exc)) from exc
+    return {"url": video_url, "storageKey": storage_key}
 
 
 def _required_int(metadata: dict[str, Any], key: str) -> int:
