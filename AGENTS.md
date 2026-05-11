@@ -8,7 +8,8 @@ This repository is a mock MVP for a website-based CS2 demo AI coach.
 - `backend/`: FastAPI service and worker code. Routes are in `backend/app/api/`; SQLAlchemy models in `backend/app/models/`; Pydantic schemas in `backend/app/schemas/`; business logic and artifact storage helpers are in `backend/app/services/`; Redis worker entrypoint is in `backend/app/workers/worker.py`.
 - `render-worker/`: standalone Render Worker V1 skeleton. `runner.py` drives fake-video and manual-operator adapter flows without launching CS2, Steam, OBS, or ffmpeg.
 - `docker-compose.yml`: local stack for `frontend`, `api`, `worker`, `postgres`, and `redis`.
-- `README.md`: product scope, mock flow, API list, and next-phase parser/render notes.
+- `README.md`: current product scope, storage/parser/render boundaries, API list, observability notes, and verification guidance.
+- `docs/deployment_readiness_v1.md`: runtime configuration, deployable boundaries, and smoke checklist for the mock MVP.
 
 ## Build, Test, and Development Commands
 
@@ -22,6 +23,9 @@ This repository is a mock MVP for a website-based CS2 demo AI coach.
 - `PYTHONPATH=backend python3 -m unittest discover backend/tests`: run backend unit tests.
 - `python3 -m compileall render-worker`: quick render-worker syntax/import sanity check.
 - `python3 -m unittest discover render-worker/tests`: run render-worker unit tests.
+- `cd frontend && node lib/demo-library.test.mjs`: run Dashboard helper regression tests.
+- `cd frontend && node lib/replay-diagnostics.test.mjs`: run replay contract diagnostics helper tests.
+- `cd frontend && node lib/replay-quality-fixtures.test.mjs`: run compact replay quality fixture regressions.
 - `python3 render-worker/runner.py dry-run {job_id}`: inspect a render job manifest and adapter plan without posting callbacks.
 - `python3 render-worker/runner.py prepare-job --job-id {job_id} --adapter cs2-manual`: generate manual operator manifest, instructions, expected output, and status files.
 - `python3 render-worker/runner.py complete-prepared-job --job-id {job_id} --video-path /absolute/path/to/clip.mp4`: upload a prepared operator MP4 and submit the completed callback.
@@ -32,7 +36,7 @@ Use TypeScript for frontend changes and Python 3.12 style for backend changes. K
 
 ## Testing Guidelines
 
-There is no dedicated test suite yet. For every change, run the relevant verification commands above. For replay UI changes, manually verify `/dashboard` and a demo detail page: play/pause, seek, speed, round selection, coaching event click-to-seek, tactical map sync, and render status fallback.
+For every change, run the relevant verification commands above. Backend changes should generally run `python3 -m compileall backend/app` and `PYTHONPATH=backend python3 -m unittest discover backend/tests`. Render-worker changes should run its compile and unittest commands. Frontend behavior changes should run lint, typecheck, build, and the focused `node lib/*.test.mjs` helper tests for the touched surface. For replay UI changes, manually verify `/dashboard` and a demo detail page: play/pause, seek, speed, round selection, coaching event click-to-seek, tactical map sync, replay diagnostics, degraded states, and render status fallback.
 
 ## Product Direction For Future Codex Work
 
@@ -52,15 +56,21 @@ Coaching UI should remain a deterministic review surface for stored rules-based 
 
 Demo Detail round workflows should remain review-tool focused. Round list, summary, and quick-jump UI must keep first-person replay, tactical map, timeline, parser markers, and coaching cards synchronized through the shared tick/round state rather than parallel state.
 
-Dashboard is a working Demo Library, not a marketing page. Library changes should keep search, status/map filtering, sorting, upload polling, rename, and soft archive flows utilitarian and dense. Prefer soft archive over destructive delete, keep archived demos directly openable by ID, and keep large upload, replay, and media files out of PostgreSQL.
+Dashboard is a working Demo Library, not a marketing page. Library changes should keep search, status/map filtering, sorting, upload polling, ingestion status, retry, rename, and soft archive flows utilitarian and dense. Prefer soft archive over destructive delete, keep archived demos directly openable by ID, and keep large upload, replay, and media files out of PostgreSQL.
 
 Auth / local user boundary is dev-only. Backend demo, upload, manual video, replay/coaching read, library mutation, and user-facing render job APIs should remain scoped by `owner_id`, resolved from default `DEV_USER_ID=dev-user` or the local test header `X-Dev-User-Id`. Do not treat this as production authentication, and do not add sessions, OAuth, JWT, password login, or account management UI in this mock phase. Future production auth should replace the helper with Clerk, Auth0, Supabase Auth, or another identity provider and map the authenticated subject to `owner_id`.
 
 Tactical map additions must go through the centralized map config in `backend/app/parser/map_config.py` and `frontend/lib/map-config.ts`. Do not hardcode radar image paths, Dust2 transforms, or per-map coordinate math inside `ReplayViewer` or the parser normalizer.
 
-Parser data-quality additions must keep the replay contract backward compatible. Old replay blobs without `events` should load as `events: []`, parser event extraction should stay best-effort, and one missing event family must not fail the entire parse. Do not store raw parser dataframes, huge raw event dumps, or large media/demo artifacts in PostgreSQL or replay blobs.
+Parser data-quality additions must keep the replay contract backward compatible. Old replay blobs without `events` should load as `events: []`, malformed optional fields should be ignored best-effort and surfaced through compact diagnostics, parser event extraction should stay best-effort, and one missing event family must not fail the entire parse. Do not store raw parser dataframes, huge raw event dumps, logs, or large media/demo artifacts in PostgreSQL or replay blobs.
 
 Rules analyzer additions must also tolerate missing parser event families. Keep rules deterministic and explainable, include compact evidence metadata such as `ruleId`, `involvedPlayerIds`, `evidenceTicks`, and `relatedEventIds` when parser events are used, and do not introduce OpenAI or AI prose generation into analyzer rules.
+
+Replay detail additions should preserve the shared tick/round state across first-person replay, tactical map, timeline, parser markers, round review, coaching cards, render fallback, and Replay Contract diagnostics. Degraded states for no frames, no rounds, no parser events, and no coaching events should be explicit but compact.
+
+Upload/parser observability should stay compact: ingestion snapshots, short failure metadata, attempts, stale/active/retryable state, and owner-scoped parse retry are acceptable. Do not add production telemetry, stack trace storage, raw parser logs, or retry flows that bypass `source_storage_key` and `backend/app/services/storage.py`.
+
+Regression fixtures should be small and human-readable. Prefer compact fixtures under `backend/tests/fixtures/` and `frontend/lib/test-fixtures/` that lock down replay normalization, parser event families, coaching evidence, and degraded UI helper behavior without checking in `.dem`, media, raw parser dataframes, or huge event dumps.
 
 Artifact storage additions must go through `backend/app/services/storage.py`. The default implementation is local filesystem storage rooted at `ARTIFACT_STORAGE_ROOT=/data`, with storage keys such as `local://uploads/{demo_id}/{filename}`, `local://replays/{demo_id}.json`, and `local://videos/{demo_id}/{filename}`. Keep PostgreSQL limited to metadata and storage keys. Do not add S3/R2 credentials, cloud SDKs, or direct writes to upload/replay/video directories outside the storage service unless it is temporary parser scratch space.
 

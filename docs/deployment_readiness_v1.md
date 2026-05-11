@@ -92,6 +92,56 @@ Production auth should replace the local helper with a real identity provider an
 
 `status` becomes `degraded` when PostgreSQL, Redis, or required worker configuration is unavailable. This endpoint confirms dependency reachability and configuration shape; it is not a monitoring system.
 
+## Runtime Status Snapshots
+
+Demo list/detail responses include compact ingestion state for upload and parser diagnosis:
+
+```json
+{
+  "phase": "uploaded",
+  "active": true,
+  "stale": false,
+  "retryable": false,
+  "attemptCount": 0,
+  "jobType": "real_parse",
+  "jobStatus": "queued",
+  "hasSourceDemo": true,
+  "failure": null
+}
+```
+
+Failed parser jobs include a short failure object with `errorCode`, `message`, `failedAt`, `updatedAt`, `retryable`, and `attemptCount`. This is intentionally compact and should not contain raw stack traces or parser dumps.
+
+If a failed demo still has a valid `source_storage_key`, retry parsing through the owner-scoped endpoint:
+
+```bash
+curl -X POST http://localhost:8000/demos/{demo_id}/parse/retry
+```
+
+Replay responses include compact contract diagnostics for QA:
+
+```json
+{
+  "contractVersion": "replay_contract_v1",
+  "normalizedLegacy": false,
+  "parserEventCount": 12,
+  "roundCount": 24,
+  "playerCount": 10,
+  "frameCount": 720,
+  "missingFields": [],
+  "degradedFields": [],
+  "eventFamilyCounts": {
+    "combat": 4,
+    "damage": 2,
+    "objective": 3,
+    "utility": 3
+  },
+  "missingEventFamilies": []
+}
+```
+
+These snapshots are deploy-readiness aids, not production observability. Keep detailed logs in process logs or a future logging backend, not in PostgreSQL or replay blobs.
+
 ## Local Verification
 
 Run all local checks in the expected order:
@@ -109,6 +159,19 @@ The script covers:
 - frontend lint
 - frontend typecheck
 - frontend build
+
+Frontend helper regressions are separate Node checks and should be run when dashboard, replay diagnostics, parser event presentation, round review, coaching review, or map-config helpers change:
+
+```bash
+cd frontend
+node lib/demo-library.test.mjs
+node lib/replay-diagnostics.test.mjs
+node lib/replay-events.test.mjs
+node lib/round-review.test.mjs
+node lib/coaching-review.test.mjs
+node lib/replay-quality-fixtures.test.mjs
+node lib/map-config.test.mjs
+```
 
 Docker checks still run separately:
 
@@ -132,12 +195,14 @@ curl http://localhost:8000/health
 Ready for mock MVP deployment:
 
 - Demo Library upload, search, status/map filtering, sorting, rename, and soft archive flows.
+- Upload/parser ingestion snapshots, failed parse metadata, stale/active indicators, and owner-scoped retry from stored source artifacts.
 - Mock upload and real `.dem`/`.zip` upload into local or mounted storage.
 - Storage-key backed uploads, replay blobs, and media URLs through the local storage adapter.
 - Async parse queue using Redis plus backend worker.
-- Replay contract JSON blobs and deterministic rules-based coaching rows.
-- Demo detail review: round navigation, timeline markers, tactical map sync, coaching cards, manual video calibration, and render job status UI.
-- Render Worker V1 manifest, media upload, and result callback contract.
+- Replay contract JSON blobs with backward-compatible normalization, compact parser events, contract diagnostics, and deterministic rules-based coaching rows.
+- Demo detail review: round navigation, timeline markers, tactical map sync, replay diagnostics, degraded states, coaching cards, manual video calibration, and render job status UI.
+- Render Worker V1 manifest claim, media upload, and terminal-safe result callback contract.
+- Compact backend/frontend parser quality fixtures for regression coverage.
 
 Still mock/dev-only:
 
@@ -167,6 +232,8 @@ Still mock/dev-only:
 5. If a sample is available, upload a real `.dem` or `.zip` containing a `.dem`.
 6. Open a demo detail page.
 7. Use round review quick jumps and confirm first-person shell/video, tactical map, timeline, parser markers, and coaching cards stay synchronized.
-8. Click `Generate Clip` on a coaching event.
-9. Confirm render job status appears in the UI and `/demos/{demo_id}/render/jobs`.
-10. For render-worker callback validation, run either the fake adapter with `DEV_FAKE_VIDEO_PATH` or the manual adapter flow documented in `render-worker/README.md`.
+8. Confirm Replay Contract diagnostics show counts and no unexpected degraded fields for a healthy mock demo.
+9. For a failed parse fixture or seeded row, confirm the Dashboard shows failure metadata and retry availability only when a source artifact exists.
+10. Click `Generate Clip` on a coaching event.
+11. Confirm render job status appears in the UI and `/demos/{demo_id}/render/jobs`.
+12. For render-worker callback validation, run either the fake adapter with `DEV_FAKE_VIDEO_PATH` or the manual adapter flow documented in `render-worker/README.md`.

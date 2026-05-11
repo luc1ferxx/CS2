@@ -4,13 +4,13 @@ This directory is a standalone development skeleton for a future Windows/Linux G
 
 ## Adapter Architecture
 
-`runner.py` fetches render manifests and delegates render-specific behavior to adapters:
+`runner.py` fetches render manifests and delegates render-specific behavior to adapters. Normal processing claims a queued manifest and moves it to `rendering`; dry-run inspection passes `claim=false` so it can inspect a plan without changing job state.
 
 - `adapters/base.py`: shared result types, callback payload helpers, and adapter errors.
 - `adapters/fake_video.py`: `FakeVideoAdapter`, the existing dev fake mp4 flow.
 - `adapters/cs2_manual.py`: `CS2ManualAdapter`, a manual probe that prepares files and callback metadata for an operator.
 
-The callback contract stays the same: adapters either upload or reference an mp4, then POST `/render-worker/jobs/{job_id}/result`.
+The callback contract stays the same: adapters either upload or reference an mp4, then POST `/render-worker/jobs/{job_id}/result`. The API rejects callbacks for terminal jobs so late worker results cannot overwrite completed or failed state.
 
 ## Configuration
 
@@ -50,6 +50,8 @@ python3 render-worker/runner.py process-job {job_id}
 python3 render-worker/runner.py poll-once
 ```
 
+`dry-run` uses `claim=false` on the manifest endpoints. `process-job`, `poll-once`, `prepare-job`, and `complete-prepared-job` use claimed manifests because they are part of an actual processing flow.
+
 Manual adapter flow:
 
 ```bash
@@ -86,7 +88,7 @@ This remains a dev bridge only. It does not render real CS2 footage.
 
 `instructions.md` includes:
 
-- demo file path and storage reference
+- demo file path when locally resolvable plus `demoStorageKey` / `replayStorageKey`
 - map name
 - POV player id / Steam ID
 - `tickStart`, `tickEnd`, `tickRate`, and `roundNumber`
@@ -144,11 +146,11 @@ The app's Render Operator panel reads API job/video status only. It does not kno
 
 Replace the manual/fake adapter with a controlled-infrastructure adapter later:
 
-1. Resolve or download the `.dem` using `demoFilePath` or a future object-storage key.
+1. Resolve or download the `.dem` using `demoStorageKey`; `demoFilePath` is only a local adapter hint when the storage implementation is local filesystem.
 2. Run CS2 only on managed Windows/Linux GPU workers.
 3. Render the selected POV/tick range.
 4. Produce mp4/HLS output.
-5. Upload media through a production storage path.
+5. Upload media through the API media endpoint or a future production storage adapter that preserves the same callback shape.
 6. POST the same result callback payload.
 
 The API and frontend should not need a new contract for that replacement.

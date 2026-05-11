@@ -11,16 +11,18 @@
 - Docker Compose 本地栈：`frontend`、`api`、`worker`、`postgres`、`redis`。
 - Dev-only owner boundary：默认 `DEV_USER_ID=dev-user`，测试或本地调试可用 `X-Dev-User-Id` 模拟不同 owner；这不是生产认证。
 - `/dashboard` Demo Library：搜索、状态/地图筛选、排序、上传轮询、重命名、软归档、渲染状态摘要。
+- Upload/parser observability：demo list/detail responses 包含 compact ingestion snapshot，失败解析有短错误、attempts、stale/active/retryable 状态，并支持 owner-scoped retry。
 - Mock demo flow：快速生成合成 replay、coaching events 和 mock first-person shell。
 - Real demo parser spike：上传 `.dem` 或包含 `.dem` 的 `.zip`，后端队列异步解析。
-- Replay contract：回合、玩家、采样帧、击杀/死亡、compact parser events、地图 metadata、视频 metadata。
-- Demo detail review：first-person shell/video、tactical map、timeline、round selector、round review、coaching panel 同步到同一个 tick/round state。
+- Replay contract：回合、玩家、采样帧、击杀/死亡、compact parser events、地图 metadata、视频 metadata、contract diagnostics。
+- Demo detail review：first-person shell/video、tactical map、timeline、round selector、round review、coaching panel、Replay Contract diagnostics 同步到同一个 tick/round state。
 - Rules-based coaching：固定规则生成事件，不调用 LLM，不生成不透明 AI 文案。
 - Tactical map assets：Dust II、Mirage、Inferno、Ancient、Nuke、Anubis radar 支持；Dust II 使用 CS2 overview transform，其余是 approximate bounds。
 - Manual MP4 binding：仅用于开发和 QA，支持上传 `.mp4` 并保存 tick/video calibration。
 - `render_clip` boundary：用户可围绕 coaching event 或当前 tick 创建短 POV clip job。
-- Render Worker V1 contract：token-gated manifest、media upload、result callback。
+- Render Worker V1 contract：token-gated manifest claim、media upload、terminal-safe result callback。
 - `render-worker/` skeleton：fake video adapter 和 manual operator adapter，用同一套回调链证明 future GPU worker 合约。
+- Parser quality regression fixtures：backend/frontend compact fixtures 覆盖 legacy replay、malformed optional fields、missing event families、coaching evidence 和 degraded detail states。
 
 明确没有做的事情：
 
@@ -55,16 +57,14 @@ frontend (Next.js)
   -> FastAPI API
     -> PostgreSQL metadata: owner-scoped demos, demo_jobs, coaching_events
     -> Redis queue: parse/render job dispatch
-    -> local replay blobs: /data/replays/*.json
-    -> local uploads: /data/uploads/{demo_id}/...
-    -> local video files: /data/videos/{demo_id}/...
+    -> artifact storage service: uploads, replay blobs, summaries, videos
   -> worker process
     -> mock_parse / real_parse / mock_render / render_clip status handling
   -> render-worker skeleton
     -> external process that calls token-gated render-worker API
 ```
 
-PostgreSQL 只存可索引的元数据、storage key 和 coaching event rows。Replay frames、parser event contract、video metadata 都在 replay JSON blob 内；上传 demo、replay artifact 和视频文件放在 Docker volumes 中，后续可以替换为 S3/R2 或其它对象存储。
+PostgreSQL 只存可索引的元数据、storage key、compact ingestion/render metadata 和 coaching event rows。Replay frames、parser event contract、video metadata 和 compact replay diagnostics 都在 replay JSON blob 内；上传 demo、replay artifact 和视频文件放在 Docker volumes 中，后续可以替换为 S3/R2 或其它对象存储。
 
 Artifact storage 通过 `backend/app/services/storage.py` 统一出入口。默认是 local filesystem implementation，root 为 `ARTIFACT_STORAGE_ROOT=/data`，分类 key 形如：
 
@@ -104,6 +104,7 @@ backend/
   app/services/           demo/upload/replay/video/render job and storage services
   app/workers/worker.py   Redis queue worker entrypoint
   tests/                  backend unit tests
+  tests/fixtures/         compact regression fixtures
 
 render-worker/
   runner.py               external worker skeleton CLI
@@ -162,6 +163,19 @@ python3 -m compileall backend/app
 PYTHONPATH=backend python3 -m unittest discover backend/tests
 ```
 
+Frontend helper regression tests live next to the helpers and are run directly with Node when those surfaces change:
+
+```bash
+cd frontend
+node lib/demo-library.test.mjs
+node lib/replay-diagnostics.test.mjs
+node lib/replay-events.test.mjs
+node lib/round-review.test.mjs
+node lib/coaching-review.test.mjs
+node lib/replay-quality-fixtures.test.mjs
+node lib/map-config.test.mjs
+```
+
 部署准备、runtime env 和 smoke checklist 见 `docs/deployment_readiness_v1.md`。
 
 ## 主要流程
@@ -175,6 +189,7 @@ PYTHONPATH=backend python3 -m unittest discover backend/tests
 - `Mock Upload` 创建合成 demo。
 - `Real Demo Upload` 上传 `.dem` 或 `.zip`。
 - 自动轮询 queued/parsing/analyzing 状态。
+- 显示 compact ingestion phase、active/stale、attempt count、failure reason 和 retry availability。
 - 搜索 demo name、original filename、map。
 - 按 status/map 过滤，按 recent/name/map/status 排序。
 - inline rename。
@@ -187,7 +202,7 @@ PYTHONPATH=backend python3 -m unittest discover backend/tests
 
 ### 3. Real Demo Upload
 
-`POST /uploads/demo` 接收 `.dem` 或 `.zip`，大小上限为 1 GiB。API 把文件存到 `/data/uploads`，创建 `real_parse` job 并推入 Redis。
+`POST /uploads/demo` 接收 `.dem` 或 `.zip`，大小上限为 1 GiB。API 通过 storage service 保存 source artifact，创建 `real_parse` job 并推入 Redis。
 
 worker 使用 `demoparser2==0.41.0` 做 best-effort 解析：
 
@@ -196,10 +211,35 @@ worker 使用 `demoparser2==0.41.0` 做 best-effort 解析：
 - player roster
 - sampled player positions，最多约 720 个采样帧加死亡 tick
 - kills/deaths
+- best-effort damage events
+- best-effort round start/end events
 - best-effort bomb plant/defuse/explode events
 - best-effort smoke/flash/molotov/he events
 
-解析失败会把 demo 标记为 `failed` 并写入 `error_message`；不会继续跑 rules analyzer。单个 bomb/utility event family 缺失不会让整个解析失败。
+解析失败会把 demo 标记为 `failed`，写入 compact failure metadata，并且不会继续跑 rules analyzer。单个 damage/bomb/utility/round event family 缺失不会让整个解析失败。
+
+Demo list/detail responses include an `ingestion` snapshot:
+
+```json
+{
+  "phase": "uploaded",
+  "active": true,
+  "stale": false,
+  "retryable": false,
+  "attemptCount": 0,
+  "jobType": "real_parse",
+  "jobStatus": "queued",
+  "hasSourceDemo": true,
+  "failure": null
+}
+```
+
+Failed parses keep short failure metadata with `errorCode`, `message`, `failedAt`, `updatedAt`, `retryable`, and `attemptCount`. If the uploaded source artifact still exists, an owner-scoped retry can requeue parsing without reuploading:
+
+```bash
+curl -X POST http://localhost:8000/demos/{demo_id}/parse/retry
+curl -X POST -H "X-Dev-User-Id: owner-a" http://localhost:8000/demos/{demo_id}/parse/retry
+```
 
 CLI 示例：
 
@@ -217,6 +257,7 @@ curl -H "X-Dev-User-Id: owner-a" -F "file=@sample.dem" http://localhost:8000/upl
 - `ReplayViewer`：tactical map、玩家点位、死亡状态、bomb state、附近 parser events。
 - `RoundReviewPanel`：回合列表、winner、tick range、first kill、plant、kill/utility/coaching counts、quick jumps。
 - `CoachingPanel`：按回合分组，支持 severity/rule/search 过滤，点击事件跳到 tick，并可为事件创建 render clip。
+- `ReplayDiagnosticsPanel`：compact contract diagnostics，包括 contract version、parser/coaching/round/player/frame counts、legacy normalization、missing/degraded optional fields、missing event families 和 render fallback state。
 - `RenderOperatorPanel`：内部 operator 视角展示最新 `render_clip` job、tick range、event/player/POV、视频输出状态和错误。
 - `VideoSetupPanel`：开发/QA 用手动 MP4 上传和 sync calibration。
 
@@ -256,16 +297,43 @@ Replay blob 的核心字段：
   "kills": [],
   "deaths": [],
   "events": [],
+  "contractVersion": "replay_contract_v1",
+  "diagnostics": {},
   "generatedAt": "..."
 }
 ```
 
 `events` 是 backward-compatible compact parser event list。旧 replay blob 没有 `events` 时按 `events: []` 处理。
 
+`diagnostics` 是为 QA 和降级 UI 准备的 compact contract snapshot，不是 raw parser log：
+
+```json
+{
+  "contractVersion": "replay_contract_v1",
+  "normalizedLegacy": false,
+  "parserEventCount": 12,
+  "roundCount": 24,
+  "playerCount": 10,
+  "frameCount": 720,
+  "missingFields": [],
+  "degradedFields": [],
+  "eventFamilyCounts": {
+    "combat": 4,
+    "damage": 2,
+    "objective": 3,
+    "utility": 3
+  },
+  "missingEventFamilies": []
+}
+```
+
+Malformed optional fields are ignored best-effort and reported through `degradedFields`. Missing optional fields are reported through `missingFields`. Neither should crash replay loading.
+
 支持的 parser event types：
 
 - `kill`
 - `death`
+- `damage`
 - `bomb_planted`
 - `bomb_defused`
 - `bomb_exploded`
@@ -273,6 +341,8 @@ Replay blob 的核心字段：
 - `flash`
 - `molotov`
 - `he`
+- `round_start`
+- `round_end`
 
 `video` metadata 支持：
 
@@ -353,17 +423,24 @@ Render clip worker is not connected yet. A Windows/Linux GPU worker must process
 
 Render worker API 使用 `X-Render-Worker-Token`。本地默认 token 是 `dev-render-worker-token`，可用 `RENDER_WORKER_TOKEN` 覆盖。它只是本地开发门禁，不是生产认证方案。
 
-获取下一个 queued manifest：
+获取下一个 queued manifest 并默认 claim 为 `rendering`：
 
 ```bash
 curl http://localhost:8000/render-worker/jobs/next \
   -H "X-Render-Worker-Token: dev-render-worker-token"
 ```
 
-获取指定 job manifest：
+获取指定 job manifest 并默认 claim 为 `rendering`：
 
 ```bash
 curl http://localhost:8000/render-worker/jobs/{job_id}/manifest \
+  -H "X-Render-Worker-Token: dev-render-worker-token"
+```
+
+只检查 manifest 而不 claim，用 `claim=false`：
+
+```bash
+curl "http://localhost:8000/render-worker/jobs/{job_id}/manifest?claim=false" \
   -H "X-Render-Worker-Token: dev-render-worker-token"
 ```
 
@@ -393,7 +470,7 @@ curl -X POST http://localhost:8000/render-worker/jobs/{job_id}/result \
   }'
 ```
 
-失败回调只更新 job error；如果当前 replay video 是 `manual_upload`，失败不会清掉已有手动视频 metadata。
+失败回调只更新 job error；如果当前 replay video 是 `manual_upload`，失败不会清掉已有手动视频 metadata。已完成或已失败的 terminal render job 会拒绝后续 callback，避免 late callback 改写最终状态。
 
 ## Render Worker Skeleton
 
@@ -457,6 +534,7 @@ Core:
 - `PATCH /demos/{demo_id}`
 - `POST /demos/{demo_id}/archive`
 - `GET /demos/{demo_id}/status`
+- `POST /demos/{demo_id}/parse/retry`
 - `POST /uploads/mock`
 - `POST /uploads/demo`
 
@@ -536,15 +614,16 @@ Minimal local smoke for a clean environment:
 - 没有经济、装备快照、line-of-sight、utility trajectory 和高级战术上下文。
 - `render_clip` 当前只创建合约 job；真实视频要等外部 GPU worker。
 - Manual MP4 必须人工校准，且只能代表它实际覆盖的 tick range。
+- Ingestion snapshots、replay diagnostics 和 regression fixtures 是 compact QA/debugging aids，不是生产 telemetry、日志平台或 parser trace storage。
 
 ## Next Useful Work
 
 优先级较高的下一步：
 
 - 更严格的 upload session / quarantine / S3-R2 storage boundary。
-- Parser telemetry 和更稳定的 bomb/utility/round event extraction。
+- Parser telemetry 和更稳定的 damage/bomb/utility/round event extraction。
 - 更准确的 map-specific coordinate calibration，尤其是 Mirage、Inferno、Ancient、Nuke、Anubis。
-- Render worker claim/lease 语义，避免多个外部 worker 同时处理同一 job。
+- Render worker lease/heartbeat 语义，避免外部 worker claim 后长时间卡住。
 - 真实受控 GPU worker adapter：拉取 `.dem`、渲染短 clip、上传 mp4/HLS、提交 result callback。
 - 更完整的 rules evidence，包括 economy、utility timing、line-of-sight 和 trade metadata。
 - 真实用户系统和 demo ownership。
