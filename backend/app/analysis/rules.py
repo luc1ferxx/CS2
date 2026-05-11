@@ -980,7 +980,16 @@ def _event_label(event: dict[str, Any]) -> str | None:
 
 
 def _event_player_id(event: dict[str, Any]) -> str | None:
-    return _optional_str(event.get("playerId"))
+    player_id = _optional_str(event.get("playerId"))
+    if player_id:
+        return player_id
+    player_ids = event.get("playerIds")
+    if isinstance(player_ids, list):
+        for value in player_ids:
+            parsed = _optional_str(value)
+            if parsed:
+                return parsed
+    return None
 
 
 def _event_player_name(event: dict[str, Any]) -> str | None:

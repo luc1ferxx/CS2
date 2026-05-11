@@ -18,13 +18,16 @@ export interface ParserEventTimelineMarker {
 const EVENT_PRESENTATION: Record<ReplayEventType, ParserEventPresentation> = {
   kill: { label: "Kill", tone: "combat", shortLabel: "K" },
   death: { label: "Death", tone: "combat", shortLabel: "D" },
+  damage: { label: "Damage", tone: "damage", shortLabel: "D" },
   bomb_planted: { label: "Plant", tone: "objective", shortLabel: "P" },
   bomb_defused: { label: "Defuse", tone: "objective", shortLabel: "D" },
   bomb_exploded: { label: "Explode", tone: "objective", shortLabel: "X" },
   smoke: { label: "Smoke", tone: "utility", shortLabel: "S" },
   flash: { label: "Flash", tone: "utility", shortLabel: "F" },
   molotov: { label: "Molotov", tone: "damage", shortLabel: "M" },
-  he: { label: "HE", tone: "damage", shortLabel: "H" }
+  he: { label: "HE", tone: "damage", shortLabel: "H" },
+  round_start: { label: "Round start", tone: "objective", shortLabel: "R" },
+  round_end: { label: "Round end", tone: "objective", shortLabel: "R" }
 };
 
 export function parserEventPresentationForType(type: ReplayEventType): ParserEventPresentation {

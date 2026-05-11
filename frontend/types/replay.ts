@@ -96,19 +96,26 @@ export interface ReplayVideo {
 export type ReplayEventType =
   | "kill"
   | "death"
+  | "damage"
   | "bomb_planted"
   | "bomb_defused"
   | "bomb_exploded"
   | "smoke"
   | "flash"
   | "molotov"
-  | "he";
+  | "he"
+  | "round_start"
+  | "round_end";
+
+export type ReplayEventSource = "parser" | "mock" | "legacy";
 
 export interface ReplayEvent {
   id: string;
   type: ReplayEventType;
   tick: number;
   roundNumber: number;
+  source: ReplayEventSource | string;
+  playerIds: string[];
   playerId?: string | null;
   playerName?: string | null;
   side?: PlayerSide | null;

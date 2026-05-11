@@ -165,9 +165,13 @@ class NormalizerTest(unittest.TestCase):
         self.assertEqual(replay["rounds"][0]["winnerReason"], "bomb_exploded")
         events = replay["events"]
         self.assertEqual([event["type"] for event in events], ["kill", "bomb_planted", "smoke", "flash"])
+        for event in events:
+            self.assertEqual(event["source"], "parser")
+            self.assertIsInstance(event["playerIds"], list)
         kill = events[0]
         self.assertEqual(kill["tick"], 180)
         self.assertEqual(kill["playerId"], "t-1")
+        self.assertEqual(kill["playerIds"], ["t-1", "ct-1"])
         self.assertEqual(kill["side"], "T")
         self.assertEqual(kill["metadata"]["victimId"], "ct-1")
         self.assertEqual(kill["metadata"]["weapon"], "ak47")
@@ -187,6 +191,77 @@ class NormalizerTest(unittest.TestCase):
         flash = events[3]
         self.assertEqual(flash["label"], "Flash")
         self.assertNotIn("x", flash)
+
+    def test_parser_event_v1_accepts_damage_and_round_markers(self) -> None:
+        replay = normalize_parser_output(
+            demo_id="demo-event-v1",
+            parsed={
+                "mapName": "de_dust2",
+                "tickRate": 64,
+                "rounds": [
+                    {
+                        "roundNumber": 1,
+                        "startTick": 100,
+                        "freezeEndTick": 164,
+                        "endTick": 500,
+                        "winnerSide": "CT",
+                    }
+                ],
+                "players": [
+                    {"id": "t-1", "name": "T One", "side": "T"},
+                    {"id": "ct-1", "name": "CT One", "side": "CT"},
+                ],
+                "frames": [
+                    {
+                        "tick": 100,
+                        "roundNumber": 1,
+                        "players": [
+                            {
+                                "id": "t-1",
+                                "name": "T One",
+                                "side": "T",
+                                "x": -1200,
+                                "y": 400,
+                                "alive": True,
+                                "hp": 100,
+                            },
+                            {
+                                "id": "ct-1",
+                                "name": "CT One",
+                                "side": "CT",
+                                "x": -1120,
+                                "y": 420,
+                                "alive": True,
+                                "hp": 100,
+                            },
+                        ],
+                    }
+                ],
+                "events": [
+                    {"type": "round_start", "tick": 100, "roundNumber": 1},
+                    {
+                        "type": "damage",
+                        "tick": 180,
+                        "roundNumber": 1,
+                        "playerIds": ["t-1", "ct-1"],
+                        "playerId": "t-1",
+                        "playerName": "T One",
+                        "side": "T",
+                        "metadata": {"victimId": "ct-1", "damageHealth": 42},
+                    },
+                    {"type": "round_end", "tick": 500, "roundNumber": 1, "metadata": {"winnerSide": "CT"}},
+                ],
+            },
+        )
+
+        events = replay["events"]
+        self.assertEqual([event["type"] for event in events], ["round_start", "damage", "round_end"])
+        self.assertEqual(events[0]["source"], "parser")
+        self.assertEqual(events[0]["playerIds"], [])
+        self.assertEqual(events[1]["playerIds"], ["t-1", "ct-1"])
+        self.assertEqual(events[1]["label"], "Damage")
+        self.assertEqual(events[1]["metadata"]["damageHealth"], 42)
+        self.assertEqual(events[2]["label"], "Round ended")
 
 
 if __name__ == "__main__":

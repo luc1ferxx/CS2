@@ -4,30 +4,9 @@ from datetime import datetime, timezone
 from typing import Any
 
 from app.parser.map_config import map_metadata_for, world_to_radar_percent
+from app.parser.replay_contract import normalize_replay_events as normalize_contract_events
 
 SIDE_COLORS = {"T": "#f5b542", "CT": "#2ed3d0"}
-REPLAY_EVENT_TYPES = {
-    "kill",
-    "death",
-    "bomb_planted",
-    "bomb_defused",
-    "bomb_exploded",
-    "smoke",
-    "flash",
-    "molotov",
-    "he",
-}
-EVENT_LABELS = {
-    "death": "Death",
-    "flash": "Flash",
-    "he": "HE",
-    "kill": "Kill",
-    "molotov": "Molotov",
-    "smoke": "Smoke",
-    "bomb_defused": "Bomb defused",
-    "bomb_exploded": "Bomb exploded",
-    "bomb_planted": "Bomb planted",
-}
 
 
 def normalize_parser_output(demo_id: str, parsed: dict[str, Any]) -> dict[str, Any]:
@@ -64,15 +43,25 @@ def normalize_parser_output(demo_id: str, parsed: dict[str, Any]) -> dict[str, A
         "frames": frames,
         "kills": list(parsed.get("kills") or []),
         "deaths": list(parsed.get("deaths") or []),
-        "events": _normalize_replay_events(
+        "events": normalize_contract_events(
             parsed.get("events") or [],
             parsed.get("kills") or [],
             rounds,
-            map_name,
-            bounds,
+            position_normalizer=_event_position_normalizer(map_name, bounds),
         ),
         "generatedAt": datetime.now(timezone.utc).isoformat(),
     }
+
+
+def _event_position_normalizer(map_name: str, bounds: dict[str, float]):
+    def normalize(source: dict[str, Any]) -> dict[str, float] | None:
+        x_value = source.get("x", source.get("X"))
+        y_value = source.get("y", source.get("Y"))
+        if x_value is None or y_value is None:
+            return None
+        return _normalize_position(float(x_value), float(y_value), bounds, map_name)
+
+    return normalize
 
 
 def _normalize_rounds(raw_rounds: list[dict[str, Any]], raw_frames: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -167,133 +156,6 @@ def _normalize_frames(
             }
         )
     return [frame for frame in normalized if frame["players"]]
-
-
-def _normalize_replay_events(
-    raw_events: list[dict[str, Any]],
-    raw_kills: list[dict[str, Any]],
-    rounds: list[dict[str, Any]],
-    map_name: str,
-    bounds: dict[str, float],
-) -> list[dict[str, Any]]:
-    events = [
-        *[_normalize_kill_event(kill, rounds, map_name, bounds) for kill in raw_kills],
-        *[
-            _normalize_parser_event(event, rounds, map_name, bounds)
-            for event in raw_events
-            if isinstance(event, dict)
-        ],
-    ]
-    normalized = [event for event in events if event is not None]
-    return sorted(normalized, key=lambda item: (int(item["tick"]), str(item["id"])))
-
-
-def _normalize_kill_event(
-    kill: dict[str, Any],
-    rounds: list[dict[str, Any]],
-    map_name: str,
-    bounds: dict[str, float],
-) -> dict[str, Any] | None:
-    tick = _optional_int(kill.get("tick"))
-    if tick is None:
-        return None
-    attacker_id = _optional_str(kill.get("attackerId"))
-    attacker_name = _optional_str(kill.get("attackerName")) or attacker_id
-    victim_id = _optional_str(kill.get("victimId"))
-    victim_name = _optional_str(kill.get("victimName")) or victim_id
-    metadata = {
-        "attackerId": attacker_id,
-        "attackerName": attacker_name,
-        "attackerSide": _normalize_side(kill.get("attackerSide")),
-        "victimId": victim_id,
-        "victimName": victim_name,
-        "victimSide": _normalize_side(kill.get("victimSide")),
-        "assisterId": _optional_str(kill.get("assisterId")),
-        "assisterName": _optional_str(kill.get("assisterName")),
-        "weapon": _optional_str(kill.get("weapon")),
-        "headshot": kill.get("headshot") if isinstance(kill.get("headshot"), bool) else None,
-    }
-    event = {
-        "id": _event_id("kill", tick, attacker_id or attacker_name, victim_id or victim_name),
-        "type": "kill",
-        "tick": tick,
-        "roundNumber": _round_for_tick(tick, rounds),
-        "playerId": attacker_id,
-        "playerName": attacker_name,
-        "side": _normalize_side(kill.get("attackerSide")),
-        "label": (
-            f"{attacker_name or 'Unknown'} killed {victim_name or 'Unknown'}"
-            if attacker_name or victim_name
-            else "Kill"
-        ),
-        "metadata": _without_none(metadata),
-    }
-    _attach_event_position(event, kill, map_name, bounds)
-    return _without_none(event)
-
-
-def _normalize_parser_event(
-    event: dict[str, Any],
-    rounds: list[dict[str, Any]],
-    map_name: str,
-    bounds: dict[str, float],
-) -> dict[str, Any] | None:
-    event_type = _normalize_event_type(event.get("type"))
-    tick = _optional_int(event.get("tick"))
-    if event_type is None or tick is None:
-        return None
-    round_number = _optional_int(event.get("roundNumber")) or _round_for_tick(tick, rounds)
-    metadata = _without_none({
-        **(event.get("metadata") if isinstance(event.get("metadata"), dict) else {}),
-        "site": _optional_str(event.get("site")),
-    })
-    normalized = {
-        "id": _optional_str(event.get("id")) or _event_id(event_type, tick, event.get("playerId")),
-        "type": event_type,
-        "tick": tick,
-        "roundNumber": round_number,
-        "playerId": _optional_str(event.get("playerId")),
-        "playerName": _optional_str(event.get("playerName")),
-        "side": _normalize_side(event.get("side")),
-        "label": _event_label(event_type, event, metadata),
-        "metadata": metadata,
-    }
-    _attach_event_position(normalized, event, map_name, bounds)
-    return _without_none(normalized)
-
-
-def _attach_event_position(
-    event: dict[str, Any],
-    source: dict[str, Any],
-    map_name: str,
-    bounds: dict[str, float],
-) -> None:
-    if source.get("x") is None or source.get("y") is None:
-        return
-    position = _normalize_position(float(source["x"]), float(source["y"]), bounds, map_name)
-    event["x"] = position["x"]
-    event["y"] = position["y"]
-
-
-def _event_label(event_type: str, event: dict[str, Any], metadata: dict[str, Any]) -> str:
-    label = _optional_str(event.get("label"))
-    if label:
-        return label
-    if event_type == "bomb_planted" and metadata.get("site"):
-        return f"Bomb planted {metadata['site']}"
-    return EVENT_LABELS[event_type]
-
-
-def _normalize_event_type(value: Any) -> str | None:
-    if not isinstance(value, str):
-        return None
-    normalized = value.strip().lower()
-    return normalized if normalized in REPLAY_EVENT_TYPES else None
-
-
-def _event_id(event_type: str, tick: int, *parts: Any) -> str:
-    suffix = "-".join(str(part) for part in parts if part is not None and str(part))
-    return f"{event_type}-{tick}-{suffix or 'event'}"
 
 
 def _normalize_frame_player(
@@ -391,19 +253,3 @@ def _normalize_side(value: Any) -> str | None:
     if value == 2:
         return "T"
     return None
-
-
-def _without_none(values: dict[str, Any]) -> dict[str, Any]:
-    return {key: value for key, value in values.items() if value is not None}
-
-
-def _optional_int(value: Any) -> int | None:
-    if value is None:
-        return None
-    return int(value)
-
-
-def _optional_str(value: Any) -> str | None:
-    if value is None:
-        return None
-    return str(value)

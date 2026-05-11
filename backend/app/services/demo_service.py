@@ -13,6 +13,7 @@ from app.core.redis import get_redis_client
 from app.models.coaching import CoachingEvent
 from app.models.demo import Demo
 from app.models.job import DemoJob
+from app.parser.replay_contract import normalize_replay_contract
 from app.schemas.coaching import CoachingEventOut
 from app.schemas.demo import (
     DemoListItem,
@@ -594,24 +595,7 @@ class DemoService:
         return [CoachingEventOut.model_validate(event) for event in events]
 
     def _with_replay_contract_defaults(self, replay: dict[str, Any]) -> dict[str, Any]:
-        replay["events"] = replay["events"] if isinstance(replay.get("events"), list) else []
-        if "video" in replay:
-            replay["video"] = self._with_video_contract_defaults(replay["video"], replay)
-            return replay
-
-        rounds = replay.get("rounds", [])
-        tick_rate = int(replay.get("tickRate", 64))
-        tick_start = int(rounds[0]["startTick"]) if rounds else 0
-        tick_end = int(rounds[-1]["endTick"]) if rounds else tick_start
-        replay["video"] = self._with_video_contract_defaults(
-            {
-                "status": "ready",
-                "url": None,
-                "source": "mock",
-            },
-            replay,
-        )
-        return replay
+        return normalize_replay_contract(replay)
 
     def _with_video_contract_defaults(
         self,

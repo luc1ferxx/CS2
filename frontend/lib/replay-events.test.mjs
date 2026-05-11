@@ -58,6 +58,16 @@ const parserEvents = [
     tone: "damage",
     shortLabel: "H"
   });
+  assert.deepEqual(normalize(parserEventPresentationForType("damage")), {
+    label: "Damage",
+    tone: "damage",
+    shortLabel: "D"
+  });
+  assert.deepEqual(normalize(parserEventPresentationForType("round_end")), {
+    label: "Round end",
+    tone: "objective",
+    shortLabel: "R"
+  });
 }
 
 {

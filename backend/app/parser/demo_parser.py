@@ -37,6 +37,12 @@ def parse_demo_file(source_path: Path) -> dict[str, Any]:
         player=["X", "Y", "health", "team_num"],
         other=["total_rounds_played"],
     )
+    damage_records = _parse_event_records(
+        parser,
+        "player_hurt",
+        player=["X", "Y", "health", "team_num"],
+        other=["total_rounds_played", "dmg_health", "dmg_armor", "armor", "weapon"],
+    )
     round_start_records = _parse_event_records(
         parser,
         "round_start",
@@ -105,10 +111,15 @@ def parse_demo_file(source_path: Path) -> dict[str, Any]:
     players = _merge_players(player_records, tick_records)
     frames = _build_frames(tick_records, rounds, tick_rate)
     kills = _build_kills(death_records)
-    events = [
-        *_build_bomb_events(bomb_planted_records, bomb_defused_records, bomb_exploded_records),
-        *_build_utility_events(utility_records),
-    ]
+    events = sorted(
+        [
+            *_build_round_events(round_start_records, round_end_records),
+            *_build_damage_events(damage_records),
+            *_build_bomb_events(bomb_planted_records, bomb_defused_records, bomb_exploded_records),
+            *_build_utility_events(utility_records),
+        ],
+        key=lambda item: int(item.get("tick", 0)),
+    )
 
     return {
         "mapName": map_name,
@@ -427,23 +438,104 @@ def _build_kills(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return kills
 
 
+def _build_damage_events(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    events: list[dict[str, Any]] = []
+    for record in records:
+        tick = _optional_int(record.get("tick"))
+        if tick is None:
+            continue
+        attacker_id = _optional_str(record.get("attacker_steamid"))
+        victim_id = _optional_str(record.get("user_steamid") or record.get("player_steamid"))
+        event = _parser_event(record, "damage", "Damage")
+        if event is None:
+            continue
+        attacker_name = _optional_str(record.get("attacker_name"))
+        victim_name = _optional_str(record.get("user_name") or record.get("player_name"))
+        event["id"] = f"damage-{tick}-{attacker_id or 'attacker'}-{victim_id or 'victim'}"
+        event["playerId"] = attacker_id or event.get("playerId")
+        event["playerName"] = attacker_name or event.get("playerName")
+        event["playerIds"] = _compact_player_ids([attacker_id, victim_id])
+        event["metadata"] = {
+            key: value
+            for key, value in {
+                "attackerId": attacker_id,
+                "attackerName": attacker_name,
+                "victimId": victim_id,
+                "victimName": victim_name,
+                "damageHealth": _optional_int(record.get("dmg_health")),
+                "damageArmor": _optional_int(record.get("dmg_armor")),
+                "health": _optional_int(record.get("health")),
+                "armor": _optional_int(record.get("armor")),
+                "weapon": _optional_str(record.get("weapon")),
+            }.items()
+            if value is not None
+        }
+        events.append(event)
+    return sorted(events, key=lambda item: int(item.get("tick", 0)))
+
+
+def _build_round_events(
+    starts: list[dict[str, Any]],
+    ends: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    events: list[dict[str, Any]] = []
+    for record in starts:
+        event = _round_event(record, "round_start", "Round started")
+        if event is not None:
+            events.append(event)
+    for record in ends:
+        event = _round_event(record, "round_end", "Round ended")
+        if event is not None:
+            events.append(event)
+    return sorted(events, key=lambda item: int(item.get("tick", 0)))
+
+
+def _round_event(record: dict[str, Any], event_type: str, label: str) -> dict[str, Any] | None:
+    tick = _optional_int(record.get("tick"))
+    if tick is None:
+        return None
+    metadata = _compact_metadata(record, ["reason", "round_end_reason", "winner_reason", "winnerReason"])
+    winner_side = _side_from_value(
+        record.get("winner")
+        or record.get("winner_side")
+        or record.get("winnerSide")
+    )
+    if winner_side:
+        metadata["winnerSide"] = winner_side
+    return {
+        "id": f"{event_type}-{tick}-r{_round_number_from_record(record)}",
+        "type": event_type,
+        "tick": tick,
+        "roundNumber": _round_number_from_record(record),
+        "source": "parser",
+        "playerIds": [],
+        "label": label,
+        "metadata": metadata,
+    }
+
+
 def _build_bomb_events(
     planted: list[dict[str, Any]],
     defused: list[dict[str, Any]],
     exploded: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    events = [
-        *[
-            _parser_event(
-                record,
-                "bomb_planted",
-                f"Bomb planted {site}" if (site := _optional_str(record.get("site"))) else "Bomb planted",
-            )
-            for record in planted
-        ],
-        *[_parser_event(record, "bomb_defused", "Bomb defused") for record in defused],
-        *[_parser_event(record, "bomb_exploded", "Bomb exploded") for record in exploded],
-    ]
+    events = []
+    for record in planted:
+        event = _parser_event(
+            record,
+            "bomb_planted",
+            f"Bomb planted {site}" if (site := _optional_str(record.get("site"))) else "Bomb planted",
+        )
+        if event is not None:
+            events.append(event)
+    for record in defused:
+        event = _parser_event(record, "bomb_defused", "Bomb defused")
+        if event is not None:
+            events.append(event)
+    for record in exploded:
+        event = _parser_event(record, "bomb_exploded", "Bomb exploded")
+        if event is not None:
+            events.append(event)
     return sorted(events, key=lambda item: int(item.get("tick", 0)))
 
 
@@ -457,18 +549,25 @@ def _build_utility_events(records_by_type: dict[str, list[dict[str, Any]]]) -> l
     events: list[dict[str, Any]] = []
     for event_type, records in records_by_type.items():
         for record in records:
-            events.append(_parser_event(record, event_type, labels[event_type]))
+            event = _parser_event(record, event_type, labels[event_type])
+            if event is not None:
+                events.append(event)
     return sorted(events, key=lambda item: int(item.get("tick", 0)))
 
 
-def _parser_event(record: dict[str, Any], event_type: str, label: str) -> dict[str, Any]:
-    tick = int(record.get("tick", 0))
+def _parser_event(record: dict[str, Any], event_type: str, label: str) -> dict[str, Any] | None:
+    tick = _optional_int(record.get("tick"))
+    if tick is None:
+        return None
+    player_id = _optional_str(record.get("user_steamid") or record.get("player_steamid"))
     event = {
         "id": f"{event_type}-{tick}-{_optional_str(record.get('user_steamid')) or _optional_str(record.get('player_steamid')) or 'event'}",
         "type": event_type,
         "tick": tick,
         "roundNumber": _round_number_from_record(record),
-        "playerId": _optional_str(record.get("user_steamid") or record.get("player_steamid")),
+        "source": "parser",
+        "playerIds": _compact_player_ids([player_id]),
+        "playerId": player_id,
         "playerName": _optional_str(record.get("user_name") or record.get("player_name")),
         "side": _side_from_value(
             record.get("team")
@@ -485,6 +584,20 @@ def _parser_event(record: dict[str, Any], event_type: str, label: str) -> dict[s
         event["x"] = position[0]
         event["y"] = position[1]
     return {key: value for key, value in event.items() if value is not None}
+
+
+def _compact_player_ids(values: list[Any]) -> list[str]:
+    seen: set[str] = set()
+    player_ids: list[str] = []
+    for value in values:
+        if value is None:
+            continue
+        player_id = str(value).strip()
+        if not player_id or player_id in seen:
+            continue
+        seen.add(player_id)
+        player_ids.append(player_id)
+    return player_ids
 
 
 def _round_number_from_record(record: dict[str, Any]) -> int:
@@ -607,6 +720,13 @@ def _records(value: Any) -> list[dict[str, Any]]:
 
 def _optional_str(value: Any) -> str | None:
     return None if value is None else str(value)
+
+
+def _optional_int(value: Any) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _optional_bool(value: Any) -> bool | None:

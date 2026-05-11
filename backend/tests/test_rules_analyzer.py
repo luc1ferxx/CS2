@@ -385,6 +385,52 @@ class RulesAnalyzerTest(unittest.TestCase):
         self.assertEqual(context["utilityLabel"], "Smoke")
         self.assertGreater(context["windowSeconds"], context["graceWindowSeconds"])
 
+    def test_parser_event_v1_player_ids_feed_evidence_metadata(self) -> None:
+        replay = replay_fixture(
+            kills=[],
+            rounds=[{"roundNumber": 1, "startTick": 0, "freezeEndTick": 0, "endTick": 1400}],
+            frames=[
+                frame(100, [player("t-entry", "T Entry", "T", 20, 20)]),
+                frame(1200, [player("t-entry", "T Entry", "T", 50, 50)]),
+            ],
+            events=[
+                {
+                    "id": "smoke-v1",
+                    "type": "smoke",
+                    "tick": 120,
+                    "roundNumber": 1,
+                    "source": "parser",
+                    "playerIds": ["t-entry"],
+                    "label": "Smoke",
+                    "metadata": {},
+                },
+                {
+                    "id": "plant-v1",
+                    "type": "bomb_planted",
+                    "tick": 1200,
+                    "roundNumber": 1,
+                    "source": "parser",
+                    "playerIds": ["t-entry"],
+                    "label": "Bomb planted",
+                    "metadata": {"site": "A"},
+                }
+            ],
+        )
+
+        events = analyze_replay(replay)
+        weak_utility = [
+            event for event in events
+            if event["structured_context_json"]["ruleId"] == "weak_utility_before_execute"
+        ]
+
+        self.assertEqual(len(weak_utility), 1)
+        self.assertEqual(weak_utility[0]["player_id"], "t-entry")
+        context = weak_utility[0]["structured_context_json"]
+        self.assertEqual(context["ruleId"], "weak_utility_before_execute")
+        self.assertEqual(context["involvedPlayerIds"], ["t-entry"])
+        self.assertEqual(context["evidenceTicks"], [1200])
+        self.assertEqual(context["relatedEventIds"], ["plant-v1"])
+
     def test_post_plant_spacing_with_bomb_event_uses_bomb_tick_and_event_id(self) -> None:
         replay = replay_fixture(
             kills=[],
