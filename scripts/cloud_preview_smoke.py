@@ -58,7 +58,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         status = wait_for_completed_demo(sample_demo_id, timeout_seconds=120)
         if SAMPLE_DEMO_NAME:
             status = rename_demo(sample_demo_id, SAMPLE_DEMO_NAME)
-        print(sample_completion_message(sample_demo_id, status))
+        sample_replay = request_json("GET", f"/demos/{sample_demo_id}/replay")
+        print(sample_completion_message(sample_demo_id, status, sample_replay))
     else:
         print(
             "sample demo upload skipped; set SAMPLE_DEMO_PATH=/absolute/path/to/sample.dem "
@@ -173,15 +174,32 @@ def rename_demo(demo_id: str, name: str) -> dict[str, Any]:
     raise SmokeFailure(f"demo {demo_id} status response was not an object: {status}")
 
 
-def sample_completion_message(demo_id: str, status: dict[str, Any]) -> str:
+def sample_completion_message(
+    demo_id: str,
+    status: dict[str, Any],
+    replay: dict[str, Any] | None = None,
+) -> str:
     name = status.get("name") or "sample demo"
     map_name = status.get("map_name") or "unknown"
     round_count = status.get("round_count") or 0
     coaching_count = status.get("coaching_event_count") or 0
+    calibration = sample_calibration_label(replay)
     return (
         f"sample demo completed: {demo_id} / {name} / {map_name} / "
-        f"{round_count} rounds / {coaching_count} coaching events"
+        f"{round_count} rounds / {coaching_count} coaching events / {calibration}"
     )
+
+
+def sample_calibration_label(replay: dict[str, Any] | None) -> str:
+    metadata = replay.get("mapMetadata") if isinstance(replay, dict) else None
+    if not isinstance(metadata, dict):
+        return "map calibration unknown"
+
+    display_name = metadata.get("displayName") or metadata.get("mapName") or "unknown map"
+    confidence = metadata.get("confidence") or "unknown"
+    calibrated = metadata.get("calibrated")
+    calibration_state = "calibrated" if calibrated is True else "uncalibrated"
+    return f"{display_name} {confidence} {calibration_state}"
 
 
 def render_clip_request(replay: dict[str, Any], coaching: list[Any]) -> dict[str, Any]:

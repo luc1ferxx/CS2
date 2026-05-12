@@ -216,6 +216,9 @@ export function worldToRadarPercent(
   if (!config) {
     return null;
   }
+  if (!Number.isFinite(x) || !Number.isFinite(y)) {
+    return null;
+  }
 
   const transform = config.transform;
   let radarX: number;
@@ -237,6 +240,24 @@ export function worldToRadarPercent(
     y: roundPercent(clamp(radarY)),
     confidence: config.confidence
   };
+}
+
+export function sanitizeRadarPercent(value: number | null | undefined): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return null;
+  }
+  return roundPercent(clamp(value));
+}
+
+export function sanitizeRadarPoint<T extends { x?: number | null; y?: number | null }>(
+  point: T
+): (T & { x: number; y: number }) | null {
+  const x = sanitizeRadarPercent(point.x);
+  const y = sanitizeRadarPercent(point.y);
+  if (x === null || y === null) {
+    return null;
+  }
+  return { ...point, x, y };
 }
 
 function scaleToPercent(value: number, low: number, high: number) {

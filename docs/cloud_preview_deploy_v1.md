@@ -98,7 +98,7 @@ FRONTEND_URL="$FRONTEND_URL" \
 python3 scripts/cloud_preview_smoke.py --require-sample
 ```
 
-Place local samples under ignored directories such as `sample-demos/`, `samples/`, or `.local/samples/`, then set `SAMPLE_DEMO_PATH` to the absolute path. The sample upload uses the normal `POST /uploads/demo` path, waits for parser completion, and prints map, round, and coaching counts. Existing parsed rows can prove detail-page compatibility, but they do not prove fresh upload/parser ingestion.
+Place local samples under ignored directories such as `sample-demos/`, `samples/`, or `.local/samples/`, then set `SAMPLE_DEMO_PATH` to the absolute path. The sample upload uses the normal `POST /uploads/demo` path, waits for parser completion, and prints map, round, coaching, and map calibration/fallback status. Existing parsed rows can prove detail-page compatibility, but they do not prove fresh upload/parser ingestion.
 
 Manual browser smoke:
 

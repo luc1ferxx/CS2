@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from copy import deepcopy
 from typing import Any
 
@@ -146,6 +147,8 @@ def world_to_radar_percent(map_name: str | None, x: float, y: float) -> dict[str
     config = get_map_config(map_name)
     if not config:
         return None
+    if not _finite(x) or not _finite(y):
+        return None
 
     transform = config["transform"]
     if transform["type"] == "overview":
@@ -173,3 +176,10 @@ def _scale_to_percent(value: float, low: float, high: float) -> float:
 
 def _clamp(value: float) -> float:
     return max(0.0, min(100.0, value))
+
+
+def _finite(value: Any) -> bool:
+    try:
+        return math.isfinite(float(value))
+    except (TypeError, ValueError, OverflowError):
+        return False

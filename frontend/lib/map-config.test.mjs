@@ -38,6 +38,8 @@ const {
   SUPPORTED_TACTICAL_MAP_NAMES,
   getTacticalMapConfig,
   getTacticalMapPresentation,
+  sanitizeRadarPercent,
+  sanitizeRadarPoint,
   worldToRadarPercent
 } = loadTypeScriptModule("./map-config.ts");
 
@@ -88,6 +90,35 @@ for (const mapName of SUPPORTED_TACTICAL_MAP_NAMES) {
   assert.ok(point.x >= 0 && point.x <= 100);
   assert.ok(point.y >= 0 && point.y <= 100);
   assert.equal(point.confidence, "approximate");
+}
+
+{
+  assert.equal(worldToRadarPercent("de_dust2", Number.NaN, 0), null);
+  assert.equal(worldToRadarPercent("de_mirage", 0, Number.POSITIVE_INFINITY), null);
+}
+
+{
+  const dust2Point = worldToRadarPercent("de_dust2", 0, 0);
+  const miragePoint = worldToRadarPercent("de_mirage", 0, 0);
+  const infernoPoint = worldToRadarPercent("de_inferno", 0, 0);
+
+  assert.notDeepEqual(
+    [dust2Point.x, dust2Point.y],
+    [miragePoint.x, miragePoint.y]
+  );
+  assert.notDeepEqual(
+    [miragePoint.x, miragePoint.y],
+    [infernoPoint.x, infernoPoint.y]
+  );
+}
+
+{
+  assert.equal(sanitizeRadarPercent(Number.NaN), null);
+  assert.equal(sanitizeRadarPercent(Number.POSITIVE_INFINITY), null);
+  assert.equal(sanitizeRadarPercent(-12), 0);
+  assert.equal(sanitizeRadarPercent(112), 100);
+  assert.deepEqual(normalize(sanitizeRadarPoint({ x: 150, y: -25, id: "p1" })), { x: 100, y: 0, id: "p1" });
+  assert.equal(sanitizeRadarPoint({ x: 50, y: Number.NaN }), null);
 }
 
 function normalize(value) {

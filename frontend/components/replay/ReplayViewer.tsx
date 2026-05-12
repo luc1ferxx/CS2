@@ -2,7 +2,7 @@
 
 import { useMemo } from "react";
 
-import { getTacticalMapPresentation } from "@/lib/map-config";
+import { getTacticalMapPresentation, sanitizeRadarPoint } from "@/lib/map-config";
 import { parserEventPresentationForType, recentMapParserEvents } from "@/lib/replay-events";
 import type { ReplayData, ReplayEvent, ReplayFrame, ReplayFramePlayer } from "@/types/replay";
 
@@ -25,7 +25,13 @@ export function ReplayViewer({
     () => getInterpolatedFrameForTick(replay.frames, currentTick),
     [currentTick, replay.frames]
   );
-  const framePlayers = frame?.players ?? [];
+  const framePlayers = useMemo(
+    () =>
+      (frame?.players ?? [])
+        .map((player) => sanitizeRadarPoint(player))
+        .filter((player): player is ReplayFramePlayer => player !== null),
+    [frame]
+  );
   const currentRoundNumber = frame?.roundNumber ?? replay.rounds[0]?.roundNumber ?? 1;
   const tPlayers = framePlayers.filter((player) => player.side === "T");
   const ctPlayers = framePlayers.filter((player) => player.side === "CT");
@@ -95,12 +101,7 @@ export function ReplayViewer({
             />
           ))}
 
-          {frame?.bombState.status === "planted" && frame.bombState.x && frame.bombState.y ? (
-            <g transform={`translate(${frame.bombState.x} ${frame.bombState.y})`}>
-              <rect x="-2" y="-2" width="4" height="4" rx="0.6" fill="#f4b740" />
-              <circle r="4" fill="none" stroke="#f4b740" strokeDasharray="1 1" />
-            </g>
-          ) : null}
+          <BombMarker bombState={frame?.bombState} />
 
           {nearbyParserEvents.map((event) => (
             <ParserEventMapMarker key={event.id} event={event} />
@@ -123,7 +124,8 @@ export function ReplayViewer({
 }
 
 function ParserEventMapMarker({ event }: { event: ReplayEvent }) {
-  if (typeof event.x !== "number" || typeof event.y !== "number") {
+  const point = sanitizeRadarPoint(event);
+  if (!point) {
     return null;
   }
   const presentation = parserEventPresentationForType(event.type);
@@ -131,13 +133,30 @@ function ParserEventMapMarker({ event }: { event: ReplayEvent }) {
   return (
     <g
       className={`parser-map-event ${presentation.tone}`}
-      transform={`translate(${event.x} ${event.y})`}
+      transform={`translate(${point.x} ${point.y})`}
     >
       <circle r="3.2" />
       <text y="1.3" textAnchor="middle" pointerEvents="none">
         {presentation.shortLabel}
       </text>
       <title>{`${event.label} at tick ${event.tick}`}</title>
+    </g>
+  );
+}
+
+function BombMarker({ bombState }: { bombState: ReplayFrame["bombState"] | undefined }) {
+  if (bombState?.status !== "planted") {
+    return null;
+  }
+  const point = sanitizeRadarPoint(bombState);
+  if (!point) {
+    return null;
+  }
+
+  return (
+    <g transform={`translate(${point.x} ${point.y})`}>
+      <rect x="-2" y="-2" width="4" height="4" rx="0.6" fill="#f4b740" />
+      <circle r="4" fill="none" stroke="#f4b740" strokeDasharray="1 1" />
     </g>
   );
 }

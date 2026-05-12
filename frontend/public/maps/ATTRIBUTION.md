@@ -29,3 +29,9 @@ Dust II uses the official-style CS2 overview transform already present in this
 mock app. Mirage, Inferno, Ancient, Nuke, and Anubis use approximate bounds
 adapted from the same source repository's `Map.vue` map area configuration and
 are marked `calibrated: false` / `confidence: approximate` in app metadata.
+
+When adding or replacing map assets, update both centralized config files
+(`backend/app/parser/map_config.py` and `frontend/lib/map-config.ts`) and this
+attribution table in the same change. If a radar or trustworthy transform is
+missing, keep the map explicit as fallback/approximate rather than reusing Dust
+II assets or transforms.

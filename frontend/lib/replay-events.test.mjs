@@ -95,7 +95,16 @@ const parserEvents = [
 }
 
 {
-  const nearby = recentMapParserEvents(parserEvents, 1, 290, 64);
+  const nearby = recentMapParserEvents(
+    [
+      ...parserEvents,
+      replayEvent({ id: "bad-x", type: "flash", tick: 302, label: "Bad X", x: Number.NaN, y: 50 }),
+      replayEvent({ id: "bad-y", type: "he", tick: 304, label: "Bad Y", x: 50, y: Number.POSITIVE_INFINITY })
+    ],
+    1,
+    290,
+    64
+  );
   assert.deepEqual(normalize(nearby.map((event) => event.id)), ["smoke-1"]);
 }
 

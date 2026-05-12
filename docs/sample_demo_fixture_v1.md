@@ -33,7 +33,7 @@ Run with a sample:
 SAMPLE_DEMO_PATH="$PWD/sample-demos/sample.dem" python3 scripts/cloud_preview_smoke.py
 ```
 
-The script validates the path, uploads through `POST /uploads/demo`, waits for parser completion, and prints the created demo id, name, map, round count, and coaching event count.
+The script validates the path, uploads through `POST /uploads/demo`, waits for parser completion, and prints the created demo id, name, map, round count, coaching event count, and map calibration/fallback status.
 
 Require a sample in stricter preview validation:
 

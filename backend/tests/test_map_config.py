@@ -56,6 +56,18 @@ class MapConfigTest(unittest.TestCase):
                 self.assertGreaterEqual(point["y"], 0)
                 self.assertLessEqual(point["y"], 100)
 
+    def test_world_to_radar_percent_rejects_non_finite_coordinates(self) -> None:
+        self.assertIsNone(world_to_radar_percent("de_dust2", float("nan"), 0))
+        self.assertIsNone(world_to_radar_percent("de_mirage", 0, float("inf")))
+
+    def test_supported_map_transforms_are_map_specific(self) -> None:
+        dust2_point = world_to_radar_percent("de_dust2", 0, 0)
+        mirage_point = world_to_radar_percent("de_mirage", 0, 0)
+        inferno_point = world_to_radar_percent("de_inferno", 0, 0)
+
+        self.assertNotEqual((dust2_point["x"], dust2_point["y"]), (mirage_point["x"], mirage_point["y"]))
+        self.assertNotEqual((mirage_point["x"], mirage_point["y"]), (inferno_point["x"], inferno_point["y"]))
+
 
 def _normalized_replay(map_name: str) -> dict:
     return normalize_parser_output(

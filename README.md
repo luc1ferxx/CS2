@@ -282,7 +282,7 @@ SAMPLE_DEMO_PATH="$PWD/sample-demos/sample.dem" python3 scripts/cloud_preview_sm
 REQUIRE_SAMPLE_DEMO=1 python3 scripts/cloud_preview_smoke.py
 ```
 
-When `SAMPLE_DEMO_PATH` is absent, the script prints a clear skip message and exits successfully after the mock smoke. When `--require-sample`, `REQUIRE_SAMPLE_DEMO=1`, or `SAMPLE_DEMO_REQUIRED=1` is set, a missing or invalid sample is a failure. When a sample is present, the script uploads it through `POST /uploads/demo`, waits for parser completion, and prints the map, round count, and coaching event count. Existing parsed rows are useful for UI regression checks, but they do not validate fresh upload/parser ingestion.
+When `SAMPLE_DEMO_PATH` is absent, the script prints a clear skip message and exits successfully after the mock smoke. When `--require-sample`, `REQUIRE_SAMPLE_DEMO=1`, or `SAMPLE_DEMO_REQUIRED=1` is set, a missing or invalid sample is a failure. When a sample is present, the script uploads it through `POST /uploads/demo`, waits for parser completion, and prints the map, round count, coaching event count, and map calibration/fallback status. Existing parsed rows are useful for UI regression checks, but they do not validate fresh upload/parser ingestion.
 
 More details and an ad hoc `curl` upload command are in `docs/sample_demo_fixture_v1.md`.
 
@@ -422,6 +422,8 @@ videoTimeToTick(time) = tickStart + (time - timeOriginSeconds) * tickRate
 | `de_anubis` | `frontend/public/maps/de_anubis_radar.png` | approximate |
 
 Unknown maps 使用 fallback grid，不复用 Dust II 图片或坐标变换。
+
+新增或更新地图时，同步修改 `backend/app/parser/map_config.py` 和 `frontend/lib/map-config.ts`，把 radar PNG 放在 `frontend/public/maps/`，更新 `frontend/public/maps/ATTRIBUTION.md`，并运行 `PYTHONPATH=backend python3 -m unittest backend.tests.test_map_config` 与 `cd frontend && node lib/map-config.test.mjs`。没有可信 transform 或 radar asset 时，保留 explicit fallback/approximate metadata，不要复用 Dust II transform。
 
 ## Render Clip Boundary
 

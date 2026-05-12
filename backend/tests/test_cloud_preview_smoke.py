@@ -68,6 +68,28 @@ class CloudPreviewSampleConfigTest(unittest.TestCase):
         self.assertIn("24 rounds", message)
         self.assertIn("12 coaching", message)
 
+    def test_sample_completion_message_includes_calibration_metadata(self) -> None:
+        message = self.smoke.sample_completion_message(
+            "demo-1",
+            {
+                "name": "Sample Match",
+                "map_name": "de_anubis",
+                "round_count": 24,
+                "coaching_event_count": 12,
+            },
+            {
+                "mapMetadata": {
+                    "displayName": "Anubis",
+                    "confidence": "approximate",
+                    "calibrated": False,
+                }
+            },
+        )
+
+        self.assertIn("Anubis", message)
+        self.assertIn("approximate", message)
+        self.assertIn("uncalibrated", message)
+
     def test_rename_demo_trims_name_and_returns_updated_payload(self) -> None:
         calls = []
 

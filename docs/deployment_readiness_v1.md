@@ -220,7 +220,7 @@ Cloud preview smoke is documented in `docs/cloud_preview_deploy_v1.md` and can b
 API_BASE_URL=http://localhost:8000 FRONTEND_URL=http://localhost:3000 python3 scripts/cloud_preview_smoke.py
 ```
 
-Without `SAMPLE_DEMO_PATH`, the smoke still runs health, frontend, mock upload, replay/coaching, render job, and media-route checks, then exits successfully with a sample-skip message. With a configured sample, it uploads through `POST /uploads/demo`, waits for parse completion, and prints map, round, and coaching counts:
+Without `SAMPLE_DEMO_PATH`, the smoke still runs health, frontend, mock upload, replay/coaching, render job, and media-route checks, then exits successfully with a sample-skip message. With a configured sample, it uploads through `POST /uploads/demo`, waits for parse completion, and prints map, round, coaching, and map calibration/fallback status:
 
 ```bash
 SAMPLE_DEMO_PATH=/absolute/path/to/sample.dem python3 scripts/cloud_preview_smoke.py

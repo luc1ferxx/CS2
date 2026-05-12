@@ -70,7 +70,7 @@ export function recentMapParserEvents(
   return events
     .filter((event) => event.roundNumber === roundNumber)
     .filter((event) => Math.abs(event.tick - currentTick) <= nearbyWindowTicks)
-    .filter((event) => typeof event.x === "number" && typeof event.y === "number")
+    .filter((event) => Number.isFinite(event.x) && Number.isFinite(event.y))
     .sort((left, right) => Math.abs(left.tick - currentTick) - Math.abs(right.tick - currentTick))
     .slice(0, 4);
 }
