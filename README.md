@@ -260,6 +260,32 @@ curl -F "file=@sample.dem" http://localhost:8000/uploads/demo
 curl -H "X-Dev-User-Id: owner-a" -F "file=@sample.dem" http://localhost:8000/uploads/demo
 ```
 
+### Optional Sample Demo Smoke
+
+The repository does not commit real `.dem`, `.zip`, replay, video, or media artifacts. For local parser smoke checks, place a real sample outside git, for example:
+
+```bash
+mkdir -p sample-demos
+# put sample.dem or a .zip containing one .dem under sample-demos/
+export SAMPLE_DEMO_PATH="$PWD/sample-demos/sample.dem"
+export SAMPLE_DEMO_NAME="Local Sample Demo"
+```
+
+`sample-demos/`, `samples/`, `.local/`, local storage directories, `.dem`, demo archives, and common video outputs are ignored by git. Treat real match demos as untrusted and potentially private: only use samples you are allowed to store locally, and do not commit them.
+
+Cloud Preview smoke keeps the mock upload path mandatory and the real sample path optional:
+
+```bash
+API_BASE_URL=http://localhost:8000 FRONTEND_URL=http://localhost:3000 python3 scripts/cloud_preview_smoke.py
+SAMPLE_DEMO_PATH="$PWD/sample-demos/sample.dem" python3 scripts/cloud_preview_smoke.py
+SAMPLE_DEMO_PATH="$PWD/sample-demos/sample.dem" python3 scripts/cloud_preview_smoke.py --require-sample
+REQUIRE_SAMPLE_DEMO=1 python3 scripts/cloud_preview_smoke.py
+```
+
+When `SAMPLE_DEMO_PATH` is absent, the script prints a clear skip message and exits successfully after the mock smoke. When `--require-sample`, `REQUIRE_SAMPLE_DEMO=1`, or `SAMPLE_DEMO_REQUIRED=1` is set, a missing or invalid sample is a failure. When a sample is present, the script uploads it through `POST /uploads/demo`, waits for parser completion, and prints the map, round count, and coaching event count. Existing parsed rows are useful for UI regression checks, but they do not validate fresh upload/parser ingestion.
+
+More details and an ad hoc `curl` upload command are in `docs/sample_demo_fixture_v1.md`.
+
 ### 4. Demo Detail Review
 
 打开 `/demos/{demoId}` 后，完成状态的 demo 会加载：
@@ -601,6 +627,9 @@ Render worker:
 | `CS2_INSTALL_DIR` | unset | render-worker manual adapter |
 | `STEAM_USER_DATA_DIR` | unset | render-worker manual adapter |
 | `CS2_MANUAL_OUTPUT_FILENAME` | `{job_id}.mp4` | render-worker manual adapter |
+| `SAMPLE_DEMO_PATH` | unset | optional smoke sample upload |
+| `SAMPLE_DEMO_NAME` | unset | optional display name for smoke sample |
+| `REQUIRE_SAMPLE_DEMO` | `0` | make smoke fail when no sample is configured |
 
 Docker Compose uses service names inside containers (`postgres`, `redis`) and host-facing URLs for the browser (`NEXT_PUBLIC_API_BASE_URL=http://localhost:8000`). Artifact directories default under `ARTIFACT_STORAGE_ROOT=/data`, with per-category overrides for local development. Hosted preview builds can use `docker-compose.preview.yml`; rebuild the frontend image whenever `NEXT_PUBLIC_API_BASE_URL` changes because Next.js bundles public env values at build time. Do not commit production secrets or object storage credentials.
 
@@ -618,6 +647,7 @@ Minimal local smoke for a clean environment:
 8. Click `Generate Clip`
 9. Confirm render job status appears in the UI and `/demos/{demo_id}/render/jobs`
 10. For Cloud Preview validation, run `API_BASE_URL=http://localhost:8000 FRONTEND_URL=http://localhost:3000 python3 scripts/cloud_preview_smoke.py` or point those variables at the public preview URLs
+11. For stricter parser validation, set `SAMPLE_DEMO_PATH` and rerun the smoke; add `--require-sample` when preview validation must fail without a fresh real upload
 
 ## Current Limitations
 

@@ -23,9 +23,20 @@ cs2-demo-detail-*.png
 render-worker/work/
 
 # Local demo samples
-sample-demos/
+/sample-demos/
+/samples/
+/.local/
+/data/
+/uploads/
+/replays/
+/summaries/
+/videos/
 *.dem
 *.dem.zip
+*.demo.zip
 *.rar
 *.mp4
+*.mov
+*.webm
+*.mkv
 frontend/public/videos/

@@ -66,6 +66,9 @@ Required preview values:
 | `API_BASE_URL` | render-worker | Public API origin used by `render-worker/runner.py`. |
 | `DEV_FAKE_VIDEO_PATH` | render-worker | Optional MP4 for fake adapter callback validation. |
 | `CS2_INSTALL_DIR`, `STEAM_USER_DATA_DIR`, `CS2_MANUAL_OUTPUT_FILENAME` | render-worker | Manual adapter instruction metadata only. |
+| `SAMPLE_DEMO_PATH` | smoke script | Optional absolute path to a local sample `.dem` or `.zip` for fresh upload/parser validation. |
+| `SAMPLE_DEMO_NAME` | smoke script | Optional display name applied after sample upload through `PATCH /demos/{demo_id}`. |
+| `REQUIRE_SAMPLE_DEMO` | smoke script | Set to `1` when smoke should fail if no sample is configured. Equivalent CLI flag: `--require-sample`. |
 
 ## Smoke Checklist
 
@@ -77,7 +80,7 @@ FRONTEND_URL="$FRONTEND_URL" \
 python3 scripts/cloud_preview_smoke.py
 ```
 
-Add a real demo parse check when a small sample is available:
+When no sample is configured, the script prints a skip message and still exits successfully after the mandatory mock upload, replay/coaching, render job, and media-route checks. Add a real demo parse check when a sample is available:
 
 ```bash
 SAMPLE_DEMO_PATH=/absolute/path/to/sample.dem \
@@ -85,6 +88,17 @@ API_BASE_URL="$NEXT_PUBLIC_API_BASE_URL" \
 FRONTEND_URL="$FRONTEND_URL" \
 python3 scripts/cloud_preview_smoke.py
 ```
+
+Require the sample for stricter preview validation:
+
+```bash
+SAMPLE_DEMO_PATH=/absolute/path/to/sample.dem \
+API_BASE_URL="$NEXT_PUBLIC_API_BASE_URL" \
+FRONTEND_URL="$FRONTEND_URL" \
+python3 scripts/cloud_preview_smoke.py --require-sample
+```
+
+Place local samples under ignored directories such as `sample-demos/`, `samples/`, or `.local/samples/`, then set `SAMPLE_DEMO_PATH` to the absolute path. The sample upload uses the normal `POST /uploads/demo` path, waits for parser completion, and prints map, round, and coaching counts. Existing parsed rows can prove detail-page compatibility, but they do not prove fresh upload/parser ingestion.
 
 Manual browser smoke:
 
@@ -95,7 +109,7 @@ Manual browser smoke:
 5. Click `Generate Clip`.
 6. Confirm the render job appears in the UI and `GET /demos/{demo_id}/render/jobs`.
 7. If a media URL exists, open it from the browser or check it with `curl -I`.
-8. If a sample `.dem` exists, upload it and confirm the same detail-page sync behavior.
+8. If a sample `.dem` exists, upload it or run smoke with `SAMPLE_DEMO_PATH`, then confirm the same detail-page sync behavior.
 
 ## Render Worker Preview
 
@@ -114,7 +128,8 @@ Use `DEV_FAKE_VIDEO_PATH` for the fake MP4 adapter, or `prepare-job` / `complete
 - `DEV_USER_ID` and `X-Dev-User-Id` are dev-only owner scoping, not production authentication.
 - This is not a public multi-user deployment.
 - Local volumes are not durable object storage; do not store large artifacts in PostgreSQL.
-- Uploaded `.dem` and archive files are untrusted input.
+- Uploaded `.dem` and archive files are untrusted input. Real match demos can contain player data or licensed match content; only use samples you are allowed to store and upload to the preview.
+- Do not commit `.dem`, demo archives, generated replay blobs, or media outputs; keep them in ignored local sample/storage paths.
 - Fake/manual render-worker flows prove the callback contract only; real first-person rendering still belongs to a controlled external GPU worker.
 - The API and worker containers must not run CS2, Steam, OBS, ffmpeg automation, OpenAI calls, or screen recording.
 

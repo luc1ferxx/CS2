@@ -66,6 +66,18 @@ Production auth should replace the local helper with a real identity provider an
 | `STEAM_USER_DATA_DIR` | unset | render-worker manual adapter | Optional path written into manual operator instructions only. |
 | `CS2_MANUAL_OUTPUT_FILENAME` | `{job_id}.mp4` | render-worker manual adapter | Expected output filename template for manual operator completion. |
 
+### Optional Sample Demo Smoke
+
+| Variable / flag | Default | Used by | Notes |
+| --- | --- | --- | --- |
+| `SAMPLE_DEMO_PATH` | unset | `scripts/cloud_preview_smoke.py` | Absolute path to a local `.dem` or supported demo archive for fresh upload/parser smoke. When unset, sample upload is skipped unless required. |
+| `SAMPLE_DEMO_NAME` | unset | `scripts/cloud_preview_smoke.py` | Optional display name applied to the uploaded sample demo through the normal demo update API. |
+| `REQUIRE_SAMPLE_DEMO` / `SAMPLE_DEMO_REQUIRED` | `0` | `scripts/cloud_preview_smoke.py` | Treat missing or invalid `SAMPLE_DEMO_PATH` as a smoke failure. The CLI flag `--require-sample` does the same. |
+
+Keep sample demos under ignored local paths such as `sample-demos/`, `samples/`, or `.local/samples/`, and set `SAMPLE_DEMO_PATH` to that file. Do not commit real `.dem`, demo archives, replay blobs, or media outputs. Real match demos can contain player data or licensed match content; use only samples you are allowed to store and upload to the target preview.
+
+See `docs/sample_demo_fixture_v1.md` for the local convention and ad hoc upload command.
+
 ## Health Check
 
 `GET /health` returns HTTP 200 with a compact readiness payload:
@@ -208,6 +220,15 @@ Cloud preview smoke is documented in `docs/cloud_preview_deploy_v1.md` and can b
 API_BASE_URL=http://localhost:8000 FRONTEND_URL=http://localhost:3000 python3 scripts/cloud_preview_smoke.py
 ```
 
+Without `SAMPLE_DEMO_PATH`, the smoke still runs health, frontend, mock upload, replay/coaching, render job, and media-route checks, then exits successfully with a sample-skip message. With a configured sample, it uploads through `POST /uploads/demo`, waits for parse completion, and prints map, round, and coaching counts:
+
+```bash
+SAMPLE_DEMO_PATH=/absolute/path/to/sample.dem python3 scripts/cloud_preview_smoke.py
+SAMPLE_DEMO_PATH=/absolute/path/to/sample.dem python3 scripts/cloud_preview_smoke.py --require-sample
+```
+
+Use `--require-sample` or `REQUIRE_SAMPLE_DEMO=1` when preview validation must prove fresh real-demo ingestion. Existing parsed database rows are not enough for that check because they do not exercise upload storage, Redis job dispatch, parser execution, replay storage, or analyzer completion for a new sample.
+
 ## Docker Notes
 
 - Compose service names are used for in-container dependencies: `postgres` and `redis`.
@@ -259,7 +280,7 @@ Still mock/dev-only:
 
 3. Open `http://localhost:3000/dashboard`.
 4. Create a mock upload and wait for it to complete.
-5. If a sample is available, upload a real `.dem` or `.zip` containing a `.dem`.
+5. If a sample is available, set `SAMPLE_DEMO_PATH` and upload a real `.dem` or `.zip` containing a `.dem`.
 6. Open a demo detail page.
 7. Use round review quick jumps and confirm first-person shell/video, tactical map, timeline, parser markers, and coaching cards stay synchronized.
 8. Confirm Replay Contract diagnostics show counts and no unexpected degraded fields for a healthy mock demo.
@@ -267,4 +288,4 @@ Still mock/dev-only:
 10. Click `Generate Clip` on a coaching event.
 11. Confirm render job status appears in the UI and `/demos/{demo_id}/render/jobs`.
 12. For render-worker callback validation, run either the fake adapter with `DEV_FAKE_VIDEO_PATH` or the manual adapter flow documented in `render-worker/README.md`.
-13. For hosted preview validation, run `python3 scripts/cloud_preview_smoke.py` with `API_BASE_URL` and `FRONTEND_URL` set to the public origins.
+13. For hosted preview validation, run `python3 scripts/cloud_preview_smoke.py` with `API_BASE_URL` and `FRONTEND_URL` set to the public origins. Add `SAMPLE_DEMO_PATH` and `--require-sample` for strict parser-ingestion validation.

@@ -6,19 +6,27 @@ import os
 import sys
 import time
 import uuid
+from http.client import HTTPConnection, HTTPException, HTTPSConnection
 import urllib.error
 import urllib.request
+from urllib.parse import urlsplit
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping, Sequence
 
 
 API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000").rstrip("/")
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000").rstrip("/")
 OWNER_ID = os.getenv("DEV_USER_ID", "cloud-preview-smoke")
 SAMPLE_DEMO_PATH = os.getenv("SAMPLE_DEMO_PATH")
+SAMPLE_DEMO_NAME = os.getenv("SAMPLE_DEMO_NAME")
+UPLOAD_CHUNK_BYTES = 1024 * 1024
 
 
-def main() -> int:
+def main(argv: Sequence[str] | None = None) -> int:
+    args = list(argv if argv is not None else sys.argv[1:])
+    require_sample = require_sample_enabled(args, os.environ)
+    sample_path = resolve_sample_demo_path(SAMPLE_DEMO_PATH, require_sample=require_sample)
+
     check_health()
     check_frontend()
 
@@ -44,12 +52,18 @@ def main() -> int:
     video_url = video_url_from_payload(render_response) or video_url_from_payload(replay)
     check_media_route(video_url)
 
-    if SAMPLE_DEMO_PATH:
-        sample_demo_id = upload_sample_demo(Path(SAMPLE_DEMO_PATH))
-        wait_for_completed_demo(sample_demo_id, timeout_seconds=90)
-        print(f"sample demo completed: {sample_demo_id}")
+    if sample_path:
+        print(f"uploading sample demo: {sample_path.name}")
+        sample_demo_id = upload_sample_demo(sample_path)
+        status = wait_for_completed_demo(sample_demo_id, timeout_seconds=120)
+        if SAMPLE_DEMO_NAME:
+            status = rename_demo(sample_demo_id, SAMPLE_DEMO_NAME)
+        print(sample_completion_message(sample_demo_id, status))
     else:
-        print("sample demo upload skipped; set SAMPLE_DEMO_PATH to include it")
+        print(
+            "sample demo upload skipped; set SAMPLE_DEMO_PATH=/absolute/path/to/sample.dem "
+            "or pass --require-sample for stricter validation"
+        )
 
     print("cloud preview smoke passed")
     return 0
@@ -57,6 +71,32 @@ def main() -> int:
 
 class SmokeFailure(RuntimeError):
     pass
+
+
+def require_sample_enabled(argv: Sequence[str], env: Mapping[str, str]) -> bool:
+    return (
+        "--require-sample" in argv
+        or _truthy(env.get("REQUIRE_SAMPLE_DEMO"))
+        or _truthy(env.get("SAMPLE_DEMO_REQUIRED"))
+    )
+
+
+def _truthy(value: str | None) -> bool:
+    return str(value or "").strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def resolve_sample_demo_path(path_value: str | None, *, require_sample: bool) -> Path | None:
+    if not path_value:
+        if require_sample:
+            raise SmokeFailure("SAMPLE_DEMO_PATH is required when sample validation is required")
+        return None
+
+    path = Path(path_value).expanduser().resolve()
+    if not path.exists():
+        raise SmokeFailure(f"SAMPLE_DEMO_PATH does not exist: {path}")
+    if not path.is_file():
+        raise SmokeFailure(f"SAMPLE_DEMO_PATH is not a file: {path}")
+    return path
 
 
 def request_json(method: str, path: str, payload: dict[str, Any] | None = None) -> Any:
@@ -121,6 +161,29 @@ def wait_for_completed_demo(demo_id: str, timeout_seconds: int = 60) -> dict[str
     raise SmokeFailure(f"demo {demo_id} did not complete before timeout: {last_status}")
 
 
+def rename_demo(demo_id: str, name: str) -> dict[str, Any]:
+    normalized = name.strip()
+    if normalized:
+        payload = request_json("PATCH", f"/demos/{demo_id}", {"name": normalized})
+        if isinstance(payload, dict):
+            return payload
+    status = request_json("GET", f"/demos/{demo_id}/status")
+    if isinstance(status, dict):
+        return status
+    raise SmokeFailure(f"demo {demo_id} status response was not an object: {status}")
+
+
+def sample_completion_message(demo_id: str, status: dict[str, Any]) -> str:
+    name = status.get("name") or "sample demo"
+    map_name = status.get("map_name") or "unknown"
+    round_count = status.get("round_count") or 0
+    coaching_count = status.get("coaching_event_count") or 0
+    return (
+        f"sample demo completed: {demo_id} / {name} / {map_name} / "
+        f"{round_count} rounds / {coaching_count} coaching events"
+    )
+
+
 def render_clip_request(replay: dict[str, Any], coaching: list[Any]) -> dict[str, Any]:
     tick_rate = int(replay.get("tickRate") or (replay.get("video") or {}).get("tickRate") or 64)
     rounds = replay.get("rounds") if isinstance(replay.get("rounds"), list) else []
@@ -171,10 +234,11 @@ def check_media_route(video_url: str | None) -> None:
 
 
 def upload_sample_demo(path: Path) -> str:
-    if not path.exists() or not path.is_file():
-        raise SmokeFailure(f"SAMPLE_DEMO_PATH does not exist: {path}")
+    path = resolve_sample_demo_path(str(path), require_sample=True)
+    if path is None:
+        raise SmokeFailure("SAMPLE_DEMO_PATH is required")
     boundary = f"----cloud-preview-smoke-{uuid.uuid4().hex}"
-    body = b"".join(
+    preamble = b"".join(
         [
             f"--{boundary}\r\n".encode("utf-8"),
             (
@@ -182,26 +246,62 @@ def upload_sample_demo(path: Path) -> str:
                 f'filename="{path.name}"\r\n'
             ).encode("utf-8"),
             b"Content-Type: application/octet-stream\r\n\r\n",
-            path.read_bytes(),
-            f"\r\n--{boundary}--\r\n".encode("utf-8"),
         ]
     )
-    request = urllib.request.Request(
-        f"{API_BASE_URL}/uploads/demo",
-        data=body,
-        headers={
-            "X-Dev-User-Id": OWNER_ID,
-            "Content-Type": f"multipart/form-data; boundary={boundary}",
-        },
-        method="POST",
-    )
+    closing = f"\r\n--{boundary}--\r\n".encode("utf-8")
+
     try:
-        with urllib.request.urlopen(request, timeout=120) as response:
-            payload = json.loads(response.read().decode("utf-8"))
-    except urllib.error.HTTPError as exc:
-        detail = exc.read().decode("utf-8", errors="replace")
-        raise SmokeFailure(f"sample upload failed with HTTP {exc.code}: {detail}") from exc
+        response_status, response_body = post_multipart_file(
+            "/uploads/demo",
+            path,
+            boundary=boundary,
+            preamble=preamble,
+            closing=closing,
+        )
+    except OSError as exc:
+        raise SmokeFailure(f"sample upload failed: {exc}") from exc
+
+    if response_status >= 400:
+        raise SmokeFailure(f"sample upload failed with HTTP {response_status}: {response_body}")
+    payload = json.loads(response_body)
     return required_str(payload, "id")
+
+
+def post_multipart_file(
+    path: str,
+    file_path: Path,
+    *,
+    boundary: str,
+    preamble: bytes,
+    closing: bytes,
+) -> tuple[int, str]:
+    parsed = urlsplit(API_BASE_URL)
+    if parsed.scheme not in {"http", "https"} or parsed.hostname is None:
+        raise SmokeFailure(f"API_BASE_URL must be http or https: {API_BASE_URL}")
+
+    base_path = parsed.path.rstrip("/")
+    request_path = f"{base_path}{path}"
+    connection_class = HTTPSConnection if parsed.scheme == "https" else HTTPConnection
+    connection = connection_class(parsed.hostname, parsed.port, timeout=120)
+    content_length = len(preamble) + file_path.stat().st_size + len(closing)
+    try:
+        connection.putrequest("POST", request_path)
+        connection.putheader("X-Dev-User-Id", OWNER_ID)
+        connection.putheader("Content-Type", f"multipart/form-data; boundary={boundary}")
+        connection.putheader("Content-Length", str(content_length))
+        connection.endheaders()
+        connection.send(preamble)
+        with file_path.open("rb") as handle:
+            while chunk := handle.read(UPLOAD_CHUNK_BYTES):
+                connection.send(chunk)
+        connection.send(closing)
+        response = connection.getresponse()
+        body = response.read().decode("utf-8", errors="replace")
+        return response.status, body
+    except HTTPException as exc:
+        raise SmokeFailure(f"sample upload failed: {exc}") from exc
+    finally:
+        connection.close()
 
 
 def required_str(payload: dict[str, Any], key: str) -> str:
@@ -213,7 +313,7 @@ def required_str(payload: dict[str, Any], key: str) -> str:
 
 if __name__ == "__main__":
     try:
-        raise SystemExit(main())
+        raise SystemExit(main(sys.argv[1:]))
     except SmokeFailure as exc:
         print(f"cloud preview smoke failed: {exc}", file=sys.stderr)
         raise SystemExit(1)
