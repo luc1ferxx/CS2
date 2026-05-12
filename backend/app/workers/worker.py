@@ -2,6 +2,7 @@ import json
 import time
 import traceback
 from datetime import datetime, timezone
+from typing import Any
 
 from sqlalchemy.orm import Session
 
@@ -11,9 +12,10 @@ from app.core.database import SessionLocal, init_db
 from app.core.redis import get_redis_client
 from app.models.demo import Demo
 from app.models.job import DemoJob
-from app.parser.demo_parser import parse_demo_file
+from app.parser.demo_parser import DemoParserError, parse_demo_file
 from app.parser.normalizer import normalize_parser_output
 from app.services.demo_service import RENDER_CLIP_JOB_TYPE, DemoService
+from app.services.storage import StorageKeyError
 from app.services.mock_replay_service import build_mock_replay
 
 
@@ -66,12 +68,25 @@ def process_real_parse_job(db: Session, demo: Demo, job: DemoJob) -> None:
 
     service.claim_parse_job(demo, job)
 
-    parsed = parse_demo_file(service.source_demo_path(demo))
+    try:
+        parsed = parse_demo_file(service.source_demo_path(demo))
+    except BaseException as exc:
+        if isinstance(exc, (KeyboardInterrupt, SystemExit)):
+            raise
+        traceback.print_exc()
+        _fail_classified_parse_job(service, demo, job, exc, phase="parse")
+        return
 
     service.mark_parse_analyzing(demo, job)
 
-    replay = normalize_parser_output(demo.id, parsed)
-    events = analyze_replay(replay)
+    try:
+        replay = normalize_parser_output(demo.id, parsed)
+        events = analyze_replay(replay)
+    except Exception as exc:
+        traceback.print_exc()
+        _fail_classified_parse_job(service, demo, job, exc, phase="normalization")
+        return
+
     service.complete_parse_job(
         demo,
         job,
@@ -140,7 +155,8 @@ def process_render_clip_job(db: Session, demo: Demo, job: DemoJob) -> None:
     db.commit()
 
 
-def fail_job(db: Session, job_id: str, demo_id: str, error: str) -> None:
+def fail_job(db: Session, job_id: str, demo_id: str, error: Any) -> None:
+    error_message = str(error)
     demo = db.query(Demo).filter(Demo.id == demo_id).one_or_none()
     job = db.query(DemoJob).filter(DemoJob.id == job_id).one_or_none()
     if demo is not None and job is not None and job.job_type == "mock_render":
@@ -153,7 +169,7 @@ def fail_job(db: Session, job_id: str, demo_id: str, error: str) -> None:
                     "status": "failed",
                     "source": "rendered",
                     "url": None,
-                    "errorMessage": error[:1000],
+                    "errorMessage": error_message[:1000],
                 },
             )
         except Exception:
@@ -161,18 +177,24 @@ def fail_job(db: Session, job_id: str, demo_id: str, error: str) -> None:
     elif demo is not None and job is not None and job.job_type == RENDER_CLIP_JOB_TYPE:
         try:
             service = DemoService(db)
-            service.update_render_clip_video_status(demo, "failed", error[:1000])
+            service.update_render_clip_video_status(demo, "failed", error_message[:1000])
         except Exception:
             traceback.print_exc()
     elif demo is not None and job is not None and job.job_type in {"real_parse", "mock_parse"}:
-        DemoService(db).fail_parse_job(demo, job, error)
+        failure = _parse_failure_for_exception(error, phase="parse")
+        DemoService(db).fail_parse_job(
+            demo,
+            job,
+            failure["message"],
+            error_code=failure["errorCode"],
+        )
         return
     elif demo is not None:
         demo.status = "failed"
-        demo.error_message = error[:1000]
+        demo.error_message = error_message[:1000]
     if job is not None:
         job.status = "failed"
-        job.error_message = error[:1000]
+        job.error_message = error_message[:1000]
         job.finished_at = utc_now()
     db.commit()
 
@@ -198,7 +220,49 @@ def run_worker() -> None:
                 print(f"Completed job {job_id} for demo {demo_id}", flush=True)
             except Exception as exc:
                 traceback.print_exc()
-                fail_job(db, job_id, demo_id, str(exc))
+                fail_job(db, job_id, demo_id, exc)
+
+
+def _fail_classified_parse_job(
+    service: DemoService,
+    demo: Demo,
+    job: DemoJob,
+    exc: BaseException,
+    *,
+    phase: str,
+) -> None:
+    failure = _parse_failure_for_exception(exc, phase=phase)
+    service.fail_parse_job(
+        demo,
+        job,
+        failure["message"],
+        error_code=failure["errorCode"],
+    )
+
+
+def _parse_failure_for_exception(error: Any, *, phase: str) -> dict[str, str]:
+    if isinstance(error, DemoParserError):
+        return {
+            "errorCode": error.error_code,
+            "message": error.user_message,
+        }
+
+    if isinstance(error, (OSError, StorageKeyError)):
+        return {
+            "errorCode": "STORAGE_READ_FAILED",
+            "message": "Uploaded demo artifact could not be read from storage.",
+        }
+
+    if phase == "normalization":
+        return {
+            "errorCode": "NORMALIZATION_FAILED",
+            "message": "Parser output could not be normalized for replay review.",
+        }
+
+    return {
+        "errorCode": "PARSER_UNEXPECTED",
+        "message": "Unexpected parser error. Retry or upload a different demo.",
+    }
 
 
 if __name__ == "__main__":

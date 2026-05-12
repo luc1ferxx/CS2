@@ -359,6 +359,25 @@ class RulesAnalyzerTest(unittest.TestCase):
         self.assertNotIn("weak_utility_before_execute", rule_ids)
         self.assertNotIn("late_post_plant_utility", rule_ids)
 
+    def test_bomb_event_dependent_rules_skip_when_objective_events_missing(self) -> None:
+        replay = replay_fixture(
+            kills=[],
+            frames=[
+                planted_frame(500, cluster_t_players(50, 50), bomb=(52, 52)),
+                planted_frame(700, cluster_t_players(50.5, 50.5), bomb=(52, 52)),
+                planted_frame(900, cluster_t_players(51, 51), bomb=(52, 52)),
+            ],
+            events=[],
+        )
+
+        events = analyze_replay(
+            replay,
+            config=RuleConfig(post_plant_min_duration_seconds=4, post_plant_cluster_distance=6),
+        )
+        rule_ids = {event["structured_context_json"]["ruleId"] for event in events}
+
+        self.assertNotIn("post_plant_spacing_with_bomb_event", rule_ids)
+
     def test_late_post_plant_utility_includes_related_event_metadata(self) -> None:
         replay = replay_fixture(
             kills=[],

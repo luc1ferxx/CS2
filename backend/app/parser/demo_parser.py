@@ -9,23 +9,43 @@ from typing import Any
 from app.services.upload_service import MAX_DEMO_UPLOAD_BYTES, safe_upload_filename
 
 MAX_SAMPLE_FRAMES = 720
+MIN_DEMO_BYTES = 16
 
 
 class DemoParserError(RuntimeError):
-    pass
+    def __init__(
+        self,
+        message: str,
+        *,
+        error_code: str = "PARSER_UNEXPECTED",
+        user_message: str | None = None,
+    ):
+        super().__init__(message)
+        self.error_code = error_code
+        self.user_message = user_message or message
 
 
 def parse_demo_file(source_path: Path) -> dict[str, Any]:
     demo_path = _resolve_demo_path(source_path)
+    _validate_demo_file(demo_path)
     try:
         from demoparser2 import DemoParser
     except ImportError as exc:
         raise DemoParserError(
             "demoparser2 is not installed in this environment; rebuild the backend image "
-            "after installing backend/requirements.txt"
+            "after installing backend/requirements.txt",
+            error_code="UNSUPPORTED_PARSER_FORMAT",
+            user_message="Demo parser support is unavailable in this environment.",
         ) from exc
 
-    parser = DemoParser(str(demo_path))
+    try:
+        parser = DemoParser(str(demo_path))
+    except Exception as exc:
+        raise DemoParserError(
+            f"demoparser2 could not open the uploaded demo: {exc}",
+            error_code="INVALID_DEMO",
+            user_message="Invalid or unreadable demo file.",
+        ) from exc
     header = _safe_records_value(lambda: parser.parse_header(), {})
     tick_rate = _derive_tick_rate(header)
     map_name = str(header.get("map_name") or header.get("mapName") or header.get("map") or "unknown")
@@ -104,9 +124,19 @@ def parse_demo_file(source_path: Path) -> dict[str, Any]:
 
     rounds = _build_rounds(round_start_records, round_freeze_end_records, round_end_records, header, tick_rate)
     sample_ticks = _sample_ticks(rounds, death_records, header, tick_rate)
+    if not sample_ticks:
+        raise DemoParserError(
+            "demoparser2 returned no rounds, playback ticks, or event ticks to sample",
+            error_code="MISSING_MATCH_METADATA",
+            user_message="Demo is missing essential match metadata needed to sample replay ticks.",
+        )
     tick_records = _parse_tick_records(parser, sample_ticks)
     if not tick_records:
-        raise DemoParserError("demoparser2 returned no sampled player position ticks")
+        raise DemoParserError(
+            "demoparser2 returned no sampled player position ticks",
+            error_code="MISSING_FRAMES",
+            user_message="Demo parsed without usable player position ticks.",
+        )
 
     players = _merge_players(player_records, tick_records)
     frames = _build_frames(tick_records, rounds, tick_rate)
@@ -137,27 +167,65 @@ def _resolve_demo_path(source_path: Path) -> Path:
     if source_path.suffix.lower() == ".dem":
         return source_path
     if source_path.suffix.lower() != ".zip":
-        raise DemoParserError(f"Unsupported parser input: {source_path.suffix}")
+        raise DemoParserError(
+            f"Unsupported parser input: {source_path.suffix}",
+            error_code="UNSUPPORTED_PARSER_FORMAT",
+            user_message="Unsupported demo parser input format.",
+        )
 
     extract_dir = source_path.parent / "extracted"
     extract_dir.mkdir(parents=True, exist_ok=True)
-    with zipfile.ZipFile(source_path) as archive:
+    try:
+        archive = zipfile.ZipFile(source_path)
+    except (OSError, zipfile.BadZipFile) as exc:
+        raise DemoParserError(
+            "Zip upload is not a readable archive",
+            error_code="INVALID_DEMO",
+            user_message="Invalid or unreadable demo archive.",
+        ) from exc
+
+    with archive:
         members = [
             item
             for item in archive.infolist()
             if not item.is_dir() and Path(item.filename).suffix.lower() == ".dem"
         ]
         if not members:
-            raise DemoParserError("Zip upload did not contain a .dem file")
+            raise DemoParserError(
+                "Zip upload did not contain a .dem file",
+                error_code="INVALID_DEMO",
+                user_message="Archive did not contain a .dem file.",
+            )
         member = max(members, key=lambda item: item.file_size)
         if member.file_size > MAX_DEMO_UPLOAD_BYTES:
-            raise DemoParserError("Zip-contained .dem exceeds the 1 GiB parser limit")
+            raise DemoParserError(
+                "Zip-contained .dem exceeds the 1 GiB parser limit",
+                error_code="INVALID_DEMO",
+                user_message="Demo file exceeds the parser size limit.",
+            )
         target = extract_dir / safe_upload_filename(Path(member.filename).name)
         if not target.exists() or target.stat().st_size != member.file_size:
             with archive.open(member) as src, target.open("wb") as dst:
                 while chunk := src.read(1024 * 1024):
                     dst.write(chunk)
     return target
+
+
+def _validate_demo_file(demo_path: Path) -> None:
+    try:
+        size = demo_path.stat().st_size
+    except OSError as exc:
+        raise DemoParserError(
+            "Uploaded demo artifact could not be read",
+            error_code="STORAGE_READ_FAILED",
+            user_message="Uploaded demo artifact could not be read from storage.",
+        ) from exc
+    if size < MIN_DEMO_BYTES:
+        raise DemoParserError(
+            "Demo file is too small to be a readable CS2 demo",
+            error_code="INVALID_DEMO",
+            user_message="Invalid or unreadable demo file.",
+        )
 
 
 def _parse_event_records(parser: Any, event_name: str, **kwargs: Any) -> list[dict[str, Any]]:
@@ -320,8 +388,8 @@ def _sample_ticks(
     else:
         end_tick = int(header.get("playback_ticks") or 0)
         step = max(tick_rate * 4, math.ceil(max(1, end_tick) / MAX_SAMPLE_FRAMES))
-        ticks = set(range(0, end_tick + 1, step))
-        if end_tick:
+        ticks = set(range(0, end_tick + 1, step)) if end_tick > 0 else set()
+        if end_tick > 0:
             ticks.add(end_tick)
 
     for record in death_records:

@@ -161,7 +161,10 @@ class DemoParserFrameBuildTest(unittest.TestCase):
                 return records
 
         fake_module = types.SimpleNamespace(DemoParser=FakeDemoParser)
-        with patch.dict("sys.modules", {"demoparser2": fake_module}):
+        with patch.dict("sys.modules", {"demoparser2": fake_module}), patch(
+            "app.parser.demo_parser._validate_demo_file",
+            return_value=None,
+        ):
             parsed = parse_demo_file(Path("match.dem"))
 
         event_types = [event["type"] for event in parsed["events"]]

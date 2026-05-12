@@ -216,7 +216,19 @@ worker 使用 `demoparser2==0.41.0` 做 best-effort 解析：
 - best-effort bomb plant/defuse/explode events
 - best-effort smoke/flash/molotov/he events
 
-解析失败会把 demo 标记为 `failed`，写入 compact failure metadata，并且不会继续跑 rules analyzer。单个 damage/bomb/utility/round event family 缺失不会让整个解析失败。
+解析失败会把 demo 标记为 `failed`，写入 compact failure metadata，并且不会继续跑 rules analyzer。单个 damage/bomb/utility/round event family 缺失不会让整个解析失败；这些缺失会作为 partial parse / replay diagnostics 暴露给 QA 界面。
+
+当前 parser failure taxonomy 使用短 `errorCode` 和安全的一句话 `message`：
+
+- `INVALID_DEMO`：无效、不可读或 archive 内没有 `.dem`。
+- `UNSUPPORTED_PARSER_FORMAT`：上传格式或 parser support 不可用。
+- `MISSING_MATCH_METADATA`：缺少 rounds、playback ticks 或可采样 event ticks。
+- `MISSING_FRAMES`：parser 没有返回可用 player position ticks。
+- `NORMALIZATION_FAILED`：parser 输出无法整理成 replay contract。
+- `STORAGE_READ_FAILED`：上传 source artifact 无法从 storage service 读取。
+- `PARSER_UNEXPECTED`：未分类 parser exception。
+
+Public API response 不包含本地路径、stack trace 或 raw parser dump；开发排障细节只保留在 worker process logs。
 
 Demo list/detail responses include an `ingestion` snapshot:
 
@@ -304,6 +316,8 @@ Replay blob 的核心字段：
 ```
 
 `events` 是 backward-compatible compact parser event list。旧 replay blob 没有 `events` 时按 `events: []` 处理。
+
+Replay blob 写入前会做轻量 validation/sanitization：tick rate 和 tick ranges 必须可用，rounds/frames 会按 tick 排序，player id/name 会稳定化，非有限坐标会被忽略，malformed parser markers/events 会 best-effort 丢弃或降级。Unknown maps 使用 `mapMetadata.confidence = "fallback"` 和 dynamic bounds grid，不复用 Dust II radar 或坐标 transform。
 
 `diagnostics` 是为 QA 和降级 UI 准备的 compact contract snapshot，不是 raw parser log：
 

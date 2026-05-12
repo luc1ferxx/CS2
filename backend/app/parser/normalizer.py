@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from datetime import datetime, timezone
 from typing import Any
 
@@ -64,7 +65,7 @@ def _event_position_normalizer(map_name: str, bounds: dict[str, float]):
     def normalize(source: dict[str, Any]) -> dict[str, float] | None:
         x_value = source.get("x", source.get("X"))
         y_value = source.get("y", source.get("Y"))
-        if x_value is None or y_value is None:
+        if not _finite(x_value) or not _finite(y_value):
             return None
         return _normalize_position(float(x_value), float(y_value), bounds, map_name)
 
@@ -75,13 +76,15 @@ def _normalize_rounds(raw_rounds: list[dict[str, Any]], raw_frames: list[dict[st
     if raw_rounds:
         rounds = []
         for index, item in enumerate(raw_rounds, start=1):
-            start_tick = int(item.get("startTick", 0))
-            end_tick = int(item.get("endTick", start_tick))
+            start_tick = _int_or_default(item.get("startTick"), 0)
+            end_tick = max(start_tick, _int_or_default(item.get("endTick"), start_tick))
+            freeze_end_tick = _int_or_default(item.get("freezeEndTick"), start_tick)
+            freeze_end_tick = max(start_tick, min(end_tick, freeze_end_tick))
             rounds.append(
                 {
-                    "roundNumber": int(item.get("roundNumber", index)),
+                    "roundNumber": _int_or_default(item.get("roundNumber"), index),
                     "startTick": start_tick,
-                    "freezeEndTick": int(item.get("freezeEndTick", start_tick)),
+                    "freezeEndTick": freeze_end_tick,
                     "endTick": end_tick,
                     "winnerSide": _normalize_side(item.get("winnerSide")) or "CT",
                     **(
@@ -91,9 +94,13 @@ def _normalize_rounds(raw_rounds: list[dict[str, Any]], raw_frames: list[dict[st
                     ),
                 }
             )
-        return sorted(rounds, key=lambda item: item["roundNumber"])
+        return sorted(rounds, key=lambda item: (item["startTick"], item["roundNumber"]))
 
-    ticks = [int(frame["tick"]) for frame in raw_frames if "tick" in frame]
+    ticks = [
+        tick
+        for frame in raw_frames
+        if (tick := _optional_int(frame.get("tick"))) is not None
+    ]
     if not ticks:
         return []
     return [
@@ -118,7 +125,7 @@ def _normalize_players(raw_players: list[dict[str, Any]], raw_frames: list[dict[
         }
 
     for frame in raw_frames:
-        for player in frame.get("players", []):
+        for player in _dict_list(frame.get("players")):
             player_id = str(player.get("id") or player.get("steamid") or player.get("name") or "unknown")
             by_id.setdefault(
                 player_id,
@@ -147,18 +154,23 @@ def _normalize_frames(
     bounds: dict[str, float],
 ) -> list[dict[str, Any]]:
     normalized = []
-    for frame in sorted(raw_frames, key=lambda item: int(item.get("tick", 0))):
-        tick = int(frame.get("tick", 0))
+    sortable_frames = [
+        (tick, frame)
+        for frame in raw_frames
+        if (tick := _optional_int(frame.get("tick"))) is not None
+    ]
+    for tick, frame in sorted(sortable_frames, key=lambda item: item[0]):
+        players = [
+            normalized_player
+            for player in _dict_list(frame.get("players"))
+            if (normalized_player := _normalize_frame_player(player, bounds, map_name)) is not None
+        ]
         normalized.append(
             {
                 "tick": tick,
-                "timeSeconds": float(frame.get("timeSeconds", 0)),
-                "roundNumber": int(frame.get("roundNumber") or _round_for_tick(tick, rounds)),
-                "players": [
-                    _normalize_frame_player(player, bounds, map_name)
-                    for player in frame.get("players", [])
-                    if _has_position(player)
-                ],
+                "timeSeconds": _float_or_default(frame.get("timeSeconds"), 0.0),
+                "roundNumber": _int_or_default(frame.get("roundNumber"), _round_for_tick(tick, rounds)),
+                "players": players,
                 "bombState": _normalize_bomb_state(frame.get("bombState")),
             }
         )
@@ -169,11 +181,13 @@ def _normalize_frame_player(
     player: dict[str, Any],
     bounds: dict[str, float],
     map_name: str,
-) -> dict[str, Any]:
+) -> dict[str, Any] | None:
+    if not _has_position(player):
+        return None
     player_id = str(player.get("id") or player.get("steamid") or player.get("name") or "unknown")
     side = _normalize_side(player.get("side") or player.get("team")) or "T"
     alive = bool(player.get("alive", True))
-    hp = int(player.get("hp", 100 if alive else 0) or 0)
+    hp = _int_or_default(player.get("hp"), 100 if alive else 0)
     if hp <= 0:
         alive = False
     return {
@@ -191,7 +205,7 @@ def _position_bounds(raw_frames: list[dict[str, Any]]) -> dict[str, float]:
     xs: list[float] = []
     ys: list[float] = []
     for frame in raw_frames:
-        for player in frame.get("players", []):
+        for player in _dict_list(frame.get("players")):
             if _has_position(player):
                 xs.append(float(player["x"]))
                 ys.append(float(player["y"]))
@@ -227,7 +241,7 @@ def _clamp(value: float) -> float:
 
 
 def _has_position(player: dict[str, Any]) -> bool:
-    return player.get("x") is not None and player.get("y") is not None
+    return _finite(player.get("x")) and _finite(player.get("y"))
 
 
 def _round_for_tick(tick: int, rounds: list[dict[str, Any]]) -> int:
@@ -268,9 +282,36 @@ def _dict_list(value: Any) -> list[dict[str, Any]]:
     return [dict(item) for item in value if isinstance(item, dict)]
 
 
+def _int_or_default(value: Any, default: int) -> int:
+    parsed = _optional_int(value)
+    return parsed if parsed is not None else default
+
+
+def _optional_int(value: Any) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
 def _positive_int_or_default(value: Any, default: int) -> int:
     try:
         parsed = int(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return default
     return parsed if parsed > 0 else default
+
+
+def _float_or_default(value: Any, default: float) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return default
+    return parsed if math.isfinite(parsed) else default
+
+
+def _finite(value: Any) -> bool:
+    try:
+        return math.isfinite(float(value))
+    except (TypeError, ValueError, OverflowError):
+        return False

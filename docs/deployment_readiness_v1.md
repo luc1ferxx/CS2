@@ -117,7 +117,19 @@ Demo list/detail responses include compact ingestion state for upload and parser
 }
 ```
 
-Failed parser jobs include a short failure object with `errorCode`, `message`, `failedAt`, `updatedAt`, `retryable`, and `attemptCount`. This is intentionally compact and should not contain raw stack traces or parser dumps.
+Failed parser jobs include a short failure object with `errorCode`, `message`, `failedAt`, `updatedAt`, `retryable`, and `attemptCount`. This is intentionally compact and should not contain raw stack traces, sensitive local filesystem paths, raw parser dumps, or large event payloads.
+
+Expected parser failure codes for the mock MVP are:
+
+- `INVALID_DEMO`
+- `UNSUPPORTED_PARSER_FORMAT`
+- `MISSING_MATCH_METADATA`
+- `MISSING_FRAMES`
+- `NORMALIZATION_FAILED`
+- `STORAGE_READ_FAILED`
+- `PARSER_UNEXPECTED`
+
+Missing optional parser event families should stay a partial parse success. The replay contract diagnostics report missing/degraded event families, and deterministic analyzer rules that depend on those families skip themselves rather than failing the parse.
 
 If a failed demo still has a valid `source_storage_key`, retry parsing through the owner-scoped endpoint:
 
@@ -148,6 +160,8 @@ Replay responses include compact contract diagnostics for QA:
 ```
 
 These snapshots are deploy-readiness aids, not production observability. Keep detailed logs in process logs or a future logging backend, not in PostgreSQL or replay blobs.
+
+Replay blobs should be normalized before storage: tick rates and tick ranges are repaired to safe defaults when possible, rounds/frames are sorted, unstable player IDs/names are stabilized, malformed parser events are ignored best-effort, and non-finite coordinates are dropped. Unknown maps must use explicit fallback metadata and dynamic bounds rather than Dust II radar assets or transforms.
 
 ## Local Verification
 

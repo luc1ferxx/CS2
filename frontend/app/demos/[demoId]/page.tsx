@@ -154,6 +154,7 @@ export default function DemoDetailPage() {
   );
 
   const videoStatus = replay?.video.status;
+  const parseFailureMessage = status?.ingestion?.failure?.message ?? status?.error_message ?? null;
 
   const loadVideoStatus = useCallback(async () => {
     if (!replay) {
@@ -375,7 +376,9 @@ export default function DemoDetailPage() {
 
         {!replay ? (
           <div className="panel loading-panel">
-            Demo status: {status?.status ?? "loading"}. Replay will load when the worker completes.
+            {status?.status === "failed"
+              ? `Demo status: failed. ${parseFailureMessage ?? "Replay could not be generated."}`
+              : `Demo status: ${status?.status ?? "loading"}. Replay will load when the worker completes.`}
           </div>
         ) : (
           <>

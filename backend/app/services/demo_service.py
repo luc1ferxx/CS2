@@ -398,12 +398,19 @@ class DemoService:
         job.metadata_json = _metadata_json({**_job_metadata(job), "phase": "ready"})
         self.db.commit()
 
-    def fail_parse_job(self, demo: Demo, job: DemoJob, error: str) -> None:
+    def fail_parse_job(
+        self,
+        demo: Demo,
+        job: DemoJob,
+        error: str,
+        *,
+        error_code: str = "PARSER_FAILED",
+    ) -> None:
         self._ensure_parse_job(job)
         failed_at = utc_now()
         short_message = _compact_failure_message(error)
         failure_metadata = {
-            "errorCode": "PARSER_FAILED",
+            "errorCode": error_code,
             "message": short_message,
             "failedAt": failed_at.isoformat(),
             "updatedAt": failed_at.isoformat(),
