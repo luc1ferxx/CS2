@@ -26,7 +26,13 @@ import {
   type RenderJobStatus,
   type VideoCalibrationUpdate
 } from "@/lib/api";
-import { isRenderActiveStatus, parseFailureReason } from "@/lib/demo-library";
+import {
+  detailSummaryItems,
+  friendlyErrorMessage,
+  isRenderActiveStatus,
+  parseFailureReason,
+  type DetailSummaryItem
+} from "@/lib/demo-library";
 import { buildReplayDiagnostics, type ReplayDetailDiagnostics } from "@/lib/replay-diagnostics";
 import type { CoachingEvent } from "@/types/coaching";
 import type { DemoStatus } from "@/types/demo";
@@ -60,7 +66,7 @@ export default function DemoDetailPage() {
       setError(null);
       return nextStatus;
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load demo status");
+      setError(friendlyErrorMessage(err instanceof Error ? err.message : "Failed to load demo status"));
       return null;
     }
   }, [demoId]);
@@ -71,7 +77,7 @@ export default function DemoDetailPage() {
       setRenderJobs(nextJobs);
       return nextJobs;
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load render jobs");
+      setError(friendlyErrorMessage(err instanceof Error ? err.message : "Failed to load render jobs"));
       return [];
     }
   }, [demoId]);
@@ -97,7 +103,7 @@ export default function DemoDetailPage() {
       setSelectedPlayerId(nextReplay.players[0]?.id ?? null);
       setError(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load replay");
+      setError(friendlyErrorMessage(err instanceof Error ? err.message : "Failed to load replay"));
     }
   }, [demoId]);
 
@@ -148,6 +154,10 @@ export default function DemoDetailPage() {
   }, [renderJobs]);
   const latestRenderClipJob = renderJobs[0] ?? null;
   const hasActiveRenderClipJob = renderJobs.some((job) => isRenderActiveStatus(job.status));
+  const summaryItems = useMemo(
+    () => detailSummaryItems({ status, replay, latestRenderJob: latestRenderClipJob }),
+    [latestRenderClipJob, replay, status]
+  );
   const detailDiagnostics = useMemo(
     () => (replay ? buildReplayDiagnostics(replay, events, renderJobs) : null),
     [events, renderJobs, replay]
@@ -167,7 +177,7 @@ export default function DemoDetailPage() {
       );
       return video;
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load video status");
+      setError(friendlyErrorMessage(err instanceof Error ? err.message : "Failed to load video status"));
       return null;
     }
   }, [demoId, replay]);
@@ -185,7 +195,7 @@ export default function DemoDetailPage() {
       );
       setError(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to refresh render state");
+      setError(friendlyErrorMessage(err instanceof Error ? err.message : "Failed to refresh render state"));
     } finally {
       setRenderJobsRefreshing(false);
     }
@@ -266,7 +276,7 @@ export default function DemoDetailPage() {
       );
       setError(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to create mock render job");
+      setError(friendlyErrorMessage(err instanceof Error ? err.message : "Failed to create mock render job"));
     } finally {
       setRenderRequesting(false);
     }
@@ -291,7 +301,7 @@ export default function DemoDetailPage() {
       setError(null);
       void refreshRenderOperatorState();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to create render clip job");
+      setError(friendlyErrorMessage(err instanceof Error ? err.message : "Failed to create render clip job"));
     } finally {
       setClipRequestingEventId(null);
     }
@@ -318,28 +328,36 @@ export default function DemoDetailPage() {
       ]);
       setError(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to create render clip job");
+      setError(friendlyErrorMessage(err instanceof Error ? err.message : "Failed to create render clip job"));
     } finally {
       setTickClipRequesting(false);
     }
   }
 
   async function uploadManualVideo(file: File) {
-    const video = await uploadDemoVideo(demoId, file);
-    setDetectedVideoDuration(null);
-    setCurrentVideoTime(video.timeOriginSeconds ?? 0);
-    setReplay((currentReplay) =>
-      currentReplay ? { ...currentReplay, video } : currentReplay
-    );
-    setError(null);
+    try {
+      const video = await uploadDemoVideo(demoId, file);
+      setDetectedVideoDuration(null);
+      setCurrentVideoTime(video.timeOriginSeconds ?? 0);
+      setReplay((currentReplay) =>
+        currentReplay ? { ...currentReplay, video } : currentReplay
+      );
+      setError(null);
+    } catch (err) {
+      setError(friendlyErrorMessage(err instanceof Error ? err.message : "Failed to upload manual video"));
+    }
   }
 
   async function saveManualVideoCalibration(calibration: VideoCalibrationUpdate) {
-    const video = await saveVideoCalibration(demoId, calibration);
-    setReplay((currentReplay) =>
-      currentReplay ? { ...currentReplay, video } : currentReplay
-    );
-    setError(null);
+    try {
+      const video = await saveVideoCalibration(demoId, calibration);
+      setReplay((currentReplay) =>
+        currentReplay ? { ...currentReplay, video } : currentReplay
+      );
+      setError(null);
+    } catch (err) {
+      setError(friendlyErrorMessage(err instanceof Error ? err.message : "Failed to save calibration"));
+    }
   }
 
   return (
@@ -371,6 +389,8 @@ export default function DemoDetailPage() {
           </div>
           {status ? <span className={`status-badge ${status.status}`}>{status.status}</span> : null}
         </div>
+
+        {status ? <DetailSummary items={summaryItems} /> : null}
 
         {error ? <div className="error-panel">{error}</div> : null}
 
@@ -461,6 +481,20 @@ export default function DemoDetailPage() {
         )}
       </section>
     </main>
+  );
+}
+
+function DetailSummary({ items }: { items: DetailSummaryItem[] }) {
+  return (
+    <section className="detail-summary-strip" aria-label="Demo status summary">
+      {items.map((item) => (
+        <div className={`detail-summary-item ${item.tone ?? "default"}`} key={item.label}>
+          <span>{item.label}</span>
+          <strong>{item.value}</strong>
+          {item.detail ? <small>{item.detail}</small> : null}
+        </div>
+      ))}
+    </section>
   );
 }
 

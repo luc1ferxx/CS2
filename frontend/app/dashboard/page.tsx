@@ -4,14 +4,17 @@ import Link from "next/link";
 import {
   Activity,
   Archive,
+  ArrowDownUp,
   Check,
   CircleCheck,
   Clock3,
   ExternalLink,
+  FileUp,
   Loader2,
   Pencil,
   RefreshCcw,
   Search,
+  UploadCloud,
   X
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
@@ -24,10 +27,14 @@ import {
   countActiveLibraryDemos,
   demoStatusLabel,
   filterAndSortDemos,
+  friendlyErrorMessage,
   ingestionPhaseLabel,
+  libraryEmptyState,
   parseFailureReason,
   renderStatusLabel,
-  type DemoLibraryFilters
+  shouldPollLibrary,
+  type DemoLibraryFilters,
+  type LibraryEmptyState
 } from "@/lib/demo-library";
 import type { DemoProcessingStatus, DemoSummary } from "@/types/demo";
 
@@ -40,6 +47,11 @@ const DEFAULT_FILTERS: DemoLibraryFilters = {
   includeArchived: false
 };
 
+interface LibraryNotice {
+  message: string;
+  demoId?: string;
+}
+
 export default function DashboardPage() {
   const [demos, setDemos] = useState<DemoSummary[]>([]);
   const [filters, setFilters] = useState<DemoLibraryFilters>(DEFAULT_FILTERS);
@@ -49,7 +61,7 @@ export default function DashboardPage() {
   const [renamingDemoId, setRenamingDemoId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
+  const [notice, setNotice] = useState<LibraryNotice | null>(null);
   const loadRequestIdRef = useRef(0);
 
   const invalidateLibraryLoads = useCallback(() => {
@@ -70,7 +82,7 @@ export default function DashboardPage() {
       if (requestId !== loadRequestIdRef.current) {
         return;
       }
-      setError(err instanceof Error ? err.message : "Failed to load demos");
+      setError(friendlyErrorMessage(err instanceof Error ? err.message : "Failed to load demos"));
     } finally {
       if (requestId === loadRequestIdRef.current) {
         setLoading(false);
@@ -80,10 +92,6 @@ export default function DashboardPage() {
 
   useEffect(() => {
     void loadDemos();
-    const intervalId = window.setInterval(() => {
-      void loadDemos();
-    }, 1800);
-    return () => window.clearInterval(intervalId);
   }, [loadDemos]);
 
   const activeJobs = useMemo(() => countActiveLibraryDemos(demos), [demos]);
@@ -96,15 +104,34 @@ export default function DashboardPage() {
     () => filterAndSortDemos(demos, filters),
     [demos, filters]
   );
+  const emptyState = useMemo(
+    () => libraryEmptyState({ loading, error, demos, visibleDemos, filters }),
+    [demos, error, filters, loading, visibleDemos]
+  );
+
+  useEffect(() => {
+    if (!shouldPollLibrary({ loading, creating, activeJobs })) {
+      return;
+    }
+
+    const intervalId = window.setInterval(() => {
+      void loadDemos();
+    }, 1800);
+    return () => window.clearInterval(intervalId);
+  }, [activeJobs, creating, loadDemos, loading]);
 
   async function handleMockUpload() {
     setCreating(true);
     try {
       const demo = await createMockUpload();
-      setNotice(`Mock upload queued: ${demo.name}`);
+      setNotice({
+        message: `Mock demo queued: ${demo.name}. This synthetic replay is for fast UI smoke checks.`,
+        demoId: demo.id
+      });
+      setError(null);
       await loadDemos();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to create mock upload");
+      setError(friendlyErrorMessage(err instanceof Error ? err.message : "Failed to create mock upload"));
     } finally {
       setCreating(false);
     }
@@ -114,10 +141,14 @@ export default function DashboardPage() {
     setCreating(true);
     try {
       const demo = await createDemoUpload(file);
-      setNotice(`Real demo upload queued: ${demo.original_filename}`);
+      setNotice({
+        message: `Real .dem upload queued for parser review: ${demo.original_filename}. Open the demo to watch parse status.`,
+        demoId: demo.id
+      });
+      setError(null);
       await loadDemos();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to upload demo");
+      setError(friendlyErrorMessage(err instanceof Error ? err.message : "Failed to upload demo"));
     } finally {
       setCreating(false);
     }
@@ -137,12 +168,12 @@ export default function DashboardPage() {
       const updated = await updateDemo(demo.id, { name: renameValue });
       invalidateLibraryLoads();
       setDemos((current) => current.map((item) => (item.id === updated.id ? updated : item)));
-      setNotice(`Renamed demo to ${updated.name}`);
+      setNotice({ message: `Renamed demo to ${updated.name}`, demoId: updated.id });
       setRenamingDemoId(null);
       setRenameValue("");
       setError(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to rename demo");
+      setError(friendlyErrorMessage(err instanceof Error ? err.message : "Failed to rename demo"));
     } finally {
       setBusyDemoId(null);
     }
@@ -166,10 +197,10 @@ export default function DashboardPage() {
           ? current.map((item) => (item.id === archived.id ? archived : item))
           : current.filter((item) => item.id !== archived.id)
       );
-      setNotice(`Archived ${archived.name}`);
+      setNotice({ message: `Archived ${archived.name}`, demoId: archived.id });
       setError(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to archive demo");
+      setError(friendlyErrorMessage(err instanceof Error ? err.message : "Failed to archive demo"));
     } finally {
       setBusyDemoId(null);
     }
@@ -182,10 +213,10 @@ export default function DashboardPage() {
       const updated = await retryDemoParse(demo.id);
       invalidateLibraryLoads();
       setDemos((current) => current.map((item) => (item.id === updated.id ? updated : item)));
-      setNotice(`Retry queued: ${updated.name}`);
+      setNotice({ message: `Retry queued: ${updated.name}`, demoId: updated.id });
       setError(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to retry parse");
+      setError(friendlyErrorMessage(err instanceof Error ? err.message : "Failed to retry parse"));
     } finally {
       setBusyDemoId(null);
     }
@@ -222,7 +253,17 @@ export default function DashboardPage() {
         </div>
 
         {error ? <div className="error-panel">{error}</div> : null}
-        {notice ? <div className="library-notice">{notice}</div> : null}
+        {notice ? (
+          <div className="library-notice">
+            <span>{notice.message}</span>
+            {notice.demoId ? (
+              <Link className="secondary-button compact-button" href={`/demos/${notice.demoId}`}>
+                <ExternalLink size={14} />
+                Open demo
+              </Link>
+            ) : null}
+          </div>
+        ) : null}
 
         <section className="panel library-toolbar" aria-label="Demo library controls">
           <label className="library-search">
@@ -303,8 +344,17 @@ export default function DashboardPage() {
               }))
             }
           >
-            <RefreshCcw size={14} />
+            <ArrowDownUp size={14} />
             {filters.order === "asc" ? "Ascending" : "Descending"}
+          </button>
+
+          <button
+            className="secondary-button compact-button"
+            type="button"
+            onClick={() => void loadDemos()}
+          >
+            <RefreshCcw size={14} />
+            Refresh
           </button>
 
           <label className="include-archived-toggle">
@@ -340,24 +390,19 @@ export default function DashboardPage() {
               </tr>
             </thead>
             <tbody>
-              {loading ? (
+              {emptyState ? (
                 <tr>
                   <td colSpan={7}>
-                    <div className="empty-state">Loading demos...</div>
-                  </td>
-                </tr>
-              ) : demos.length === 0 ? (
-                <tr>
-                  <td colSpan={7}>
-                    <div className="empty-state">
-                      No demos yet. Use Real Demo Upload for a .dem/.zip parser job or Mock Upload for a synthetic replay.
-                    </div>
-                  </td>
-                </tr>
-              ) : visibleDemos.length === 0 ? (
-                <tr>
-                  <td colSpan={7}>
-                    <div className="empty-state">No demos match the current library filters.</div>
+                    <LibraryEmptyStateRow
+                      state={emptyState}
+                      creating={creating}
+                      onClearFilters={() => setFilters(DEFAULT_FILTERS)}
+                      onMockUpload={() => void handleMockUpload()}
+                      onRefresh={() => void loadDemos()}
+                      onShowArchived={() =>
+                        setFilters((current) => ({ ...current, includeArchived: true }))
+                      }
+                    />
                   </td>
                 </tr>
               ) : (
@@ -472,6 +517,77 @@ function LibraryStat({ label, value }: { label: string; value: number }) {
     <div className="panel library-stat">
       <span>{label}</span>
       <strong>{value}</strong>
+    </div>
+  );
+}
+
+function LibraryEmptyStateRow({
+  state,
+  creating,
+  onClearFilters,
+  onMockUpload,
+  onRefresh,
+  onShowArchived
+}: {
+  state: LibraryEmptyState;
+  creating: boolean;
+  onClearFilters: () => void;
+  onMockUpload: () => void;
+  onRefresh: () => void;
+  onShowArchived: () => void;
+}) {
+  return (
+    <div className={`library-empty-state ${state.kind}`}>
+      <div>
+        <strong>{state.title}</strong>
+        <p>{state.message}</p>
+      </div>
+      <div className="library-empty-actions">
+        {state.showMockAction ? (
+          <button
+            className="primary-button compact-button"
+            type="button"
+            onClick={onMockUpload}
+            disabled={creating}
+          >
+            <UploadCloud size={14} />
+            Create mock demo
+          </button>
+        ) : null}
+        {state.showUploadAction ? (
+          <label
+            className={`secondary-button compact-button ${creating ? "disabled-label" : ""}`}
+            htmlFor="demo-upload-input"
+            aria-disabled={creating}
+            onClick={(event) => {
+              if (creating) {
+                event.preventDefault();
+              }
+            }}
+          >
+            <FileUp size={14} />
+            Upload .dem
+          </label>
+        ) : null}
+        {state.showClearFiltersAction ? (
+          <button className="secondary-button compact-button" type="button" onClick={onClearFilters}>
+            <X size={14} />
+            Clear filters
+          </button>
+        ) : null}
+        {state.showArchivedAction ? (
+          <button className="secondary-button compact-button" type="button" onClick={onShowArchived}>
+            <Archive size={14} />
+            Show archived
+          </button>
+        ) : null}
+        {state.showRefreshAction ? (
+          <button className="secondary-button compact-button" type="button" onClick={onRefresh}>
+            <RefreshCcw size={14} />
+            Refresh library
+          </button>
+        ) : null}
+      </div>
     </div>
   );
 }

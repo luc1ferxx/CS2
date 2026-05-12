@@ -8,12 +8,12 @@ Use an ignored local directory and an absolute path:
 
 ```bash
 mkdir -p sample-demos
-# place sample.dem or sample.dem.zip here
+# place sample.dem here
 export SAMPLE_DEMO_PATH="$PWD/sample-demos/sample.dem"
 export SAMPLE_DEMO_NAME="Local Sample Demo"
 ```
 
-Ignored local locations include `sample-demos/`, `samples/`, `.local/`, root storage directories, `.dem`, demo archive names such as `*.dem.zip`, and common video outputs. Do not commit real demos, replay blobs, media files, parser dumps, or generated storage artifacts.
+Ignored local locations include `sample-demos/`, `samples/`, `.local/`, root storage directories, `.dem`, demo archive names such as `*.dem.zip`, and common video outputs. The product smoke path should use a `.dem`; archive inputs are retained only as development compatibility. Do not commit real demos, replay blobs, media files, parser dumps, or generated storage artifacts.
 
 Real match demos can include player data or licensed match content. Use only samples you are allowed to keep locally and upload to the target API.
 

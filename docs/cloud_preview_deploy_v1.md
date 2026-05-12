@@ -68,7 +68,7 @@ Required preview values:
 | `API_BASE_URL` | render-worker | Public API origin used by `render-worker/runner.py`. |
 | `DEV_FAKE_VIDEO_PATH` | render-worker | Optional MP4 for fake adapter callback validation. |
 | `CS2_INSTALL_DIR`, `STEAM_USER_DATA_DIR`, `CS2_MANUAL_OUTPUT_FILENAME` | render-worker | Manual adapter instruction metadata only. |
-| `SAMPLE_DEMO_PATH` | smoke script | Optional absolute path to a local sample `.dem` or `.zip` for fresh upload/parser validation. |
+| `SAMPLE_DEMO_PATH` | smoke script | Optional absolute path to a local sample `.dem` for fresh upload/parser validation. Archive samples are development compatibility only. |
 | `SAMPLE_DEMO_NAME` | smoke script | Optional display name applied after sample upload through `PATCH /demos/{demo_id}`. |
 | `REQUIRE_SAMPLE_DEMO` | smoke script | Set to `1` when smoke should fail if no sample is configured. Equivalent CLI flag: `--require-sample`. |
 
@@ -105,14 +105,16 @@ Place local samples under ignored directories such as `sample-demos/`, `samples/
 Manual browser smoke:
 
 1. Open the public dashboard URL.
-2. Create a mock upload and wait until it completes.
-3. Open the demo detail page.
-4. Verify play/pause, seek, speed, round selection, coaching card click-to-seek, tactical map sync, parser markers, replay diagnostics, and degraded states.
-5. Click `Generate Clip`.
-6. Confirm the render job appears in the UI and `GET /demos/{demo_id}/render/jobs`.
-7. Check `GET /diagnostics` for safe worker heartbeat, job counts, and recent failure summaries.
-8. If a media URL exists, open it from the browser or check it with `curl -I`.
-9. If a sample `.dem` exists, upload it or run smoke with `SAMPLE_DEMO_PATH`, then confirm the same detail-page sync behavior.
+2. On a clean or filtered library, confirm empty/loading/no-result states show direct actions for create mock, upload `.dem`, refresh, clear filters, or show archived.
+3. Create a mock upload and wait until it completes.
+4. Open the demo detail page from the post-create notice or table action.
+5. Confirm the compact detail summary shows file, map, calibration/fallback, rounds, coaching count, parser status, media status, and latest render status.
+6. Verify play/pause, seek, speed, round selection, coaching card click-to-seek, tactical map sync, parser markers, replay diagnostics, and degraded states.
+7. Click `Generate Clip`.
+8. Confirm the render job appears in the UI and `GET /demos/{demo_id}/render/jobs`; without an external GPU worker, the expected failure text is `GPU worker not connected for render_clip`.
+9. Check `GET /diagnostics` for safe worker heartbeat, job counts, and recent failure summaries.
+10. If a media URL exists, open it from the browser or check it with `curl -I`; if the URL is missing or unavailable, the UI should keep the synced mock shell usable.
+11. If a sample `.dem` exists, upload it or run smoke with `SAMPLE_DEMO_PATH`, then confirm the same detail-page sync behavior and compact parser failure copy if the sample is invalid.
 
 ## Render Worker Preview
 
@@ -131,7 +133,7 @@ Use `DEV_FAKE_VIDEO_PATH` for the fake MP4 adapter, or `prepare-job` / `complete
 - `DEV_USER_ID` and `X-Dev-User-Id` are dev-only owner scoping, not production authentication.
 - This is not a public multi-user deployment.
 - Local volumes are not durable object storage; do not store large artifacts in PostgreSQL.
-- Uploaded `.dem` and archive files are untrusted input. Real match demos can contain player data or licensed match content; only use samples you are allowed to store and upload to the preview.
+- Uploaded `.dem` files are untrusted input. Archive ingestion, where available, is development compatibility rather than the primary product path. Real match demos can contain player data or licensed match content; only use samples you are allowed to store and upload to the preview.
 - Do not commit `.dem`, demo archives, generated replay blobs, or media outputs; keep them in ignored local sample/storage paths.
 - Fake/manual render-worker flows prove the callback contract only; real first-person rendering still belongs to a controlled external GPU worker.
 - The API and worker containers must not run CS2, Steam, OBS, ffmpeg automation, OpenAI calls, or screen recording.

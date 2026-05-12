@@ -27,7 +27,7 @@ This project is deployable as a mock MVP for demos and internal review. It is no
 | --- | --- | --- | --- |
 | `ARTIFACT_STORAGE_ROOT` | `/data` | API, worker | Base root for the local filesystem storage adapter. Per-category variables below override individual roots. |
 | `REPLAY_STORAGE_DIR` | `/data/replays` | API, worker | Stores replay JSON blobs. |
-| `DEMO_UPLOAD_STORAGE_DIR` | `/data/uploads` | API, worker | Stores uploaded `.dem` and `.zip` files. Treat every upload as untrusted input. |
+| `DEMO_UPLOAD_STORAGE_DIR` | `/data/uploads` | API, worker | Stores uploaded `.dem` files. Archive support may exist for development compatibility, but the product UI should present `.dem` upload as the real path. Treat every upload as untrusted input. |
 | `VIDEO_STORAGE_DIR` | `/data/videos` | API, worker | Stores manual or render-worker MP4 outputs served under `/media/videos`. |
 | `SUMMARY_STORAGE_DIR` | `/data/summaries` | API, worker | Reserved for compact generated summary artifacts. |
 
@@ -37,7 +37,7 @@ Artifact storage keys use stable application-level categories:
 
 | Category | Key shape | Contents |
 | --- | --- | --- |
-| uploads | `local://uploads/{demo_id}/{safe_filename}` | Uploaded `.dem` or `.zip` source files. |
+| uploads | `local://uploads/{demo_id}/{safe_filename}` | Uploaded `.dem` source files; archive inputs are development compatibility only. |
 | replays | `local://replays/{demo_id}.json` | Replay contract JSON blobs. |
 | summaries | `local://summaries/{demo_id}/{safe_filename}` | Reserved compact summary artifacts. |
 | videos | `local://videos/{demo_id}/{safe_filename}` | Manual uploads and render-worker media outputs served under `/media/videos/...`. |
@@ -240,6 +240,8 @@ SAMPLE_DEMO_PATH=/absolute/path/to/sample.dem python3 scripts/cloud_preview_smok
 
 Use `--require-sample` or `REQUIRE_SAMPLE_DEMO=1` when preview validation must prove fresh real-demo ingestion. Existing parsed database rows are not enough for that check because they do not exercise upload storage, Redis job dispatch, parser execution, replay storage, or analyzer completion for a new sample.
 
+Manual first-run preview should start at `/dashboard`. Verify the empty/loading/fetch-failed/no-result states expose clear actions, create a mock demo for the fast synthetic path, upload a real `.dem` for parser ingestion when a sample exists, and use the post-upload/open-demo link to inspect detail status. On detail, check the compact summary strip for file, map, calibration/fallback, parser status or failure code, media status, and latest render job status before testing replay controls.
+
 ## Docker Notes
 
 - Compose service names are used for in-container dependencies: `postgres` and `redis`.
@@ -258,7 +260,7 @@ Ready for mock MVP deployment:
 
 - Demo Library upload, search, status/map filtering, sorting, rename, and soft archive flows.
 - Upload/parser ingestion snapshots, failed parse metadata, stale/active indicators, and owner-scoped retry from stored source artifacts.
-- Mock upload and real `.dem`/`.zip` upload into local or mounted storage.
+- Mock upload and real `.dem` upload into local or mounted storage.
 - Storage-key backed uploads, replay blobs, and media URLs through the local storage adapter.
 - Async parse queue using Redis plus backend worker.
 - Replay contract JSON blobs with backward-compatible normalization, compact parser events, contract diagnostics, and deterministic rules-based coaching rows.
@@ -271,7 +273,7 @@ Still mock/dev-only:
 - `DEV_USER_ID` and `X-Dev-User-Id` are local owner scoping only, not production auth.
 - `render-worker` fake and manual adapters are not real GPU rendering.
 - Local filesystem and Docker volumes are not final production object storage.
-- `.dem` and archive uploads are untrusted inputs and need stronger production quarantine and scanning.
+- `.dem` uploads are untrusted inputs and need stronger production quarantine and scanning. Archive ingestion, where available, is a development compatibility path rather than the primary product flow.
 - Real first-person CS2 rendering still belongs in an external controlled Windows/Linux GPU worker. API and worker containers must not run Steam, CS2, OBS, or ffmpeg automation.
 - Manual MP4 upload/calibration is a development and QA bridge, not the primary product path.
 
@@ -291,11 +293,11 @@ Still mock/dev-only:
 
 3. Open `http://localhost:3000/dashboard`.
 4. Create a mock upload and wait for it to complete.
-5. If a sample is available, set `SAMPLE_DEMO_PATH` and upload a real `.dem` or `.zip` containing a `.dem`.
+5. If a sample is available, set `SAMPLE_DEMO_PATH` and upload a real `.dem`.
 6. Open a demo detail page.
 7. Use round review quick jumps and confirm first-person shell/video, tactical map, timeline, parser markers, and coaching cards stay synchronized.
 8. Confirm Replay Contract diagnostics show counts and no unexpected degraded fields for a healthy mock demo.
-9. For a failed parse fixture or seeded row, confirm the Dashboard shows failure metadata and retry availability only when a source artifact exists.
+9. For a failed parse fixture or seeded row, confirm the Dashboard and detail summary show compact failure metadata such as `INVALID_DEMO` or `UNSUPPORTED_PARSER_FORMAT`, and retry availability only when a source artifact exists.
 10. Click `Generate Clip` on a coaching event.
 11. Confirm render job status appears in the UI and `/demos/{demo_id}/render/jobs`.
 12. For render-worker callback validation, run either the fake adapter with `DEV_FAKE_VIDEO_PATH` or the manual adapter flow documented in `render-worker/README.md`.

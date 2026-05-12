@@ -10,11 +10,11 @@
 
 - Docker Compose 本地栈：`frontend`、`api`、`worker`、`postgres`、`redis`。
 - Dev-only owner boundary：默认 `DEV_USER_ID=dev-user`，测试或本地调试可用 `X-Dev-User-Id` 模拟不同 owner；这不是生产认证。
-- `/dashboard` Demo Library：搜索、状态/地图筛选、排序、上传轮询、重命名、软归档、渲染状态摘要。
+- `/dashboard` Demo Library：搜索、状态/地图筛选、排序、bounded 上传/任务轮询、重命名、软归档、空/失败/无结果状态、渲染状态摘要。
 - Upload/parser observability：demo list/detail responses 包含 compact ingestion snapshot，失败解析有短错误、attempts、stale/active/retryable 状态，并支持 owner-scoped retry。
 - Safe diagnostics：`GET /diagnostics` 暴露 DB/Redis/storage/worker heartbeat/job failure 的 compact 状态，`GET /demos/{demo_id}/diagnostics` 暴露 owner-scoped demo 诊断；两者不返回 secrets、absolute local paths、stack traces、raw parser data 或上传内容。
 - Mock demo flow：快速生成合成 replay、coaching events 和 mock first-person shell。
-- Real demo parser spike：上传 `.dem` 或包含 `.dem` 的 `.zip`，后端队列异步解析。
+- Real demo parser spike：主产品入口上传 `.dem`，后端队列异步解析；archive upload 只保留为开发兼容路径。
 - Replay contract：回合、玩家、采样帧、击杀/死亡、compact parser events、地图 metadata、视频 metadata、contract diagnostics。
 - Demo detail review：first-person shell/video、tactical map、timeline、round selector、round review、coaching panel、Replay Contract diagnostics 同步到同一个 tick/round state。
 - Rules-based coaching：固定规则生成事件，不调用 LLM，不生成不透明 AI 文案。
@@ -126,6 +126,7 @@ docker compose up --build
 打开：
 
 - Frontend: http://localhost:3000
+- Dashboard: http://localhost:3000/dashboard
 - API: http://localhost:8000
 - Health: http://localhost:8000/health
 - Diagnostics: http://localhost:8000/diagnostics
@@ -189,9 +190,10 @@ node lib/map-config.test.mjs
 
 支持：
 
-- `Mock Upload` 创建合成 demo。
-- `Real Demo Upload` 上传 `.dem` 或 `.zip`。
-- 自动轮询 queued/parsing/analyzing 状态。
+- `Create mock demo` 创建合成 demo，用于快速 UI smoke。
+- `Upload .dem` 上传真实 demo 并走 parser flow。上传成功后会显示可直接打开的新 demo 链接。
+- 只在 loading、upload/create、queued/parsing/analyzing 或 render active 时轮询，避免空闲页面无限刷新。
+- 空库、加载、API fetch 失败、仅有 archived demo、search/filter 无结果都有明确状态和动作：create mock demo、upload `.dem`、refresh library、clear filters、show archived。
 - 显示 compact ingestion phase、active/stale、attempt count、failure reason 和 retry availability。
 - 搜索 demo name、original filename、map。
 - 按 status/map 过滤，按 recent/name/map/status 排序。
@@ -205,7 +207,7 @@ node lib/map-config.test.mjs
 
 ### 3. Real Demo Upload
 
-`POST /uploads/demo` 接收 `.dem` 或 `.zip`，大小上限为 1 GiB。API 通过 storage service 保存 source artifact，创建 `real_parse` job 并推入 Redis。
+`POST /uploads/demo` 的主产品路径是 `.dem`，大小上限为 1 GiB。API 通过 storage service 保存 source artifact，创建 `real_parse` job 并推入 Redis。后端仍能识别包含 `.dem` 的 archive 以支持开发/QA 兼容，但浏览器 UI 不把 archive upload 作为主要用户路径。
 
 worker 使用 `demoparser2==0.41.0` 做 best-effort 解析：
 
@@ -232,6 +234,8 @@ worker 使用 `demoparser2==0.41.0` 做 best-effort 解析：
 - `PARSER_UNEXPECTED`：未分类 parser exception。
 
 Parser/demo failure API responses and diagnostics 不包含本地路径、stack trace 或 raw parser dump；开发排障细节只保留在 worker process logs。
+
+在 Dashboard 和 Demo Detail 中，失败状态以 compact 文案呈现：invalid/corrupt demo 显示 `INVALID_DEMO` 和一句原因；unsupported parser/support 显示 `UNSUPPORTED_PARSER_FORMAT`；partial parse 的 missing event family 留在 Replay Contract diagnostics；API/Redis/worker 不可达时提示检查 `/diagnostics`；render clip 未连接 GPU worker 时显示 `GPU worker not connected for render_clip`；媒体 URL 缺失或加载失败时保留同步 mock shell 并提示 media route 不可用。
 
 Demo list/detail responses include an `ingestion` snapshot:
 
@@ -303,6 +307,8 @@ More details and an ad hoc `curl` upload command are in `docs/sample_demo_fixtur
 - `VideoSetupPanel`：开发/QA 用手动 MP4 上传和 sync calibration。
 
 这些视图共用同一个 `currentTick`、`selectedRound` 和 replay contract；不要引入平行状态来让回合列表、timeline、地图和 coaching 脱节。
+
+Detail 顶部的 compact summary strip 汇总 file、map、calibration/fallback、round count、coaching count、parser status/failure category、media status 和最新 render job status，方便 first-run preview 先判断 demo 是否可复盘。
 
 ## Rules-Based Coaching
 
@@ -459,7 +465,7 @@ API 会验证：
 本地 worker 识别 `render_clip` 后会把 job 从 `queued` 推到 `rendering`，然后标记为 `failed`：
 
 ```text
-Render clip worker is not connected yet. A Windows/Linux GPU worker must process this job.
+GPU worker not connected for render_clip. A separate Windows/Linux GPU worker or manual operator must process this job.
 ```
 
 这是有意设计的边界标记。API 容器不能负责真实 CS2 渲染。
@@ -649,7 +655,7 @@ Minimal local smoke for a clean environment:
 3. `curl http://localhost:8000/diagnostics`
 4. Open `http://localhost:3000/dashboard`
 5. Create a mock upload and wait for completion
-6. Upload a real `.dem` or `.zip` if a sample is available
+6. Upload a real `.dem` if a sample is available
 7. Open a demo detail page
 8. Use round review quick jumps and confirm replay, tactical map, timeline, parser markers, and coaching cards stay synchronized
 9. Click `Generate Clip`

@@ -3,6 +3,7 @@
 import { AlertTriangle, CheckCircle2, Clock3, RefreshCw, Wrench } from "lucide-react";
 
 import type { RenderJobStatus } from "@/lib/api";
+import { friendlyErrorMessage } from "@/lib/demo-library";
 import type { ReplayVideo } from "@/types/replay";
 
 interface RenderOperatorPanelProps {
@@ -96,7 +97,7 @@ export function RenderOperatorPanel({
 
       {latestJob?.error_message || video.errorMessage ? (
         <div className="operator-error">
-          {latestJob?.error_message ?? video.errorMessage}
+          {friendlyErrorMessage(latestJob?.error_message ?? video.errorMessage)}
         </div>
       ) : null}
     </section>

@@ -1,10 +1,10 @@
 "use client";
 
 import { Crosshair, RadioTower, Scissors, Video } from "lucide-react";
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { RenderJobStatus } from "@/lib/api";
-import { isRenderActiveStatus } from "@/lib/demo-library";
+import { friendlyErrorMessage, isRenderActiveStatus } from "@/lib/demo-library";
 import { resolveMediaUrl } from "@/lib/media-url";
 import { tickToVideoTime, videoTimeRange, videoTimeToTick } from "@/lib/replay-time";
 import type { ReplayData, ReplayFrame } from "@/types/replay";
@@ -40,6 +40,7 @@ export function FirstPersonReplay({
 }: FirstPersonReplayProps) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const lastSyncedTickRef = useRef<number | null>(null);
+  const [mediaUnavailable, setMediaUnavailable] = useState(false);
   const frame = useMemo(() => getFrameForTick(replay.frames, currentTick), [currentTick, replay.frames]);
   const videoSource = resolveMediaUrl(replay.video.url);
   const timeRange = videoTimeRange(replay.video);
@@ -55,6 +56,10 @@ export function FirstPersonReplay({
   useEffect(() => {
     onVideoTimeChange?.(videoTime);
   }, [onVideoTimeChange, videoTime]);
+
+  useEffect(() => {
+    setMediaUnavailable(false);
+  }, [videoSource]);
 
   useEffect(() => {
     const element = videoRef.current;
@@ -150,7 +155,9 @@ export function FirstPersonReplay({
             muted
             playsInline
             preload="metadata"
+            onError={() => setMediaUnavailable(true)}
             onLoadedMetadata={(event) => {
+              setMediaUnavailable(false);
               const duration = event.currentTarget.duration;
               if (Number.isFinite(duration) && duration > 0) {
                 onVideoDurationChange?.(duration);
@@ -183,7 +190,7 @@ export function FirstPersonReplay({
           <span className="hud-chip">{speed}x</span>
           <span className="hud-chip">{playing ? "Playing" : "Paused"}</span>
         </div>
-        <RenderStatusOverlay video={replay.video} />
+        <RenderStatusOverlay video={replay.video} mediaUnavailable={mediaUnavailable} />
         <div className="video-progress" aria-hidden="true">
           <span style={{ width: `${progress * 100}%` }} />
         </div>
@@ -192,7 +199,23 @@ export function FirstPersonReplay({
   );
 }
 
-function RenderStatusOverlay({ video }: { video: ReplayData["video"] }) {
+function RenderStatusOverlay({
+  mediaUnavailable,
+  video
+}: {
+  mediaUnavailable: boolean;
+  video: ReplayData["video"];
+}) {
+  if (mediaUnavailable) {
+    return (
+      <div className="render-status-overlay failed">
+        <span>{video.source}</span>
+        <strong>media unavailable</strong>
+        <p>The media URL could not be loaded. Check the API media route and keep using the synced mock shell.</p>
+      </div>
+    );
+  }
+
   if (video.status === "ready" && video.url) {
     return null;
   }
@@ -203,7 +226,9 @@ function RenderStatusOverlay({ video }: { video: ReplayData["video"] }) {
     processing: "Render job processing. No CS2 client or recorder is running in this MVP.",
     rendering: "Render job in progress. No CS2 client or recorder is running in this MVP.",
     ready: "Render metadata is ready, but no video URL exists yet, so the mock shell stays active.",
-    failed: video.errorMessage ?? "Render job failed."
+    failed: video.errorMessage
+      ? friendlyErrorMessage(video.errorMessage)
+      : "Render job failed; the synced mock shell remains usable."
   };
 
   return (
