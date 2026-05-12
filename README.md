@@ -112,6 +112,7 @@ render-worker/
   adapters/               fake video and manual CS2 operator adapters
 
 docs/
+  release_candidate_qa_v1.md
   *_goal.md               prior phase goals and design notes
 ```
 
@@ -180,7 +181,15 @@ node lib/replay-quality-fixtures.test.mjs
 node lib/map-config.test.mjs
 ```
 
-部署准备、runtime env 和 smoke checklist 见 `docs/deployment_readiness_v1.md`。
+Release-candidate validation:
+
+```bash
+./scripts/rc_check.sh
+```
+
+`rc_check.sh` runs `./scripts/verify.sh`, Docker build/up, `/health`, `/diagnostics`, and cloud preview smoke. If `SAMPLE_DEMO_PATH` is set, it also runs sample smoke; set `REQUIRE_SAMPLE_DEMO=1` to fail when no sample is configured. Manual browser QA is still required and is listed in `docs/release_candidate_qa_v1.md`.
+
+部署准备、runtime env 和 smoke checklist 见 `docs/deployment_readiness_v1.md`。完整 RC runbook 见 `docs/release_candidate_qa_v1.md`。
 
 ## 主要流程
 
@@ -269,11 +278,11 @@ curl -H "X-Dev-User-Id: owner-a" -F "file=@sample.dem" http://localhost:8000/upl
 
 ### Optional Sample Demo Smoke
 
-The repository does not commit real `.dem`, `.zip`, replay, video, or media artifacts. For local parser smoke checks, place a real sample outside git, for example:
+The repository does not commit real `.dem`, demo archives, replay, video, or media artifacts. For local parser smoke checks, place a real `.dem` sample outside git, for example:
 
 ```bash
 mkdir -p sample-demos
-# put sample.dem or a .zip containing one .dem under sample-demos/
+# put sample.dem under sample-demos/
 export SAMPLE_DEMO_PATH="$PWD/sample-demos/sample.dem"
 export SAMPLE_DEMO_NAME="Local Sample Demo"
 ```
@@ -292,6 +301,8 @@ REQUIRE_SAMPLE_DEMO=1 python3 scripts/cloud_preview_smoke.py
 When `SAMPLE_DEMO_PATH` is absent, the script prints a clear skip message and exits successfully after the mock smoke and compact diagnostics summary. When any smoke step fails, it attempts to print `/diagnostics` summary; if diagnostics is unavailable, it says so without hiding the original failure. When `--require-sample`, `REQUIRE_SAMPLE_DEMO=1`, or `SAMPLE_DEMO_REQUIRED=1` is set, a missing or invalid sample is a failure. When a sample is present, the script uploads it through `POST /uploads/demo`, waits for parser completion, and prints the map, round count, coaching event count, and map calibration/fallback status. Existing parsed rows are useful for UI regression checks, but they do not validate fresh upload/parser ingestion.
 
 More details and an ad hoc `curl` upload command are in `docs/sample_demo_fixture_v1.md`.
+
+For release-candidate sign-off, use `docs/release_candidate_qa_v1.md` as the source checklist for local Docker checks, preview checks, optional/strict sample validation, and manual browser smoke.
 
 ### 4. Demo Detail Review
 
@@ -648,7 +659,7 @@ Docker Compose uses service names inside containers (`postgres`, `redis`) and ho
 
 ## Deploy Smoke Checklist
 
-Minimal local smoke for a clean environment:
+Minimal local smoke for a clean environment. For full release-candidate validation, prefer `./scripts/rc_check.sh` plus the manual browser checklist in `docs/release_candidate_qa_v1.md`.
 
 1. `docker compose up --build`
 2. `curl http://localhost:8000/health`

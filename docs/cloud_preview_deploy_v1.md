@@ -74,6 +74,8 @@ Required preview values:
 
 ## Smoke Checklist
 
+For release-candidate sign-off, use the full checklist in `docs/release_candidate_qa_v1.md`. The script smoke below covers API/frontend/mock/render/media and optional sample upload; manual browser QA remains required.
+
 API/script smoke:
 
 ```bash
@@ -115,6 +117,8 @@ Manual browser smoke:
 9. Check `GET /diagnostics` for safe worker heartbeat, job counts, and recent failure summaries.
 10. If a media URL exists, open it from the browser or check it with `curl -I`; if the URL is missing or unavailable, the UI should keep the synced mock shell usable.
 11. If a sample `.dem` exists, upload it or run smoke with `SAMPLE_DEMO_PATH`, then confirm the same detail-page sync behavior and compact parser failure copy if the sample is invalid.
+
+For local preview RC checks, `./scripts/rc_check.sh` runs the non-browser command sequence against `API_BASE_URL` and `FRONTEND_URL`, then prints the manual browser checklist reminder. Set those variables to public preview origins when using it outside localhost.
 
 ## Render Worker Preview
 

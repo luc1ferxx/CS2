@@ -27,6 +27,7 @@ This repository is a mock MVP for a website-based CS2 demo AI coach.
 - `cd frontend && node lib/demo-library.test.mjs`: run Dashboard helper regression tests.
 - `cd frontend && node lib/replay-diagnostics.test.mjs`: run replay contract diagnostics helper tests.
 - `cd frontend && node lib/replay-quality-fixtures.test.mjs`: run compact replay quality fixture regressions.
+- `./scripts/rc_check.sh`: run the non-browser release-candidate gate: verify, Docker build/up, health, diagnostics, cloud preview smoke, and optional sample smoke.
 - `python3 render-worker/runner.py dry-run {job_id}`: inspect a render job manifest and adapter plan without posting callbacks.
 - `python3 render-worker/runner.py prepare-job --job-id {job_id} --adapter cs2-manual`: generate manual operator manifest, instructions, expected output, and status files.
 - `python3 render-worker/runner.py complete-prepared-job --job-id {job_id} --video-path /absolute/path/to/clip.mp4`: upload a prepared operator MP4 and submit the completed callback.
@@ -38,6 +39,8 @@ Use TypeScript for frontend changes and Python 3.12 style for backend changes. K
 ## Testing Guidelines
 
 For every change, run the relevant verification commands above. Backend changes should generally run `python3 -m compileall backend/app` and `PYTHONPATH=backend python3 -m unittest discover backend/tests`. Render-worker changes should run its compile and unittest commands. Frontend behavior changes should run lint, typecheck, build, and the focused `node lib/*.test.mjs` helper tests for the touched surface. For replay UI changes, manually verify `/dashboard` and a demo detail page: play/pause, seek, speed, round selection, coaching event click-to-seek, tactical map sync, replay diagnostics, degraded states, and render status fallback.
+
+For release-candidate QA work, keep `docs/release_candidate_qa_v1.md`, `scripts/rc_check.sh`, README, deployment readiness, cloud preview, and sample fixture docs aligned. `rc_check.sh` is only the non-browser gate; manual browser smoke remains required for RC sign-off.
 
 ## Product Direction For Future Codex Work
 

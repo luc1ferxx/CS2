@@ -1,0 +1,106 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+API_BASE_URL="${API_BASE_URL:-http://localhost:8000}"
+FRONTEND_URL="${FRONTEND_URL:-http://localhost:3000}"
+SAMPLE_DEMO_PATH="${SAMPLE_DEMO_PATH:-}"
+REQUIRE_SAMPLE_DEMO="${REQUIRE_SAMPLE_DEMO:-${SAMPLE_DEMO_REQUIRED:-0}}"
+
+run() {
+  printf '\n==> %s\n' "$*"
+  "$@"
+}
+
+wait_for_url() {
+  local url="$1"
+  local label="$2"
+  local attempts="${3:-30}"
+  local delay_seconds="${4:-2}"
+
+  printf '\n==> waiting for %s: %s\n' "$label" "$url"
+  for ((attempt = 1; attempt <= attempts; attempt += 1)); do
+    if curl -fsS "$url" >/dev/null 2>&1; then
+      printf '%s ready\n' "$label"
+      return 0
+    fi
+    sleep "$delay_seconds"
+  done
+
+  printf '%s was not ready after %s attempts: %s\n' "$label" "$attempts" "$url" >&2
+  return 1
+}
+
+truthy() {
+  case "$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')" in
+    1|true|yes|y|on) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+docker_cmd() {
+  if command -v docker >/dev/null 2>&1; then
+    command -v docker
+    return 0
+  fi
+
+  if [ -x /Applications/Docker.app/Contents/Resources/bin/docker ]; then
+    printf '%s\n' /Applications/Docker.app/Contents/Resources/bin/docker
+    return 0
+  fi
+
+  printf 'docker command not found. Start Docker Desktop or install Docker CLI.\n' >&2
+  return 1
+}
+
+cd "$ROOT_DIR"
+
+DOCKER_BIN="$(docker_cmd)"
+DOCKER_BIN_DIR="$(dirname "$DOCKER_BIN")"
+export PATH="$DOCKER_BIN_DIR:$PATH"
+
+if truthy "$REQUIRE_SAMPLE_DEMO" && [ -z "$SAMPLE_DEMO_PATH" ]; then
+  printf '\nSAMPLE_DEMO_PATH is required when REQUIRE_SAMPLE_DEMO=1.\n' >&2
+  exit 1
+fi
+
+run ./scripts/verify.sh
+run "$DOCKER_BIN" compose build
+run "$DOCKER_BIN" compose up -d
+wait_for_url "$API_BASE_URL/health" "api health"
+run curl -fsS "$API_BASE_URL/health"
+wait_for_url "$API_BASE_URL/diagnostics" "api diagnostics"
+run curl -fsS "$API_BASE_URL/diagnostics"
+wait_for_url "$FRONTEND_URL/dashboard" "frontend dashboard"
+
+run env \
+  API_BASE_URL="$API_BASE_URL" \
+  FRONTEND_URL="$FRONTEND_URL" \
+  python3 scripts/cloud_preview_smoke.py
+
+if [ -n "$SAMPLE_DEMO_PATH" ]; then
+  sample_args=()
+  if truthy "$REQUIRE_SAMPLE_DEMO"; then
+    sample_args+=(--require-sample)
+  fi
+  run env \
+    API_BASE_URL="$API_BASE_URL" \
+    FRONTEND_URL="$FRONTEND_URL" \
+    SAMPLE_DEMO_PATH="$SAMPLE_DEMO_PATH" \
+    SAMPLE_DEMO_NAME="${SAMPLE_DEMO_NAME:-}" \
+    python3 scripts/cloud_preview_smoke.py "${sample_args[@]}"
+else
+  printf '\n==> sample demo smoke skipped; set SAMPLE_DEMO_PATH to include it\n'
+fi
+
+cat <<'EOF'
+
+==> manual browser QA still required
+Open the target /dashboard and complete docs/release_candidate_qa_v1.md:
+- dashboard states, mock upload/open, real/sample upload when configured
+- corrupt demo failure copy
+- search/filter/sort/rename/archive
+- detail summary, replay controls, round jumps, tactical map sync, timeline markers
+- coaching filters/cards, Generate Clip fallback, RenderOperatorPanel
+- desktop and mobile with no current console errors
+EOF

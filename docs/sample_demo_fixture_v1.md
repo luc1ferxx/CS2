@@ -44,6 +44,15 @@ REQUIRE_SAMPLE_DEMO=1 python3 scripts/cloud_preview_smoke.py
 
 Missing, non-file, or failed sample parses are non-zero in required mode. A configured but invalid `SAMPLE_DEMO_PATH` is always a failure because it indicates a broken smoke configuration.
 
+The release-candidate helper uses the same environment:
+
+```bash
+SAMPLE_DEMO_PATH="$PWD/sample-demos/sample.dem" ./scripts/rc_check.sh
+REQUIRE_SAMPLE_DEMO=1 SAMPLE_DEMO_PATH="$PWD/sample-demos/sample.dem" ./scripts/rc_check.sh
+```
+
+See `docs/release_candidate_qa_v1.md` for the full RC checklist and manual browser smoke expectations.
+
 ## Manual Upload Command
 
 For ad hoc seeding without the full smoke:

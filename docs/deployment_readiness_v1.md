@@ -70,7 +70,7 @@ Production auth should replace the local helper with a real identity provider an
 
 | Variable / flag | Default | Used by | Notes |
 | --- | --- | --- | --- |
-| `SAMPLE_DEMO_PATH` | unset | `scripts/cloud_preview_smoke.py` | Absolute path to a local `.dem` or supported demo archive for fresh upload/parser smoke. When unset, sample upload is skipped unless required. |
+| `SAMPLE_DEMO_PATH` | unset | `scripts/cloud_preview_smoke.py` | Absolute path to a local `.dem` for fresh upload/parser smoke. When unset, sample upload is skipped unless required. |
 | `SAMPLE_DEMO_NAME` | unset | `scripts/cloud_preview_smoke.py` | Optional display name applied to the uploaded sample demo through the normal demo update API. |
 | `REQUIRE_SAMPLE_DEMO` / `SAMPLE_DEMO_REQUIRED` | `0` | `scripts/cloud_preview_smoke.py` | Treat missing or invalid `SAMPLE_DEMO_PATH` as a smoke failure. The CLI flag `--require-sample` does the same. |
 
@@ -225,6 +225,14 @@ curl http://localhost:8000/health
 curl http://localhost:8000/diagnostics
 ```
 
+Release-candidate non-browser checks can be run together:
+
+```bash
+./scripts/rc_check.sh
+```
+
+The RC helper wraps `./scripts/verify.sh`, Docker build/up, health, diagnostics, no-sample cloud preview smoke, and sample smoke when `SAMPLE_DEMO_PATH` is set. Use `REQUIRE_SAMPLE_DEMO=1` when a missing sample must fail the gate. It does not replace manual browser QA; use `docs/release_candidate_qa_v1.md` for the full checklist.
+
 Cloud preview smoke is documented in `docs/cloud_preview_deploy_v1.md` and can be run against a local or hosted preview:
 
 ```bash
@@ -278,6 +286,8 @@ Still mock/dev-only:
 - Manual MP4 upload/calibration is a development and QA bridge, not the primary product path.
 
 ## Deploy Smoke Checklist
+
+For release-candidate sign-off, use `docs/release_candidate_qa_v1.md`. The shorter deploy smoke checklist remains:
 
 1. Build and start the stack:
 
