@@ -2,13 +2,13 @@ services:
   postgres:
     image: postgres:16-alpine
     environment:
-      POSTGRES_DB: cs2coach
-      POSTGRES_USER: cs2coach
-      POSTGRES_PASSWORD: cs2coach
+      POSTGRES_DB: ${POSTGRES_DB:-cs2coach}
+      POSTGRES_USER: ${POSTGRES_USER:-cs2coach}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-cs2coach}
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U cs2coach -d cs2coach"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-cs2coach} -d ${POSTGRES_DB:-cs2coach}"]
       interval: 5s
       timeout: 5s
       retries: 20
@@ -26,15 +26,20 @@ services:
       context: ./backend
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000
     environment:
-      DATABASE_URL: postgresql+psycopg2://cs2coach:cs2coach@postgres:5432/cs2coach
-      REDIS_URL: redis://redis:6379/0
-      REDIS_QUEUE_NAME: cs2-demo-jobs
-      ARTIFACT_STORAGE_ROOT: /data
-      REPLAY_STORAGE_DIR: /data/replays
-      DEMO_UPLOAD_STORAGE_DIR: /data/uploads
-      VIDEO_STORAGE_DIR: /data/videos
-      SUMMARY_STORAGE_DIR: /data/summaries
-      CORS_ORIGINS: http://localhost:3000,http://127.0.0.1:3000
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg2://cs2coach:cs2coach@postgres:5432/cs2coach}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      REDIS_QUEUE_NAME: ${REDIS_QUEUE_NAME:-cs2-demo-jobs}
+      BACKEND_PUBLIC_URL: ${BACKEND_PUBLIC_URL:-http://localhost:8000}
+      ARTIFACT_STORAGE_ROOT: ${ARTIFACT_STORAGE_ROOT:-/data}
+      REPLAY_STORAGE_DIR: ${REPLAY_STORAGE_DIR:-/data/replays}
+      DEMO_UPLOAD_STORAGE_DIR: ${DEMO_UPLOAD_STORAGE_DIR:-/data/uploads}
+      VIDEO_STORAGE_DIR: ${VIDEO_STORAGE_DIR:-/data/videos}
+      SUMMARY_STORAGE_DIR: ${SUMMARY_STORAGE_DIR:-/data/summaries}
+      MEDIA_URL_BASE: ${MEDIA_URL_BASE:-}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
+      DEV_USER_ID: ${DEV_USER_ID:-dev-user}
+      MAX_RENDER_CLIP_SECONDS: ${MAX_RENDER_CLIP_SECONDS:-60}
+      RENDER_WORKER_TOKEN: ${RENDER_WORKER_TOKEN:-dev-render-worker-token}
     ports:
       - "8000:8000"
     volumes:
@@ -62,14 +67,19 @@ services:
       context: ./backend
     command: python -m app.workers.worker
     environment:
-      DATABASE_URL: postgresql+psycopg2://cs2coach:cs2coach@postgres:5432/cs2coach
-      REDIS_URL: redis://redis:6379/0
-      REDIS_QUEUE_NAME: cs2-demo-jobs
-      ARTIFACT_STORAGE_ROOT: /data
-      REPLAY_STORAGE_DIR: /data/replays
-      DEMO_UPLOAD_STORAGE_DIR: /data/uploads
-      VIDEO_STORAGE_DIR: /data/videos
-      SUMMARY_STORAGE_DIR: /data/summaries
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg2://cs2coach:cs2coach@postgres:5432/cs2coach}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      REDIS_QUEUE_NAME: ${REDIS_QUEUE_NAME:-cs2-demo-jobs}
+      BACKEND_PUBLIC_URL: ${BACKEND_PUBLIC_URL:-http://localhost:8000}
+      ARTIFACT_STORAGE_ROOT: ${ARTIFACT_STORAGE_ROOT:-/data}
+      REPLAY_STORAGE_DIR: ${REPLAY_STORAGE_DIR:-/data/replays}
+      DEMO_UPLOAD_STORAGE_DIR: ${DEMO_UPLOAD_STORAGE_DIR:-/data/uploads}
+      VIDEO_STORAGE_DIR: ${VIDEO_STORAGE_DIR:-/data/videos}
+      SUMMARY_STORAGE_DIR: ${SUMMARY_STORAGE_DIR:-/data/summaries}
+      MEDIA_URL_BASE: ${MEDIA_URL_BASE:-}
+      DEV_USER_ID: ${DEV_USER_ID:-dev-user}
+      MAX_RENDER_CLIP_SECONDS: ${MAX_RENDER_CLIP_SECONDS:-60}
+      RENDER_WORKER_TOKEN: ${RENDER_WORKER_TOKEN:-dev-render-worker-token}
     volumes:
       - replay-data:/data/replays
       - upload-data:/data/uploads
@@ -86,7 +96,7 @@ services:
       context: ./frontend
     command: npm run dev -- --hostname 0.0.0.0 --port 3000
     environment:
-      NEXT_PUBLIC_API_BASE_URL: http://localhost:8000
+      NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8000}
     ports:
       - "3000:3000"
     depends_on:

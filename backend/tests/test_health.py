@@ -20,6 +20,8 @@ class HealthEndpointTest(unittest.TestCase):
         self.assertIs(payload["workerDependencies"]["redisQueueConfigured"], True)
         self.assertIs(payload["workerDependencies"]["renderWorkerTokenConfigured"], True)
         self.assertEqual(payload["workerDependencies"]["maxRenderClipSeconds"], 60)
+        self.assertEqual(payload["publicUrls"]["backendPublicUrl"], "http://localhost:8000")
+        self.assertEqual(payload["publicUrls"]["effectiveMediaUrlBase"], "http://localhost:8000")
         self.assertIn("artifactStorageRoot", payload["storage"])
         self.assertIn("replayStorageDir", payload["storage"])
         self.assertIn("demoUploadStorageDir", payload["storage"])

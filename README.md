@@ -561,11 +561,13 @@ Render worker:
 
 ## Configuration
 
-完整部署准备说明见 `docs/deployment_readiness_v1.md`。关键环境变量：
+完整部署准备说明见 `docs/deployment_readiness_v1.md`，Cloud Preview runbook 见 `docs/cloud_preview_deploy_v1.md`。关键环境变量：
 
 | Name | Default | Used by |
 | --- | --- | --- |
 | `NEXT_PUBLIC_API_BASE_URL` | `http://localhost:8000` | frontend browser API/media URL |
+| `BACKEND_PUBLIC_URL` | `http://localhost:8000` | backend health/readiness public URL |
+| `MEDIA_URL_BASE` | unset | optional backend media URL base for `/media/videos` |
 | `CORS_ORIGINS` | `http://localhost:3000,http://127.0.0.1:3000` | backend API |
 | `DATABASE_URL` | `postgresql+psycopg2://cs2coach:cs2coach@localhost:5432/cs2coach` | API, worker |
 | `REDIS_URL` | `redis://localhost:6379/0` | API, worker |
@@ -586,7 +588,7 @@ Render worker:
 | `STEAM_USER_DATA_DIR` | unset | render-worker manual adapter |
 | `CS2_MANUAL_OUTPUT_FILENAME` | `{job_id}.mp4` | render-worker manual adapter |
 
-Docker Compose uses service names inside containers (`postgres`, `redis`) and host-facing URLs for the browser (`NEXT_PUBLIC_API_BASE_URL=http://localhost:8000`). Artifact directories default under `ARTIFACT_STORAGE_ROOT=/data`, with per-category overrides for local development. Do not commit production secrets or object storage credentials.
+Docker Compose uses service names inside containers (`postgres`, `redis`) and host-facing URLs for the browser (`NEXT_PUBLIC_API_BASE_URL=http://localhost:8000`). Artifact directories default under `ARTIFACT_STORAGE_ROOT=/data`, with per-category overrides for local development. Hosted preview builds can use `docker-compose.preview.yml`; rebuild the frontend image whenever `NEXT_PUBLIC_API_BASE_URL` changes because Next.js bundles public env values at build time. Do not commit production secrets or object storage credentials.
 
 ## Deploy Smoke Checklist
 
@@ -601,6 +603,7 @@ Minimal local smoke for a clean environment:
 7. Use round review quick jumps and confirm replay, tactical map, timeline, parser markers, and coaching cards stay synchronized
 8. Click `Generate Clip`
 9. Confirm render job status appears in the UI and `/demos/{demo_id}/render/jobs`
+10. For Cloud Preview validation, run `API_BASE_URL=http://localhost:8000 FRONTEND_URL=http://localhost:3000 python3 scripts/cloud_preview_smoke.py` or point those variables at the public preview URLs
 
 ## Current Limitations
 

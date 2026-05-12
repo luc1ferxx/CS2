@@ -77,6 +77,11 @@ def health() -> dict[str, object]:
         "database": db_ok,
         "redis": redis_ok,
         "workerDependencies": worker_dependencies,
+        "publicUrls": {
+            "backendPublicUrl": settings.backend_public_url,
+            "mediaUrlBase": settings.media_url_base or None,
+            "effectiveMediaUrlBase": settings.media_url_base or settings.backend_public_url,
+        },
         "storage": {
             "artifactStorageRoot": str(settings.artifact_storage_root),
             "replayStorageDir": str(settings.replay_storage_dir),

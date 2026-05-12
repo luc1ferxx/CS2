@@ -6,6 +6,10 @@ from pathlib import Path
 DEFAULT_ARTIFACT_STORAGE_ROOT = Path(os.getenv("ARTIFACT_STORAGE_ROOT", "/data"))
 
 
+def _base_url_from_env(name: str, default: str = "") -> str:
+    return os.getenv(name, default).strip().rstrip("/")
+
+
 @dataclass(frozen=True)
 class Settings:
     database_url: str = os.getenv(
@@ -14,6 +18,8 @@ class Settings:
     )
     redis_url: str = os.getenv("REDIS_URL", "redis://localhost:6379/0")
     redis_queue_name: str = os.getenv("REDIS_QUEUE_NAME", "cs2-demo-jobs")
+    backend_public_url: str = _base_url_from_env("BACKEND_PUBLIC_URL", "http://localhost:8000")
+    media_url_base: str = _base_url_from_env("MEDIA_URL_BASE")
     artifact_storage_root: Path = DEFAULT_ARTIFACT_STORAGE_ROOT
     replay_storage_dir: Path = Path(
         os.getenv("REPLAY_STORAGE_DIR", str(DEFAULT_ARTIFACT_STORAGE_ROOT / "replays"))

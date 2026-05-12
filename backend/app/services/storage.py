@@ -23,8 +23,10 @@ class LocalStorageService:
         self,
         artifact_root: Path,
         category_roots: Mapping[str, Path] | None = None,
+        media_url_base: str = "",
     ):
         self.artifact_root = artifact_root
+        self.media_url_base = media_url_base.rstrip("/")
         self.category_roots = {
             category: (category_roots[category] if category_roots and category in category_roots else artifact_root / category)
             for category in self.CATEGORIES
@@ -40,6 +42,7 @@ class LocalStorageService:
                 "summaries": settings.summary_storage_dir,
                 "videos": settings.video_storage_dir,
             },
+            settings.media_url_base,
         )
 
     def key(self, category: str, *segments: str) -> str:
@@ -121,13 +124,15 @@ class LocalStorageService:
         category, segments = self._parse_key(storage_key)
         if category != "videos":
             raise StorageKeyError("Only video artifacts can produce media URLs")
-        return f"/media/videos/{'/'.join(segments)}"
+        return self._public_media_url(f"/media/videos/{'/'.join(segments)}")
 
     def storage_key_from_media_url(self, url: str) -> str:
         prefix = "/media/videos/"
-        if not url.startswith(prefix):
+        parsed = urlparse(url)
+        path = parsed.path if parsed.scheme and parsed.netloc else url
+        if not path.startswith(prefix):
             raise StorageKeyError("videoUrl must use /media/videos/... for local storage")
-        segments = [segment for segment in url[len(prefix) :].split("/") if segment]
+        segments = [segment for segment in path[len(prefix) :].split("/") if segment]
         return self.key("videos", *segments)
 
     def media_url_for_local_path(self, local_path: Path) -> str:
@@ -138,7 +143,12 @@ class LocalStorageService:
             relative_path = local_path.resolve().relative_to(video_root.resolve())
         except ValueError as exc:
             raise StorageKeyError("localMediaPath must be inside video storage") from exc
-        return f"/media/videos/{relative_path.as_posix()}"
+        return self._public_media_url(f"/media/videos/{relative_path.as_posix()}")
+
+    def _public_media_url(self, path: str) -> str:
+        if not self.media_url_base:
+            return path
+        return f"{self.media_url_base}{path}"
 
     def _parse_key(self, storage_key: str) -> tuple[str, list[str]]:
         parsed = urlparse(storage_key)

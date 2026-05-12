@@ -35,3 +35,34 @@ class LocalStorageServiceTest(unittest.TestCase):
 
             self.assertEqual(storage.media_url(key), "/media/videos/demo-1/clip.mp4")
             self.assertEqual(storage.storage_key_from_media_url("/media/videos/demo-1/clip.mp4"), key)
+
+    def test_media_url_can_use_configured_public_base(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            storage = LocalStorageService(Path(directory), media_url_base="https://api.preview.example")
+            key = storage.video_key("demo-1", "clip.mp4")
+
+            self.assertEqual(
+                storage.media_url(key),
+                "https://api.preview.example/media/videos/demo-1/clip.mp4",
+            )
+            self.assertEqual(
+                storage.storage_key_from_media_url(
+                    "https://api.preview.example/media/videos/demo-1/clip.mp4"
+                ),
+                key,
+            )
+
+    def test_media_url_for_local_path_uses_configured_public_base(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            video_root = Path(directory) / "videos"
+            storage = LocalStorageService(
+                Path(directory),
+                category_roots={"videos": video_root},
+                media_url_base="https://api.preview.example/",
+            )
+            local_path = video_root / "demo-1" / "clip.mp4"
+
+            self.assertEqual(
+                storage.media_url_for_local_path(local_path),
+                "https://api.preview.example/media/videos/demo-1/clip.mp4",
+            )

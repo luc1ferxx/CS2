@@ -9,6 +9,8 @@ This project is deployable as a mock MVP for demos and internal review. It is no
 | Variable | Default | Used by | Notes |
 | --- | --- | --- | --- |
 | `NEXT_PUBLIC_API_BASE_URL` | `http://localhost:8000` | Frontend | Public browser-facing API origin used by `frontend/lib/api.ts` and media URL resolution. For Compose on the host, keep this as `http://localhost:8000`. |
+| `BACKEND_PUBLIC_URL` | `http://localhost:8000` | Backend API, worker | Public API origin reported by health/readiness output. |
+| `MEDIA_URL_BASE` | unset | Backend API, worker | Optional public base for absolute `/media/videos/...` URLs. If unset, media URLs remain relative and the frontend resolves them against `NEXT_PUBLIC_API_BASE_URL`. |
 | `CORS_ORIGINS` | `http://localhost:3000,http://127.0.0.1:3000` | Backend API | Comma-separated list of allowed frontend origins. Add deployed frontend origins here. |
 
 ### Backend Dependencies
@@ -79,6 +81,11 @@ Production auth should replace the local helper with a real identity provider an
     "redisQueueConfigured": true,
     "renderWorkerTokenConfigured": true,
     "maxRenderClipSeconds": 60
+  },
+  "publicUrls": {
+    "backendPublicUrl": "http://localhost:8000",
+    "mediaUrlBase": null,
+    "effectiveMediaUrlBase": "http://localhost:8000"
   },
   "storage": {
     "artifactStorageRoot": "/data",
@@ -181,6 +188,12 @@ docker compose up -d
 curl http://localhost:8000/health
 ```
 
+Cloud preview smoke is documented in `docs/cloud_preview_deploy_v1.md` and can be run against a local or hosted preview:
+
+```bash
+API_BASE_URL=http://localhost:8000 FRONTEND_URL=http://localhost:3000 python3 scripts/cloud_preview_smoke.py
+```
+
 ## Docker Notes
 
 - Compose service names are used for in-container dependencies: `postgres` and `redis`.
@@ -188,6 +201,9 @@ curl http://localhost:8000/health
 - `api` waits for healthy PostgreSQL and Redis, exposes `/health`, and has a Compose health check.
 - `frontend` waits for the API service health check before starting.
 - The default Compose frontend still uses `NEXT_PUBLIC_API_BASE_URL=http://localhost:8000` because browser requests originate from the host browser, not from the container network.
+- `docker-compose.preview.yml` switches the frontend to a production Next.js build via `frontend/Dockerfile.preview`.
+- Rebuild the preview frontend image whenever `NEXT_PUBLIC_API_BASE_URL` changes because it is bundled at build time.
+- Set `MEDIA_URL_BASE` to the public backend origin when the frontend and backend are served from different hosts and absolute media URLs are preferred.
 - The local storage adapter writes uploads, replay blobs, summaries, and videos under `/data` by default. Keep the adapter boundary when replacing local storage with S3/R2 later.
 
 ## Deployable Boundaries
@@ -237,3 +253,4 @@ Still mock/dev-only:
 10. Click `Generate Clip` on a coaching event.
 11. Confirm render job status appears in the UI and `/demos/{demo_id}/render/jobs`.
 12. For render-worker callback validation, run either the fake adapter with `DEV_FAKE_VIDEO_PATH` or the manual adapter flow documented in `render-worker/README.md`.
+13. For hosted preview validation, run `python3 scripts/cloud_preview_smoke.py` with `API_BASE_URL` and `FRONTEND_URL` set to the public origins.
