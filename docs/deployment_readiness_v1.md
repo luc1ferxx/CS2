@@ -111,6 +111,16 @@ See `docs/sample_demo_fixture_v1.md` for the local convention and ad hoc upload 
 
 `status` becomes `degraded` when PostgreSQL, Redis, or required worker configuration is unavailable. This endpoint confirms dependency reachability and configuration shape; it is not a monitoring system.
 
+## Safe Diagnostics
+
+`GET /diagnostics` returns a safer troubleshooting payload for previews and local smoke failures. It includes compact API readiness, DB/Redis/storage readiness, worker dependency readiness, Redis queue length, worker heartbeat age, recent job counts by type/status, recent failed job summaries, and an inferred render-worker status when recent `render_clip` jobs make that clear.
+
+It must not expose secrets, full env dumps, local absolute storage paths, stack traces, raw parser data, upload contents, or replay/media payloads. Storage readiness is represented as category booleans; demo artifacts are represented as key-present/artifact-present booleans.
+
+`GET /demos/{demo_id}/diagnostics` is owner-scoped through the same dev-only `X-Dev-User-Id` boundary as the rest of the mock app. It reports compact parse failure metadata, last parse/render job status, source/replay artifact presence, media URL availability, and map calibration/fallback state for one demo.
+
+The backend Redis worker writes a simple heartbeat under a Redis key while polling and after job activity. This is only an internal freshness signal for the mock MVP; it is not a production lease, scheduler, or monitoring backend.
+
 ## Runtime Status Snapshots
 
 Demo list/detail responses include compact ingestion state for upload and parser diagnosis:
@@ -212,6 +222,7 @@ Docker checks still run separately:
 docker compose build
 docker compose up -d
 curl http://localhost:8000/health
+curl http://localhost:8000/diagnostics
 ```
 
 Cloud preview smoke is documented in `docs/cloud_preview_deploy_v1.md` and can be run against a local or hosted preview:
@@ -220,7 +231,7 @@ Cloud preview smoke is documented in `docs/cloud_preview_deploy_v1.md` and can b
 API_BASE_URL=http://localhost:8000 FRONTEND_URL=http://localhost:3000 python3 scripts/cloud_preview_smoke.py
 ```
 
-Without `SAMPLE_DEMO_PATH`, the smoke still runs health, frontend, mock upload, replay/coaching, render job, and media-route checks, then exits successfully with a sample-skip message. With a configured sample, it uploads through `POST /uploads/demo`, waits for parse completion, and prints map, round, coaching, and map calibration/fallback status:
+Without `SAMPLE_DEMO_PATH`, the smoke still runs health, frontend, mock upload, replay/coaching, render job, media-route checks, and a compact diagnostics summary, then exits successfully with a sample-skip message. If any smoke step fails, it attempts to fetch `/diagnostics` and prints a compact summary; if that endpoint is unavailable, the original failure remains visible. With a configured sample, it uploads through `POST /uploads/demo`, waits for parse completion, and prints map, round, coaching, and map calibration/fallback status:
 
 ```bash
 SAMPLE_DEMO_PATH=/absolute/path/to/sample.dem python3 scripts/cloud_preview_smoke.py

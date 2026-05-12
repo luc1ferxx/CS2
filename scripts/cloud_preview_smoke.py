@@ -66,6 +66,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             "or pass --require-sample for stricter validation"
         )
 
+    print(failure_diagnostics_summary())
     print("cloud preview smoke passed")
     return 0
 
@@ -145,6 +146,56 @@ def check_frontend() -> None:
     if response.status >= 400 or "<" not in body:
         raise SmokeFailure(f"frontend dashboard returned an unexpected response: HTTP {response.status}")
     print(f"frontend reachable: {FRONTEND_URL}/dashboard")
+
+
+def failure_diagnostics_summary() -> str:
+    try:
+        payload = request_json("GET", "/diagnostics")
+    except SmokeFailure as exc:
+        return f"diagnostics unavailable: {exc}"
+    return diagnostics_summary(payload)
+
+
+def diagnostics_summary(payload: Any) -> str:
+    if not isinstance(payload, dict):
+        return "diagnostics unavailable: endpoint returned a non-object response"
+
+    dependencies = payload.get("dependencies") if isinstance(payload.get("dependencies"), dict) else {}
+    worker = payload.get("worker") if isinstance(payload.get("worker"), dict) else {}
+    heartbeat = worker.get("heartbeat") if isinstance(worker.get("heartbeat"), dict) else {}
+    jobs = payload.get("jobs") if isinstance(payload.get("jobs"), dict) else {}
+    failures = jobs.get("recentFailures") if isinstance(jobs.get("recentFailures"), list) else []
+
+    queue_name = worker.get("queueName") or "unknown"
+    queue_length = worker.get("queueLength")
+    heartbeat_label = _heartbeat_label(heartbeat)
+
+    return (
+        f"diagnostics: status={payload.get('status') or 'unknown'} "
+        f"db={_dependency_label(dependencies, 'database')} "
+        f"redis={_dependency_label(dependencies, 'redis')} "
+        f"storage={_dependency_label(dependencies, 'storage')} "
+        f"workerDeps={_dependency_label(dependencies, 'worker')} "
+        f"queue={queue_name} "
+        f"queueLength={queue_length if queue_length is not None else 'unknown'} "
+        f"heartbeat={heartbeat_label} "
+        f"recentFailures={len(failures)}"
+    )
+
+
+def _dependency_label(dependencies: dict[str, Any], key: str) -> str:
+    value = dependencies.get(key)
+    if not isinstance(value, dict):
+        return "unknown"
+    return "ok" if value.get("ok") is True else "fail"
+
+
+def _heartbeat_label(heartbeat: dict[str, Any]) -> str:
+    if heartbeat.get("alive") is True:
+        return "alive"
+    if heartbeat.get("lastSeenAt") or heartbeat.get("ageSeconds") is not None:
+        return "stale"
+    return "missing"
 
 
 def wait_for_completed_demo(demo_id: str, timeout_seconds: int = 60) -> dict[str, Any]:
@@ -334,4 +385,5 @@ if __name__ == "__main__":
         raise SystemExit(main(sys.argv[1:]))
     except SmokeFailure as exc:
         print(f"cloud preview smoke failed: {exc}", file=sys.stderr)
+        print(failure_diagnostics_summary(), file=sys.stderr)
         raise SystemExit(1)

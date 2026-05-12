@@ -15,6 +15,7 @@ from app.models.job import DemoJob
 from app.parser.demo_parser import DemoParserError, parse_demo_file
 from app.parser.normalizer import normalize_parser_output
 from app.services.demo_service import RENDER_CLIP_JOB_TYPE, DemoService
+from app.services.diagnostics import write_worker_heartbeat
 from app.services.storage import StorageKeyError
 from app.services.mock_replay_service import build_mock_replay
 
@@ -205,7 +206,9 @@ def run_worker() -> None:
     print(f"Worker listening on Redis queue: {settings.redis_queue_name}", flush=True)
 
     while True:
+        write_worker_heartbeat(redis_client)
         item = redis_client.brpop(settings.redis_queue_name, timeout=5)
+        write_worker_heartbeat(redis_client)
         if item is None:
             continue
 
@@ -221,6 +224,8 @@ def run_worker() -> None:
             except Exception as exc:
                 traceback.print_exc()
                 fail_job(db, job_id, demo_id, exc)
+            finally:
+                write_worker_heartbeat(redis_client)
 
 
 def _fail_classified_parse_job(

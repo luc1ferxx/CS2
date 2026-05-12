@@ -12,6 +12,7 @@
 - Dev-only owner boundary：默认 `DEV_USER_ID=dev-user`，测试或本地调试可用 `X-Dev-User-Id` 模拟不同 owner；这不是生产认证。
 - `/dashboard` Demo Library：搜索、状态/地图筛选、排序、上传轮询、重命名、软归档、渲染状态摘要。
 - Upload/parser observability：demo list/detail responses 包含 compact ingestion snapshot，失败解析有短错误、attempts、stale/active/retryable 状态，并支持 owner-scoped retry。
+- Safe diagnostics：`GET /diagnostics` 暴露 DB/Redis/storage/worker heartbeat/job failure 的 compact 状态，`GET /demos/{demo_id}/diagnostics` 暴露 owner-scoped demo 诊断；两者不返回 secrets、absolute local paths、stack traces、raw parser data 或上传内容。
 - Mock demo flow：快速生成合成 replay、coaching events 和 mock first-person shell。
 - Real demo parser spike：上传 `.dem` 或包含 `.dem` 的 `.zip`，后端队列异步解析。
 - Replay contract：回合、玩家、采样帧、击杀/死亡、compact parser events、地图 metadata、视频 metadata、contract diagnostics。
@@ -127,14 +128,16 @@ docker compose up --build
 - Frontend: http://localhost:3000
 - API: http://localhost:8000
 - Health: http://localhost:8000/health
+- Diagnostics: http://localhost:8000/diagnostics
 
 API 健康检查：
 
 ```bash
 curl http://localhost:8000/health
+curl http://localhost:8000/diagnostics
 ```
 
-`/health` 会返回 API、PostgreSQL、Redis、worker dependency 配置和本地 storage path 的 compact readiness payload；`status=degraded` 表示至少一个依赖不可用或关键 worker 配置缺失。
+`/health` 会返回 API、PostgreSQL、Redis、worker dependency 配置和本地 storage path 的 readiness payload；`status=degraded` 表示至少一个依赖不可用或关键 worker 配置缺失。`/diagnostics` 是更安全的排障端点：它只返回 compact readiness、Redis queue/worker heartbeat、job counts、recent failed job summary 和 render-worker inferred status，不暴露本地 storage path、env dump、token、stack trace、raw parser data 或上传内容。
 
 单独运行 frontend：
 
@@ -228,7 +231,7 @@ worker 使用 `demoparser2==0.41.0` 做 best-effort 解析：
 - `STORAGE_READ_FAILED`：上传 source artifact 无法从 storage service 读取。
 - `PARSER_UNEXPECTED`：未分类 parser exception。
 
-Public API response 不包含本地路径、stack trace 或 raw parser dump；开发排障细节只保留在 worker process logs。
+Parser/demo failure API responses and diagnostics 不包含本地路径、stack trace 或 raw parser dump；开发排障细节只保留在 worker process logs。
 
 Demo list/detail responses include an `ingestion` snapshot:
 
@@ -282,7 +285,7 @@ SAMPLE_DEMO_PATH="$PWD/sample-demos/sample.dem" python3 scripts/cloud_preview_sm
 REQUIRE_SAMPLE_DEMO=1 python3 scripts/cloud_preview_smoke.py
 ```
 
-When `SAMPLE_DEMO_PATH` is absent, the script prints a clear skip message and exits successfully after the mock smoke. When `--require-sample`, `REQUIRE_SAMPLE_DEMO=1`, or `SAMPLE_DEMO_REQUIRED=1` is set, a missing or invalid sample is a failure. When a sample is present, the script uploads it through `POST /uploads/demo`, waits for parser completion, and prints the map, round count, coaching event count, and map calibration/fallback status. Existing parsed rows are useful for UI regression checks, but they do not validate fresh upload/parser ingestion.
+When `SAMPLE_DEMO_PATH` is absent, the script prints a clear skip message and exits successfully after the mock smoke and compact diagnostics summary. When any smoke step fails, it attempts to print `/diagnostics` summary; if diagnostics is unavailable, it says so without hiding the original failure. When `--require-sample`, `REQUIRE_SAMPLE_DEMO=1`, or `SAMPLE_DEMO_REQUIRED=1` is set, a missing or invalid sample is a failure. When a sample is present, the script uploads it through `POST /uploads/demo`, waits for parser completion, and prints the map, round count, coaching event count, and map calibration/fallback status. Existing parsed rows are useful for UI regression checks, but they do not validate fresh upload/parser ingestion.
 
 More details and an ad hoc `curl` upload command are in `docs/sample_demo_fixture_v1.md`.
 
@@ -572,10 +575,12 @@ curl -X POST http://localhost:8000/demos/{demo_id}/video/calibration \
 Core:
 
 - `GET /health`
+- `GET /diagnostics`
 - `GET /demos`
 - `PATCH /demos/{demo_id}`
 - `POST /demos/{demo_id}/archive`
 - `GET /demos/{demo_id}/status`
+- `GET /demos/{demo_id}/diagnostics`
 - `POST /demos/{demo_id}/parse/retry`
 - `POST /uploads/mock`
 - `POST /uploads/demo`
@@ -641,15 +646,16 @@ Minimal local smoke for a clean environment:
 
 1. `docker compose up --build`
 2. `curl http://localhost:8000/health`
-3. Open `http://localhost:3000/dashboard`
-4. Create a mock upload and wait for completion
-5. Upload a real `.dem` or `.zip` if a sample is available
-6. Open a demo detail page
-7. Use round review quick jumps and confirm replay, tactical map, timeline, parser markers, and coaching cards stay synchronized
-8. Click `Generate Clip`
-9. Confirm render job status appears in the UI and `/demos/{demo_id}/render/jobs`
-10. For Cloud Preview validation, run `API_BASE_URL=http://localhost:8000 FRONTEND_URL=http://localhost:3000 python3 scripts/cloud_preview_smoke.py` or point those variables at the public preview URLs
-11. For stricter parser validation, set `SAMPLE_DEMO_PATH` and rerun the smoke; add `--require-sample` when preview validation must fail without a fresh real upload
+3. `curl http://localhost:8000/diagnostics`
+4. Open `http://localhost:3000/dashboard`
+5. Create a mock upload and wait for completion
+6. Upload a real `.dem` or `.zip` if a sample is available
+7. Open a demo detail page
+8. Use round review quick jumps and confirm replay, tactical map, timeline, parser markers, and coaching cards stay synchronized
+9. Click `Generate Clip`
+10. Confirm render job status appears in the UI and `/demos/{demo_id}/render/jobs`
+11. For Cloud Preview validation, run `API_BASE_URL=http://localhost:8000 FRONTEND_URL=http://localhost:3000 python3 scripts/cloud_preview_smoke.py` or point those variables at the public preview URLs
+12. For stricter parser validation, set `SAMPLE_DEMO_PATH` and rerun the smoke; add `--require-sample` when preview validation must fail without a fresh real upload
 
 ## Current Limitations
 
@@ -663,7 +669,7 @@ Minimal local smoke for a clean environment:
 - 没有经济、装备快照、line-of-sight、utility trajectory 和高级战术上下文。
 - `render_clip` 当前只创建合约 job；真实视频要等外部 GPU worker。
 - Manual MP4 必须人工校准，且只能代表它实际覆盖的 tick range。
-- Ingestion snapshots、replay diagnostics 和 regression fixtures 是 compact QA/debugging aids，不是生产 telemetry、日志平台或 parser trace storage。
+- Ingestion snapshots、safe diagnostics、replay diagnostics 和 regression fixtures 是 compact QA/debugging aids，不是生产 telemetry、日志平台或 parser trace storage。
 
 ## Next Useful Work
 

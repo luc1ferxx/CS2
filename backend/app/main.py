@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 
-from app.api import coaching, demos, replay, uploads
+from app.api import coaching, demos, diagnostics, replay, uploads
 from app.core.config import settings
 from app.core.database import SessionLocal, init_db
 from app.core.redis import get_redis_client
@@ -23,6 +23,7 @@ app.include_router(demos.router)
 app.include_router(uploads.router)
 app.include_router(replay.router)
 app.include_router(coaching.router)
+app.include_router(diagnostics.router)
 app.mount(
     "/media/videos",
     StaticFiles(directory=settings.video_storage_dir, check_dir=False),

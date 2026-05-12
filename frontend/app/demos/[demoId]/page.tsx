@@ -26,7 +26,7 @@ import {
   type RenderJobStatus,
   type VideoCalibrationUpdate
 } from "@/lib/api";
-import { isRenderActiveStatus } from "@/lib/demo-library";
+import { isRenderActiveStatus, parseFailureReason } from "@/lib/demo-library";
 import { buildReplayDiagnostics, type ReplayDetailDiagnostics } from "@/lib/replay-diagnostics";
 import type { CoachingEvent } from "@/types/coaching";
 import type { DemoStatus } from "@/types/demo";
@@ -154,7 +154,7 @@ export default function DemoDetailPage() {
   );
 
   const videoStatus = replay?.video.status;
-  const parseFailureMessage = status?.ingestion?.failure?.message ?? status?.error_message ?? null;
+  const parseFailureMessage = status ? parseFailureReason(status) : null;
 
   const loadVideoStatus = useCallback(async () => {
     if (!replay) {

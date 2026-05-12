@@ -1,4 +1,4 @@
-import type { DemoProcessingStatus, DemoSummary } from "@/types/demo";
+import type { DemoIngestionStatus, DemoProcessingStatus, DemoSummary } from "@/types/demo";
 
 export type DemoLibrarySort = "recent" | "name" | "map" | "status";
 export type DemoLibraryOrder = "asc" | "desc";
@@ -16,6 +16,11 @@ export interface DemoLibraryFilters {
 export interface DemoLibraryFilterOptions {
   statuses: DemoProcessingStatus[];
   maps: string[];
+}
+
+interface ParseFailureSource {
+  ingestion: DemoIngestionStatus | null;
+  error_message: string | null;
 }
 
 const STATUS_ORDER: DemoProcessingStatus[] = ["queued", "parsing", "analyzing", "completed", "failed"];
@@ -87,8 +92,20 @@ export function ingestionPhaseLabel(demo: DemoSummary): string {
   return phase;
 }
 
-export function parseFailureReason(demo: DemoSummary): string | null {
-  return demo.ingestion?.failure?.message ?? demo.error_message ?? null;
+export function parseFailureReason(demo: ParseFailureSource): string | null {
+  const failure = demo.ingestion?.failure;
+  if (!failure) {
+    return demo.error_message ?? null;
+  }
+
+  const labels = [`${failure.errorCode}: ${failure.message}`];
+  if (failure.retryable || demo.ingestion?.retryable) {
+    labels.push("retry available");
+  }
+  if (failure.attemptCount > 0) {
+    labels.push(`attempt ${failure.attemptCount}`);
+  }
+  return labels.join(" / ");
 }
 
 export function canRetryParse(demo: DemoSummary): boolean {

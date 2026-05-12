@@ -107,7 +107,7 @@ function operatorState(video: ReplayVideo, latestJob: RenderJobStatus | null) {
   if (latestJob?.status === "failed" || (video.status === "failed" && latestJob?.status !== "completed")) {
     return {
       label: "Failed",
-      nextAction: "Review the error and keep using the mock shell or manual upload until a worker completes a clip.",
+      nextAction: "Review the error; diagnostics can confirm whether the local no-GPU fallback or an external worker failure produced it.",
       tone: "failed"
     } as const;
   }
@@ -123,7 +123,7 @@ function operatorState(video: ReplayVideo, latestJob: RenderJobStatus | null) {
   if (latestJob?.status === "queued") {
     return {
       label: "Queued",
-      nextAction: "A render worker or operator can prepare this job from the render-worker runner.",
+      nextAction: "Waiting for a render worker or operator; check diagnostics for worker heartbeat before preparing the job manually.",
       tone: "waiting"
     } as const;
   }

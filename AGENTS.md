@@ -15,6 +15,7 @@ This repository is a mock MVP for a website-based CS2 demo AI coach.
 
 - `docker compose up --build`: build and run the full local stack.
 - `curl http://localhost:8000/health`: verify API, database, and Redis health.
+- `curl http://localhost:8000/diagnostics`: inspect safe DB/Redis/storage/worker/job diagnostics without local paths or secrets.
 - `cd frontend && npm run dev`: run the frontend dev server outside Docker.
 - `cd frontend && npm run lint`: run ESLint with zero warnings allowed.
 - `cd frontend && npm run typecheck`: run TypeScript checks without emitting files.
@@ -68,7 +69,7 @@ Rules analyzer additions must also tolerate missing parser event families. Keep 
 
 Replay detail additions should preserve the shared tick/round state across first-person replay, tactical map, timeline, parser markers, round review, coaching cards, render fallback, and Replay Contract diagnostics. Degraded states for no frames, no rounds, no parser events, and no coaching events should be explicit but compact.
 
-Upload/parser observability should stay compact: ingestion snapshots, short failure metadata, attempts, stale/active/retryable state, and owner-scoped parse retry are acceptable. Parser failures should classify invalid/unreadable demos, unsupported parser format/support, missing essential match metadata, missing frames/ticks, normalization failure, storage/read failure, and unexpected parser exceptions with safe one-line API messages. Optional event-family absence is a partial success, not a parse failure. Do not add production telemetry, stack trace storage, raw parser logs, sensitive local paths in API responses, or retry flows that bypass `source_storage_key` and `backend/app/services/storage.py`.
+Upload/parser observability should stay compact: ingestion snapshots, short failure metadata, attempts, stale/active/retryable state, owner-scoped parse retry, safe `/diagnostics`, and owner-scoped `/demos/{demo_id}/diagnostics` are acceptable. Parser failures should classify invalid/unreadable demos, unsupported parser format/support, missing essential match metadata, missing frames/ticks, normalization failure, storage/read failure, and unexpected parser exceptions with safe one-line API messages. Optional event-family absence is a partial success, not a parse failure. Do not add production telemetry, stack trace storage, raw parser logs, sensitive local paths in API responses, raw parser data, upload contents, secrets, env dumps, or retry flows that bypass `source_storage_key` and `backend/app/services/storage.py`.
 
 Regression fixtures should be small and human-readable. Prefer compact fixtures under `backend/tests/fixtures/` and `frontend/lib/test-fixtures/` that lock down replay normalization, parser event families, coaching evidence, and degraded UI helper behavior without checking in `.dem`, media, raw parser dataframes, or huge event dumps.
 

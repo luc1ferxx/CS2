@@ -188,7 +188,7 @@ const demos = [
   });
 
   assert.equal(ingestionPhaseLabel(failedParse), "failed");
-  assert.equal(parseFailureReason(failedParse), "Parser timed out while reading demo");
+  assert.equal(parseFailureReason(failedParse), "PARSER_FAILED: Parser timed out while reading demo / retry available / attempt 2");
   assert.equal(canRetryParse(failedParse), true);
 }
 

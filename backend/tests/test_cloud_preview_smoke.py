@@ -107,6 +107,53 @@ class CloudPreviewSampleConfigTest(unittest.TestCase):
             [("PATCH", "/demos/demo-1", {"name": "Local Sample"})],
         )
 
+    def test_failure_diagnostics_summary_handles_unavailable_endpoint(self) -> None:
+        def fake_request_json(method, path, payload=None):
+            raise self.smoke.SmokeFailure(f"{method} {path} unavailable")
+
+        self.smoke.request_json = fake_request_json
+
+        summary = self.smoke.failure_diagnostics_summary()
+
+        self.assertIn("diagnostics unavailable", summary)
+        self.assertIn("GET /diagnostics unavailable", summary)
+
+    def test_diagnostics_summary_is_compact(self) -> None:
+        summary = self.smoke.diagnostics_summary(
+            {
+                "status": "degraded",
+                "dependencies": {
+                    "database": {"ok": True},
+                    "redis": {"ok": False},
+                    "storage": {"ok": True},
+                    "worker": {"ok": True},
+                },
+                "worker": {
+                    "queueName": "cs2-demo-jobs",
+                    "queueLength": 2,
+                    "heartbeat": {"alive": False, "ageSeconds": 120},
+                },
+                "jobs": {
+                    "recentFailures": [
+                        {
+                            "jobType": "real_parse",
+                            "status": "failed",
+                            "errorCode": "INVALID_DEMO",
+                            "message": "Invalid or unreadable demo file.",
+                        }
+                    ]
+                },
+            }
+        )
+
+        self.assertIn("diagnostics: status=degraded", summary)
+        self.assertIn("db=ok", summary)
+        self.assertIn("redis=fail", summary)
+        self.assertIn("queue=cs2-demo-jobs", summary)
+        self.assertIn("heartbeat=stale", summary)
+        self.assertIn("recentFailures=1", summary)
+        self.assertNotIn("Invalid or unreadable demo file.", summary)
+
 
 if __name__ == "__main__":
     unittest.main()
