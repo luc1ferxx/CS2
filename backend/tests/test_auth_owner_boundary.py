@@ -419,6 +419,45 @@ class OwnerBackfillTest(unittest.TestCase):
 
         self.assertEqual(owner_id, "legacy-owner")
 
+    def test_legacy_rows_receive_storage_key_backfills(self) -> None:
+        engine = create_engine("sqlite:///:memory:")
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "CREATE TABLE demos ("
+                    "id VARCHAR(36) PRIMARY KEY, "
+                    "user_id VARCHAR(64) NOT NULL, "
+                    "original_filename VARCHAR(255) NOT NULL, "
+                    "status VARCHAR(32) NOT NULL, "
+                    "archived BOOLEAN DEFAULT FALSE NOT NULL)"
+                )
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO demos "
+                    "(id, user_id, original_filename, status, archived) "
+                    "VALUES ('legacy-demo', 'legacy-owner', 'legacy.dem', 'completed', 0)"
+                )
+            )
+
+        original_engine = database.engine
+        database.engine = engine
+        try:
+            database.ensure_schema_backfills()
+        finally:
+            database.engine = original_engine
+
+        with engine.connect() as connection:
+            row = connection.execute(
+                text(
+                    "SELECT source_storage_key, replay_storage_key "
+                    "FROM demos WHERE id = 'legacy-demo'"
+                )
+            ).one()
+
+        self.assertEqual(row.source_storage_key, "local://uploads/legacy-demo/legacy.dem")
+        self.assertEqual(row.replay_storage_key, "local://replays/legacy-demo.json")
+
 
 class FakeRedis:
     def __init__(self) -> None:

@@ -53,6 +53,21 @@ class StorageBackedDemoServiceTest(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(key, "local://replays/demo-storage-replay.json")
                 self.assertEqual(service.load_replay_blob(demo)["demoId"], demo.id)
 
+    async def test_invalid_legacy_source_storage_key_falls_back_to_safe_upload_key(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            with storage_dirs(Path(directory)):
+                db = self.Session()
+                demo = add_completed_demo(db, "demo-storage-source-fallback")
+                demo.original_filename = "../../match.dem"
+                demo.source_storage_key = "local://uploads/demo-storage-source-fallback/../evil.dem"
+                db.commit()
+                service = DemoService(db)
+
+                self.assertEqual(
+                    service.source_demo_storage_key(demo),
+                    "local://uploads/demo-storage-source-fallback/match.dem",
+                )
+
     async def test_render_worker_local_media_path_must_stay_inside_video_storage(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             with storage_dirs(Path(directory)):

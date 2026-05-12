@@ -272,6 +272,7 @@ class DemoService:
             job is not None and job.status in ACTIVE_PARSE_JOB_STATUSES
         )
         retryable = self._parse_retryable(demo, job)
+        source_key_for_ingestion = self._retry_source_storage_key(demo, job)
         attempt_count = int(job.attempts) if job is not None else 0
         failure = (
             self._parse_failure_metadata(demo, job, retryable=retryable, attempt_count=attempt_count)
@@ -294,7 +295,7 @@ class DemoService:
             jobId=job.id if job is not None else None,
             jobType=job.job_type if job is not None else None,
             jobStatus=job.status if job is not None else None,
-            hasSourceDemo=bool(getattr(demo, "source_storage_key", None)),
+            hasSourceDemo=bool(source_key_for_ingestion),
             updatedAt=updated_at,
             startedAt=(
                 _aware_datetime(job.started_at)
@@ -312,8 +313,9 @@ class DemoService:
     def retry_parse_job(self, demo: Demo) -> DemoListItem:
         if demo.status != "failed":
             raise ValueError("Only failed parse jobs can be retried")
-        source_storage_key = getattr(demo, "source_storage_key", None)
-        if not source_storage_key:
+        latest_job = self.latest_parse_job(demo)
+        source_storage_key = self._retry_source_storage_key(demo, latest_job)
+        if source_storage_key is None:
             raise ValueError("Uploaded source demo is not available for retry")
         try:
             source_exists = self.storage.exists(source_storage_key)
@@ -322,7 +324,6 @@ class DemoService:
         if not source_exists:
             raise ValueError("Uploaded source demo artifact is missing")
 
-        latest_job = self.latest_parse_job(demo)
         if latest_job is not None and latest_job.status in ACTIVE_PARSE_JOB_STATUSES:
             raise ValueError("Parse is already active")
 
@@ -428,13 +429,21 @@ class DemoService:
             return False
         if job is not None and job.status in ACTIVE_PARSE_JOB_STATUSES:
             return False
-        source_storage_key = getattr(demo, "source_storage_key", None)
-        if not source_storage_key:
+        source_storage_key = self._retry_source_storage_key(demo, job)
+        if source_storage_key is None:
             return False
         try:
             return self.storage.exists(source_storage_key)
         except (OSError, StorageKeyError):
             return False
+
+    def _retry_source_storage_key(self, demo: Demo, job: DemoJob | None) -> str | None:
+        stored_key = getattr(demo, "source_storage_key", None)
+        if stored_key:
+            return self.source_demo_storage_key(demo)
+        if job is not None and job.job_type == "real_parse":
+            return self.source_demo_storage_key(demo)
+        return None
 
     def _parse_failure_metadata(
         self,
@@ -473,10 +482,15 @@ class DemoService:
         return self.storage.path_for_key(self.source_demo_storage_key(demo))
 
     def source_demo_storage_key(self, demo: Demo) -> str:
-        return getattr(demo, "source_storage_key", None) or demo_upload_key(
-            demo.id,
-            demo.original_filename,
-        )
+        fallback_key = demo_upload_key(demo.id, demo.original_filename)
+        stored_key = getattr(demo, "source_storage_key", None)
+        if not stored_key:
+            return fallback_key
+        try:
+            self.storage.path_for_key(stored_key)
+        except StorageKeyError:
+            return fallback_key
+        return stored_key
 
     def create_mock_render_job(self, demo: Demo) -> DemoJob:
         replay = self.load_replay_blob(demo)
