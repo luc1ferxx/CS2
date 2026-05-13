@@ -2,6 +2,8 @@
 
 This project is deployable as a mock MVP for demos and internal review. It is not a production CS2 rendering service, not a production auth system, and not a durable media storage architecture.
 
+For a repeatable internal reviewer handoff, use `docs/internal_preview_packaging_v1.md`. This document remains the runtime configuration and readiness reference.
+
 ## Runtime Configuration
 
 ### Backend API and Frontend
@@ -232,6 +234,8 @@ Release-candidate non-browser checks can be run together:
 ```
 
 The RC helper wraps `./scripts/verify.sh`, Docker build/up, health, diagnostics, no-sample cloud preview smoke, and sample smoke when `SAMPLE_DEMO_PATH` is set. Use `REQUIRE_SAMPLE_DEMO=1` when a missing sample must fail the gate. It does not replace manual browser QA; use `docs/release_candidate_qa_v1.md` for the full checklist.
+
+For packaging evidence and reviewer handoff, follow `docs/internal_preview_packaging_v1.md` after the RC helper finishes.
 
 Cloud preview smoke is documented in `docs/cloud_preview_deploy_v1.md` and can be run against a local or hosted preview:
 

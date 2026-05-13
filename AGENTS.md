@@ -9,28 +9,38 @@ This repository is a mock MVP for a website-based CS2 demo AI coach.
 - `render-worker/`: standalone Render Worker V1 skeleton. `runner.py` drives fake-video and manual-operator adapter flows without launching CS2, Steam, OBS, or ffmpeg.
 - `docker-compose.yml`: local stack for `frontend`, `api`, `worker`, `postgres`, and `redis`.
 - `README.md`: current product scope, storage/parser/render boundaries, API list, observability notes, and verification guidance.
+- `docs/internal_preview_packaging_v1.md`: repeatable internal preview runbook, strict sample smoke command, browser checklist, known limitations, and handoff evidence checklist.
 - `docs/deployment_readiness_v1.md`: runtime configuration, deployable boundaries, and smoke checklist for the mock MVP.
 
 ## Build, Test, and Development Commands
 
 - `docker compose up --build`: build and run the full local stack.
+- `docker compose -f docker-compose.yml -f docker-compose.preview.yml up --build`: run the preview Compose shape with a production-built frontend.
 - `curl http://localhost:8000/health`: verify API, database, and Redis health.
 - `curl http://localhost:8000/diagnostics`: inspect safe DB/Redis/storage/worker/job diagnostics without local paths or secrets.
 - `cd frontend && npm run dev`: run the frontend dev server outside Docker.
 - `cd frontend && npm run lint`: run ESLint with zero warnings allowed.
 - `cd frontend && npm run typecheck`: run TypeScript checks without emitting files.
 - `cd frontend && npm run build`: verify the production Next.js build.
+- `./scripts/verify.sh`: run the local non-Docker gate: backend compile/tests, render-worker compile/tests, frontend lint/typecheck/build.
 - `python3 -m compileall backend/app`: quick backend syntax/import sanity check.
 - `PYTHONPATH=backend python3 -m unittest discover backend/tests`: run backend unit tests.
 - `python3 -m compileall render-worker`: quick render-worker syntax/import sanity check.
 - `python3 -m unittest discover render-worker/tests`: run render-worker unit tests.
 - `cd frontend && node lib/demo-library.test.mjs`: run Dashboard helper regression tests.
 - `cd frontend && node lib/replay-diagnostics.test.mjs`: run replay contract diagnostics helper tests.
+- `cd frontend && node lib/replay-events.test.mjs`: run parser event presentation and timeline marker helper tests.
+- `cd frontend && node lib/round-review.test.mjs`: run round review helper regression tests.
+- `cd frontend && node lib/coaching-review.test.mjs`: run coaching review helper regression tests.
 - `cd frontend && node lib/replay-quality-fixtures.test.mjs`: run compact replay quality fixture regressions.
+- `cd frontend && node lib/map-config.test.mjs`: run tactical map config helper tests.
+- `API_BASE_URL=http://localhost:8000 FRONTEND_URL=http://localhost:3000 python3 scripts/cloud_preview_smoke.py`: run local API/frontend mock replay, render job, media-route, and diagnostics smoke; add `SAMPLE_DEMO_PATH` and `--require-sample` for strict real `.dem` parser validation.
 - `./scripts/rc_check.sh`: run the non-browser release-candidate gate: verify, Docker build/up, health, diagnostics, cloud preview smoke, and optional sample smoke.
-- `python3 render-worker/runner.py dry-run {job_id}`: inspect a render job manifest and adapter plan without posting callbacks.
+- `python3 render-worker/runner.py dry-run [{job_id}]`: inspect the next or specified render job manifest and adapter plan without posting callbacks.
+- `python3 render-worker/runner.py process-job {job_id}`: claim and process one render job through the configured adapter flow.
+- `python3 render-worker/runner.py poll-once`: claim and process the next queued render job once.
 - `python3 render-worker/runner.py prepare-job --job-id {job_id} --adapter cs2-manual`: generate manual operator manifest, instructions, expected output, and status files.
-- `python3 render-worker/runner.py complete-prepared-job --job-id {job_id} --video-path /absolute/path/to/clip.mp4`: upload a prepared operator MP4 and submit the completed callback.
+- `python3 render-worker/runner.py complete-prepared-job --job-id {job_id} [--video-path /absolute/path/to/clip.mp4]`: upload the expected or provided operator MP4 and submit the completed callback.
 
 ## Coding Style & Naming Conventions
 

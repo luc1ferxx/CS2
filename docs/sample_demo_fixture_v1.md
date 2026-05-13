@@ -1,6 +1,6 @@
 # Sample Demo Fixture V1
 
-Sample demos are optional local inputs for proving the fresh upload/parser path. They are not part of the repository.
+Sample demos are optional local inputs for proving the fresh upload/parser path. They are not part of the repository. Internal preview packaging uses the same convention; see `docs/internal_preview_packaging_v1.md` for the strict sample command and handoff evidence checklist.
 
 ## Local Convention
 

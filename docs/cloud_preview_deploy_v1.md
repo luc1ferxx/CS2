@@ -2,6 +2,8 @@
 
 This preview path uses Docker Compose with the existing FastAPI API, Redis worker, PostgreSQL, Redis, and a built Next.js frontend. It is meant for short-lived internal review of the mock MVP, not production multi-user hosting.
 
+For the complete internal reviewer package, including local RC commands, strict sample validation, browser smoke, known limitations, and handoff evidence, use `docs/internal_preview_packaging_v1.md`.
+
 ## Selected Preview Shape
 
 Use the default `docker-compose.yml` for local development. Use `docker-compose.preview.yml` as an override when the frontend should run from a production Next.js build:
@@ -74,7 +76,7 @@ Required preview values:
 
 ## Smoke Checklist
 
-For release-candidate sign-off, use the full checklist in `docs/release_candidate_qa_v1.md`. The script smoke below covers API/frontend/mock/render/media and optional sample upload; manual browser QA remains required.
+For release-candidate sign-off, use the full checklist in `docs/release_candidate_qa_v1.md`. For reviewer handoff evidence, use `docs/internal_preview_packaging_v1.md`. The script smoke below covers API/frontend/mock/render/media and optional sample upload; manual browser QA remains required.
 
 API/script smoke:
 

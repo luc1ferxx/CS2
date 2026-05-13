@@ -102,7 +102,8 @@ class DiagnosticsEndpointTest(unittest.TestCase):
                 },
             )
 
-        response = self.client.get("/diagnostics")
+        with patch("app.services.diagnostics.utc_now", return_value=now):
+            response = self.client.get("/diagnostics")
 
         self.assertEqual(response.status_code, 200)
         body = response.json()
