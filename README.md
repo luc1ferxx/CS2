@@ -112,6 +112,7 @@ render-worker/
   adapters/               fake video and manual CS2 operator adapters
 
 docs/
+  deployment_target_decision_v1.md
   internal_preview_packaging_v1.md
   release_candidate_qa_v1.md
   *_goal.md               prior phase goals and design notes
@@ -190,7 +191,7 @@ Release-candidate validation:
 
 `rc_check.sh` runs `./scripts/verify.sh`, Docker build/up, `/health`, `/diagnostics`, and cloud preview smoke. If `SAMPLE_DEMO_PATH` is set, it also runs sample smoke; set `REQUIRE_SAMPLE_DEMO=1` to fail when no sample is configured. Manual browser QA is still required and is listed in `docs/release_candidate_qa_v1.md`.
 
-内部 preview 打包和 reviewer handoff checklist 见 `docs/internal_preview_packaging_v1.md`。部署准备、runtime env 和 smoke checklist 见 `docs/deployment_readiness_v1.md`。完整 RC runbook 见 `docs/release_candidate_qa_v1.md`。
+下一次内部 preview 的部署目标决策见 `docs/deployment_target_decision_v1.md`。内部 preview 打包和 reviewer handoff checklist 见 `docs/internal_preview_packaging_v1.md`。部署准备、runtime env 和 smoke checklist 见 `docs/deployment_readiness_v1.md`。完整 RC runbook 见 `docs/release_candidate_qa_v1.md`。
 
 ## 主要流程
 
