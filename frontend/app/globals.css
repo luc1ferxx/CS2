@@ -451,6 +451,8 @@ button {
 }
 
 .panel {
+  min-width: 0;
+  max-width: 100%;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: rgba(17, 24, 32, 0.88);
@@ -596,6 +598,7 @@ button {
 .analysis-main-column {
   display: grid;
   gap: 14px;
+  min-width: 0;
 }
 
 .replay-diagnostics-panel {
@@ -1050,6 +1053,7 @@ button {
 .render-operator-panel {
   display: grid;
   gap: 12px;
+  min-width: 0;
   padding: 14px;
 }
 
@@ -1091,6 +1095,10 @@ button {
   padding: 10px 0;
   border-top: 1px solid var(--line);
   border-bottom: 1px solid var(--line);
+}
+
+.operator-state-row > div {
+  min-width: 0;
 }
 
 .operator-state-icon {
@@ -1135,6 +1143,8 @@ button {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 10px 12px;
+  min-width: 0;
+  max-width: 100%;
   margin: 0;
 }
 
@@ -1157,6 +1167,7 @@ button {
 }
 
 .operator-error {
+  max-width: 100%;
   padding: 9px 10px;
   border: 1px solid rgba(241, 91, 91, 0.34);
   border-radius: 8px;
@@ -1164,6 +1175,7 @@ button {
   color: var(--text);
   font-size: 12px;
   line-height: 1.42;
+  overflow-wrap: anywhere;
 }
 
 .disabled-label {
@@ -1175,6 +1187,8 @@ button {
   display: grid;
   grid-template-columns: minmax(180px, 1.4fr) repeat(3, minmax(110px, 0.7fr));
   gap: 12px;
+  min-width: 0;
+  max-width: 100%;
   margin: 0;
   padding: 10px 0;
   border-top: 1px solid var(--line);
@@ -1208,6 +1222,8 @@ button {
   display: grid;
   grid-template-columns: repeat(4, minmax(110px, 1fr));
   gap: 10px;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .calibration-grid label {
@@ -1251,13 +1267,21 @@ button {
   justify-content: space-between;
   align-items: center;
   gap: 14px;
+  min-width: 0;
   margin-bottom: 12px;
+}
+
+.first-person-header > div {
+  min-width: 0;
 }
 
 .render-actions {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .compact-button {
@@ -1297,6 +1321,7 @@ button {
 .first-person-header span {
   color: var(--muted);
   font-size: 13px;
+  overflow-wrap: anywhere;
 }
 
 .first-person-viewport {
@@ -1993,6 +2018,8 @@ button {
   display: flex;
   flex-direction: column;
   align-self: start;
+  min-width: 0;
+  max-width: 100%;
   min-height: 0;
   max-height: min(1040px, calc(100vh - 150px));
   overflow: hidden;
@@ -2464,6 +2491,18 @@ button {
   .render-actions {
     align-items: flex-start;
     flex-direction: column;
+    width: 100%;
+  }
+
+  .first-person-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .render-actions .compact-button,
+  .render-actions .mini-pill {
+    justify-content: center;
+    width: 100%;
   }
 
   .render-operator-header,
@@ -2660,5 +2699,28 @@ button {
 
   .featured-tactical-panel .player-list {
     grid-template-columns: 1fr;
+  }
+
+  .first-person-viewport {
+    width: 100%;
+    max-width: 100%;
+    height: 240px;
+    aspect-ratio: auto;
+  }
+
+  .render-status-overlay {
+    left: 10px;
+    right: 10px;
+    bottom: 42px;
+    max-height: calc(100% - 52px);
+    padding: 10px;
+    overflow: auto;
+  }
+
+  .render-status-overlay p {
+    display: -webkit-box;
+    overflow: hidden;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 3;
   }
 }
