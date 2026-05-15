@@ -9,8 +9,12 @@ This repository is a mock MVP for a website-based CS2 demo AI coach.
 - `render-worker/`: standalone Render Worker V1 skeleton. `runner.py` drives fake-video and manual-operator adapter flows without launching CS2, Steam, OBS, or ffmpeg.
 - `docker-compose.yml`: local stack for `frontend`, `api`, `worker`, `postgres`, and `redis`.
 - `README.md`: current product scope, storage/parser/render boundaries, API list, observability notes, and verification guidance.
+- `docs/cloud_preview_deploy_v1.md`: Compose preview shape, public URL contract, smoke commands, render-worker preview notes, and rollback/cleanup commands.
 - `docs/internal_preview_packaging_v1.md`: repeatable internal preview runbook, strict sample smoke command, browser checklist, known limitations, and handoff evidence checklist.
 - `docs/deployment_readiness_v1.md`: runtime configuration, deployable boundaries, and smoke checklist for the mock MVP.
+- `docs/release_candidate_qa_v1.md`: full RC checklist for local Docker checks, preview smoke, optional/strict sample validation, and manual browser QA.
+- `docs/sample_demo_fixture_v1.md`: ignored local `.dem` sample convention, strict sample smoke modes, and ad hoc upload command.
+- `docs/deployment_target_decision_v1.md`: internal preview target decision covering localhost/LAN, tunnel caveats, and VPS escalation.
 
 ## Build, Test, and Development Commands
 
@@ -34,8 +38,8 @@ This repository is a mock MVP for a website-based CS2 demo AI coach.
 - `cd frontend && node lib/coaching-review.test.mjs`: run coaching review helper regression tests.
 - `cd frontend && node lib/replay-quality-fixtures.test.mjs`: run compact replay quality fixture regressions.
 - `cd frontend && node lib/map-config.test.mjs`: run tactical map config helper tests.
-- `API_BASE_URL=http://localhost:8000 FRONTEND_URL=http://localhost:3000 python3 scripts/cloud_preview_smoke.py`: run local API/frontend mock replay, render job, media-route, and diagnostics smoke; add `SAMPLE_DEMO_PATH` and `--require-sample` for strict real `.dem` parser validation.
-- `./scripts/rc_check.sh`: run the non-browser release-candidate gate: verify, Docker build/up, health, diagnostics, cloud preview smoke, and optional sample smoke.
+- `API_BASE_URL=http://localhost:8000 FRONTEND_URL=http://localhost:3000 python3 scripts/cloud_preview_smoke.py`: run local API/frontend mock replay, render job, media-route, and diagnostics smoke; use `SAMPLE_DEMO_PATH=/absolute/path/to/sample.dem python3 scripts/cloud_preview_smoke.py --require-sample` for strict real `.dem` parser validation.
+- `./scripts/rc_check.sh`: run the non-browser release-candidate gate: verify, Docker build/up, health, diagnostics, `/dashboard` reachability, cloud preview smoke, and optional sample smoke; use `REQUIRE_SAMPLE_DEMO=1 SAMPLE_DEMO_PATH=/absolute/path/to/sample.dem ./scripts/rc_check.sh` when missing sample input must fail the gate.
 - `python3 render-worker/runner.py dry-run [{job_id}]`: inspect the next or specified render job manifest and adapter plan without posting callbacks.
 - `python3 render-worker/runner.py process-job {job_id}`: claim and process one render job through the configured adapter flow.
 - `python3 render-worker/runner.py poll-once`: claim and process the next queued render job once.
@@ -50,7 +54,7 @@ Use TypeScript for frontend changes and Python 3.12 style for backend changes. K
 
 For every change, run the relevant verification commands above. Backend changes should generally run `python3 -m compileall backend/app` and `PYTHONPATH=backend python3 -m unittest discover backend/tests`. Render-worker changes should run its compile and unittest commands. Frontend behavior changes should run lint, typecheck, build, and the focused `node lib/*.test.mjs` helper tests for the touched surface. For replay UI changes, manually verify `/dashboard` and a demo detail page: play/pause, seek, speed, round selection, coaching event click-to-seek, tactical map sync, replay diagnostics, degraded states, and render status fallback.
 
-For release-candidate QA work, keep `docs/release_candidate_qa_v1.md`, `scripts/rc_check.sh`, README, deployment readiness, cloud preview, and sample fixture docs aligned. `rc_check.sh` is only the non-browser gate; manual browser smoke remains required for RC sign-off.
+For release-candidate QA work, keep `docs/release_candidate_qa_v1.md`, `scripts/rc_check.sh`, README, deployment readiness, cloud preview, and sample fixture docs aligned. `rc_check.sh` is only the non-browser gate; manual browser smoke remains required for RC sign-off. For map config/radar changes, run `PYTHONPATH=backend python3 -m unittest backend.tests.test_map_config` and `cd frontend && node lib/map-config.test.mjs`.
 
 ## Product Direction For Future Codex Work
 
