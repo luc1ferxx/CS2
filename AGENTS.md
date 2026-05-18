@@ -19,9 +19,16 @@ This repository is a mock MVP for a website-based CS2 demo AI coach.
 ## Build, Test, and Development Commands
 
 - `docker compose up --build`: build and run the full local stack.
+- `docker compose build` and `docker compose up -d`: run the split Docker build/start sequence used by the RC checklist.
 - `docker compose -f docker-compose.yml -f docker-compose.preview.yml up --build`: run the preview Compose shape with a production-built frontend.
 - `curl http://localhost:8000/health`: verify API, database, and Redis health.
 - `curl http://localhost:8000/diagnostics`: inspect safe DB/Redis/storage/worker/job diagnostics without local paths or secrets.
+- `curl http://localhost:8000/demos/{demo_id}/diagnostics`: inspect owner-scoped parse/render/source/media/map diagnostics for one demo; use `X-Dev-User-Id` when testing owner boundaries.
+- `curl -F "file=@sample.dem" http://localhost:8000/uploads/demo`: ad hoc upload a real `.dem` through the normal parser path; use `X-Dev-User-Id` when testing owner boundaries.
+- `curl -X POST http://localhost:8000/demos/{demo_id}/parse/retry`: retry owner-scoped parsing from the stored source artifact when ingestion metadata says the failure is retryable.
+- `curl -F "file=@clip.mp4" http://localhost:8000/demos/{demo_id}/video/upload`: attach a dev/QA manual MP4 bridge, then post `/video/calibration` metadata; do not make MP4 upload the primary product path.
+- `curl -X POST http://localhost:8000/demos/{demo_id}/video/calibration -H "Content-Type: application/json" -d '{"timeOriginSeconds":12.5,"tickStart":12345,"tickEnd":54321}'`: save dev/QA manual MP4 tick calibration after video upload.
+- `curl -X POST http://localhost:8000/demos/{demo_id}/render/clip -H "Content-Type: application/json" -d '{"tickStart":0,"tickEnd":640,"tickRate":64}'`: create a short `render_clip` job; without an external/manual worker, expect the local no-GPU fallback.
 - `cd frontend && npm run dev`: run the frontend dev server outside Docker.
 - `cd frontend && npm run lint`: run ESLint with zero warnings allowed.
 - `cd frontend && npm run typecheck`: run TypeScript checks without emitting files.
@@ -38,7 +45,7 @@ This repository is a mock MVP for a website-based CS2 demo AI coach.
 - `cd frontend && node lib/coaching-review.test.mjs`: run coaching review helper regression tests.
 - `cd frontend && node lib/replay-quality-fixtures.test.mjs`: run compact replay quality fixture regressions.
 - `cd frontend && node lib/map-config.test.mjs`: run tactical map config helper tests.
-- `API_BASE_URL=http://localhost:8000 FRONTEND_URL=http://localhost:3000 python3 scripts/cloud_preview_smoke.py`: run local API/frontend mock replay, render job, media-route, and diagnostics smoke; use `SAMPLE_DEMO_PATH=/absolute/path/to/sample.dem python3 scripts/cloud_preview_smoke.py --require-sample` for strict real `.dem` parser validation.
+- `API_BASE_URL=http://localhost:8000 FRONTEND_URL=http://localhost:3000 python3 scripts/cloud_preview_smoke.py`: run API/frontend mock replay, render job, media-route, and diagnostics smoke; point these env vars at public preview origins for hosted smoke, and use `SAMPLE_DEMO_PATH=/absolute/path/to/sample.dem python3 scripts/cloud_preview_smoke.py --require-sample` for strict real `.dem` parser validation.
 - `./scripts/rc_check.sh`: run the non-browser release-candidate gate: verify, Docker build/up, health, diagnostics, `/dashboard` reachability, cloud preview smoke, and optional sample smoke; use `REQUIRE_SAMPLE_DEMO=1 SAMPLE_DEMO_PATH=/absolute/path/to/sample.dem ./scripts/rc_check.sh` when missing sample input must fail the gate.
 - `python3 render-worker/runner.py dry-run [{job_id}]`: inspect the next or specified render job manifest and adapter plan without posting callbacks.
 - `python3 render-worker/runner.py process-job {job_id}`: claim and process one render job through the configured adapter flow.
