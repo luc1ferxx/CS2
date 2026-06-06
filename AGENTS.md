@@ -6,7 +6,7 @@ This repository is a mock MVP for a website-based CS2 demo AI coach.
 
 - `frontend/`: Next.js + TypeScript app. App Router pages live in `frontend/app/`; shared UI is in `frontend/components/`; API helpers are in `frontend/lib/`; shared frontend types are in `frontend/types/`; static assets are in `frontend/public/`.
 - `backend/`: FastAPI service and worker code. Routes are in `backend/app/api/`; SQLAlchemy models in `backend/app/models/`; Pydantic schemas in `backend/app/schemas/`; business logic and artifact storage helpers are in `backend/app/services/`; Redis worker entrypoint is in `backend/app/workers/worker.py`.
-- `render-worker/`: standalone Render Worker V1 skeleton. `runner.py` drives fake-video and manual-operator adapter flows without launching CS2, Steam, OBS, or ffmpeg.
+- `render-worker/`: standalone Render Worker V1 skeleton. `runner.py` drives fake-video and manual-operator adapter flows without launching CS2, Steam, OBS, or ffmpeg; `render-worker/README.md` documents runner env, token, API, and adapter details.
 - `docker-compose.yml`: local stack for `frontend`, `api`, `worker`, `postgres`, and `redis`.
 - `README.md`: current product scope, storage/parser/render boundaries, API list, observability notes, and verification guidance.
 - `docs/cloud_preview_deploy_v1.md`: Compose preview shape, public URL contract, smoke commands, render-worker preview notes, and rollback/cleanup commands.
@@ -20,15 +20,30 @@ This repository is a mock MVP for a website-based CS2 demo AI coach.
 
 - `docker compose up --build`: build and run the full local stack.
 - `docker compose build` and `docker compose up -d`: run the split Docker build/start sequence used by the RC checklist.
-- `docker compose -f docker-compose.yml -f docker-compose.preview.yml up --build`: run the preview Compose shape with a production-built frontend.
+- `docker compose -f docker-compose.yml -f docker-compose.preview.yml up --build`: run the preview Compose shape with a production-built frontend; set `NEXT_PUBLIC_API_BASE_URL`, `BACKEND_PUBLIC_URL`, `CORS_ORIGINS`, and `MEDIA_URL_BASE` before building hosted previews.
+- `docker compose -f docker-compose.yml -f docker-compose.preview.yml down` and `docker compose -f docker-compose.yml -f docker-compose.preview.yml down -v`: stop a Compose preview with data preserved, or intentionally remove preview volumes for a clean environment.
 - `curl http://localhost:8000/health`: verify API, database, and Redis health.
 - `curl http://localhost:8000/diagnostics`: inspect safe DB/Redis/storage/worker/job diagnostics without local paths or secrets.
+- `curl "http://localhost:8000/demos?search=dust&status=completed&map=de_dust2&sort=recent&includeArchived=true"`: inspect the owner-scoped Demo Library API with the same search/filter/sort/archive visibility used by `/dashboard`.
+- `curl -X PATCH http://localhost:8000/demos/{demo_id} -H "Content-Type: application/json" -d '{"name":"Review sample","archived":false}'`: rename, unarchive, or update library metadata; omit fields you are not changing.
+- `curl -X POST http://localhost:8000/demos/{demo_id}/archive`: soft archive a demo while keeping it directly openable by ID.
 - `curl http://localhost:8000/demos/{demo_id}/diagnostics`: inspect owner-scoped parse/render/source/media/map diagnostics for one demo; use `X-Dev-User-Id` when testing owner boundaries.
+- `curl -X POST http://localhost:8000/uploads/mock`: create a fast synthetic demo for UI smoke and replay/coaching checks.
 - `curl -F "file=@sample.dem" http://localhost:8000/uploads/demo`: ad hoc upload a real `.dem` through the normal parser path; use `X-Dev-User-Id` when testing owner boundaries.
+- `curl http://localhost:8000/demos/{demo_id}/status`: poll owner-scoped parse/analyze status after mock or real upload.
+- `curl http://localhost:8000/demos/{demo_id}/replay` and `curl http://localhost:8000/demos/{demo_id}/coaching`: inspect the stored replay contract and deterministic coaching payloads used by Demo Detail.
 - `curl -X POST http://localhost:8000/demos/{demo_id}/parse/retry`: retry owner-scoped parsing from the stored source artifact when ingestion metadata says the failure is retryable.
+- `curl http://localhost:8000/demos/{demo_id}/video`: inspect replay video metadata before or after manual upload, calibration, or render-worker callbacks.
 - `curl -F "file=@clip.mp4" http://localhost:8000/demos/{demo_id}/video/upload`: attach a dev/QA manual MP4 bridge, then post `/video/calibration` metadata; do not make MP4 upload the primary product path.
 - `curl -X POST http://localhost:8000/demos/{demo_id}/video/calibration -H "Content-Type: application/json" -d '{"timeOriginSeconds":12.5,"tickStart":12345,"tickEnd":54321}'`: save dev/QA manual MP4 tick calibration after video upload.
+- `curl -X POST http://localhost:8000/demos/{demo_id}/render/mock`: create a dev/QA `mock_render` job that exercises rendered-video status without CS2; keep `render_clip` as the product render boundary.
 - `curl -X POST http://localhost:8000/demos/{demo_id}/render/clip -H "Content-Type: application/json" -d '{"tickStart":0,"tickEnd":640,"tickRate":64}'`: create a short `render_clip` job; without an external/manual worker, expect the local no-GPU fallback.
+- `curl http://localhost:8000/demos/{demo_id}/render/jobs`: inspect user-facing render job status, including no-GPU fallback and callback results.
+- `curl http://localhost:8000/render-worker/jobs/next -H "X-Render-Worker-Token: dev-render-worker-token"`: fetch and claim the next queued render-worker manifest; use `RENDER_WORKER_TOKEN` when overridden.
+- `curl http://localhost:8000/render-worker/jobs/{job_id}/manifest -H "X-Render-Worker-Token: dev-render-worker-token"`: fetch and claim a specific render-worker manifest as `rendering`.
+- `curl "http://localhost:8000/render-worker/jobs/{job_id}/manifest?claim=false" -H "X-Render-Worker-Token: dev-render-worker-token"`: inspect a specific render-worker manifest without claiming it; omit `claim=false` to claim it as `rendering`.
+- `curl -X POST http://localhost:8000/render-worker/jobs/{job_id}/media -H "X-Render-Worker-Token: dev-render-worker-token" -F "file=@clip.mp4"`: upload worker-produced dev media before posting a render-worker result callback.
+- `curl -X POST http://localhost:8000/render-worker/jobs/{job_id}/result -H "X-Render-Worker-Token: dev-render-worker-token" -H "Content-Type: application/json" -d '{"status":"failed","errorMessage":"GPU worker not connected"}'`: submit a completed or failed render-worker callback; see `render-worker/README.md` for the full completed payload.
 - `cd frontend && npm run dev`: run the frontend dev server outside Docker.
 - `cd frontend && npm run lint`: run ESLint with zero warnings allowed.
 - `cd frontend && npm run typecheck`: run TypeScript checks without emitting files.
@@ -45,9 +60,9 @@ This repository is a mock MVP for a website-based CS2 demo AI coach.
 - `cd frontend && node lib/coaching-review.test.mjs`: run coaching review helper regression tests.
 - `cd frontend && node lib/replay-quality-fixtures.test.mjs`: run compact replay quality fixture regressions.
 - `cd frontend && node lib/map-config.test.mjs`: run tactical map config helper tests.
-- `API_BASE_URL=http://localhost:8000 FRONTEND_URL=http://localhost:3000 python3 scripts/cloud_preview_smoke.py`: run API/frontend mock replay, render job, media-route, and diagnostics smoke; point these env vars at public preview origins for hosted smoke, and use `SAMPLE_DEMO_PATH=/absolute/path/to/sample.dem python3 scripts/cloud_preview_smoke.py --require-sample` for strict real `.dem` parser validation.
-- `./scripts/rc_check.sh`: run the non-browser release-candidate gate: verify, Docker build/up, health, diagnostics, `/dashboard` reachability, cloud preview smoke, and optional sample smoke; use `REQUIRE_SAMPLE_DEMO=1 SAMPLE_DEMO_PATH=/absolute/path/to/sample.dem ./scripts/rc_check.sh` when missing sample input must fail the gate.
-- `python3 render-worker/runner.py dry-run [{job_id}]`: inspect the next or specified render job manifest and adapter plan without posting callbacks.
+- `API_BASE_URL=http://localhost:8000 FRONTEND_URL=http://localhost:3000 python3 scripts/cloud_preview_smoke.py`: run API/frontend mock replay, render job, media-route, and diagnostics smoke; point these env vars at public preview origins for hosted smoke, set `SAMPLE_DEMO_NAME` to rename an uploaded smoke sample, and use `SAMPLE_DEMO_PATH=/absolute/path/to/sample.dem python3 scripts/cloud_preview_smoke.py --require-sample`, `REQUIRE_SAMPLE_DEMO=1`, or `SAMPLE_DEMO_REQUIRED=1` for strict real `.dem` parser validation.
+- `./scripts/rc_check.sh`: run the non-browser release-candidate gate using `API_BASE_URL` and `FRONTEND_URL` (defaulting to localhost): verify, Docker build/up, health, diagnostics, `/dashboard` reachability, cloud preview smoke, and optional sample smoke; set those URL env vars for public previews, `SAMPLE_DEMO_NAME` to rename the sample, and `REQUIRE_SAMPLE_DEMO=1` or `SAMPLE_DEMO_REQUIRED=1` when missing sample input must fail the gate.
+- `python3 render-worker/runner.py dry-run [{job_id}]`: inspect the next or specified render job manifest and adapter plan without posting callbacks; set `API_BASE_URL` and `RENDER_WORKER_TOKEN` when targeting a non-local preview API.
 - `python3 render-worker/runner.py process-job {job_id}`: claim and process one render job through the configured adapter flow.
 - `python3 render-worker/runner.py poll-once`: claim and process the next queued render job once.
 - `python3 render-worker/runner.py prepare-job --job-id {job_id} --adapter cs2-manual`: generate manual operator manifest, instructions, expected output, and status files.
@@ -59,7 +74,7 @@ Use TypeScript for frontend changes and Python 3.12 style for backend changes. K
 
 ## Testing Guidelines
 
-For every change, run the relevant verification commands above. Backend changes should generally run `python3 -m compileall backend/app` and `PYTHONPATH=backend python3 -m unittest discover backend/tests`. Render-worker changes should run its compile and unittest commands. Frontend behavior changes should run lint, typecheck, build, and the focused `node lib/*.test.mjs` helper tests for the touched surface. For replay UI changes, manually verify `/dashboard` and a demo detail page: play/pause, seek, speed, round selection, coaching event click-to-seek, tactical map sync, replay diagnostics, degraded states, and render status fallback.
+For every change, run the relevant verification commands above. Backend changes should generally run `python3 -m compileall backend/app` and `PYTHONPATH=backend python3 -m unittest discover backend/tests`. Render-worker changes should run its compile and unittest commands. Frontend behavior changes should run lint, typecheck, build, and the focused `node lib/*.test.mjs` helper tests for the touched surface. For replay UI changes, manually verify `/dashboard` and a demo detail page: play/pause, seek, speed, round selection, coaching event click-to-seek, tactical map sync, replay diagnostics, degraded states, `RenderOperatorPanel`, and render status fallback.
 
 For release-candidate QA work, keep `docs/release_candidate_qa_v1.md`, `scripts/rc_check.sh`, README, deployment readiness, cloud preview, and sample fixture docs aligned. `rc_check.sh` is only the non-browser gate; manual browser smoke remains required for RC sign-off. For map config/radar changes, run `PYTHONPATH=backend python3 -m unittest backend.tests.test_map_config` and `cd frontend && node lib/map-config.test.mjs`.
 
