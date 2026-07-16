@@ -1,4 +1,5 @@
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlparse
@@ -7,6 +8,10 @@ from urllib.parse import urlparse
 DEFAULT_ARTIFACT_STORAGE_ROOT = Path(os.getenv("ARTIFACT_STORAGE_ROOT", "/data"))
 SUPPORTED_AUTH_MODES = {"development", "test", "production"}
 SUPPORTED_OIDC_ALGORITHMS = {"RS256", "ES256"}
+SUPPORTED_ARTIFACT_STORAGE_BACKENDS = {"local", "s3"}
+MAX_STAGE3_DEMO_UPLOAD_BYTES = 1024 * 1024 * 1024
+MAX_STAGE3_VIDEO_UPLOAD_BYTES = 2 * 1024 * 1024 * 1024
+MAX_STAGE3_REPLAY_ARTIFACT_BYTES = 128 * 1024 * 1024
 
 
 def _base_url_from_env(name: str, default: str = "") -> str:
@@ -79,6 +84,41 @@ class Settings:
     redis_queue_name: str = os.getenv("REDIS_QUEUE_NAME", "cs2-demo-jobs")
     backend_public_url: str = _base_url_from_env("BACKEND_PUBLIC_URL", "http://localhost:8000")
     media_url_base: str = _base_url_from_env("MEDIA_URL_BASE")
+    artifact_storage_backend: str = os.getenv(
+        "ARTIFACT_STORAGE_BACKEND", "local"
+    ).strip().lower()
+    object_storage_bucket: str = os.getenv("OBJECT_STORAGE_BUCKET", "").strip()
+    object_storage_prefix: str = os.getenv(
+        "OBJECT_STORAGE_PREFIX", "cs2-artifacts-v1"
+    ).strip()
+    object_storage_region: str = os.getenv(
+        "OBJECT_STORAGE_REGION", "us-east-1"
+    ).strip()
+    object_storage_endpoint_url: str = _base_url_from_env(
+        "OBJECT_STORAGE_ENDPOINT_URL"
+    )
+    object_storage_access_key_id: str = os.getenv(
+        "OBJECT_STORAGE_ACCESS_KEY_ID", ""
+    ).strip()
+    object_storage_secret_access_key: str = os.getenv(
+        "OBJECT_STORAGE_SECRET_ACCESS_KEY", ""
+    ).strip()
+    artifact_quarantine_ttl_seconds: int = int(
+        os.getenv("ARTIFACT_QUARANTINE_TTL_SECONDS", "3600")
+    )
+    max_demo_upload_bytes: int = int(
+        os.getenv("MAX_DEMO_UPLOAD_BYTES", str(MAX_STAGE3_DEMO_UPLOAD_BYTES))
+    )
+    max_video_upload_bytes: int = int(
+        os.getenv("MAX_VIDEO_UPLOAD_BYTES", str(MAX_STAGE3_VIDEO_UPLOAD_BYTES))
+    )
+    max_replay_artifact_bytes: int = int(
+        os.getenv(
+            "MAX_REPLAY_ARTIFACT_BYTES",
+            str(MAX_STAGE3_REPLAY_ARTIFACT_BYTES),
+        )
+    )
+    upload_chunk_bytes: int = int(os.getenv("UPLOAD_CHUNK_BYTES", str(1024 * 1024)))
     artifact_storage_root: Path = DEFAULT_ARTIFACT_STORAGE_ROOT
     replay_storage_dir: Path = Path(
         os.getenv("REPLAY_STORAGE_DIR", str(DEFAULT_ARTIFACT_STORAGE_ROOT / "replays"))
@@ -125,6 +165,7 @@ class Settings:
     def validate_runtime_configuration(self) -> None:
         self._validate_explicit_auth_mode()
         if self.auth_mode != "production":
+            self._validate_artifact_storage_configuration()
             return
 
         required = (
@@ -221,11 +262,83 @@ class Settings:
             raise RuntimeError(
                 "FRONTEND_PUBLIC_URL must share the exact API origin in production"
             )
+        self._validate_artifact_storage_configuration()
 
     def validate_worker_runtime_configuration(self) -> None:
         self._validate_explicit_auth_mode()
         if self.auth_mode == "production":
             self._validate_production_render_worker_token()
+        self._validate_artifact_storage_configuration()
+
+    def _validate_artifact_storage_configuration(self) -> None:
+        if self.artifact_storage_backend not in SUPPORTED_ARTIFACT_STORAGE_BACKENDS:
+            raise RuntimeError(
+                "ARTIFACT_STORAGE_BACKEND must be explicitly set to local or s3"
+            )
+        if self.auth_mode == "production" and self.artifact_storage_backend != "s3":
+            raise RuntimeError(
+                "ARTIFACT_STORAGE_BACKEND must be s3 in production"
+            )
+
+        if self.artifact_quarantine_ttl_seconds != 3600:
+            raise RuntimeError(
+                "ARTIFACT_QUARANTINE_TTL_SECONDS must be 3600 for artifact_intake_v1"
+            )
+        if not 16 <= self.max_demo_upload_bytes <= MAX_STAGE3_DEMO_UPLOAD_BYTES:
+            raise RuntimeError(
+                "MAX_DEMO_UPLOAD_BYTES must be between 16 and 1073741824"
+            )
+        if not 1 <= self.max_video_upload_bytes <= MAX_STAGE3_VIDEO_UPLOAD_BYTES:
+            raise RuntimeError(
+                "MAX_VIDEO_UPLOAD_BYTES must be between 1 and 2147483648"
+            )
+        if not 1 <= self.max_replay_artifact_bytes <= MAX_STAGE3_REPLAY_ARTIFACT_BYTES:
+            raise RuntimeError(
+                "MAX_REPLAY_ARTIFACT_BYTES must be between 1 and 134217728"
+            )
+        if self.upload_chunk_bytes != 1024 * 1024:
+            raise RuntimeError(
+                "UPLOAD_CHUNK_BYTES must be 1048576 for artifact_intake_v1"
+            )
+
+        if self.artifact_storage_backend != "s3":
+            return
+        if not _valid_bucket_name(self.object_storage_bucket):
+            raise RuntimeError(
+                "OBJECT_STORAGE_BUCKET must be a non-empty private bucket name"
+            )
+        if not _valid_object_prefix(self.object_storage_prefix):
+            raise RuntimeError(
+                "OBJECT_STORAGE_PREFIX must contain only safe path segments"
+            )
+        if not self.object_storage_region:
+            raise RuntimeError("OBJECT_STORAGE_REGION must not be blank")
+        if self.object_storage_endpoint_url:
+            try:
+                parsed = urlparse(self.object_storage_endpoint_url)
+                parsed.port
+            except ValueError as exc:
+                raise RuntimeError(
+                    "OBJECT_STORAGE_ENDPOINT_URL must be a valid URL"
+                ) from exc
+            required_scheme = "https" if self.auth_mode == "production" else parsed.scheme
+            if (
+                parsed.scheme != required_scheme
+                or not parsed.hostname
+                or parsed.username is not None
+                or parsed.password is not None
+                or parsed.query
+                or parsed.fragment
+            ):
+                raise RuntimeError(
+                    "OBJECT_STORAGE_ENDPOINT_URL must be a private https endpoint in production"
+                )
+        if bool(self.object_storage_access_key_id) != bool(
+            self.object_storage_secret_access_key
+        ):
+            raise RuntimeError(
+                "Object storage credentials must provide both access key and secret key"
+            )
 
     def _validate_explicit_auth_mode(self) -> None:
         if self.auth_mode not in SUPPORTED_AUTH_MODES:
@@ -238,6 +351,26 @@ class Settings:
             raise RuntimeError(
                 "RENDER_WORKER_TOKEN must be a non-default service credential in production"
             )
+
+
+def _valid_bucket_name(value: str) -> bool:
+    return bool(
+        3 <= len(value) <= 63
+        and "/" not in value
+        and "\\" not in value
+        and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*[A-Za-z0-9]", value)
+    )
+
+
+def _valid_object_prefix(value: str) -> bool:
+    if not value or len(value) > 128 or value.startswith("/") or value.endswith("/"):
+        return False
+    segments = value.split("/")
+    return all(
+        segment not in {"", ".", ".."}
+        and re.fullmatch(r"[A-Za-z0-9._-]+", segment)
+        for segment in segments
+    )
 
 
 settings = Settings()

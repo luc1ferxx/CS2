@@ -20,8 +20,8 @@ from app.schemas.demo import (
     ReplayVideoStatus,
     VideoCalibrationUpdate,
 )
-from app.services.demo_service import DemoService
-from app.services.upload_service import DemoUploadValidationError, store_video_upload
+from app.services.demo_service import DemoDispatchError, DemoService
+from app.services.upload_service import DemoUploadValidationError, store_video_artifact
 
 router = APIRouter(tags=["demos"])
 
@@ -99,6 +99,8 @@ def retry_demo_parse(
         raise HTTPException(status_code=404, detail="Demo not found")
     try:
         return service.retry_parse_job(demo)
+    except DemoDispatchError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from None
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
@@ -137,7 +139,7 @@ def get_demo_video(
 
 
 @router.post("/demos/{demo_id}/video/upload", response_model=ReplayVideoStatus)
-async def upload_demo_video(
+def upload_demo_video(
     demo_id: str,
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
@@ -151,7 +153,14 @@ async def upload_demo_video(
         raise HTTPException(status_code=409, detail="Demo parse must complete before video upload")
 
     try:
-        stored_video = await store_video_upload(demo.id, file)
+        stored_video = store_video_artifact(
+            owner_id=demo.owner_id,
+            demo_id=demo.id,
+            upload=file,
+            store=service.artifact_store,
+            max_bytes=settings.max_video_upload_bytes,
+            chunk_size=settings.upload_chunk_bytes,
+        )
         video = service.attach_manual_video(demo, stored_video)
     except DemoUploadValidationError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -305,7 +314,7 @@ def get_render_worker_manifest(
     response_model=RenderWorkerMediaUpload,
     tags=["render-worker"],
 )
-async def upload_render_worker_media(
+def upload_render_worker_media(
     job_id: str,
     file: UploadFile = File(...),
     _: None = Depends(require_render_worker_token),
@@ -315,11 +324,26 @@ async def upload_render_worker_media(
     job = service.get_render_clip_job(job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="Render clip job not found")
+    if job.status != "rendering":
+        raise HTTPException(
+            status_code=409,
+            detail="Render worker media requires a rendering job",
+        )
 
     try:
-        stored_video = await store_video_upload(job.demo_id, file)
+        stored_video = store_video_artifact(
+            owner_id=job.demo.owner_id,
+            demo_id=job.demo_id,
+            upload=file,
+            store=service.artifact_store,
+            max_bytes=settings.max_video_upload_bytes,
+            chunk_size=settings.upload_chunk_bytes,
+        )
+        service.bind_render_worker_media(job, stored_video)
     except DemoUploadValidationError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     return RenderWorkerMediaUpload(
         jobId=job.id,

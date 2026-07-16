@@ -97,6 +97,9 @@ class ProductionAuthConfigurationTest(unittest.TestCase):
         Settings(
             auth_mode="production",
             render_worker_token="production-worker-credential",
+            artifact_storage_backend="s3",
+            object_storage_bucket="private-cs2-artifacts",
+            object_storage_prefix="cs2-artifacts-v1",
         ).validate_worker_runtime_configuration()
 
     def test_production_requires_secure_bounded_session_configuration(self) -> None:
@@ -218,6 +221,9 @@ def valid_production_settings_kwargs() -> dict[str, object]:
         "auth_cookie_secure": True,
         "cors_origins_raw": "https://coach.example.test",
         "render_worker_token": "test-worker-secret-that-is-not-a-default",
+        "artifact_storage_backend": "s3",
+        "object_storage_bucket": "private-cs2-artifacts",
+        "object_storage_prefix": "cs2-artifacts-v1",
     }
 
 

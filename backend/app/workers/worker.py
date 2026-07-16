@@ -21,8 +21,9 @@ from app.services.demo_service import (
     RENDER_WORKER_UNAVAILABLE_ERROR_CODE,
     DemoService,
 )
+from app.services.artifact_binding import AcceptedArtifactError
 from app.services.diagnostics import write_worker_heartbeat
-from app.services.storage import StorageKeyError
+from app.services.storage import ArtifactStoreError, StorageKeyError
 from app.services.mock_replay_service import build_mock_replay
 
 
@@ -33,7 +34,7 @@ def utc_now() -> datetime:
 def process_job(db: Session, job_id: str, demo_id: str) -> None:
     demo = db.query(Demo).filter(Demo.id == demo_id).one_or_none()
     job = db.query(DemoJob).filter(DemoJob.id == job_id).one_or_none()
-    if demo is None or job is None:
+    if demo is None or job is None or job.demo_id != demo.id:
         return
 
     if job.job_type == RENDER_CLIP_JOB_TYPE:
@@ -70,7 +71,8 @@ def process_real_parse_job(db: Session, demo: Demo, job: DemoJob) -> None:
     service.claim_parse_job(demo, job)
 
     try:
-        parsed = parse_demo_file(service.source_demo_path(demo))
+        with service.materialized_source_demo(demo, job) as source_path:
+            parsed = parse_demo_file(source_path)
     except BaseException as exc:
         if isinstance(exc, (KeyboardInterrupt, SystemExit)):
             raise
@@ -100,39 +102,20 @@ def process_real_parse_job(db: Session, demo: Demo, job: DemoJob) -> None:
 def process_mock_render_job(db: Session, demo: Demo, job: DemoJob) -> None:
     service = DemoService.for_internal(db)
 
-    job.status = "processing"
     job.attempts += 1
-    job.started_at = utc_now()
-    service.update_replay_video(
-        demo,
-        {
-            **service.get_video_status(demo),
-            "status": "rendering",
-            "source": "rendered",
-            "url": None,
-            "errorCode": None,
-            "errorMessage": None,
-        },
+    service.transition_mock_render_job(
+        job,
+        job_status="processing",
+        video_status="rendering",
     )
-    db.commit()
 
     time.sleep(1.4)
 
-    service.update_replay_video(
-        demo,
-        {
-            **service.get_video_status(demo),
-            "status": "ready",
-            "source": "rendered",
-            "url": None,
-            "errorCode": None,
-            "errorMessage": None,
-        },
+    service.transition_mock_render_job(
+        job,
+        job_status="completed",
+        video_status="ready",
     )
-    job.status = "completed"
-    job.finished_at = utc_now()
-    job.error_message = None
-    db.commit()
 
 
 def process_render_clip_job(db: Session, demo: Demo, job: DemoJob) -> None:
@@ -144,55 +127,43 @@ def process_render_clip_job(db: Session, demo: Demo, job: DemoJob) -> None:
     if service.load_replay_blob(demo) is None:
         raise ValueError("Replay blob is not ready")
 
-    job.status = "rendering"
-    job.attempts += 1
-    job.started_at = utc_now()
-    job.error_message = None
-    service.update_render_clip_video_status(demo, "rendering", None)
-    db.commit()
-
-    service.update_render_clip_video_status(
-        demo,
-        "failed",
+    service.claim_render_clip_job(job)
+    service.fail_render_clip_job(
+        job,
         RENDER_CLIP_NOT_CONNECTED_ERROR,
         error_code=RENDER_WORKER_UNAVAILABLE_ERROR_CODE,
     )
-    job.status = "failed"
-    job.error_message = RENDER_CLIP_NOT_CONNECTED_ERROR
-    job.finished_at = utc_now()
-    db.commit()
 
 
 def fail_job(db: Session, job_id: str, demo_id: str, error: Any) -> None:
     demo = db.query(Demo).filter(Demo.id == demo_id).one_or_none()
     job = db.query(DemoJob).filter(DemoJob.id == job_id).one_or_none()
+    if demo is None or job is None or job.demo_id != demo.id:
+        return
     if demo is not None and job is not None and job.job_type == "mock_render":
         try:
             service = DemoService.for_internal(db)
-            service.update_replay_video(
-                demo,
-                {
-                    **service.get_video_status(demo),
-                    "status": "failed",
-                    "source": "rendered",
-                    "url": None,
-                    "errorCode": RENDER_FAILED_ERROR_CODE,
-                    "errorMessage": RENDER_FAILED_PUBLIC_MESSAGE,
-                },
+            service.transition_mock_render_job(
+                job,
+                job_status="failed",
+                video_status="failed",
+                error_code=RENDER_FAILED_ERROR_CODE,
+                error_message=RENDER_FAILED_PUBLIC_MESSAGE,
             )
         except Exception:
             _log_job_failure(job.id, "mock-render-failure-update", error)
+        return
     elif demo is not None and job is not None and job.job_type == RENDER_CLIP_JOB_TYPE:
         try:
             service = DemoService.for_internal(db)
-            service.update_render_clip_video_status(
-                demo,
-                "failed",
+            service.fail_render_clip_job(
+                job,
                 RENDER_FAILED_PUBLIC_MESSAGE,
                 error_code=RENDER_FAILED_ERROR_CODE,
             )
         except Exception:
             _log_job_failure(job.id, "render-clip-failure-update", error)
+        return
     elif demo is not None and job is not None and job.job_type in {"real_parse", "mock_parse"}:
         failure = _parse_failure_for_exception(error, phase="parse")
         DemoService.for_internal(db).fail_parse_job(
@@ -269,7 +240,7 @@ def _parse_failure_for_exception(error: Any, *, phase: str) -> dict[str, str]:
             "message": error.user_message,
         }
 
-    if isinstance(error, (OSError, StorageKeyError)):
+    if isinstance(error, (OSError, StorageKeyError, ArtifactStoreError, AcceptedArtifactError)):
         return {
             "errorCode": "STORAGE_READ_FAILED",
             "message": "Uploaded demo artifact could not be read from storage.",

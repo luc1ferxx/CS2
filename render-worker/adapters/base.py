@@ -11,7 +11,7 @@ class AdapterConfigError(ValueError):
 
 
 class RenderWorkerClient(Protocol):
-    def upload_media(self, job_id: str, media_path: Path) -> str:
+    def upload_media(self, job_id: str, media_path: Path) -> "UploadedMedia":
         ...
 
     def post_result(self, job_id: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -29,10 +29,21 @@ class AdapterResult:
     output_path: Path | None = None
 
 
-def completed_payload(manifest: dict[str, Any], video_url: str) -> dict[str, Any]:
+@dataclass(frozen=True)
+class UploadedMedia:
+    video_url: str
+    storage_key: str
+
+
+def completed_payload(
+    manifest: dict[str, Any],
+    video_url: str,
+    storage_key: str | None = None,
+) -> dict[str, Any]:
     return {
         "status": "completed",
         "videoUrl": video_url,
+        "storageKey": storage_key,
         "localMediaPath": None,
         "tickStart": int(manifest["tickStart"]),
         "tickEnd": int(manifest["tickEnd"]),
@@ -47,6 +58,7 @@ def failed_payload(manifest: dict[str, Any], error_message: str) -> dict[str, An
     return {
         "status": "failed",
         "videoUrl": None,
+        "storageKey": None,
         "localMediaPath": None,
         "tickStart": int(manifest["tickStart"]),
         "tickEnd": int(manifest["tickEnd"]),

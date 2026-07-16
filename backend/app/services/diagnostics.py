@@ -12,7 +12,13 @@ from app.core.config import settings
 from app.models.demo import Demo
 from app.models.job import DemoJob
 from app.services.demo_service import RENDER_CLIP_JOB_TYPE, DemoService
-from app.services.storage import LocalStorageService, StorageKeyError
+from app.services.storage import (
+    ArtifactStore,
+    ArtifactStoreError,
+    LocalStorageService,
+    StorageKeyError,
+    artifact_store_from_settings,
+)
 
 
 WORKER_HEARTBEAT_KEY = "cs2-demo-coach:worker:heartbeat"
@@ -72,13 +78,13 @@ def build_system_diagnostics(
     db: Session,
     redis_client: Any,
     *,
-    storage: LocalStorageService | None = None,
+    storage: LocalStorageService | ArtifactStore | None = None,
     now: datetime | None = None,
 ) -> dict[str, Any]:
     current = _aware_datetime(now or utc_now())
     database = _database_status(db)
     redis = _redis_status(redis_client)
-    storage_status = _storage_status(storage or LocalStorageService.from_settings())
+    storage_status = _storage_status(storage or artifact_store_from_settings())
     worker_dependencies = _worker_dependency_status()
 
     jobs = {
@@ -126,10 +132,17 @@ def build_demo_diagnostics(service: DemoService, demo: Demo) -> dict[str, Any]:
         },
         "storage": {
             "sourceDemo": _artifact_status(
-                service.storage,
+                service,
                 _source_storage_key_for_diagnostics(service, demo),
+                demo=demo,
+                kind="source",
             ),
-            "replay": _artifact_status(service.storage, getattr(demo, "replay_storage_key", None)),
+            "replay": _artifact_status(
+                service,
+                getattr(demo, "replay_storage_key", None),
+                demo=demo,
+                kind="replay",
+            ),
         },
         "video": {
             "status": _optional_str(video.get("status")),
@@ -171,7 +184,13 @@ def _redis_status(redis_client: Any) -> dict[str, bool]:
         return {"ok": False}
 
 
-def _storage_status(storage: LocalStorageService) -> dict[str, Any]:
+def _storage_status(storage: LocalStorageService | ArtifactStore) -> dict[str, Any]:
+    if not isinstance(storage, LocalStorageService):
+        return {
+            "ok": True,
+            "backend": settings.artifact_storage_backend,
+            "private": True,
+        }
     categories: dict[str, bool] = {}
     for category in sorted(storage.CATEGORIES):
         try:
@@ -303,11 +322,40 @@ def _unknown_render_worker_status() -> dict[str, Any]:
     return {"status": "unknown", "connected": None}
 
 
-def _artifact_status(storage: LocalStorageService, storage_key: str | None) -> dict[str, Any]:
+def _artifact_status(
+    service: DemoService,
+    storage_key: str | None,
+    *,
+    demo: Demo,
+    kind: str,
+) -> dict[str, Any]:
     if not storage_key:
         return {"keyPresent": False, "artifactPresent": None}
+    if storage_key.startswith("artifact://"):
+        try:
+            service.artifact_store.require_binding(
+                storage_key,
+                owner_id=demo.owner_id,
+                demo_id=demo.id,
+                kind=kind,
+                state="accepted",
+            )
+            exists = service.artifact_store.head(storage_key) is not None
+        except ArtifactStoreError:
+            exists = False
+        return {"keyPresent": True, "artifactPresent": exists}
     try:
-        exists = storage.exists(storage_key)
+        if kind == "source" and not service.storage.upload_key_belongs_to_demo(
+            demo.id,
+            storage_key,
+        ):
+            return {"keyPresent": True, "artifactPresent": False}
+        if kind == "replay" and not service.storage.replay_key_belongs_to_demo(
+            demo.id,
+            storage_key,
+        ):
+            return {"keyPresent": True, "artifactPresent": False}
+        exists = service.storage.exists(storage_key)
     except (OSError, StorageKeyError):
         exists = False
     return {"keyPresent": True, "artifactPresent": exists}
@@ -316,9 +364,6 @@ def _artifact_status(storage: LocalStorageService, storage_key: str | None) -> d
 def _source_storage_key_for_diagnostics(service: DemoService, demo: Demo) -> str | None:
     if getattr(demo, "source_storage_key", None):
         return demo.source_storage_key
-    parse_job = service.latest_parse_job(demo)
-    if parse_job is not None and parse_job.job_type == "real_parse":
-        return service.source_demo_storage_key(demo)
     return None
 
 

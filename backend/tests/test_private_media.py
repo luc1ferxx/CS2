@@ -1,3 +1,6 @@
+import io
+import json
+import os
 import tempfile
 import unittest
 from datetime import datetime, timezone
@@ -16,7 +19,8 @@ from app.core.config import settings
 from app.core.database import Base, get_db
 from app.models import Demo
 from app.services.demo_service import DemoService
-from app.services.storage import LocalStorageService
+from app.services.storage import ArtifactReference, LocalStorageService
+from app.services.upload_service import store_video_artifact
 
 
 OWNER_A = "owner-a"
@@ -34,9 +38,14 @@ class PrivateMediaApiTest(unittest.TestCase):
         self.Session = sessionmaker(bind=self.engine, autocommit=False, autoflush=False)
 
         self.temp_dir = tempfile.TemporaryDirectory()
+        self.original_artifact_storage_backend = settings.artifact_storage_backend
+        self.original_artifact_storage_root = settings.artifact_storage_root
         self.original_replay_dir = settings.replay_storage_dir
         self.original_video_dir = settings.video_storage_dir
         root = Path(self.temp_dir.name)
+        self.artifact_root = root / "artifacts"
+        object.__setattr__(settings, "artifact_storage_backend", "local")
+        object.__setattr__(settings, "artifact_storage_root", self.artifact_root)
         object.__setattr__(settings, "replay_storage_dir", root / "replays")
         object.__setattr__(settings, "video_storage_dir", root / "videos")
 
@@ -48,6 +57,16 @@ class PrivateMediaApiTest(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.app.dependency_overrides.clear()
+        object.__setattr__(
+            settings,
+            "artifact_storage_backend",
+            self.original_artifact_storage_backend,
+        )
+        object.__setattr__(
+            settings,
+            "artifact_storage_root",
+            self.original_artifact_storage_root,
+        )
         object.__setattr__(settings, "replay_storage_dir", self.original_replay_dir)
         object.__setattr__(settings, "video_storage_dir", self.original_video_dir)
         self.temp_dir.cleanup()
@@ -147,14 +166,14 @@ class PrivateMediaApiTest(unittest.TestCase):
         self.assertEqual(response.json(), {"detail": "Media not found"})
 
     def test_copied_private_video_url_does_not_cross_owner_boundary(self) -> None:
-        self.add_ready_video("demo-owner-b", "owner-b")
+        video_reference = self.add_ready_video("demo-owner-b", "owner-b")
 
         response = self.client.get("/demos/demo-owner-b/media/video")
 
-        self.assertEqual(response.status_code, 404)
-        self.assertEqual(response.json(), {"detail": "Media not found"})
-        self.assertNotIn("clip.mp4", response.text)
-        self.assertNotIn("local://", response.text)
+        self.assert_private_not_found_without_artifact_details(
+            response,
+            video_reference,
+        )
 
     def test_archived_demo_video_remains_available_to_its_owner(self) -> None:
         self.add_ready_video("demo-owner-a", OWNER_A, archived=True)
@@ -165,34 +184,38 @@ class PrivateMediaApiTest(unittest.TestCase):
         self.assertEqual(response.content, VIDEO_BYTES)
 
     def test_missing_private_video_is_not_found_without_path_details(self) -> None:
-        self.add_ready_video("demo-owner-a", OWNER_A)
-        (settings.video_storage_dir / "demo-owner-a" / "clip.mp4").unlink()
+        video_reference = self.add_ready_video("demo-owner-a", OWNER_A)
+        with self.Session() as db:
+            service = DemoService(db, owner_id=OWNER_A)
+            service.artifact_store.delete(video_reference)
 
         response = self.client.get("/demos/demo-owner-a/media/video")
 
-        self.assertEqual(response.status_code, 404)
-        self.assertEqual(response.json(), {"detail": "Media not found"})
-        self.assertNotIn(str(settings.video_storage_dir), response.text)
-        self.assertNotIn("clip.mp4", response.text)
+        self.assert_private_not_found_without_artifact_details(
+            response,
+            video_reference,
+        )
 
     def test_private_video_rejects_another_demos_artifact_reference(self) -> None:
         self.add_ready_video("demo-owner-a", OWNER_A)
-        self.add_ready_video("demo-owner-b", "owner-b")
+        other_reference = self.add_ready_video("demo-owner-b", OWNER_A)
         with self.Session() as db:
             service = DemoService(db, owner_id=OWNER_A)
             demo = service.get_demo("demo-owner-a")
             replay = service.load_replay_blob(demo)
-            replay["video"]["storageKey"] = "local://videos/demo-owner-b/clip.mp4"
-            service.write_replay_blob(demo.id, replay)
+            replay["video"]["storageKey"] = other_reference
+            persist_replay(service, demo, replay)
 
         response = self.client.get("/demos/demo-owner-a/media/video")
 
-        self.assertEqual(response.status_code, 404)
-        self.assertEqual(response.json(), {"detail": "Media not found"})
-        self.assertNotIn("demo-owner-b", response.text)
+        self.assert_private_not_found_without_artifact_details(
+            response,
+            other_reference,
+        )
 
     def test_private_video_rejects_symlinked_artifact(self) -> None:
-        self.add_ready_video("demo-owner-a", OWNER_A)
+        # Legacy local media remains supported only as an explicit compatibility boundary.
+        self.add_ready_video("demo-owner-a", OWNER_A, legacy=True)
         video_path = settings.video_storage_dir / "demo-owner-a" / "clip.mp4"
         outside_path = Path(self.temp_dir.name) / "outside.mp4"
         outside_path.write_bytes(b"outside-video")
@@ -206,8 +229,9 @@ class PrivateMediaApiTest(unittest.TestCase):
         self.assertNotIn(str(outside_path), response.text)
 
     def test_private_video_rejects_symlinked_demo_directory(self) -> None:
-        self.add_ready_video("demo-owner-a", OWNER_A)
-        self.add_ready_video("demo-owner-b", "owner-b")
+        # Legacy local media remains supported only as an explicit compatibility boundary.
+        self.add_ready_video("demo-owner-a", OWNER_A, legacy=True)
+        self.add_ready_video("demo-owner-b", "owner-b", legacy=True)
         owner_a_directory = settings.video_storage_dir / "demo-owner-a"
         owner_b_directory = settings.video_storage_dir / "demo-owner-b"
         (owner_a_directory / "clip.mp4").unlink()
@@ -221,7 +245,8 @@ class PrivateMediaApiTest(unittest.TestCase):
         self.assertNotIn("demo-owner-b", response.text)
 
     def test_private_video_stream_remains_bound_to_the_validated_file(self) -> None:
-        self.add_ready_video("demo-owner-a", OWNER_A)
+        # This test pins the already-open file descriptor in the legacy local adapter.
+        self.add_ready_video("demo-owner-a", OWNER_A, legacy=True)
         video_path = settings.video_storage_dir / "demo-owner-a" / "clip.mp4"
         outside_path = Path(self.temp_dir.name) / "outside.mp4"
         outside_path.write_bytes(b"outside-video")
@@ -245,7 +270,8 @@ class PrivateMediaApiTest(unittest.TestCase):
         self.assertNotEqual(response.content, outside_path.read_bytes())
 
     def test_private_video_rejects_traversal_in_artifact_metadata(self) -> None:
-        self.add_ready_video("demo-owner-a", OWNER_A)
+        # Traversal syntax only exists in the legacy local storage-key format.
+        self.add_ready_video("demo-owner-a", OWNER_A, legacy=True)
         with self.Session() as db:
             service = DemoService(db, owner_id=OWNER_A)
             demo = service.get_demo("demo-owner-a")
@@ -253,13 +279,44 @@ class PrivateMediaApiTest(unittest.TestCase):
             replay["video"]["storageKey"] = (
                 "local://videos/demo-owner-a/../../outside.mp4"
             )
-            service.write_replay_blob(demo.id, replay)
+            persist_replay(service, demo, replay)
 
         response = self.client.get("/demos/demo-owner-a/media/video")
 
         self.assertEqual(response.status_code, 404)
         self.assertEqual(response.json(), {"detail": "Media not found"})
         self.assertNotIn("outside.mp4", response.text)
+
+    def test_private_video_rejects_missing_artifact_generation_metadata(self) -> None:
+        video_reference = self.add_ready_video("demo-owner-a", OWNER_A)
+        _, metadata_path = self.accepted_artifact_paths(video_reference)
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        metadata.pop("generation")
+        metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+
+        response = self.client.get("/demos/demo-owner-a/media/video")
+
+        self.assert_private_not_found_without_artifact_details(
+            response,
+            video_reference,
+        )
+
+    def test_private_video_rejects_accepted_content_drift(self) -> None:
+        video_reference = self.add_ready_video("demo-owner-a", OWNER_A)
+        data_path, _ = self.accepted_artifact_paths(video_reference)
+        original_stat = data_path.stat()
+        data_path.write_bytes(b"fedcba9876543210")
+        os.utime(
+            data_path,
+            ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns + 1),
+        )
+
+        response = self.client.get("/demos/demo-owner-a/media/video")
+
+        self.assert_private_not_found_without_artifact_details(
+            response,
+            video_reference,
+        )
 
     def test_main_app_does_not_mount_public_video_storage(self) -> None:
         from app.main import app
@@ -278,7 +335,8 @@ class PrivateMediaApiTest(unittest.TestCase):
         owner_id: str,
         *,
         archived: bool = False,
-    ) -> None:
+        legacy: bool = False,
+    ) -> str:
         timestamp = datetime(2026, 7, 16, tzinfo=timezone.utc)
         with self.Session() as db:
             demo = Demo(
@@ -293,7 +351,6 @@ class PrivateMediaApiTest(unittest.TestCase):
                 coaching_event_count=0,
                 status="completed",
                 archived=archived,
-                replay_storage_key=f"local://replays/{demo_id}.json",
                 created_at=timestamp,
                 updated_at=timestamp,
             )
@@ -302,9 +359,20 @@ class PrivateMediaApiTest(unittest.TestCase):
             db.refresh(demo)
 
             service = DemoService(db, owner_id=owner_id)
-            video_key = service.storage.video_key(demo_id, "clip.mp4")
-            service.storage.write_bytes(video_key, VIDEO_BYTES)
-            service.write_replay_blob(
+            if legacy:
+                video_key = service.storage.video_key(demo_id, "clip.mp4")
+                service.storage.write_bytes(video_key, VIDEO_BYTES)
+                video_url = f"/media/videos/{demo_id}/clip.mp4"
+            else:
+                stored_video = store_video_artifact(
+                    owner_id=owner_id,
+                    demo_id=demo_id,
+                    upload=FakeUpload("clip.mp4", VIDEO_BYTES, "video/mp4"),
+                    store=service.artifact_store,
+                )
+                video_key = stored_video.storage_key
+                video_url = stored_video.url
+            replay_reference = service.write_replay_blob(
                 demo_id,
                 {
                     "demoId": demo_id,
@@ -312,7 +380,7 @@ class PrivateMediaApiTest(unittest.TestCase):
                     "tickRate": 64,
                     "video": {
                         "status": "ready",
-                        "url": f"/media/videos/{demo_id}/clip.mp4",
+                        "url": video_url,
                         "storageKey": video_key,
                         "durationSeconds": 1,
                         "tickStart": 0,
@@ -336,6 +404,49 @@ class PrivateMediaApiTest(unittest.TestCase):
                     "generatedAt": "2026-07-16T00:00:00Z",
                 },
             )
+            demo.replay_storage_key = replay_reference
+            db.commit()
+            return video_key
+
+    def accepted_artifact_paths(self, reference: str) -> tuple[Path, Path]:
+        artifact_id = ArtifactReference.parse(reference).artifact_id
+        data_paths = list(self.artifact_root.rglob(f"{artifact_id}.blob"))
+        metadata_paths = list(
+            self.artifact_root.rglob(f"{artifact_id}.metadata.json")
+        )
+        self.assertEqual(len(data_paths), 1)
+        self.assertEqual(len(metadata_paths), 1)
+        return data_paths[0], metadata_paths[0]
+
+    def assert_private_not_found_without_artifact_details(
+        self,
+        response,
+        reference: str,
+    ) -> None:
+        parsed = ArtifactReference.parse(reference)
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.json(), {"detail": "Media not found"})
+        self.assertNotIn(reference, response.text)
+        self.assertNotIn(parsed.artifact_id, response.text)
+        self.assertNotIn("artifact://", response.text)
+        self.assertNotIn(".blob", response.text)
+        self.assertNotIn("storageKey", response.text)
+        self.assertNotIn("bucket", response.text.lower())
+        self.assertNotIn(str(self.artifact_root), response.text)
+
+
+class FakeUpload:
+    def __init__(self, filename: str, payload: bytes, content_type: str):
+        self.filename = filename
+        self.file = io.BytesIO(payload)
+        self.content_type = content_type
+
+
+def persist_replay(service: DemoService, demo: Demo, replay: dict) -> str:
+    reference = service.write_replay_blob(demo.id, replay)
+    demo.replay_storage_key = reference
+    service.db.commit()
+    return reference
 
 
 if __name__ == "__main__":

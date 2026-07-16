@@ -1,3 +1,6 @@
+import io
+import json
+import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
@@ -8,7 +11,9 @@ from sqlalchemy.orm import sessionmaker
 from app.core.config import settings
 from app.core.database import Base
 from app.models import Demo, DemoJob
+from app.services.artifact_intake import ArtifactIntakeService
 from app.services.demo_service import DemoService
+from app.services.storage import LocalArtifactStore
 
 
 class DemoLibraryTest(unittest.TestCase):
@@ -162,23 +167,44 @@ class DemoLibraryTest(unittest.TestCase):
         self.assertEqual(len(redis_factory.return_value.payloads), 1)
 
     def test_list_item_includes_compact_ingestion_snapshot_for_active_upload(self) -> None:
-        db = self.Session()
-        timestamp = datetime.now(timezone.utc)
-        demo = add_demo(
-            db,
-            "demo-active-upload",
-            "Active Upload",
-            "active.dem",
-            "unknown",
-            status="queued",
-            created_at=timestamp,
-            updated_at=timestamp,
-            source_storage_key="local://uploads/demo-active-upload/active.dem",
-        )
-        add_parse_job(db, demo.id, "real_parse", status="queued", attempts=0)
-        service = DemoService(db, owner_id=settings.dev_user_id)
+        with tempfile.TemporaryDirectory() as directory:
+            db = self.Session()
+            timestamp = datetime.now(timezone.utc)
+            demo = add_demo(
+                db,
+                "demo-active-upload",
+                "Active Upload",
+                "active.dem",
+                "unknown",
+                status="queued",
+                created_at=timestamp,
+                updated_at=timestamp,
+            )
+            store = LocalArtifactStore(directory)
+            accepted = ArtifactIntakeService(store).intake_demo(
+                owner_id=demo.owner_id,
+                demo_id=demo.id,
+                filename=demo.original_filename,
+                content_type="application/octet-stream",
+                stream=io.BytesIO(b"HL2DEMO\x00demo-library-fixture"),
+            )
+            demo.source_storage_key = accepted.reference
+            add_parse_job(
+                db,
+                demo.id,
+                "real_parse",
+                status="queued",
+                attempts=0,
+                metadata={"phase": "uploaded", "sourceArtifact": accepted.as_snapshot()},
+            )
+            db.commit()
+            service = DemoService(
+                db,
+                owner_id=settings.dev_user_id,
+                artifact_store=store,
+            )
 
-        item = service.demo_list_item(demo)
+            item = service.demo_list_item(demo)
 
         self.assertEqual(item.ingestion.phase, "uploaded")
         self.assertTrue(item.ingestion.active)
@@ -318,6 +344,7 @@ def add_parse_job(
     started_at: datetime | None = None,
     finished_at: datetime | None = None,
     error_message: str | None = None,
+    metadata: dict | None = None,
 ) -> DemoJob:
     job = DemoJob(
         id=f"{demo_id}-{job_type}-{status}",
@@ -328,6 +355,7 @@ def add_parse_job(
         started_at=started_at,
         finished_at=finished_at,
         error_message=error_message,
+        metadata_json=json.dumps(metadata) if metadata is not None else None,
     )
     db.add(job)
     db.commit()

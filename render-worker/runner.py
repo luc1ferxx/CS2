@@ -9,13 +9,13 @@ import urllib.request
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, BinaryIO, Iterator, Protocol
 
 RUNNER_ROOT = Path(__file__).resolve().parent
 if str(RUNNER_ROOT) not in sys.path:
     sys.path.insert(0, str(RUNNER_ROOT))
 
-from adapters.base import AdapterResult
+from adapters.base import AdapterResult, UploadedMedia
 from adapters.cs2_manual import CS2ManualAdapter
 from adapters.fake_video import FakeVideoAdapter
 
@@ -24,6 +24,7 @@ DEFAULT_API_BASE_URL = "http://localhost:8000"
 DEFAULT_RENDER_WORKER_TOKEN = "dev-render-worker-token"
 DEFAULT_WORK_DIR = ".render-worker-work"
 DEFAULT_POLL_INTERVAL_SECONDS = 5
+MEDIA_UPLOAD_CHUNK_BYTES = 1024 * 1024
 
 
 class WorkerClient(Protocol):
@@ -33,7 +34,7 @@ class WorkerClient(Protocol):
     def fetch_next_manifest(self, *, claim: bool = True) -> dict[str, Any] | None:
         ...
 
-    def upload_media(self, job_id: str, media_path: Path) -> str:
+    def upload_media(self, job_id: str, media_path: Path) -> UploadedMedia:
         ...
 
     def post_result(self, job_id: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -94,14 +95,17 @@ class RenderWorkerApiClient:
             raise RuntimeError(f"Unexpected next-job response: HTTP {status}")
         return payload
 
-    def upload_media(self, job_id: str, media_path: Path) -> str:
+    def upload_media(self, job_id: str, media_path: Path) -> UploadedMedia:
         status, payload = self._upload_file(f"/render-worker/jobs/{job_id}/media", media_path)
         if status != 200 or not isinstance(payload, dict):
             raise RuntimeError(f"Unexpected media upload response for {job_id}: HTTP {status}")
         video_url = payload.get("videoUrl")
         if not isinstance(video_url, str) or not video_url:
             raise RuntimeError("Media upload response did not include videoUrl")
-        return video_url
+        storage_key = payload.get("storageKey")
+        if not isinstance(storage_key, str) or not storage_key:
+            raise RuntimeError("Media upload response did not include storageKey")
+        return UploadedMedia(video_url=video_url, storage_key=storage_key)
 
     def post_result(self, job_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         status, response = self._request_json(
@@ -145,34 +149,44 @@ class RenderWorkerApiClient:
     def _upload_file(self, path: str, media_path: Path) -> tuple[int, Any]:
         boundary = f"----render-worker-{uuid.uuid4().hex}"
         filename = media_path.name
-        body = b"".join(
-            [
-                f"--{boundary}\r\n".encode("utf-8"),
-                (
-                    'Content-Disposition: form-data; name="file"; '
-                    f'filename="{filename}"\r\n'
-                ).encode("utf-8"),
-                b"Content-Type: video/mp4\r\n\r\n",
-                media_path.read_bytes(),
-                f"\r\n--{boundary}--\r\n".encode("utf-8"),
-            ]
-        )
-        request = urllib.request.Request(
-            f"{self.config.api_base_url}{path}",
-            data=body,
-            headers={
-                "X-Render-Worker-Token": self.config.render_worker_token,
-                "Content-Type": f"multipart/form-data; boundary={boundary}",
-            },
-            method="POST",
-        )
-        try:
-            with urllib.request.urlopen(request, timeout=120) as response:
-                response_body = response.read()
-                return response.status, json.loads(response_body.decode("utf-8"))
-        except urllib.error.HTTPError as exc:
-            detail = exc.read().decode("utf-8", errors="replace")
-            raise RuntimeError(f"HTTP {exc.code} from {path}: {detail}") from exc
+        prefix = (
+            f"--{boundary}\r\n"
+            'Content-Disposition: form-data; name="file"; '
+            f'filename="{filename}"\r\n'
+            "Content-Type: video/mp4\r\n\r\n"
+        ).encode("utf-8")
+        suffix = f"\r\n--{boundary}--\r\n".encode("utf-8")
+
+        with media_path.open("rb") as media_file:
+            media_size = os.fstat(media_file.fileno()).st_size
+            request = urllib.request.Request(
+                f"{self.config.api_base_url}{path}",
+                data=_iter_multipart_upload(media_file, prefix, suffix),
+                headers={
+                    "X-Render-Worker-Token": self.config.render_worker_token,
+                    "Content-Type": f"multipart/form-data; boundary={boundary}",
+                    "Content-Length": str(len(prefix) + media_size + len(suffix)),
+                },
+                method="POST",
+            )
+            try:
+                with urllib.request.urlopen(request, timeout=120) as response:
+                    response_body = response.read()
+                    return response.status, json.loads(response_body.decode("utf-8"))
+            except urllib.error.HTTPError as exc:
+                detail = exc.read().decode("utf-8", errors="replace")
+                raise RuntimeError(f"HTTP {exc.code} from {path}: {detail}") from exc
+
+
+def _iter_multipart_upload(
+    media_file: BinaryIO,
+    prefix: bytes,
+    suffix: bytes,
+) -> Iterator[bytes]:
+    yield prefix
+    while chunk := media_file.read(MEDIA_UPLOAD_CHUNK_BYTES):
+        yield chunk
+    yield suffix
 
 
 def process_job(

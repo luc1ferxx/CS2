@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
@@ -7,10 +9,25 @@ from app.core.config import settings
 from app.core.auth import SessionCsrfMiddleware
 from app.core.database import SessionLocal, init_db
 from app.core.redis import get_redis_client
+from app.core.request_limits import MultipartRequestLimitMiddleware
+from app.services.artifact_intake import ArtifactIntakeError, ArtifactIntakePolicy, ArtifactIntakeService
+from app.services.storage import artifact_store_from_settings
 
 
 app = FastAPI(title="CS2 Demo AI Coach Mock API", version="0.1.0")
+logger = logging.getLogger(__name__)
 
+multipart_envelope_overhead = 8 * 1024 * 1024
+app.add_middleware(
+    MultipartRequestLimitMiddleware,
+    demo_envelope_limit_bytes=settings.max_demo_upload_bytes + multipart_envelope_overhead,
+    video_envelope_limit_bytes=settings.max_video_upload_bytes + multipart_envelope_overhead,
+    worker_media_envelope_limit_bytes=settings.max_video_upload_bytes
+    + multipart_envelope_overhead,
+    worker_result_envelope_limit_bytes=64 * 1024,
+    render_worker_token=settings.render_worker_token,
+    max_concurrent_uploads=1,
+)
 app.add_middleware(SessionCsrfMiddleware)
 app.add_middleware(
     CORSMiddleware,
@@ -33,13 +50,26 @@ app.include_router(private_media.router)
 def on_startup() -> None:
     settings.validate_runtime_configuration()
     init_db()
-    for storage_dir in (
-        settings.replay_storage_dir,
-        settings.demo_upload_storage_dir,
-        settings.video_storage_dir,
-        settings.summary_storage_dir,
-    ):
-        storage_dir.mkdir(parents=True, exist_ok=True)
+    store = artifact_store_from_settings()
+    try:
+        ArtifactIntakeService(
+            store,
+            policy=ArtifactIntakePolicy(
+                max_source_bytes=settings.max_demo_upload_bytes,
+                stream_chunk_bytes=settings.upload_chunk_bytes,
+                quarantine_ttl_seconds=settings.artifact_quarantine_ttl_seconds,
+            ),
+        ).cleanup_abandoned()
+    except ArtifactIntakeError:
+        logger.warning("Artifact quarantine cleanup was unavailable during startup")
+    if settings.artifact_storage_backend == "local":
+        for storage_dir in (
+            settings.replay_storage_dir,
+            settings.demo_upload_storage_dir,
+            settings.video_storage_dir,
+            settings.summary_storage_dir,
+        ):
+            storage_dir.mkdir(parents=True, exist_ok=True)
 
 
 @app.get("/health")

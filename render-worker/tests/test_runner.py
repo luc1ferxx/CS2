@@ -3,6 +3,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 
 RUNNER_PATH = Path(__file__).resolve().parents[1] / "runner.py"
@@ -79,6 +80,7 @@ class RenderWorkerRunnerTest(unittest.TestCase):
         self.assertEqual(job_id, "render-job-missing-video")
         self.assertEqual(payload["status"], "failed")
         self.assertIsNone(payload["videoUrl"])
+        self.assertIsNone(payload["storageKey"])
         self.assertEqual(payload["tickStart"], 640)
         self.assertEqual(payload["tickEnd"], 1280)
         self.assertEqual(payload["tickRate"], 64)
@@ -110,6 +112,7 @@ class RenderWorkerRunnerTest(unittest.TestCase):
         self.assertEqual(job_id, "render-job-fake-video")
         self.assertEqual(payload["status"], "completed")
         self.assertEqual(payload["videoUrl"], "/media/videos/demo-1/render-job-fake-video.mp4")
+        self.assertEqual(payload["storageKey"], "artifact://video/render-output")
         self.assertEqual(payload["tickStart"], 640)
         self.assertEqual(payload["tickEnd"], 1280)
         self.assertEqual(payload["tickRate"], 64)
@@ -177,12 +180,23 @@ class RenderWorkerRunnerTest(unittest.TestCase):
         self.assertEqual(client.uploaded_media, [("render-job-manual-complete", output_path)])
         self.assertEqual(client.posted_results[-1][1]["status"], "completed")
         self.assertEqual(client.posted_results[-1][1]["videoUrl"], "/media/videos/demo-1/manual-complete.mp4")
+        self.assertEqual(
+            client.posted_results[-1][1]["storageKey"],
+            "artifact://video/render-output",
+        )
 
 
 class FakeClient:
-    def __init__(self, *, manifest: dict, uploaded_video_url: str = "/media/videos/demo-1/fake.mp4"):
+    def __init__(
+        self,
+        *,
+        manifest: dict,
+        uploaded_video_url: str = "/media/videos/demo-1/fake.mp4",
+        uploaded_storage_key: str = "artifact://video/render-output",
+    ):
         self.manifest = manifest
         self.uploaded_video_url = uploaded_video_url
+        self.uploaded_storage_key = uploaded_storage_key
         self.fetched_job_ids: list[str] = []
         self.fetch_claims: list[bool] = []
         self.next_fetches = 0
@@ -200,9 +214,12 @@ class FakeClient:
         self.next_claims.append(claim)
         return self.manifest
 
-    def upload_media(self, job_id: str, media_path: Path) -> str:
+    def upload_media(self, job_id: str, media_path: Path) -> SimpleNamespace:
         self.uploaded_media.append((job_id, media_path))
-        return self.uploaded_video_url
+        return SimpleNamespace(
+            video_url=self.uploaded_video_url,
+            storage_key=self.uploaded_storage_key,
+        )
 
     def post_result(self, job_id: str, payload: dict) -> dict:
         self.posted_results.append((job_id, payload))

@@ -1,3 +1,4 @@
+import io
 import json
 import tempfile
 import unittest
@@ -17,6 +18,7 @@ from app.core.config import settings
 from app.core.database import Base, get_db
 from app.models import Demo, DemoJob
 from app.schemas.demo import RenderClipRequest
+from app.services.artifact_intake import ArtifactIntakeService
 from app.services.demo_service import DemoService
 
 
@@ -35,12 +37,14 @@ class AuthOwnerBoundaryApiTest(unittest.TestCase):
         self.Session = sessionmaker(bind=self.engine, autocommit=False, autoflush=False)
 
         self.temp_dir = tempfile.TemporaryDirectory()
+        self.original_artifact_root = settings.artifact_storage_root
         self.original_replay_dir = settings.replay_storage_dir
         self.original_upload_dir = settings.demo_upload_storage_dir
         self.original_video_dir = settings.video_storage_dir
         self.original_auth_mode = settings.auth_mode
         object.__setattr__(settings, "auth_mode", "test")
         root = Path(self.temp_dir.name)
+        object.__setattr__(settings, "artifact_storage_root", root)
         object.__setattr__(settings, "replay_storage_dir", root / "replays")
         object.__setattr__(settings, "demo_upload_storage_dir", root / "uploads")
         object.__setattr__(settings, "video_storage_dir", root / "videos")
@@ -59,6 +63,7 @@ class AuthOwnerBoundaryApiTest(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.redis_patch.stop()
+        object.__setattr__(settings, "artifact_storage_root", self.original_artifact_root)
         object.__setattr__(settings, "replay_storage_dir", self.original_replay_dir)
         object.__setattr__(settings, "demo_upload_storage_dir", self.original_upload_dir)
         object.__setattr__(settings, "video_storage_dir", self.original_video_dir)
@@ -95,10 +100,7 @@ class AuthOwnerBoundaryApiTest(unittest.TestCase):
     def test_replay_cannot_read_another_owners_demo(self) -> None:
         with self.Session() as db:
             other_demo = add_demo(db, "demo-owner-b", OWNER_B)
-            DemoService(db, owner_id=OWNER_B).write_replay_blob(
-                other_demo.id,
-                replay_contract(other_demo.id),
-            )
+            bind_replay(db, other_demo, replay_contract(other_demo.id))
 
         response = self.client.get("/demos/demo-owner-b/replay", headers=owner_headers(OWNER_A))
 
@@ -107,8 +109,7 @@ class AuthOwnerBoundaryApiTest(unittest.TestCase):
     def test_archived_demo_is_hidden_from_list_but_openable_by_owner(self) -> None:
         with self.Session() as db:
             archived = add_demo(db, "demo-owner-a-archived", OWNER_A, archived=True)
-            service = DemoService(db, owner_id=OWNER_A)
-            service.write_replay_blob(archived.id, replay_contract(archived.id))
+            bind_replay(db, archived, replay_contract(archived.id))
 
         list_response = self.client.get("/demos", headers=owner_headers(OWNER_A))
         status_response = self.client.get(
@@ -130,9 +131,9 @@ class AuthOwnerBoundaryApiTest(unittest.TestCase):
     def test_replay_response_includes_legacy_contract_diagnostics(self) -> None:
         with self.Session() as db:
             demo = add_demo(db, "demo-owner-a-legacy", OWNER_A)
-            service = DemoService(db, owner_id=OWNER_A)
-            service.write_replay_blob(
-                demo.id,
+            bind_replay(
+                db,
+                demo,
                 {
                     "demoId": demo.id,
                     "mapName": "de_inferno",
@@ -200,7 +201,13 @@ class AuthOwnerBoundaryApiTest(unittest.TestCase):
         real_response = self.client.post(
             "/uploads/demo",
             headers=owner_headers(OWNER_B),
-            files={"file": ("owner-b.dem", b"demo-bytes", "application/octet-stream")},
+            files={
+                "file": (
+                    "owner-b.dem",
+                    b"HL2DEMO\x00owner-boundary-fixture",
+                    "application/octet-stream",
+                )
+            },
         )
 
         self.assertEqual(mock_response.status_code, 201)
@@ -214,10 +221,44 @@ class AuthOwnerBoundaryApiTest(unittest.TestCase):
             self.assertEqual(mock_demo.legacy_user_id, OWNER_A)
             self.assertEqual(real_demo.owner_id, OWNER_B)
             self.assertEqual(real_demo.legacy_user_id, OWNER_B)
-            self.assertEqual(
-                real_demo.source_storage_key,
-                f"local://uploads/{real_demo.id}/owner-b.dem",
+            self.assertTrue(real_demo.source_storage_key.startswith("artifact://v1/accepted/source/"))
+            job = (
+                db.query(DemoJob)
+                .filter(DemoJob.demo_id == real_demo.id, DemoJob.job_type == "real_parse")
+                .one()
             )
+            source_snapshot = json.loads(job.metadata_json)["sourceArtifact"]
+            self.assertEqual(source_snapshot["reference"], real_demo.source_storage_key)
+
+    def test_rejected_public_uploads_have_stable_safe_errors_and_no_dispatch(self) -> None:
+        cases = (
+            ("archive.zip", b"HL2DEMO\x00archive-fixture", "INTAKE_TYPE_REJECTED"),
+            ("empty.dem", b"", "INTAKE_EMPTY"),
+            ("short.dem", b"short", "INTAKE_TRUNCATED"),
+            ("masked.dem", b"PK\x03\x04archive-payload", "INTAKE_CONTENT_MISMATCH"),
+        )
+        for filename, body, expected_code in cases:
+            with self.subTest(filename=filename):
+                response = self.client.post(
+                    "/uploads/demo",
+                    headers=owner_headers(OWNER_A),
+                    files={"file": (filename, body, "application/octet-stream")},
+                )
+
+                self.assertEqual(response.status_code, 400)
+                self.assertEqual(response.json()["errorCode"], expected_code)
+                self.assertNotIn("artifact://", response.text)
+                self.assertNotIn(str(settings.artifact_storage_root), response.text)
+                self.assertNotIn("traceback", response.text.lower())
+
+        with self.Session() as db:
+            self.assertEqual(db.query(Demo).count(), 0)
+            self.assertEqual(db.query(DemoJob).count(), 0)
+        self.assertEqual(self.fake_redis.payloads, [])
+        self.assertEqual(
+            [path for path in Path(settings.artifact_storage_root).rglob("*") if path.is_file()],
+            [],
+        )
 
     def test_render_clip_cannot_be_created_for_another_owners_demo(self) -> None:
         with self.Session() as db:
@@ -238,7 +279,7 @@ class AuthOwnerBoundaryApiTest(unittest.TestCase):
             own_demo = add_demo(db, "demo-owner-a", OWNER_A)
             other_demo = add_demo(db, "demo-owner-b", OWNER_B)
             service = DemoService(db, owner_id=OWNER_A)
-            service.write_replay_blob(own_demo.id, replay_contract(own_demo.id))
+            bind_replay(db, own_demo, replay_contract(own_demo.id))
             own_job = service.create_render_clip_job(
                 own_demo,
                 RenderClipRequest(tickStart=0, tickEnd=640, tickRate=64),
@@ -274,10 +315,7 @@ class AuthOwnerBoundaryApiTest(unittest.TestCase):
     def test_user_media_responses_expose_only_owner_scoped_private_url(self) -> None:
         with self.Session() as db:
             demo = add_demo(db, "demo-owner-a-private-video", OWNER_A)
-            DemoService(db, owner_id=OWNER_A).write_replay_blob(
-                demo.id,
-                replay_contract(demo.id),
-            )
+            bind_replay(db, demo, replay_contract(demo.id))
 
         upload_response = self.client.post(
             "/demos/demo-owner-a-private-video/video/upload",
@@ -313,10 +351,7 @@ class AuthOwnerBoundaryApiTest(unittest.TestCase):
     def test_owner_can_complete_the_protected_review_and_mutation_journey(self) -> None:
         with self.Session() as db:
             demo = add_demo(db, "demo-owner-a-journey", OWNER_A)
-            DemoService(db, owner_id=OWNER_A).write_replay_blob(
-                demo.id,
-                replay_contract(demo.id),
-            )
+            bind_replay(db, demo, replay_contract(demo.id))
 
         headers = owner_headers(OWNER_A)
         read_paths = (
@@ -386,10 +421,7 @@ class AuthOwnerBoundaryApiTest(unittest.TestCase):
     def test_coaching_video_status_and_mock_render_hide_cross_owner_demo(self) -> None:
         with self.Session() as db:
             demo = add_demo(db, "demo-owner-b-surfaces", OWNER_B)
-            DemoService(db, owner_id=OWNER_B).write_replay_blob(
-                demo.id,
-                replay_contract(demo.id),
-            )
+            bind_replay(db, demo, replay_contract(demo.id))
 
         headers = owner_headers(OWNER_A)
         responses = (
@@ -437,10 +469,17 @@ class AuthOwnerBoundaryApiTest(unittest.TestCase):
                 "demo-owner-a-failed",
                 OWNER_A,
                 status="failed",
-                source_storage_key="local://uploads/demo-owner-a-failed/source.dem",
             )
-            DemoService(db, owner_id=OWNER_A).storage.write_bytes(demo.source_storage_key, b"demo-bytes")
-            add_job(db, "old-parse-job", demo.id, "real_parse", status="failed", attempts=1)
+            accepted = accept_source_artifact(db, demo)
+            add_job(
+                db,
+                "old-parse-job",
+                demo.id,
+                "real_parse",
+                status="failed",
+                attempts=1,
+                metadata={"phase": "failed", "sourceArtifact": accepted.as_snapshot()},
+            )
 
         response = self.client.post(
             "/demos/demo-owner-a-failed/parse/retry",
@@ -467,7 +506,7 @@ class AuthOwnerBoundaryApiTest(unittest.TestCase):
                 .order_by(DemoJob.created_at.asc())
                 .all()
             )
-            self.assertEqual(demo.source_storage_key, "local://uploads/demo-owner-a-failed/source.dem")
+            self.assertEqual(demo.source_storage_key, accepted.reference)
             self.assertEqual(demo.error_message, None)
             self.assertEqual([job.status for job in jobs], ["failed", "queued"])
             self.assertEqual(jobs[-1].attempts, 0)
@@ -481,10 +520,17 @@ class AuthOwnerBoundaryApiTest(unittest.TestCase):
                 "demo-owner-b-failed",
                 OWNER_B,
                 status="failed",
-                source_storage_key="local://uploads/demo-owner-b-failed/source.dem",
             )
-            DemoService(db, owner_id=OWNER_B).storage.write_bytes(demo.source_storage_key, b"demo-bytes")
-            add_job(db, "owner-b-old-parse", demo.id, "real_parse", status="failed", attempts=1)
+            accepted = accept_source_artifact(db, demo)
+            add_job(
+                db,
+                "owner-b-old-parse",
+                demo.id,
+                "real_parse",
+                status="failed",
+                attempts=1,
+                metadata={"phase": "failed", "sourceArtifact": accepted.as_snapshot()},
+            )
 
         response = self.client.post(
             "/demos/demo-owner-b-failed/parse/retry",
@@ -503,18 +549,23 @@ class AuthOwnerBoundaryApiTest(unittest.TestCase):
                 "demo-owner-a-completed",
                 OWNER_A,
                 status="completed",
-                source_storage_key="local://uploads/demo-owner-a-completed/source.dem",
             )
-            service = DemoService(db, owner_id=OWNER_A)
-            service.storage.write_bytes(completed.source_storage_key, b"demo-bytes")
+            completed_accepted = accept_source_artifact(db, completed)
             missing_source = add_demo(
                 db,
                 "demo-owner-a-missing-source",
                 OWNER_A,
                 status="failed",
-                source_storage_key="local://uploads/demo-owner-a-missing-source/source.dem",
             )
-            add_job(db, "completed-parse-job", completed.id, "real_parse", status="completed", attempts=1)
+            add_job(
+                db,
+                "completed-parse-job",
+                completed.id,
+                "real_parse",
+                status="completed",
+                attempts=1,
+                metadata={"phase": "ready", "sourceArtifact": completed_accepted.as_snapshot()},
+            )
             add_job(db, "missing-source-job", missing_source.id, "real_parse", status="failed", attempts=1)
 
         completed_response = self.client.post(
@@ -692,6 +743,7 @@ def add_job(
     *,
     status: str,
     attempts: int,
+    metadata: dict | None = None,
 ) -> DemoJob:
     job = DemoJob(
         id=job_id,
@@ -699,11 +751,38 @@ def add_job(
         job_type=job_type,
         status=status,
         attempts=attempts,
+        metadata_json=json.dumps(metadata) if metadata is not None else None,
     )
     db.add(job)
     db.commit()
     db.refresh(job)
     return job
+
+
+def bind_replay(db, demo: Demo, replay: dict) -> str:
+    reference = DemoService(db, owner_id=demo.owner_id).write_replay_blob(
+        demo.id,
+        replay,
+    )
+    demo.replay_storage_key = reference
+    db.commit()
+    db.refresh(demo)
+    return reference
+
+
+def accept_source_artifact(db, demo: Demo):
+    service = DemoService(db, owner_id=demo.owner_id)
+    accepted = ArtifactIntakeService(service.artifact_store).intake_demo(
+        owner_id=demo.owner_id,
+        demo_id=demo.id,
+        filename=demo.original_filename,
+        content_type="application/octet-stream",
+        stream=io.BytesIO(b"HL2DEMO\x00accepted-owner-boundary-fixture"),
+    )
+    demo.source_storage_key = accepted.reference
+    db.commit()
+    db.refresh(demo)
+    return accepted
 
 
 def replay_contract(demo_id: str) -> dict:

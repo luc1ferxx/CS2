@@ -9,7 +9,7 @@ RENDER_WORKER_ROOT = Path(__file__).resolve().parents[1]
 if str(RENDER_WORKER_ROOT) not in sys.path:
     sys.path.insert(0, str(RENDER_WORKER_ROOT))
 
-from adapters.base import AdapterConfigError
+from adapters.base import AdapterConfigError, UploadedMedia
 from adapters.cs2_manual import CS2ManualAdapter
 from adapters.fake_video import FakeVideoAdapter
 
@@ -29,6 +29,7 @@ class FakeVideoAdapterTest(unittest.TestCase):
         self.assertEqual(job_id, "fake-missing")
         self.assertEqual(payload["status"], "failed")
         self.assertIsNone(payload["videoUrl"])
+        self.assertIsNone(payload["storageKey"])
         self.assertIn("DEV_FAKE_VIDEO_PATH", payload["errorMessage"])
 
     def test_existing_fake_video_posts_completed_callback(self) -> None:
@@ -46,6 +47,7 @@ class FakeVideoAdapterTest(unittest.TestCase):
         _, payload = client.posted_results[0]
         self.assertEqual(payload["status"], "completed")
         self.assertEqual(payload["videoUrl"], "/media/videos/demo-1/fake-render.mp4")
+        self.assertEqual(payload["storageKey"], "artifact://video/render-output")
         self.assertEqual(payload["tickStart"], 640)
         self.assertEqual(payload["tickEnd"], 1280)
         self.assertEqual(payload["tickRate"], 64)
@@ -132,6 +134,7 @@ class CS2ManualAdapterTest(unittest.TestCase):
         self.assertEqual(job_id, "manual-complete")
         self.assertEqual(payload["status"], "completed")
         self.assertEqual(payload["videoUrl"], "/media/videos/demo-1/manual-render.mp4")
+        self.assertEqual(payload["storageKey"], "artifact://video/render-output")
         self.assertEqual(payload["tickStart"], 640)
         self.assertEqual(payload["tickEnd"], 1280)
         self.assertEqual(payload["durationSeconds"], 10)
@@ -150,14 +153,22 @@ class CS2ManualAdapterTest(unittest.TestCase):
 
 
 class FakeClient:
-    def __init__(self, uploaded_video_url: str = "/media/videos/demo-1/uploaded.mp4"):
+    def __init__(
+        self,
+        uploaded_video_url: str = "/media/videos/demo-1/uploaded.mp4",
+        uploaded_storage_key: str = "artifact://video/render-output",
+    ):
         self.uploaded_video_url = uploaded_video_url
+        self.uploaded_storage_key = uploaded_storage_key
         self.uploaded_media: list[tuple[str, Path]] = []
         self.posted_results: list[tuple[str, dict]] = []
 
-    def upload_media(self, job_id: str, media_path: Path) -> str:
+    def upload_media(self, job_id: str, media_path: Path) -> UploadedMedia:
         self.uploaded_media.append((job_id, media_path))
-        return self.uploaded_video_url
+        return UploadedMedia(
+            video_url=self.uploaded_video_url,
+            storage_key=self.uploaded_storage_key,
+        )
 
     def post_result(self, job_id: str, payload: dict) -> dict:
         self.posted_results.append((job_id, payload))
