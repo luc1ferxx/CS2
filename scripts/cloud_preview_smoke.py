@@ -17,6 +17,7 @@ from typing import Any, Mapping, Sequence
 API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000").rstrip("/")
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000").rstrip("/")
 OWNER_ID = os.getenv("DEV_USER_ID", "cloud-preview-smoke")
+AUTH_SESSION_COOKIE = os.getenv("AUTH_SESSION_COOKIE", "").strip()
 SAMPLE_DEMO_PATH = os.getenv("SAMPLE_DEMO_PATH")
 SAMPLE_DEMO_NAME = os.getenv("SAMPLE_DEMO_NAME")
 UPLOAD_CHUNK_BYTES = 1024 * 1024
@@ -103,7 +104,7 @@ def resolve_sample_demo_path(path_value: str | None, *, require_sample: bool) ->
 
 def request_json(method: str, path: str, payload: dict[str, Any] | None = None) -> Any:
     data = None
-    headers = {"X-Dev-User-Id": OWNER_ID}
+    headers = auth_headers(method)
     if payload is not None:
         data = json.dumps(payload).encode("utf-8")
         headers["Content-Type"] = "application/json"
@@ -129,12 +130,7 @@ def check_health() -> None:
     payload = request_json("GET", "/health")
     if not isinstance(payload, dict) or payload.get("status") != "ok":
         raise SmokeFailure(f"health was not ok: {payload}")
-    public_urls = payload.get("publicUrls") or {}
-    print(
-        "health ok: "
-        f"backend={public_urls.get('backendPublicUrl')} "
-        f"media={public_urls.get('effectiveMediaUrlBase')}"
-    )
+    print("health ok")
 
 
 def check_frontend() -> None:
@@ -289,9 +285,9 @@ def check_media_route(video_url: str | None) -> None:
         url = video_url if video_url.startswith(("http://", "https://")) else f"{API_BASE_URL}{video_url}"
         expected = {200, 206}
     else:
-        url = f"{API_BASE_URL}/media/videos/__cloud_preview_smoke_missing__.mp4"
+        url = f"{API_BASE_URL}/demos/__cloud_preview_smoke_missing__/media/video"
         expected = {404}
-    request = urllib.request.Request(url, method="GET")
+    request = urllib.request.Request(url, headers=auth_headers("GET"), method="GET")
     try:
         with urllib.request.urlopen(request, timeout=30) as response:
             status = response.status
@@ -355,7 +351,8 @@ def post_multipart_file(
     content_length = len(preamble) + file_path.stat().st_size + len(closing)
     try:
         connection.putrequest("POST", request_path)
-        connection.putheader("X-Dev-User-Id", OWNER_ID)
+        for header_name, header_value in auth_headers("POST").items():
+            connection.putheader(header_name, header_value)
         connection.putheader("Content-Type", f"multipart/form-data; boundary={boundary}")
         connection.putheader("Content-Length", str(content_length))
         connection.endheaders()
@@ -378,6 +375,25 @@ def required_str(payload: dict[str, Any], key: str) -> str:
     if not isinstance(value, str) or not value:
         raise SmokeFailure(f"response missing {key}: {payload}")
     return value
+
+
+def auth_headers(method: str) -> dict[str, str]:
+    if AUTH_SESSION_COOKIE:
+        headers = {"Cookie": f"__Host-cs2_session={AUTH_SESSION_COOKIE}"}
+        if method.upper() not in {"GET", "HEAD", "OPTIONS"}:
+            headers["Origin"] = frontend_origin()
+        return headers
+    return {"X-Dev-User-Id": OWNER_ID}
+
+
+def frontend_origin() -> str:
+    parsed = urlsplit(FRONTEND_URL)
+    if parsed.scheme not in {"http", "https"} or parsed.hostname is None:
+        raise SmokeFailure(f"FRONTEND_URL must be http or https: {FRONTEND_URL}")
+    host = parsed.hostname
+    if parsed.port is not None:
+        host = f"{host}:{parsed.port}"
+    return f"{parsed.scheme}://{host}"
 
 
 if __name__ == "__main__":

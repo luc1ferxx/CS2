@@ -1,0 +1,277 @@
+from __future__ import annotations
+
+import base64
+import hashlib
+import json
+import secrets
+import time
+from dataclasses import dataclass
+from urllib.parse import urlencode, urlparse
+
+import httpx
+import jwt
+
+from app.core.config import Settings, settings
+from app.core.redis import get_redis_client
+
+MAX_RETURN_TO_LENGTH = 2048
+
+
+@dataclass(frozen=True)
+class LoginStart:
+    authorization_url: str
+    state: str
+
+
+@dataclass(frozen=True)
+class SessionGrant:
+    session_token: str
+    max_age: int
+    return_to: str
+
+
+class AuthenticationError(RuntimeError):
+    pass
+
+
+class AuthService:
+    def __init__(
+        self,
+        runtime_settings: Settings,
+        redis_client: object,
+        *,
+        http_client: object = httpx,
+    ):
+        self.settings = runtime_settings
+        self.redis = redis_client
+        self.http = http_client
+
+    def begin_login(self, return_to: str | None) -> LoginStart:
+        safe_return_to = _safe_return_to(return_to)
+        state = secrets.token_urlsafe(32)
+        nonce = secrets.token_urlsafe(32)
+        verifier = secrets.token_urlsafe(64)
+        challenge = _base64url(hashlib.sha256(verifier.encode("ascii")).digest())
+        self.redis.setex(
+            _hashed_key("auth:login", state),
+            self.settings.auth_login_ttl_seconds,
+            json.dumps(
+                {
+                    "nonce": nonce,
+                    "codeVerifier": verifier,
+                    "returnTo": safe_return_to,
+                },
+                separators=(",", ":"),
+            ),
+        )
+        query = urlencode(
+            {
+                "response_type": "code",
+                "client_id": self.settings.oidc_client_id,
+                "redirect_uri": self.settings.oidc_redirect_uri,
+                "scope": "openid",
+                "state": state,
+                "nonce": nonce,
+                "code_challenge": challenge,
+                "code_challenge_method": "S256",
+            }
+        )
+        return LoginStart(
+            authorization_url=f"{self.settings.oidc_authorization_endpoint}?{query}",
+            state=state,
+        )
+
+    def complete_login(self, code: str, state: str, state_cookie: str | None) -> SessionGrant:
+        if (
+            not code
+            or len(code) > 4096
+            or not _is_valid_opaque_value(state)
+            or not _is_valid_opaque_value(state_cookie)
+        ):
+            raise AuthenticationError("OIDC callback could not be verified")
+        if not secrets.compare_digest(state, state_cookie):
+            raise AuthenticationError("OIDC callback could not be verified")
+
+        raw_attempt = self.redis.getdel(_hashed_key("auth:login", state))
+        if not raw_attempt:
+            raise AuthenticationError("OIDC callback could not be verified")
+        try:
+            attempt = json.loads(_decode_redis_value(raw_attempt))
+            verifier = str(attempt["codeVerifier"])
+            nonce = str(attempt["nonce"])
+            return_to = _safe_return_to(str(attempt["returnTo"]))
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise AuthenticationError("OIDC callback could not be verified") from exc
+
+        token_form = {
+            "grant_type": "authorization_code",
+            "code": code,
+            "redirect_uri": self.settings.oidc_redirect_uri,
+            "client_id": self.settings.oidc_client_id,
+            "code_verifier": verifier,
+        }
+        if self.settings.oidc_client_secret:
+            token_form["client_secret"] = self.settings.oidc_client_secret
+        try:
+            token_response = self.http.post(
+                self.settings.oidc_token_endpoint,
+                data=token_form,
+                timeout=5.0,
+            )
+            token_response.raise_for_status()
+            id_token = token_response.json().get("id_token")
+            if not isinstance(id_token, str) or not id_token:
+                raise AuthenticationError("OIDC callback could not be verified")
+            jwks_response = self.http.get(self.settings.oidc_jwks_url, timeout=5.0)
+            jwks_response.raise_for_status()
+            claims = self._verified_claims(id_token, jwks_response.json(), nonce)
+        except AuthenticationError:
+            raise
+        except Exception as exc:
+            raise AuthenticationError("OIDC callback could not be verified") from exc
+
+        owner_id = derive_owner_id(str(claims["iss"]), str(claims["sub"]))
+        now = int(time.time())
+        max_age = min(self.settings.auth_session_ttl_seconds, int(claims["exp"]) - now)
+        if max_age <= 0:
+            raise AuthenticationError("OIDC callback could not be verified")
+        session_token = secrets.token_urlsafe(32)
+        self.redis.setex(
+            _hashed_key("auth:session", session_token),
+            max_age,
+            json.dumps(
+                {"ownerId": owner_id, "expiresAt": now + max_age},
+                separators=(",", ":"),
+            ),
+        )
+        return SessionGrant(
+            session_token=session_token,
+            max_age=max_age,
+            return_to=return_to,
+        )
+
+    def resolve_session(self, session_token: str | None) -> str | None:
+        if not _is_valid_opaque_value(session_token):
+            return None
+        raw_session = self.redis.get(_hashed_key("auth:session", session_token))
+        if not raw_session:
+            return None
+        try:
+            session = json.loads(_decode_redis_value(raw_session))
+            owner_id = str(session["ownerId"])
+            expires_at = int(session["expiresAt"])
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+            return None
+        if expires_at <= int(time.time()) or not owner_id.startswith("owner_v1_"):
+            self.revoke_session(session_token)
+            return None
+        return owner_id
+
+    def revoke_session(self, session_token: str | None) -> None:
+        if _is_valid_opaque_value(session_token):
+            self.redis.delete(_hashed_key("auth:session", session_token))
+
+    def _verified_claims(
+        self,
+        id_token: str,
+        jwks: object,
+        expected_nonce: str,
+    ) -> dict[str, object]:
+        if not isinstance(jwks, dict) or not isinstance(jwks.get("keys"), list):
+            raise AuthenticationError("OIDC callback could not be verified")
+        try:
+            header = jwt.get_unverified_header(id_token)
+        except jwt.PyJWTError as exc:
+            raise AuthenticationError("OIDC callback could not be verified") from exc
+        algorithm = header.get("alg")
+        if (
+            algorithm not in self.settings.oidc_allowed_algorithms
+            or not isinstance(header.get("kid"), str)
+        ):
+            raise AuthenticationError("OIDC callback could not be verified")
+        matching_keys = [key for key in jwks["keys"] if key.get("kid") == header["kid"]]
+        if len(matching_keys) != 1:
+            raise AuthenticationError("OIDC callback could not be verified")
+        try:
+            public_key = jwt.PyJWK.from_dict(matching_keys[0], algorithm=algorithm).key
+            claims = jwt.decode(
+                id_token,
+                public_key,
+                algorithms=[algorithm],
+                audience=self.settings.oidc_client_id,
+                issuer=self.settings.oidc_issuer,
+                options={"require": ["iss", "sub", "aud", "iat", "exp"]},
+                leeway=self.settings.auth_clock_skew_seconds,
+            )
+        except (jwt.PyJWTError, ValueError, TypeError) as exc:
+            raise AuthenticationError("OIDC callback could not be verified") from exc
+        nonce = claims.get("nonce")
+        subject = claims.get("sub")
+        if not isinstance(nonce, str) or not secrets.compare_digest(nonce, expected_nonce):
+            raise AuthenticationError("OIDC callback could not be verified")
+        if not isinstance(subject, str) or not subject.strip():
+            raise AuthenticationError("OIDC callback could not be verified")
+        if int(claims["iat"]) > int(time.time()) + self.settings.auth_clock_skew_seconds:
+            raise AuthenticationError("OIDC callback could not be verified")
+        audience = claims.get("aud")
+        authorized_party = claims.get("azp")
+        if authorized_party is not None and authorized_party != self.settings.oidc_client_id:
+            raise AuthenticationError("OIDC callback could not be verified")
+        if isinstance(audience, list) and len(audience) > 1:
+            if authorized_party != self.settings.oidc_client_id:
+                raise AuthenticationError("OIDC callback could not be verified")
+        return claims
+
+
+def get_auth_service() -> AuthService:
+    return AuthService(settings, get_redis_client())
+
+
+def derive_owner_id(issuer: str, subject: str) -> str:
+    if not issuer.strip() or not subject.strip():
+        raise ValueError("Verified issuer and subject must be non-empty")
+    digest = hashlib.sha256(f"{issuer}\0{subject}".encode("utf-8")).digest()
+    encoded = base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
+    return f"owner_v1_{encoded}"
+
+
+def _base64url(value: bytes) -> str:
+    return base64.urlsafe_b64encode(value).decode("ascii").rstrip("=")
+
+
+def _hashed_key(prefix: str, opaque_value: str) -> str:
+    digest = hashlib.sha256(opaque_value.encode("ascii")).hexdigest()
+    return f"{prefix}:{digest}"
+
+
+def _is_valid_opaque_value(value: str | None) -> bool:
+    if not value or len(value) > 128:
+        return False
+    return all(
+        character.isascii() and (character.isalnum() or character in "-_")
+        for character in value
+    )
+
+
+def _safe_return_to(return_to: str | None) -> str:
+    value = (return_to or "/dashboard").strip()
+    parsed = urlparse(value)
+    if (
+        len(value) > MAX_RETURN_TO_LENGTH
+        or parsed.scheme
+        or parsed.netloc
+        or not value.startswith("/")
+        or value.startswith("//")
+        or "\\" in value
+        or any(ord(character) < 32 for character in value)
+    ):
+        return "/dashboard"
+    return value
+
+
+def _decode_redis_value(value: object) -> str:
+    if isinstance(value, bytes):
+        return value.decode("utf-8")
+    if isinstance(value, str):
+        return value
+    raise TypeError("Redis value must be bytes or text")

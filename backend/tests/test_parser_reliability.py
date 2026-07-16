@@ -218,10 +218,10 @@ class ParserWorkerReliabilityTest(unittest.TestCase):
                     side_effect=ParserPanic(
                         f"parser panicked while reading {directory}/private/bad.dem\ntraceback..."
                     ),
-                ), patch("app.workers.worker.traceback.print_exc") as log_traceback:
+                ), patch("app.workers.worker._log_job_failure") as log_failure:
                     process_real_parse_job(db, failed_demo, failed_job)
 
-                log_traceback.assert_called_once()
+                log_failure.assert_called_once()
                 db.refresh(failed_demo)
                 db.refresh(failed_job)
                 failure = json.loads(failed_job.metadata_json)["failure"]
@@ -266,10 +266,10 @@ class ParserWorkerReliabilityTest(unittest.TestCase):
                         "deaths": [],
                         "events": [],
                     },
-                ), patch("app.workers.worker.traceback.print_exc") as log_traceback:
+                ), patch("app.workers.worker._log_job_failure") as log_failure:
                     process_real_parse_job(db, demo, job)
 
-                log_traceback.assert_called_once()
+                log_failure.assert_called_once()
                 db.refresh(demo)
                 db.refresh(job)
                 failure = json.loads(job.metadata_json)["failure"]

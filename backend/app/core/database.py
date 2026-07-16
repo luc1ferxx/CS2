@@ -57,11 +57,21 @@ def ensure_schema_backfills() -> None:
                     connection.execute(
                         text(
                             "UPDATE demos "
-                            "SET owner_id = COALESCE(NULLIF(user_id, ''), :default_owner) "
+                            "SET owner_id = NULLIF(user_id, '') "
                             "WHERE owner_id IS NULL OR owner_id = ''"
-                        ),
-                        {"default_owner": settings.dev_user_id},
+                        )
                     )
+                if settings.auth_mode == "production":
+                    missing_owner_count = connection.execute(
+                        text(
+                            "SELECT COUNT(*) FROM demos "
+                            "WHERE owner_id IS NULL OR owner_id = ''"
+                        )
+                    ).scalar_one()
+                    if missing_owner_count:
+                        raise RuntimeError(
+                            "Production startup cannot backfill demo owner without a legacy owner"
+                        )
                 else:
                     connection.execute(
                         text(
@@ -76,14 +86,35 @@ def ensure_schema_backfills() -> None:
             demo_column_names.add("owner_id")
         else:
             with engine.begin() as connection:
-                connection.execute(
-                    text(
-                        "UPDATE demos "
-                        "SET owner_id = :default_owner "
-                        "WHERE owner_id IS NULL OR owner_id = ''"
-                    ),
-                    {"default_owner": settings.dev_user_id},
-                )
+                if "user_id" in demo_column_names:
+                    connection.execute(
+                        text(
+                            "UPDATE demos "
+                            "SET owner_id = NULLIF(user_id, '') "
+                            "WHERE (owner_id IS NULL OR owner_id = '') "
+                            "AND user_id IS NOT NULL AND user_id != ''"
+                        )
+                    )
+                if settings.auth_mode == "production":
+                    missing_owner_count = connection.execute(
+                        text(
+                            "SELECT COUNT(*) FROM demos "
+                            "WHERE owner_id IS NULL OR owner_id = ''"
+                        )
+                    ).scalar_one()
+                    if missing_owner_count:
+                        raise RuntimeError(
+                            "Production startup cannot backfill demo owner without a legacy owner"
+                        )
+                else:
+                    connection.execute(
+                        text(
+                            "UPDATE demos "
+                            "SET owner_id = :default_owner "
+                            "WHERE owner_id IS NULL OR owner_id = ''"
+                        ),
+                        {"default_owner": settings.dev_user_id},
+                    )
 
         if "user_id" not in demo_column_names:
             with engine.begin() as connection:

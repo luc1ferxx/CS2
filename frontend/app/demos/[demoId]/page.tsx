@@ -6,6 +6,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 
 import { CoachingPanel } from "@/components/coaching/CoachingPanel";
+import { AuthBoundary } from "@/components/auth/AuthBoundary";
+import { SessionControls } from "@/components/auth/SessionControls";
 import { FirstPersonReplay } from "@/components/replay/FirstPersonReplay";
 import { RenderOperatorPanel } from "@/components/replay/RenderOperatorPanel";
 import { ReplayViewer } from "@/components/replay/ReplayViewer";
@@ -39,6 +41,14 @@ import type { DemoStatus } from "@/types/demo";
 import type { ReplayData } from "@/types/replay";
 
 export default function DemoDetailPage() {
+  return (
+    <AuthBoundary>
+      <DemoDetailContent />
+    </AuthBoundary>
+  );
+}
+
+function DemoDetailContent() {
   const params = useParams<{ demoId: string }>();
   const demoId = params.demoId;
 
@@ -372,6 +382,7 @@ export default function DemoDetailPage() {
             <ArrowLeft size={16} />
             Dashboard
           </Link>
+          <SessionControls />
         </div>
       </header>
 

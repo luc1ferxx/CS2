@@ -13,7 +13,12 @@ from app.core.database import Base
 from app.models import Demo, DemoJob
 from app.schemas.demo import RenderClipRequest, RenderJobCreated, RenderWorkerResult, ReplayVideoStatus
 from app.services.demo_service import DemoService
-from app.workers.worker import RENDER_CLIP_NOT_CONNECTED_ERROR, process_render_clip_job
+from app.workers.worker import (
+    RENDER_CLIP_NOT_CONNECTED_ERROR,
+    _log_job_failure,
+    fail_job,
+    process_render_clip_job,
+)
 
 
 class RenderClipJobTest(unittest.TestCase):
@@ -30,7 +35,7 @@ class RenderClipJobTest(unittest.TestCase):
             ) as redis_factory:
                 db = self.Session()
                 demo = add_completed_demo(db, "demo-render-valid")
-                service = DemoService(db)
+                service = DemoService.for_internal(db)
                 service.write_replay_blob(demo.id, replay_contract(demo.id))
 
                 job = service.create_render_clip_job(
@@ -72,7 +77,7 @@ class RenderClipJobTest(unittest.TestCase):
             ):
                 db = self.Session()
                 demo = add_completed_demo(db, "demo-render-invalid-range")
-                service = DemoService(db)
+                service = DemoService.for_internal(db)
                 service.write_replay_blob(demo.id, replay_contract(demo.id))
 
                 with self.assertRaisesRegex(ValueError, "tickEnd must be greater than tickStart"):
@@ -91,7 +96,7 @@ class RenderClipJobTest(unittest.TestCase):
             ):
                 db = self.Session()
                 demo = add_completed_demo(db, "demo-render-too-long")
-                service = DemoService(db)
+                service = DemoService.for_internal(db)
                 service.write_replay_blob(demo.id, replay_contract(demo.id))
 
                 with self.assertRaisesRegex(ValueError, "60 seconds or less"):
@@ -110,7 +115,7 @@ class RenderClipJobTest(unittest.TestCase):
             ):
                 db = self.Session()
                 demo = add_completed_demo(db, "demo-render-missing-replay")
-                service = DemoService(db)
+                service = DemoService.for_internal(db)
 
                 with self.assertRaisesRegex(ValueError, "Replay blob is not ready"):
                     service.create_render_clip_job(
@@ -125,7 +130,7 @@ class RenderClipJobTest(unittest.TestCase):
             with replay_storage_dir(Path(directory)):
                 db = self.Session()
                 demo = add_completed_demo(db, "demo-render-manual-video")
-                service = DemoService(db)
+                service = DemoService.for_internal(db)
                 service.write_replay_blob(
                     demo.id,
                     replay_contract(
@@ -142,6 +147,10 @@ class RenderClipJobTest(unittest.TestCase):
                             "timeOriginSeconds": 1.25,
                         },
                     ),
+                )
+                service.storage.write_bytes(
+                    service.storage.video_key(demo.id, "clip.mp4"),
+                    b"manual-video",
                 )
                 job = DemoJob(
                     id="render-job-manual-video",
@@ -180,7 +189,7 @@ class RenderClipJobTest(unittest.TestCase):
             ):
                 db = self.Session()
                 demo = add_completed_demo(db, "demo-render-claim")
-                service = DemoService(db)
+                service = DemoService.for_internal(db)
                 service.write_replay_blob(demo.id, replay_contract(demo.id))
                 job = service.create_render_clip_job(
                     demo,
@@ -205,7 +214,7 @@ class RenderClipJobTest(unittest.TestCase):
             with replay_storage_dir(Path(directory)):
                 db = self.Session()
                 demo = add_completed_demo(db, "demo-render-already-completed")
-                service = DemoService(db)
+                service = DemoService.for_internal(db)
                 service.write_replay_blob(
                     demo.id,
                     replay_contract(
@@ -251,7 +260,7 @@ class RenderClipJobTest(unittest.TestCase):
             ):
                 db = self.Session()
                 demo = add_completed_demo(db, "demo-render-manifest")
-                service = DemoService(db)
+                service = DemoService.for_internal(db)
                 service.write_replay_blob(demo.id, replay_contract(demo.id))
                 job = service.create_render_clip_job(
                     demo,
@@ -291,7 +300,7 @@ class RenderClipJobTest(unittest.TestCase):
             ):
                 db = self.Session()
                 demo = add_completed_demo(db, "demo-render-manifest-claim")
-                service = DemoService(db)
+                service = DemoService.for_internal(db)
                 service.write_replay_blob(demo.id, replay_contract(demo.id))
                 job = service.create_render_clip_job(
                     demo,
@@ -309,7 +318,7 @@ class RenderClipJobTest(unittest.TestCase):
             with replay_storage_dir(Path(directory)):
                 db = self.Session()
                 demo = add_completed_demo(db, "demo-render-next-job")
-                service = DemoService(db)
+                service = DemoService.for_internal(db)
                 service.write_replay_blob(demo.id, replay_contract(demo.id))
                 db.add_all(
                     [
@@ -360,7 +369,7 @@ class RenderClipJobTest(unittest.TestCase):
             ):
                 db = self.Session()
                 demo = add_completed_demo(db, "demo-render-operator-list")
-                service = DemoService(db)
+                service = DemoService.for_internal(db)
                 service.write_replay_blob(demo.id, replay_contract(demo.id))
                 job = service.create_render_clip_job(
                     demo,
@@ -383,7 +392,7 @@ class RenderClipJobTest(unittest.TestCase):
                 self.assertEqual(status.job_id, job.id)
                 self.assertEqual(status.source, "rendered")
                 self.assertEqual(status.video_status, "queued")
-                self.assertIsNone(status.video_url)
+                self.assertNotIn("video_url", status.model_dump())
                 self.assertEqual(status.tick_start, 1280)
                 self.assertEqual(status.tick_end, 1920)
                 self.assertEqual(status.tick_rate, 64)
@@ -393,6 +402,9 @@ class RenderClipJobTest(unittest.TestCase):
                 self.assertEqual(status.pov_steam_id, "76561190000000001")
                 self.assertEqual(status.round_number, 4)
                 self.assertEqual(status.render_preset, "operator_panel_probe")
+                self.assertNotIn("demoStorageKey", status.metadata)
+                self.assertNotIn("replayStorageKey", status.metadata)
+                self.assertNotIn("local://", status.model_dump_json())
 
     def test_render_job_created_schema_preserves_operator_fields(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -402,7 +414,7 @@ class RenderClipJobTest(unittest.TestCase):
             ):
                 db = self.Session()
                 demo = add_completed_demo(db, "demo-render-created-schema")
-                service = DemoService(db)
+                service = DemoService.for_internal(db)
                 service.write_replay_blob(demo.id, replay_contract(demo.id))
                 job = service.create_render_clip_job(
                     demo,
@@ -432,7 +444,7 @@ class RenderClipJobTest(unittest.TestCase):
             ):
                 db = self.Session()
                 demo = add_completed_demo(db, "demo-render-status-source")
-                service = DemoService(db)
+                service = DemoService.for_internal(db)
                 service.write_replay_blob(
                     demo.id,
                     replay_contract(
@@ -450,6 +462,10 @@ class RenderClipJobTest(unittest.TestCase):
                         },
                     ),
                 )
+                service.storage.write_bytes(
+                    service.storage.video_key(demo.id, "manual.mp4"),
+                    b"manual-video",
+                )
                 failed_job = DemoJob(
                     id="render-job-failed-manual-state",
                     demo_id=demo.id,
@@ -466,15 +482,20 @@ class RenderClipJobTest(unittest.TestCase):
                 self.assertEqual(failed_status.status, "failed")
                 self.assertEqual(failed_status.source, "manual_upload")
                 self.assertEqual(failed_status.video_status, "ready")
+                self.assertNotIn("video_url", failed_status.model_dump())
+                self.assertEqual(failed_status.error_code, "RENDER_FAILED")
                 self.assertEqual(
-                    failed_status.video_url,
-                    "/media/videos/demo-render-status-source/manual.mp4",
+                    failed_status.error_message,
+                    "Render output could not be produced.",
                 )
-                self.assertEqual(failed_status.error_message, "Operator cancelled capture")
 
                 completed_job = service.create_render_clip_job(
                     demo,
                     RenderClipRequest(tickStart=640, tickEnd=1280, tickRate=64),
+                )
+                service.storage.write_bytes(
+                    service.storage.video_key(demo.id, "rendered.mp4"),
+                    b"rendered-video",
                 )
                 service.apply_render_worker_result(
                     completed_job,
@@ -492,10 +513,7 @@ class RenderClipJobTest(unittest.TestCase):
                 self.assertEqual(completed_status.status, "completed")
                 self.assertEqual(completed_status.source, "rendered")
                 self.assertEqual(completed_status.video_status, "ready")
-                self.assertEqual(
-                    completed_status.video_url,
-                    "/media/videos/demo-render-status-source/rendered.mp4",
-                )
+                self.assertNotIn("video_url", completed_status.model_dump())
 
     def test_render_worker_completed_result_updates_rendered_video_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -505,11 +523,15 @@ class RenderClipJobTest(unittest.TestCase):
             ):
                 db = self.Session()
                 demo = add_completed_demo(db, "demo-render-completed")
-                service = DemoService(db)
+                service = DemoService.for_internal(db)
                 service.write_replay_blob(demo.id, replay_contract(demo.id))
                 job = service.create_render_clip_job(
                     demo,
                     RenderClipRequest(tickStart=100, tickEnd=3044, tickRate=64),
+                )
+                service.storage.write_bytes(
+                    service.storage.video_key(demo.id, "rendered.mp4"),
+                    b"rendered-video",
                 )
 
                 video = service.apply_render_worker_result(
@@ -542,7 +564,7 @@ class RenderClipJobTest(unittest.TestCase):
             with replay_storage_dir(Path(directory)):
                 db = self.Session()
                 demo = add_completed_demo(db, "demo-render-callback-failed")
-                service = DemoService(db)
+                service = DemoService.for_internal(db)
                 service.write_replay_blob(
                     demo.id,
                     replay_contract(
@@ -592,11 +614,119 @@ class RenderClipJobTest(unittest.TestCase):
 
                 db.refresh(job)
                 self.assertEqual(job.status, "failed")
-                self.assertEqual(job.error_message, "Renderer crashed before capture")
+                self.assertEqual(job.error_message, "Render output could not be produced.")
+                status = service.render_job_status(job)
+                self.assertEqual(status.error_code, "RENDER_FAILED")
+                self.assertEqual(status.error_message, "Render output could not be produced.")
+                self.assertNotIn("Renderer crashed", status.model_dump_json())
                 self.assertEqual(video["status"], "ready")
                 self.assertEqual(video["source"], "manual_upload")
                 self.assertEqual(video["url"], "/media/videos/demo-render-callback-failed/manual.mp4")
                 self.assertEqual(video["timeOriginSeconds"], 2)
+
+    def test_render_failure_details_never_enter_user_visible_state(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            with replay_storage_dir(Path(directory)), patch(
+                "app.services.demo_service.get_redis_client",
+                return_value=FakeRedis(),
+            ):
+                db = self.Session()
+                demo = add_completed_demo(db, "demo-render-safe-failure")
+                service = DemoService.for_internal(db)
+                service.write_replay_blob(demo.id, replay_contract(demo.id))
+                job = service.create_render_clip_job(
+                    demo,
+                    RenderClipRequest(tickStart=0, tickEnd=640, tickRate=64),
+                )
+                raw_error = (
+                    "/data/videos/private.mp4 token=secret-value\n"
+                    "Traceback (most recent call last): ..."
+                )
+
+                with self.assertLogs(
+                    "app.services.demo_service",
+                    level="WARNING",
+                ) as captured_logs:
+                    video = service.apply_render_worker_result(
+                        job,
+                        RenderWorkerResult(
+                            status="failed",
+                            tickStart=0,
+                            tickEnd=640,
+                            tickRate=64,
+                            durationSeconds=10,
+                            errorMessage=raw_error,
+                        ),
+                    )
+
+                db.refresh(job)
+                public_video = service.public_video_status(demo)
+                public_job = service.render_job_status(job)
+                combined = json.dumps(
+                    {
+                        "video": video,
+                        "publicVideo": public_video,
+                        "job": public_job.model_dump(mode="json"),
+                    }
+                )
+                self.assertEqual(job.error_message, "Render output could not be produced.")
+                self.assertEqual(video["errorCode"], "RENDER_FAILED")
+                self.assertEqual(video["errorMessage"], "Render output could not be produced.")
+                self.assertEqual(public_video["errorCode"], "RENDER_FAILED")
+                self.assertEqual(public_job.error_code, "RENDER_FAILED")
+                self.assertNotIn("/data/", combined)
+                self.assertNotIn("secret-value", combined)
+                self.assertNotIn("Traceback", combined)
+                self.assertNotIn("/data/", "\n".join(captured_logs.output))
+                self.assertNotIn("secret-value", "\n".join(captured_logs.output))
+                self.assertNotIn("Traceback", "\n".join(captured_logs.output))
+
+    def test_worker_exception_persists_only_safe_render_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            with replay_storage_dir(Path(directory)):
+                db = self.Session()
+                demo = add_completed_demo(db, "demo-worker-safe-failure")
+                service = DemoService.for_internal(db)
+                service.write_replay_blob(demo.id, replay_contract(demo.id))
+                job = DemoJob(
+                    id="render-job-worker-safe-failure",
+                    demo_id=demo.id,
+                    job_type="render_clip",
+                    status="rendering",
+                    metadata_json=json.dumps(render_job_metadata(0, 640)),
+                )
+                db.add(job)
+                db.commit()
+
+                fail_job(
+                    db,
+                    job.id,
+                    demo.id,
+                    RuntimeError("/private/tmp/clip.mp4 api_token=secret Traceback"),
+                )
+
+                db.refresh(job)
+                video = service.get_video_status(demo)
+                self.assertEqual(job.error_message, "Render output could not be produced.")
+                self.assertEqual(video["errorCode"], "RENDER_FAILED")
+                self.assertEqual(video["errorMessage"], "Render output could not be produced.")
+                self.assertNotIn("/private/tmp", json.dumps(video))
+                self.assertNotIn("api_token", json.dumps(video))
+
+    def test_worker_failure_log_omits_exception_text(self) -> None:
+        with patch("builtins.print") as print_mock:
+            _log_job_failure(
+                "job-safe-log",
+                "process",
+                RuntimeError("/private/tmp/clip.mp4 token=secret Traceback"),
+            )
+
+        rendered_log = " ".join(str(value) for value in print_mock.call_args.args)
+        self.assertIn("job-safe-log", rendered_log)
+        self.assertIn("RuntimeError", rendered_log)
+        self.assertNotIn("/private/tmp", rendered_log)
+        self.assertNotIn("token=secret", rendered_log)
+        self.assertNotIn("Traceback", rendered_log)
 
     def test_terminal_render_job_rejects_later_callbacks(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -606,11 +736,15 @@ class RenderClipJobTest(unittest.TestCase):
             ):
                 db = self.Session()
                 demo = add_completed_demo(db, "demo-render-terminal-callback")
-                service = DemoService(db)
+                service = DemoService.for_internal(db)
                 service.write_replay_blob(demo.id, replay_contract(demo.id))
                 job = service.create_render_clip_job(
                     demo,
                     RenderClipRequest(tickStart=100, tickEnd=740, tickRate=64),
+                )
+                service.storage.write_bytes(
+                    service.storage.video_key(demo.id, "rendered.mp4"),
+                    b"rendered-video",
                 )
                 service.apply_render_worker_result(
                     job,
@@ -709,12 +843,15 @@ def render_job_metadata(tick_start: int, tick_end: int) -> dict:
 
 @contextmanager
 def replay_storage_dir(path: Path):
-    original = settings.replay_storage_dir
+    original = (settings.replay_storage_dir, settings.video_storage_dir)
     object.__setattr__(settings, "replay_storage_dir", path)
+    object.__setattr__(settings, "video_storage_dir", path / "videos")
     try:
         yield
     finally:
-        object.__setattr__(settings, "replay_storage_dir", original)
+        replay_dir, video_dir = original
+        object.__setattr__(settings, "replay_storage_dir", replay_dir)
+        object.__setattr__(settings, "video_storage_dir", video_dir)
 
 
 if __name__ == "__main__":

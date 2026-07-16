@@ -1,3 +1,5 @@
+import secrets
+
 from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, Response, UploadFile
 from sqlalchemy.orm import Session
 
@@ -27,7 +29,10 @@ router = APIRouter(tags=["demos"])
 def require_render_worker_token(
     x_render_worker_token: str | None = Header(default=None, alias="X-Render-Worker-Token"),
 ) -> None:
-    if x_render_worker_token != settings.render_worker_token:
+    if not x_render_worker_token or not secrets.compare_digest(
+        x_render_worker_token,
+        settings.render_worker_token,
+    ):
         raise HTTPException(status_code=401, detail="Invalid render worker token")
 
 
@@ -128,7 +133,7 @@ def get_demo_video(
     demo = service.get_demo(demo_id)
     if demo is None:
         raise HTTPException(status_code=404, detail="Demo not found")
-    return ReplayVideoStatus.model_validate(service.get_video_status(demo))
+    return ReplayVideoStatus.model_validate(service.public_video_status(demo))
 
 
 @router.post("/demos/{demo_id}/video/upload", response_model=ReplayVideoStatus)
@@ -153,7 +158,7 @@ async def upload_demo_video(
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
-    return ReplayVideoStatus.model_validate(video)
+    return ReplayVideoStatus.model_validate(service.public_video_status(demo))
 
 
 @router.post("/demos/{demo_id}/video/calibration", response_model=ReplayVideoStatus)
@@ -180,7 +185,7 @@ def update_demo_video_calibration(
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
-    return ReplayVideoStatus.model_validate(video)
+    return ReplayVideoStatus.model_validate(service.public_video_status(demo))
 
 
 @router.post("/demos/{demo_id}/render/mock", response_model=RenderJobCreated, status_code=201)
@@ -204,7 +209,7 @@ def create_mock_render_job(
     job_status = service.render_job_status(job)
     return render_job_created_response(
         job_status,
-        ReplayVideoStatus.model_validate(service.get_video_status(demo)),
+        ReplayVideoStatus.model_validate(service.public_video_status(demo)),
     )
 
 
@@ -231,7 +236,7 @@ def create_render_clip_job(
     job_status = service.render_job_status(job)
     return render_job_created_response(
         job_status,
-        ReplayVideoStatus.model_validate(service.get_video_status(demo)),
+        ReplayVideoStatus.model_validate(service.public_video_status(demo)),
     )
 
 
@@ -258,7 +263,7 @@ def get_next_render_worker_manifest(
     _: None = Depends(require_render_worker_token),
     db: Session = Depends(get_db),
 ) -> RenderJobManifest | Response:
-    service = DemoService(db)
+    service = DemoService.for_internal(db)
     job = service.next_render_clip_job()
     if job is None:
         return Response(status_code=204)
@@ -282,7 +287,7 @@ def get_render_worker_manifest(
     _: None = Depends(require_render_worker_token),
     db: Session = Depends(get_db),
 ) -> RenderJobManifest:
-    service = DemoService(db)
+    service = DemoService.for_internal(db)
     job = service.get_render_clip_job(job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="Render clip job not found")
@@ -306,7 +311,7 @@ async def upload_render_worker_media(
     _: None = Depends(require_render_worker_token),
     db: Session = Depends(get_db),
 ) -> RenderWorkerMediaUpload:
-    service = DemoService(db)
+    service = DemoService.for_internal(db)
     job = service.get_render_clip_job(job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="Render clip job not found")
@@ -337,7 +342,7 @@ def apply_render_worker_result(
     _: None = Depends(require_render_worker_token),
     db: Session = Depends(get_db),
 ) -> RenderWorkerResultAccepted:
-    service = DemoService(db)
+    service = DemoService.for_internal(db)
     job = service.get_render_clip_job(job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="Render clip job not found")

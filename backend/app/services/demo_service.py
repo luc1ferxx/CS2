@@ -1,8 +1,10 @@
 import json
+import logging
+import os
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, BinaryIO
 
 from sqlalchemy import asc, case, desc, func, or_
 from sqlalchemy.orm import Session
@@ -30,6 +32,13 @@ from app.services.upload_service import StoredVideoUpload, demo_upload_key, stor
 
 
 RENDER_CLIP_JOB_TYPE = "render_clip"
+RENDER_FAILED_ERROR_CODE = "RENDER_FAILED"
+RENDER_FAILED_PUBLIC_MESSAGE = "Render output could not be produced."
+RENDER_WORKER_UNAVAILABLE_ERROR_CODE = "RENDER_WORKER_UNAVAILABLE"
+RENDER_CLIP_NOT_CONNECTED_ERROR = (
+    "GPU worker not connected for render_clip. "
+    "A separate Windows/Linux GPU worker or manual operator must process this job."
+)
 PARSE_JOB_TYPES = ("real_parse", "mock_parse")
 RENDER_CLIP_DEFAULT_PRESET = "event_clip_v1"
 RENDER_WORKER_MANIFEST_VERSION = "render_worker_v1"
@@ -43,6 +52,7 @@ DEMO_STATUS_SEARCH_ALIASES = {
     "ready": "completed",
     "complete": "completed",
 }
+logger = logging.getLogger(__name__)
 
 
 def utc_now() -> datetime:
@@ -55,10 +65,25 @@ class DemoService:
         db: Session,
         owner_id: str | None = None,
         storage: LocalStorageService | None = None,
+        *,
+        internal: bool = False,
     ):
         self.db = db
-        self.owner_id = normalize_owner_id(owner_id)
+        self.owner_id = None if internal else normalize_owner_id(owner_id)
         self._storage = storage
+
+    @classmethod
+    def for_internal(
+        cls,
+        db: Session,
+        storage: LocalStorageService | None = None,
+    ) -> "DemoService":
+        return cls(db, storage=storage, internal=True)
+
+    def _owner_id(self) -> str:
+        if self.owner_id is None:
+            raise RuntimeError("Owner-scoped operations require an explicit owner context")
+        return self.owner_id
 
     @property
     def storage(self) -> LocalStorageService:
@@ -74,7 +99,7 @@ class DemoService:
         order: str | None = None,
         include_archived: bool = False,
     ) -> list[DemoListItem]:
-        query = self.db.query(Demo).filter(Demo.owner_id == self.owner_id)
+        query = self.db.query(Demo).filter(Demo.owner_id == self._owner_id())
 
         if not include_archived:
             query = query.filter(Demo.archived.is_(False))
@@ -127,13 +152,12 @@ class DemoService:
         return [self.demo_list_item(demo) for demo in demos]
 
     def demo_list_item(self, demo: Demo) -> DemoListItem:
-        video = self._video_status_for_list(demo)
+        video = self._public_video_status_for_list(demo)
         latest_render_job = self._latest_render_clip_job(demo)
         return DemoListItem.model_validate(demo).model_copy(
             update={
                 "video_status": _optional_str(video.get("status")),
                 "video_source": _optional_str(video.get("source")),
-                "video_url": _optional_str(video.get("url")),
                 "latest_render_status": latest_render_job.status if latest_render_job else None,
                 "ingestion": self.demo_ingestion_status(demo),
             }
@@ -147,7 +171,7 @@ class DemoService:
     def get_demo(self, demo_id: str) -> Demo | None:
         return (
             self.db.query(Demo)
-            .filter(Demo.id == demo_id, Demo.owner_id == self.owner_id)
+            .filter(Demo.id == demo_id, Demo.owner_id == self._owner_id())
             .one_or_none()
         )
 
@@ -185,8 +209,8 @@ class DemoService:
 
         demo = Demo(
             id=demo_id,
-            owner_id=self.owner_id,
-            legacy_user_id=self.owner_id,
+            owner_id=self._owner_id(),
+            legacy_user_id=self._owner_id(),
             name=f"Mock Match {demo_id[:8]}",
             original_filename=f"mock_demo_{demo_id[:8]}.dem",
             map_name="de_inferno",
@@ -222,8 +246,8 @@ class DemoService:
 
         demo = Demo(
             id=demo_id,
-            owner_id=self.owner_id,
-            legacy_user_id=self.owner_id,
+            owner_id=self._owner_id(),
+            legacy_user_id=self._owner_id(),
             name=f"Uploaded Demo {demo_id[:8]}",
             original_filename=stored_upload.original_filename,
             source_storage_key=stored_upload.storage_key,
@@ -493,9 +517,7 @@ class DemoService:
         stored_key = getattr(demo, "source_storage_key", None)
         if not stored_key:
             return fallback_key
-        try:
-            self.storage.path_for_key(stored_key)
-        except StorageKeyError:
+        if not self.storage.upload_key_belongs_to_demo(demo.id, stored_key):
             return fallback_key
         return stored_key
 
@@ -643,7 +665,17 @@ class DemoService:
 
     def render_job_status(self, job: DemoJob) -> RenderJobStatus:
         metadata = _job_metadata(job)
-        video = self.get_video_status(job.demo) if job.demo is not None else {}
+        public_metadata = {
+            key: value
+            for key, value in metadata.items()
+            if key not in {"demoStorageKey", "replayStorageKey"}
+        }
+        video = self.public_video_status(job.demo) if job.demo is not None else {}
+        error_code, error_message = _public_render_failure(
+            job.status,
+            None,
+            job.error_message,
+        )
         return RenderJobStatus(
             job_id=job.id,
             demo_id=job.demo_id,
@@ -651,7 +683,6 @@ class DemoService:
             status=job.status,
             source=_optional_str(video.get("source")) or "unknown",
             video_status=_optional_str(video.get("status")),
-            video_url=_optional_str(video.get("url")),
             tick_start=_optional_int(metadata.get("tickStart")),
             tick_end=_optional_int(metadata.get("tickEnd")),
             tick_rate=_optional_int(metadata.get("tickRate")),
@@ -661,8 +692,9 @@ class DemoService:
             pov_steam_id=_optional_str(metadata.get("povSteamId")),
             round_number=_optional_int(metadata.get("roundNumber")),
             render_preset=_optional_str(metadata.get("renderPreset")),
-            metadata=metadata,
-            error_message=job.error_message,
+            metadata=public_metadata,
+            error_code=error_code,
+            error_message=error_message,
             created_at=job.created_at,
             started_at=job.started_at,
             finished_at=job.finished_at,
@@ -711,10 +743,19 @@ class DemoService:
             job.status = "completed"
             job.error_message = None
         elif normalized_status == "failed":
-            error_message = result.errorMessage or "Render worker reported failure"
-            video = self.update_render_clip_video_status(job.demo, "failed", error_message[:1000])
+            logger.warning(
+                "Render worker job %s reported %s",
+                job.id,
+                RENDER_FAILED_ERROR_CODE,
+            )
+            video = self.update_render_clip_video_status(
+                job.demo,
+                "failed",
+                RENDER_FAILED_PUBLIC_MESSAGE,
+                error_code=RENDER_FAILED_ERROR_CODE,
+            )
             job.status = "failed"
-            job.error_message = error_message[:1000]
+            job.error_message = RENDER_FAILED_PUBLIC_MESSAGE
         else:
             raise ValueError("status must be completed or failed")
 
@@ -737,12 +778,22 @@ class DemoService:
         return storage_key
 
     def load_replay_blob(self, demo: Demo) -> dict[str, object] | None:
-        keys = [getattr(demo, "replay_storage_key", None), self.replay_blob_key(demo.id)]
-        for storage_key in dict.fromkeys(key for key in keys if key):
-            if self.storage.exists(storage_key):
-                replay = self.storage.read_json(storage_key)
-                return self._with_replay_contract_defaults(replay)
-        return None
+        storage_key = getattr(demo, "replay_storage_key", None) or self.replay_blob_key(demo.id)
+        if not self.storage.replay_key_belongs_to_demo(demo.id, storage_key):
+            return None
+        if not self.storage.exists(storage_key):
+            return None
+
+        replay = self.storage.read_json(storage_key)
+        if not isinstance(replay, dict) or _optional_str(replay.get("demoId")) != demo.id:
+            return None
+        return self._with_replay_contract_defaults(replay)
+
+    def public_replay(self, demo: Demo) -> dict[str, object] | None:
+        replay = self.load_replay_blob(demo)
+        if replay is None:
+            return None
+        return _public_replay_contract(replay, self.public_video_status(demo))
 
     def get_video_status(self, demo: Demo) -> dict[str, Any]:
         replay = self.load_replay_blob(demo)
@@ -755,6 +806,7 @@ class DemoService:
                 "tickEnd": 0,
                 "tickRate": demo.tick_rate,
                 "source": "mock",
+                "errorCode": None,
                 "errorMessage": None,
                 "timeOriginSeconds": 0,
             }
@@ -763,9 +815,68 @@ class DemoService:
             return video
         raise ValueError("Invalid replay video contract")
 
-    def _video_status_for_list(self, demo: Demo) -> dict[str, Any]:
+    def public_video_status(self, demo: Demo) -> dict[str, Any]:
+        internal_video = self.get_video_status(demo)
+        video = _project_fields(
+            internal_video,
+            (
+                "status",
+                "durationSeconds",
+                "tickStart",
+                "tickEnd",
+                "tickRate",
+                "source",
+                "timeOriginSeconds",
+            ),
+        )
+        error_code, error_message = _public_render_failure(
+            _optional_str(internal_video.get("status")),
+            _optional_str(internal_video.get("errorCode")),
+            _optional_str(internal_video.get("errorMessage")),
+        )
+        video["errorCode"] = error_code
+        video["errorMessage"] = error_message
+        video["url"] = (
+            f"/demos/{demo.id}/media/video"
+            if self.get_private_video_path(demo) is not None
+            else None
+        )
+        return video
+
+    def get_private_video_path(self, demo: Demo) -> Path | None:
+        storage_key = self._private_video_storage_key(demo)
+        if storage_key is None:
+            return None
+        return self.storage.video_path_for_demo(demo.id, storage_key)
+
+    def open_private_video(
+        self,
+        demo: Demo,
+    ) -> tuple[BinaryIO, os.stat_result] | None:
+        storage_key = self._private_video_storage_key(demo)
+        if storage_key is None:
+            return None
+        return self.storage.open_video_for_demo(demo.id, storage_key)
+
+    def _private_video_storage_key(self, demo: Demo) -> str | None:
+        video = self.get_video_status(demo)
+        if video.get("status") != "ready":
+            return None
+
+        storage_key = _optional_str(video.get("storageKey"))
+        if storage_key is None:
+            media_url = _optional_str(video.get("url"))
+            if media_url is None:
+                return None
+            try:
+                storage_key = self.storage.storage_key_from_media_url(media_url)
+            except StorageKeyError:
+                return None
+        return storage_key
+
+    def _public_video_status_for_list(self, demo: Demo) -> dict[str, Any]:
         try:
-            return self.get_video_status(demo)
+            return self.public_video_status(demo)
         except (OSError, ValueError, json.JSONDecodeError):
             return {
                 "status": "unknown",
@@ -834,11 +945,18 @@ class DemoService:
         demo: Demo,
         status: str,
         error_message: str | None,
+        *,
+        error_code: str | None = None,
     ) -> dict[str, Any]:
         current_video = self.get_video_status(demo)
         if current_video.get("source") == "manual_upload":
             return current_video
 
+        public_error_code, public_error_message = _public_render_failure(
+            status,
+            error_code,
+            error_message,
+        )
         return self.update_replay_video(
             demo,
             {
@@ -846,7 +964,8 @@ class DemoService:
                 "status": status,
                 "source": "rendered",
                 "url": None,
-                "errorMessage": error_message,
+                "errorCode": public_error_code,
+                "errorMessage": public_error_message,
             },
         )
 
@@ -867,6 +986,8 @@ class DemoService:
         video_reference = _render_output_reference(result, self.storage)
         if video_reference is None:
             raise ValueError("completed render output must include videoUrl or localMediaPath")
+        if self.storage.video_path_for_demo(demo.id, video_reference["storageKey"]) is None:
+            raise ValueError("completed render output must belong to the requested demo")
 
         return self.update_replay_video(
             demo,
@@ -879,6 +1000,7 @@ class DemoService:
                 "tickEnd": result.tickEnd,
                 "tickRate": result.tickRate,
                 "source": "rendered",
+                "errorCode": None,
                 "errorMessage": None,
                 "timeOriginSeconds": result.timeOriginSeconds,
             },
@@ -919,6 +1041,7 @@ class DemoService:
             "tickEnd": tick_end,
             "tickRate": tick_rate,
             "source": video.get("source", "mock"),
+            "errorCode": video.get("errorCode"),
             "errorMessage": video.get("errorMessage"),
             "timeOriginSeconds": max(0, time_origin_seconds),
         }
@@ -1066,3 +1189,235 @@ def _optional_str(value: Any) -> str | None:
     if value is None:
         return None
     return str(value)
+
+
+def _public_render_failure(
+    status: str | None,
+    error_code: str | None,
+    error_message: str | None,
+) -> tuple[str | None, str | None]:
+    if status != "failed":
+        return None, None
+    if (
+        error_code == RENDER_WORKER_UNAVAILABLE_ERROR_CODE
+        or (error_message or "").startswith("GPU worker not connected for render_clip")
+    ):
+        return RENDER_WORKER_UNAVAILABLE_ERROR_CODE, RENDER_CLIP_NOT_CONNECTED_ERROR
+    return RENDER_FAILED_ERROR_CODE, RENDER_FAILED_PUBLIC_MESSAGE
+
+
+def _public_replay_contract(
+    replay: dict[str, Any],
+    video: dict[str, Any],
+) -> dict[str, object]:
+    public: dict[str, object] = {
+        "demoId": replay["demoId"],
+        "mapName": replay["mapName"],
+        "tickRate": replay["tickRate"],
+        "video": video,
+        "rounds": [
+            _project_fields(
+                item,
+                (
+                    "roundNumber",
+                    "startTick",
+                    "freezeEndTick",
+                    "endTick",
+                    "winnerSide",
+                    "winnerReason",
+                ),
+            )
+            for item in replay.get("rounds", [])
+            if isinstance(item, dict)
+        ],
+        "players": [
+            _project_fields(item, ("id", "name", "side", "color"))
+            for item in replay.get("players", [])
+            if isinstance(item, dict)
+        ],
+        "frames": [
+            _public_replay_frame(item)
+            for item in replay.get("frames", [])
+            if isinstance(item, dict)
+        ],
+        "kills": [
+            _public_kill(item)
+            for item in replay.get("kills", [])
+            if isinstance(item, dict)
+        ],
+        "deaths": [
+            _public_kill(item)
+            for item in replay.get("deaths", [])
+            if isinstance(item, dict)
+        ],
+        "events": [
+            _public_replay_event(item)
+            for item in replay.get("events", [])
+            if isinstance(item, dict)
+        ],
+        "generatedAt": replay["generatedAt"],
+        "contractVersion": replay["contractVersion"],
+        "diagnostics": _public_replay_diagnostics(replay.get("diagnostics")),
+    }
+    map_metadata = replay.get("mapMetadata")
+    if isinstance(map_metadata, dict):
+        public["mapMetadata"] = _public_map_metadata(map_metadata)
+    return public
+
+
+def _public_map_metadata(value: dict[str, Any]) -> dict[str, Any]:
+    projected = _project_fields(
+        value,
+        (
+            "mapName",
+            "displayName",
+            "radarImagePath",
+            "secondaryRadarImagePath",
+            "calibrated",
+            "confidence",
+            "attribution",
+            "source",
+        ),
+    )
+    transform = value.get("transform")
+    if isinstance(transform, dict):
+        projected["transform"] = _project_fields(
+            transform,
+            (
+                "type",
+                "posX",
+                "posY",
+                "scale",
+                "imageSize",
+                "minX",
+                "maxX",
+                "minY",
+                "maxY",
+            ),
+        )
+    return projected
+
+
+def _public_replay_frame(value: dict[str, Any]) -> dict[str, Any]:
+    projected = _project_fields(value, ("tick", "timeSeconds", "roundNumber"))
+    players = value.get("players")
+    projected["players"] = [
+        _project_fields(
+            player,
+            ("id", "name", "side", "x", "y", "alive", "hp", "hasBomb"),
+        )
+        for player in players
+        if isinstance(player, dict)
+    ] if isinstance(players, list) else []
+    bomb_state = value.get("bombState")
+    projected["bombState"] = (
+        _project_fields(bomb_state, ("status", "carrierPlayerId", "x", "y", "site"))
+        if isinstance(bomb_state, dict)
+        else {"status": "carried"}
+    )
+    return projected
+
+
+def _public_kill(value: dict[str, Any]) -> dict[str, Any]:
+    return _project_fields(
+        value,
+        (
+            "tick",
+            "roundNumber",
+            "attackerId",
+            "attackerName",
+            "attackerSide",
+            "victimId",
+            "victimName",
+            "victimSide",
+            "assisterId",
+            "assisterName",
+            "weapon",
+            "headshot",
+        ),
+    )
+
+
+def _public_replay_event(value: dict[str, Any]) -> dict[str, Any]:
+    projected = _project_fields(
+        value,
+        (
+            "id",
+            "type",
+            "tick",
+            "roundNumber",
+            "source",
+            "playerIds",
+            "playerId",
+            "playerName",
+            "side",
+            "x",
+            "y",
+            "label",
+        ),
+    )
+    metadata = value.get("metadata")
+    projected["metadata"] = (
+        _project_fields(
+            metadata,
+            (
+                "attackerId",
+                "attackerName",
+                "attackerSide",
+                "victimId",
+                "victimName",
+                "victimSide",
+                "assisterId",
+                "assisterName",
+                "weapon",
+                "headshot",
+                "damageHealth",
+                "damageArmor",
+                "health",
+                "armor",
+                "site",
+                "reason",
+                "round_end_reason",
+                "winner_reason",
+                "winnerReason",
+                "winnerSide",
+            ),
+        )
+        if isinstance(metadata, dict)
+        else {}
+    )
+    return projected
+
+
+def _public_replay_diagnostics(value: Any) -> dict[str, Any] | None:
+    if not isinstance(value, dict):
+        return None
+    projected = _project_fields(
+        value,
+        (
+            "contractVersion",
+            "normalizedLegacy",
+            "parserEventCount",
+            "roundCount",
+            "playerCount",
+            "frameCount",
+            "missingFields",
+            "degradedFields",
+            "missingEventFamilies",
+        ),
+    )
+    family_counts = value.get("eventFamilyCounts")
+    projected["eventFamilyCounts"] = (
+        {
+            key: count
+            for key, count in family_counts.items()
+            if key in {"combat", "damage", "objective", "utility"}
+        }
+        if isinstance(family_counts, dict)
+        else {}
+    )
+    return projected
+
+
+def _project_fields(value: dict[str, Any], fields: tuple[str, ...]) -> dict[str, Any]:
+    return {field: value[field] for field in fields if field in value}

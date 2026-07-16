@@ -38,6 +38,8 @@ class AuthOwnerBoundaryApiTest(unittest.TestCase):
         self.original_replay_dir = settings.replay_storage_dir
         self.original_upload_dir = settings.demo_upload_storage_dir
         self.original_video_dir = settings.video_storage_dir
+        self.original_auth_mode = settings.auth_mode
+        object.__setattr__(settings, "auth_mode", "test")
         root = Path(self.temp_dir.name)
         object.__setattr__(settings, "replay_storage_dir", root / "replays")
         object.__setattr__(settings, "demo_upload_storage_dir", root / "uploads")
@@ -60,6 +62,7 @@ class AuthOwnerBoundaryApiTest(unittest.TestCase):
         object.__setattr__(settings, "replay_storage_dir", self.original_replay_dir)
         object.__setattr__(settings, "demo_upload_storage_dir", self.original_upload_dir)
         object.__setattr__(settings, "video_storage_dir", self.original_video_dir)
+        object.__setattr__(settings, "auth_mode", self.original_auth_mode)
         self.temp_dir.cleanup()
         self.app.dependency_overrides.clear()
 
@@ -79,7 +82,7 @@ class AuthOwnerBoundaryApiTest(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual([item["id"] for item in response.json()], ["demo-owner-a"])
-        self.assertEqual(response.json()[0]["owner_id"], OWNER_A)
+        self.assertNotIn("owner_id", response.json()[0])
 
     def test_demo_status_cannot_read_another_owners_demo(self) -> None:
         with self.Session() as db:
@@ -202,8 +205,8 @@ class AuthOwnerBoundaryApiTest(unittest.TestCase):
 
         self.assertEqual(mock_response.status_code, 201)
         self.assertEqual(real_response.status_code, 201)
-        self.assertEqual(mock_response.json()["owner_id"], OWNER_A)
-        self.assertEqual(real_response.json()["owner_id"], OWNER_B)
+        self.assertNotIn("owner_id", mock_response.json())
+        self.assertNotIn("owner_id", real_response.json())
         with self.Session() as db:
             mock_demo = db.query(Demo).filter(Demo.id == mock_response.json()["id"]).one()
             real_demo = db.query(Demo).filter(Demo.id == real_response.json()["id"]).one()
@@ -263,7 +266,150 @@ class AuthOwnerBoundaryApiTest(unittest.TestCase):
 
         self.assertEqual(own_response.status_code, 200)
         self.assertEqual([job["job_id"] for job in own_response.json()], [own_job_id])
+        self.assertNotIn("local://", own_response.text)
+        self.assertNotIn("demoStorageKey", own_response.text)
+        self.assertNotIn("replayStorageKey", own_response.text)
         self.assertEqual(other_response.status_code, 404)
+
+    def test_user_media_responses_expose_only_owner_scoped_private_url(self) -> None:
+        with self.Session() as db:
+            demo = add_demo(db, "demo-owner-a-private-video", OWNER_A)
+            DemoService(db, owner_id=OWNER_A).write_replay_blob(
+                demo.id,
+                replay_contract(demo.id),
+            )
+
+        upload_response = self.client.post(
+            "/demos/demo-owner-a-private-video/video/upload",
+            headers=owner_headers(OWNER_A),
+            files={"file": ("clip.mp4", b"video-bytes", "video/mp4")},
+        )
+        replay_response = self.client.get(
+            "/demos/demo-owner-a-private-video/replay",
+            headers=owner_headers(OWNER_A),
+        )
+        video_response = self.client.get(
+            "/demos/demo-owner-a-private-video/video",
+            headers=owner_headers(OWNER_A),
+        )
+        list_response = self.client.get("/demos", headers=owner_headers(OWNER_A))
+
+        private_url = "/demos/demo-owner-a-private-video/media/video"
+        self.assertEqual(upload_response.status_code, 200)
+        self.assertEqual(upload_response.json()["url"], private_url)
+        self.assertEqual(replay_response.json()["video"]["url"], private_url)
+        self.assertEqual(video_response.json()["url"], private_url)
+        self.assertNotIn("video_url", list_response.json()[0])
+        for response in (
+            upload_response,
+            replay_response,
+            video_response,
+            list_response,
+        ):
+            self.assertNotIn("storageKey", response.text)
+            self.assertNotIn("local://", response.text)
+            self.assertNotIn("/media/videos/", response.text)
+
+    def test_owner_can_complete_the_protected_review_and_mutation_journey(self) -> None:
+        with self.Session() as db:
+            demo = add_demo(db, "demo-owner-a-journey", OWNER_A)
+            DemoService(db, owner_id=OWNER_A).write_replay_blob(
+                demo.id,
+                replay_contract(demo.id),
+            )
+
+        headers = owner_headers(OWNER_A)
+        read_paths = (
+            "/demos/demo-owner-a-journey/status",
+            "/demos/demo-owner-a-journey/replay",
+            "/demos/demo-owner-a-journey/coaching",
+            "/demos/demo-owner-a-journey/video",
+        )
+        for path in read_paths:
+            with self.subTest(path=path):
+                self.assertEqual(self.client.get(path, headers=headers).status_code, 200)
+
+        renamed = self.client.patch(
+            "/demos/demo-owner-a-journey",
+            headers=headers,
+            json={"name": "Owned Journey"},
+        )
+        archived = self.client.post(
+            "/demos/demo-owner-a-journey/archive",
+            headers=headers,
+        )
+        unarchived = self.client.patch(
+            "/demos/demo-owner-a-journey",
+            headers=headers,
+            json={"archived": False},
+        )
+        video = self.client.post(
+            "/demos/demo-owner-a-journey/video/upload",
+            headers=headers,
+            files={"file": ("owned.mp4", b"owned-video", "video/mp4")},
+        )
+        calibrated = self.client.post(
+            "/demos/demo-owner-a-journey/video/calibration",
+            headers=headers,
+            json={"tickStart": 10, "tickEnd": 620, "timeOriginSeconds": 1.5},
+        )
+        mock_render = self.client.post(
+            "/demos/demo-owner-a-journey/render/mock",
+            headers=headers,
+        )
+        clip_render = self.client.post(
+            "/demos/demo-owner-a-journey/render/clip",
+            headers=headers,
+            json={"tickStart": 10, "tickEnd": 620, "tickRate": 64},
+        )
+        jobs = self.client.get(
+            "/demos/demo-owner-a-journey/render/jobs",
+            headers=headers,
+        )
+        library = self.client.get("/demos", headers=headers)
+
+        self.assertEqual(renamed.status_code, 200)
+        self.assertEqual(renamed.json()["name"], "Owned Journey")
+        self.assertTrue(archived.json()["archived"])
+        self.assertFalse(unarchived.json()["archived"])
+        self.assertEqual(video.status_code, 200)
+        self.assertEqual(video.json()["url"], "/demos/demo-owner-a-journey/media/video")
+        self.assertEqual(calibrated.status_code, 200)
+        self.assertEqual(calibrated.json()["timeOriginSeconds"], 1.5)
+        self.assertEqual(mock_render.status_code, 201)
+        self.assertEqual(clip_render.status_code, 201)
+        self.assertEqual(jobs.status_code, 200)
+        self.assertEqual(len(jobs.json()), 1)
+        self.assertEqual(library.status_code, 200)
+        self.assertEqual(library.json()[0]["name"], "Owned Journey")
+
+    def test_coaching_video_status_and_mock_render_hide_cross_owner_demo(self) -> None:
+        with self.Session() as db:
+            demo = add_demo(db, "demo-owner-b-surfaces", OWNER_B)
+            DemoService(db, owner_id=OWNER_B).write_replay_blob(
+                demo.id,
+                replay_contract(demo.id),
+            )
+
+        headers = owner_headers(OWNER_A)
+        responses = (
+            self.client.get(
+                "/demos/demo-owner-b-surfaces/coaching",
+                headers=headers,
+            ),
+            self.client.get(
+                "/demos/demo-owner-b-surfaces/video",
+                headers=headers,
+            ),
+            self.client.post(
+                "/demos/demo-owner-b-surfaces/render/mock",
+                headers=headers,
+            ),
+        )
+
+        self.assertEqual([response.status_code for response in responses], [404, 404, 404])
+        with self.Session() as db:
+            self.assertEqual(db.query(DemoJob).count(), 0)
 
     def test_manual_video_surfaces_cannot_modify_another_owners_demo(self) -> None:
         with self.Session() as db:
@@ -457,6 +603,39 @@ class OwnerBackfillTest(unittest.TestCase):
 
         self.assertEqual(row.source_storage_key, "local://uploads/legacy-demo/legacy.dem")
         self.assertEqual(row.replay_storage_key, "local://replays/legacy-demo.json")
+
+    def test_production_backfill_never_assigns_missing_owners_to_dev_user(self) -> None:
+        engine = create_engine("sqlite:///:memory:")
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "CREATE TABLE demos ("
+                    "id VARCHAR(36) PRIMARY KEY, "
+                    "user_id VARCHAR(64), "
+                    "archived BOOLEAN DEFAULT FALSE NOT NULL)"
+                )
+            )
+            connection.execute(
+                text("INSERT INTO demos (id, user_id, archived) VALUES ('orphan-demo', '', 0)")
+            )
+
+        original_engine = database.engine
+        original_auth_mode = settings.auth_mode
+        database.engine = engine
+        object.__setattr__(settings, "auth_mode", "production")
+        try:
+            with self.assertRaisesRegex(RuntimeError, "owner"):
+                database.ensure_schema_backfills()
+        finally:
+            object.__setattr__(settings, "auth_mode", original_auth_mode)
+            database.engine = original_engine
+
+        with engine.connect() as connection:
+            owner_id = connection.execute(
+                text("SELECT owner_id FROM demos WHERE id = 'orphan-demo'")
+            ).scalar_one()
+
+        self.assertIsNone(owner_id)
 
 
 class FakeRedis:

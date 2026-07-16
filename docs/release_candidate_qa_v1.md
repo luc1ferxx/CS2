@@ -1,6 +1,6 @@
 # Release Candidate QA V1
 
-This runbook defines the repeatable release-candidate validation pass for local Docker development and short-lived cloud previews. It is a QA gate for the current mock MVP, not a production launch checklist.
+This runbook defines the repeatable Stage 2 release-candidate validation pass for local Docker development, short-lived previews, production identity/owner authorization, and private video access. Passing it does not complete later object-storage, reliable-job, parser-isolation, migration/observability/backup, or beta-corpus stages.
 
 ## Scope
 
@@ -8,17 +8,21 @@ RC QA validates that the demo-first review flow still works:
 
 1. Local checks compile, test, lint, typecheck, and build.
 2. Docker services build and start.
-3. API health and safe diagnostics are reachable.
-4. Cloud preview smoke creates a mock demo, opens replay/coaching data, creates a `render_clip` job, checks media routing, and prints diagnostics.
-5. Optional sample `.dem` smoke proves fresh real-demo upload, Redis parse dispatch, replay storage, rules analysis, and map calibration/fallback metadata.
-6. Manual browser smoke verifies the dense Demo Library and Demo Detail review workflows on desktop and mobile.
+3. Public API health is coarse; production system diagnostics are disabled; demo diagnostics remain authenticated and owner-scoped.
+4. Provider-neutral OIDC Code + PKCE/JWKS validation, Redis opaque sessions, logout revocation, and frontend session-expiry handling pass focused tests and browser smoke.
+5. Owner A/B/anonymous/invalid/expired/revoked requests are denied or allowed consistently across every user surface.
+6. Private video GET/HEAD/Range rechecks session, owner, and safe artifact binding without a public static-media bypass.
+7. Development Cloud Preview smoke creates a mock demo, opens replay/coaching data, creates a `render_clip` job, checks private-media projection, and prints development diagnostics.
+8. Optional sample `.dem` smoke proves fresh real-demo upload, Redis parse dispatch, replay storage, rules analysis, and map calibration/fallback metadata.
+9. Manual browser smoke verifies the dense Demo Library and Demo Detail review workflows on desktop and mobile.
 
 ## Non-Goals
 
 - No OpenAI or LLM coaching.
-- No production auth, sessions, OAuth, JWT, passwords, or account UI.
+- No password/account-management system, provider-specific SDK, billing, or team collaboration.
 - No real CS2, Steam, OBS, ffmpeg, screen recording, or local game-client control in API/worker containers.
 - No object-storage migration or production media durability work.
+- No queue crash recovery, parser resource sandbox, formal migration, production observability, or backup/restore implementation.
 - No checked-in `.dem`, video, replay blob, parser dump, or generated media artifacts.
 
 ## Required Local RC Checklist
@@ -33,10 +37,20 @@ git pull origin main
 Then run the non-browser gates:
 
 ```bash
+PYTHONPATH=backend python3 -m unittest \
+  backend.tests.test_production_auth \
+  backend.tests.test_private_media \
+  backend.tests.test_auth_owner_boundary \
+  backend.tests.test_diagnostics
+cd frontend
+node lib/auth.test.mjs
+node lib/private-media.test.mjs
+cd ..
 ./scripts/verify.sh
 docker compose build
 docker compose up -d
 curl http://localhost:8000/health
+# development/test only; production must return 404:
 curl http://localhost:8000/diagnostics
 API_BASE_URL=http://localhost:8000 FRONTEND_URL=http://localhost:3000 python3 scripts/cloud_preview_smoke.py
 ```
@@ -47,7 +61,7 @@ You can run the same non-browser sequence with:
 ./scripts/rc_check.sh
 ```
 
-`scripts/rc_check.sh` does not replace manual browser QA. It intentionally stops after the automated local checks and prints the manual browser items that still need a human pass.
+`scripts/rc_check.sh` remains a development-mode harness. It does not acquire independent production OIDC sessions and therefore does not replace the owner matrix, private-media denial tests, or manual browser QA.
 
 ## Optional Sample `.dem` Validation
 
@@ -84,9 +98,9 @@ Build a hosted preview with public origins set before the frontend image is buil
 
 ```bash
 export FRONTEND_URL=https://cs2-preview.example.com
-export NEXT_PUBLIC_API_BASE_URL=https://cs2-api-preview.example.com
-export BACKEND_PUBLIC_URL=https://cs2-api-preview.example.com
-export MEDIA_URL_BASE=https://cs2-api-preview.example.com
+export NEXT_PUBLIC_API_BASE_URL=https://cs2-preview.example.com
+export FRONTEND_PUBLIC_URL=https://cs2-preview.example.com
+export BACKEND_PUBLIC_URL=https://cs2-preview.example.com
 export CORS_ORIGINS=https://cs2-preview.example.com
 
 docker compose -f docker-compose.yml -f docker-compose.preview.yml up --build -d
@@ -96,12 +110,15 @@ Check the public API and run smoke against the public URLs:
 
 ```bash
 curl "$NEXT_PUBLIC_API_BASE_URL/health"
+# development/test preview only:
 curl "$NEXT_PUBLIC_API_BASE_URL/diagnostics"
 
 API_BASE_URL="$NEXT_PUBLIC_API_BASE_URL" \
 FRONTEND_URL="$FRONTEND_URL" \
 python3 scripts/cloud_preview_smoke.py
 ```
+
+For a production-auth RC, set `AUTH_MODE=production`, secure `__Host-` cookies, one exact HTTPS origin for frontend/API/auth/media routing, the complete OIDC server configuration, and a non-default render-worker service credential through the deployment secret/config system. Verify that `/diagnostics` returns `404`; do not run the development script as a substitute for independently authenticated owner A/B browser/API sessions.
 
 If a sample is available for the preview environment:
 
@@ -112,10 +129,41 @@ FRONTEND_URL="$FRONTEND_URL" \
 python3 scripts/cloud_preview_smoke.py --require-sample
 ```
 
+## Production Identity and Owner Matrix
+
+Use two independent OIDC identities, A and B, plus anonymous, invalid, expired, and explicitly logged-out/revoked browser sessions. Do not simulate this production gate with `X-Dev-User-Id`.
+
+For demos owned separately by A and B, exercise all of these surfaces:
+
+- Library list; status; replay; coaching; demo diagnostics.
+- Rename; archive; unarchive.
+- Mock upload; real `.dem` upload; parser retry.
+- Video status; development/QA video upload; calibration.
+- Mock render; `render_clip`; render-job list.
+- Private video full GET, HEAD, satisfiable Range, and unsatisfiable Range.
+
+Expected results:
+
+- Each owner sees and mutates only their own rows. Cross-owner resource IDs return the same generic `404` as unknown IDs and cause no row, job, metadata, or artifact mutation.
+- Anonymous, invalid, expired, and revoked sessions return `401` before user data or media bytes are returned and cause no mutation.
+- Production ignores/rejects `X-Dev-User-Id`; a valid A session plus a B header remains A.
+- A copied private-media URL fails for B and anonymous sessions. Legacy `/media/videos/...`, traversal, another demo's storage reference, leaf or parent-directory symlinks, post-validation path replacement, and missing files return no foreign bytes or local/storage-key details.
+- Logout deletes the server-side Redis session and clears the cookie. Reusing the old cookie fails.
+- Invalid signature or algorithm, issuer, audience, nonce, timestamps, missing required claims, unknown JWKS key, reused/mismatched state, and unsafe or oversized `return_to` inputs are denied or reduced to the safe dashboard target.
+- Unsafe cookie-authenticated mutations with a missing or untrusted `Origin` receive `403` and create no row, job, metadata, or artifact change; render-worker service calls remain on their independent credential boundary.
+- User-facing demo/replay/video payloads contain no `owner_id`, `storageKey`, unknown internal replay fields, `local://`, absolute local path, issuer, subject, or token; replay/source keys and replay `demoId` remain bound to the requested demo.
+- Production startup rejects more than one CORS origin, and a stale or sibling configured origin cannot read credentialed responses or pass the unsafe-method origin gate.
+- Every auth/session and owner-private JSON/media response, including failures, has `Cache-Control: private, no-store` and `Vary` containing `Cookie` and `Origin`; a shared-cache harness never replays owner A content to owner B.
+- Render callback and worker exception probes containing fake local paths, credentials, and traceback markers persist and return only `RENDER_FAILED`/`RENDER_WORKER_UNAVAILABLE` with safe copy; the injected text is absent from DB, replay/video JSON, render-job JSON, and logs.
+
+Record the status/body summary and mutation check for each cell. The concise reference matrix is in `docs/production_auth_owner_private_media_v1.md`.
+
 ## Manual Browser Smoke
 
 Open `/dashboard` in the target frontend and verify:
 
+- Anonymous production load shows the login boundary; sign-in completes through OIDC and the frontend callback without exposing code/state/token/subject in the final URL or browser storage.
+- Dashboard and Demo Detail use the same session boundary; expiry shows a clear `Session expired` recovery action, and sign-out returns to the anonymous boundary.
 - Dashboard loads with no current console errors.
 - Empty, loading, fetch-failed, archived-only, and search/filter no-result states are clear when practical to exercise.
 - Mock upload creates a demo and the post-create notice/table action opens it.
@@ -130,14 +178,16 @@ Open `/dashboard` in the target frontend and verify:
 - Coaching severity/rule/search filters and event cards work.
 - `Generate Clip` creates a `render_clip` job, and local no-GPU fallback appears as `GPU worker not connected for render_clip`.
 - `RenderOperatorPanel` shows latest job status, tick range, output, and compact errors.
-- A `/media/...` URL returns `200` or `206` where media exists; missing media smoke returns expected `404`.
+- The private `/demos/{demo_id}/media/video` source uses the session cookie, supports seek via `206`, and never falls back to `/media/videos/...`; missing/denied media preserves the synchronized 2D/mock shell.
 - Desktop and mobile widths do not show incoherent horizontal overflow, clipped controls, or current console errors.
 
 ## Safe Preview Boundaries
 
 RC sign-off must preserve these boundaries:
 
-- `DEV_USER_ID` and `X-Dev-User-Id` are dev-only owner scoping, not production auth.
+- Production identity is provider-neutral OIDC with an opaque Redis session; `DEV_USER_ID` and `X-Dev-User-Id` remain development/test-only.
+- User media is private and demo-scoped. No public static `/media/videos` mount, tokenized query string, or user-facing storage key is allowed.
+- Render-worker service credentials remain separate from browser identity.
 - Fake/manual render-worker flows are not real GPU rendering.
 - Local filesystem storage and Docker volumes are preview/MVP storage, not durable production object storage.
 - Uploaded demos are untrusted input.
@@ -151,5 +201,7 @@ For a release-candidate handoff, record:
 - Git commit SHA and `git status --short` output.
 - Non-browser command output, or `./scripts/rc_check.sh` output.
 - Whether optional sample smoke was skipped, optional, or strict.
-- Manual browser smoke result, including desktop/mobile viewport coverage and any known limitations.
-- `/health` and `/diagnostics` status at the time of validation.
+- Production OIDC negative-case results and the complete owner A/B/anonymous/expired/revoked matrix, including no-mutation evidence.
+- Private media GET/HEAD/Range, copied/guessed URL, legacy static path, traversal, symlink, logout, and expiry results.
+- Manual browser smoke result, including callback/session-expired/sign-out behavior, desktop/mobile viewport coverage, screenshots, and known limitations.
+- Coarse `/health` status and proof that system `/diagnostics` is `404` in production while demo diagnostics remain owner-scoped.

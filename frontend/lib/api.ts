@@ -5,6 +5,33 @@ import type { ReplayData, ReplayVideo } from "@/types/replay";
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
 
+export type ApiErrorCode = "unauthenticated" | "request_failed";
+
+export class ApiError extends Error {
+  readonly status: number;
+  readonly code: ApiErrorCode;
+
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+    this.code = status === 401 ? "unauthenticated" : "request_failed";
+  }
+}
+
+export function isApiError(error: unknown): error is ApiError {
+  return error instanceof ApiError;
+}
+
+type UnauthorizedListener = () => void;
+
+const unauthorizedListeners = new Set<UnauthorizedListener>();
+
+export function onUnauthorized(listener: UnauthorizedListener): () => void {
+  unauthorizedListeners.add(listener);
+  return () => unauthorizedListeners.delete(listener);
+}
+
 export interface RenderClipRequest {
   eventId?: string;
   playerId?: string;
@@ -37,7 +64,6 @@ export interface RenderJobStatus {
   status: string;
   source: string;
   video_status?: ReplayVideo["status"] | string | null;
-  video_url?: string | null;
   tick_start?: number | null;
   tick_end?: number | null;
   tick_rate?: number | null;
@@ -48,6 +74,7 @@ export interface RenderJobStatus {
   round_number?: number | null;
   render_preset?: string | null;
   metadata: RenderClipMetadata;
+  error_code?: string | null;
   error_message?: string | null;
   created_at: string;
   started_at?: string | null;
@@ -80,12 +107,18 @@ export interface DemoUpdateRequest {
   archived?: boolean;
 }
 
+export interface AuthSession {
+  authenticated: true;
+  expires_at?: string | null;
+}
+
 async function requestJson<T>(
   path: string,
   init?: RequestInit
 ): Promise<T> {
   const response = await fetch(`${API_BASE_URL}${path}`, {
     ...init,
+    credentials: "include",
     headers: {
       "Content-Type": "application/json",
       ...(init?.headers ?? {})
@@ -94,8 +127,7 @@ async function requestJson<T>(
   });
 
   if (!response.ok) {
-    const detail = await responseErrorMessage(response);
-    throw new Error(detail || `Request failed with ${response.status}`);
+    await throwResponseError(response);
   }
 
   return response.json() as Promise<T>;
@@ -105,12 +137,12 @@ async function requestForm<T>(path: string, formData: FormData): Promise<T> {
   const response = await fetch(`${API_BASE_URL}${path}`, {
     method: "POST",
     body: formData,
+    credentials: "include",
     cache: "no-store"
   });
 
   if (!response.ok) {
-    const detail = await responseErrorMessage(response);
-    throw new Error(detail || `Request failed with ${response.status}`);
+    await throwResponseError(response);
   }
 
   return response.json() as Promise<T>;
@@ -126,6 +158,26 @@ export function listDemos(params: DemoListParams = {}): Promise<DemoSummary[]> {
   }
   const suffix = query.toString() ? `?${query.toString()}` : "";
   return requestJson<DemoSummary[]>(`/demos${suffix}`);
+}
+
+export function getAuthSession(): Promise<AuthSession> {
+  return requestJson<AuthSession>("/auth/session");
+}
+
+export async function logoutAuthSession(): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/auth/logout`, {
+    method: "POST",
+    credentials: "include",
+    cache: "no-store"
+  });
+  if (!response.ok) {
+    await throwResponseError(response);
+  }
+}
+
+export function getAuthLoginUrl(returnTo: string): string {
+  const query = new URLSearchParams({ return_to: returnTo });
+  return `${API_BASE_URL}/auth/login?${query.toString()}`;
 }
 
 export function createMockUpload(): Promise<DemoSummary> {
@@ -222,4 +274,17 @@ async function responseErrorMessage(response: Response): Promise<string> {
   }
 
   return body;
+}
+
+async function throwResponseError(response: Response): Promise<never> {
+  const detail = await responseErrorMessage(response);
+  if (response.status === 401) {
+    for (const listener of unauthorizedListeners) {
+      listener();
+    }
+  }
+  throw new ApiError(
+    response.status,
+    detail || `Request failed with ${response.status}`
+  );
 }

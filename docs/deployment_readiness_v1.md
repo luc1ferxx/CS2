@@ -1,8 +1,8 @@
 # Deployment Readiness V1
 
-This project is deployable as a mock MVP for demos and internal review. It is not a production CS2 rendering service, not a production auth system, and not a durable media storage architecture.
+This project now includes the Stage 2 production identity, owner-authorization, and private-video boundary for the rules-based 2D beta. It is still not a durable object-storage architecture, a reliable/crash-recoverable job system, an isolated parser runtime, a production observability/backup platform, or a real CS2 rendering service.
 
-For a repeatable internal reviewer handoff, use `docs/internal_preview_packaging_v1.md`. This document remains the runtime configuration and readiness reference.
+The normative security contract and owner acceptance matrix are in `docs/production_auth_owner_private_media_v1.md`. For a repeatable development preview handoff, use `docs/internal_preview_packaging_v1.md`. This document remains the runtime configuration and readiness reference.
 
 ## Runtime Configuration
 
@@ -10,10 +10,10 @@ For a repeatable internal reviewer handoff, use `docs/internal_preview_packaging
 
 | Variable | Default | Used by | Notes |
 | --- | --- | --- | --- |
-| `NEXT_PUBLIC_API_BASE_URL` | `http://localhost:8000` | Frontend | Public browser-facing API origin used by `frontend/lib/api.ts` and media URL resolution. For Compose on the host, keep this as `http://localhost:8000`. |
-| `BACKEND_PUBLIC_URL` | `http://localhost:8000` | Backend API, worker | Public API origin reported by health/readiness output. |
-| `MEDIA_URL_BASE` | unset | Backend API, worker | Optional public base for absolute `/media/videos/...` URLs. If unset, media URLs remain relative and the frontend resolves them against `NEXT_PUBLIC_API_BASE_URL`. |
-| `CORS_ORIGINS` | `http://localhost:3000,http://127.0.0.1:3000` | Backend API | Comma-separated list of allowed frontend origins. Add deployed frontend origins here. |
+| `NEXT_PUBLIC_API_BASE_URL` | `http://localhost:8000` | Frontend | Public browser-facing API origin used by the credentialed API client and private media URL resolution. It is not a secret. |
+| `FRONTEND_PUBLIC_URL` | `http://localhost:3000` | Backend API | Trusted post-OIDC frontend redirect origin. Production requires the exact same HTTPS origin as `BACKEND_PUBLIC_URL` and the sole value in `CORS_ORIGINS`. |
+| `BACKEND_PUBLIC_URL` | `http://localhost:8000` | Backend API, worker | Public API origin. Production requires an HTTPS origin with no path/query/fragment; `/health` does not echo it. |
+| `CORS_ORIGINS` | `http://localhost:3000,http://127.0.0.1:3000` | Backend API | Credentialed browser origins. Production requires exactly one HTTPS origin equal to `FRONTEND_PUBLIC_URL`; wildcard, stale, and sibling origins are rejected. |
 
 ### Backend Dependencies
 
@@ -30,10 +30,10 @@ For a repeatable internal reviewer handoff, use `docs/internal_preview_packaging
 | `ARTIFACT_STORAGE_ROOT` | `/data` | API, worker | Base root for the local filesystem storage adapter. Per-category variables below override individual roots. |
 | `REPLAY_STORAGE_DIR` | `/data/replays` | API, worker | Stores replay JSON blobs. |
 | `DEMO_UPLOAD_STORAGE_DIR` | `/data/uploads` | API, worker | Stores uploaded `.dem` files. Archive support may exist for development compatibility, but the product UI should present `.dem` upload as the real path. Treat every upload as untrusted input. |
-| `VIDEO_STORAGE_DIR` | `/data/videos` | API, worker | Stores manual or render-worker MP4 outputs served under `/media/videos`. |
+| `VIDEO_STORAGE_DIR` | `/data/videos` | API, worker | Stores manual or render-worker MP4 outputs. Browser bytes are delivered only through owner-scoped `/demos/{demo_id}/media/video`. |
 | `SUMMARY_STORAGE_DIR` | `/data/summaries` | API, worker | Reserved for compact generated summary artifacts. |
 
-Local paths and Docker volumes are acceptable for the mock MVP and local demos. Production should replace the local adapter with object storage such as S3/R2 plus upload quarantine and lifecycle rules.
+Local paths and Docker volumes remain the Stage 2 adapter. Stage 3 must select and introduce object storage plus upload quarantine and lifecycle rules without bypassing this boundary.
 
 Artifact storage keys use stable application-level categories:
 
@@ -42,24 +42,41 @@ Artifact storage keys use stable application-level categories:
 | uploads | `local://uploads/{demo_id}/{safe_filename}` | Uploaded `.dem` source files; archive inputs are development compatibility only. |
 | replays | `local://replays/{demo_id}.json` | Replay contract JSON blobs. |
 | summaries | `local://summaries/{demo_id}/{safe_filename}` | Reserved compact summary artifacts. |
-| videos | `local://videos/{demo_id}/{safe_filename}` | Manual uploads and render-worker media outputs served under `/media/videos/...`. |
+| videos | `local://videos/{demo_id}/{safe_filename}` | Manual uploads and render-worker outputs. The key is internal and is projected to the private demo media route for users. |
 
 PostgreSQL should store compact metadata and storage keys only. Large `.dem`, replay JSON, raw parser dumps, and video files stay in artifact storage.
 
-### Dev Owner Boundary
+### Production Identity and Browser Session
 
 | Variable | Default | Used by | Notes |
 | --- | --- | --- | --- |
-| `DEV_USER_ID` | `dev-user` | Backend API | Default owner id for local requests. `X-Dev-User-Id` can override it in local tests. This is not production authentication. |
+| `AUTH_MODE` | unset | Backend API | Required explicit value: `development`, `test`, or `production`. Unsupported or missing values fail runtime validation. |
+| `OIDC_ISSUER` | unset | Backend API | Exact HTTPS production issuer expected in verified identity tokens. |
+| `OIDC_CLIENT_ID` | unset | Backend API | OIDC client identifier and required audience. |
+| `OIDC_CLIENT_SECRET` | unset | Backend API | Optional server-side secret for confidential clients. Never expose it to the frontend. |
+| `OIDC_ALLOWED_ALGORITHMS` | `RS256,ES256` | Backend API | Non-empty subset of the supported asymmetric algorithms. Symmetric and `none` algorithms are rejected. |
+| `OIDC_AUTHORIZATION_ENDPOINT` | unset | Backend API | HTTPS Authorization Code + PKCE endpoint. |
+| `OIDC_TOKEN_ENDPOINT` | unset | Backend API | HTTPS server-side code exchange endpoint. |
+| `OIDC_JWKS_URL` | unset | Backend API | HTTPS trusted asymmetric signing-key set. |
+| `OIDC_REDIRECT_URI` | unset | Backend API | Exact registered HTTPS backend `/auth/oidc/callback` URL, distinct from the frontend `/auth/callback` page. |
+| `AUTH_COOKIE_SECURE` | `false` | Backend API | Must be enabled in production. |
+| `AUTH_SESSION_COOKIE_NAME` | `__Host-cs2_session` | Backend API | Opaque `HttpOnly` browser session cookie; production requires the `__Host-` prefix. |
+| `AUTH_STATE_COOKIE_NAME` | `__Host-cs2_oidc_state` | Backend API | Short-lived `HttpOnly` OIDC state cookie; production requires a distinct `__Host-` name. |
+| `AUTH_SESSION_TTL_SECONDS` | `3600` | Backend API, Redis | Session TTL; production accepts `1..86400` and caps it at identity-token expiry. |
+| `AUTH_LOGIN_TTL_SECONDS` | `300` | Backend API, Redis | One-time state/nonce/PKCE attempt TTL; production accepts `1..600`. |
+| `AUTH_CLOCK_SKEW_SECONDS` | `30` | Backend API | Bounded OIDC timestamp leeway; production accepts `0..300`. |
+| `DEV_USER_ID` | `dev-user` | Backend API | Development/test owner harness only. `X-Dev-User-Id` is never a production identity source. |
 
-Production auth should replace the local helper with a real identity provider and keep mapping the authenticated subject to `owner_id`.
+Production API startup fails closed unless the complete well-formed HTTPS OIDC, secure `__Host-` cookie, exact single application origin, exact single-origin CORS, bounded algorithm/clock configuration, and non-default render-worker credential are present. OIDC URLs reject missing hosts, userinfo, fragments, whitespace/backslashes, and invalid ports. The queue worker uses a narrower validation path: it needs explicit `AUTH_MODE` and a non-default production worker credential, but it does not receive browser OIDC/client/cookie secrets. The verified issuer/subject maps to a stable opaque `owner_v1_...` value; browser sessions are random opaque Redis entries. Unsafe browser mutations require the exact `FRONTEND_PUBLIC_URL` origin. No provider token, raw identity claim, auth secret, or owner ID belongs in a frontend-visible payload.
+
+Every browser-private auth, demo, upload, replay, coaching, diagnostics, render-job, and media response—including `4xx` failures—sets `Cache-Control: private, no-store` and merges `Cookie, Origin` into `Vary`. Render failures persist and expose only the stable `RENDER_FAILED` or `RENDER_WORKER_UNAVAILABLE` code and safe message; callback-provided error text and background exception strings do not enter the database, replay payload, user JSON, or logs.
 
 ### Render Clip and Render Worker
 
 | Variable | Default | Used by | Notes |
 | --- | --- | --- | --- |
 | `MAX_RENDER_CLIP_SECONDS` | `60` | API | Maximum accepted `render_clip` duration. |
-| `RENDER_WORKER_TOKEN` | `dev-render-worker-token` | API, render-worker | Token expected in `X-Render-Worker-Token` for manifest, media upload, and callback endpoints. This is a local development gate, not production auth. |
+| `RENDER_WORKER_TOKEN` | `dev-render-worker-token` | API, render-worker | Separate service credential for manifest, media upload, and callback endpoints. Production rejects the development default. It is not a browser identity credential. |
 | `API_BASE_URL` | `http://localhost:8000` | render-worker | API origin used by `render-worker/runner.py`. |
 | `WORK_DIR` | `.render-worker-work` | render-worker | Local workspace for manifest snapshots and manual operator files. |
 | `POLL_INTERVAL_SECONDS` | `5` | render-worker | Poll interval setting retained for worker loops and future adapters. |
@@ -82,46 +99,31 @@ See `docs/sample_demo_fixture_v1.md` for the local convention and ad hoc upload 
 
 ## Health Check
 
-`GET /health` returns HTTP 200 with a compact readiness payload:
+`GET /health` remains public and returns only coarse readiness:
 
 ```json
 {
-  "status": "ok",
-  "api": true,
-  "database": true,
-  "redis": true,
-  "workerDependencies": {
-    "redisQueueName": "cs2-demo-jobs",
-    "redisQueueConfigured": true,
-    "renderWorkerTokenConfigured": true,
-    "maxRenderClipSeconds": 60
-  },
-  "publicUrls": {
-    "backendPublicUrl": "http://localhost:8000",
-    "mediaUrlBase": null,
-    "effectiveMediaUrlBase": "http://localhost:8000"
-  },
-  "storage": {
-    "artifactStorageRoot": "/data",
-    "replayStorageDir": "/data/replays",
-    "demoUploadStorageDir": "/data/uploads",
-    "videoStorageDir": "/data/videos",
-    "summaryStorageDir": "/data/summaries"
-  }
+  "status": "ok"
 }
 ```
 
-`status` becomes `degraded` when PostgreSQL, Redis, or required worker configuration is unavailable. This endpoint confirms dependency reachability and configuration shape; it is not a monitoring system.
+`status` becomes `degraded` when PostgreSQL, Redis, or required worker configuration is unavailable. The response does not reveal dependency names, internal URLs, credentials, queue names, or storage paths. It is not a monitoring system.
 
 ## Safe Diagnostics
 
-`GET /diagnostics` returns a safer troubleshooting payload for previews and local smoke failures. It includes compact API readiness, DB/Redis/storage readiness, worker dependency readiness, Redis queue length, worker heartbeat age, recent job counts by type/status, recent failed job summaries, and an inferred render-worker status when recent `render_clip` jobs make that clear.
+In `development` and `test`, `GET /diagnostics` returns a compact troubleshooting payload for preview and smoke failures. It includes API readiness, DB/Redis/storage readiness, worker dependency readiness, Redis queue length, worker heartbeat age, recent job counts by type/status, recent failed job summaries, and an inferred render-worker status when recent `render_clip` jobs make that clear. Production returns `404`; deployment operators must use a separately protected operational channel in a later stage.
 
 It must not expose secrets, full env dumps, local absolute storage paths, stack traces, raw parser data, upload contents, or replay/media payloads. Storage readiness is represented as category booleans; demo artifacts are represented as key-present/artifact-present booleans.
 
-`GET /demos/{demo_id}/diagnostics` is owner-scoped through the same dev-only `X-Dev-User-Id` boundary as the rest of the mock app. It reports compact parse failure metadata, last parse/render job status, source/replay artifact presence, media URL availability, and map calibration/fallback state for one demo.
+`GET /demos/{demo_id}/diagnostics` is authenticated and owner-scoped through the same session-derived owner as every user endpoint. It reports compact parse failure metadata, last parse/render job status, source/replay artifact presence, private media availability, and map calibration/fallback state for one demo.
 
 The backend Redis worker writes a simple heartbeat under a Redis key while polling and after job activity. This is only an internal freshness signal for the mock MVP; it is not a production lease, scheduler, or monitoring backend.
+
+## Private Video Readiness
+
+User-facing replay and video status payloads are rebuilt from explicit public-field allowlists and expose only `/demos/{demo_id}/media/video`; they omit internal `storageKey`, unknown internal fields, and local path details. Replay/source storage references are bound to the current demo, and replay payload `demoId` must match its database demo. The API does not mount `/media/videos` as static content. Local private media rejects symlinked path components and streams from the validated file descriptor so a later path replacement cannot redirect the response.
+
+Before deployment, verify authenticated `GET`, `HEAD`, and byte-range requests against a ready owner video. A valid owner should receive `200` or `206`; an unsatisfiable range should receive `416`; anonymous/expired/revoked sessions should receive `401`; another owner, a guessed ID, missing media, cross-demo storage metadata, traversal, or a symlink escape should receive the same generic `404` without bytes or path details. Confirm `Cache-Control: private, no-store`, safe MP4 MIME, `Accept-Ranges: bytes`, and that the frontend retains the 2D fallback when media is unavailable.
 
 ## Runtime Status Snapshots
 
@@ -205,6 +207,19 @@ The script covers:
 - frontend typecheck
 - frontend build
 
+Stage 2 focused gates also run directly:
+
+```bash
+PYTHONPATH=backend python3 -m unittest \
+  backend.tests.test_production_auth \
+  backend.tests.test_private_media \
+  backend.tests.test_auth_owner_boundary \
+  backend.tests.test_diagnostics
+cd frontend
+node lib/auth.test.mjs
+node lib/private-media.test.mjs
+```
+
 Frontend helper regressions are separate Node checks and should be run when dashboard, replay diagnostics, parser event presentation, round review, coaching review, or map-config helpers change:
 
 ```bash
@@ -224,6 +239,7 @@ Docker checks still run separately:
 docker compose build
 docker compose up -d
 curl http://localhost:8000/health
+# development/test only:
 curl http://localhost:8000/diagnostics
 ```
 
@@ -233,7 +249,7 @@ Release-candidate non-browser checks can be run together:
 ./scripts/rc_check.sh
 ```
 
-The RC helper wraps `./scripts/verify.sh`, Docker build/up, health, diagnostics, no-sample cloud preview smoke, and sample smoke when `SAMPLE_DEMO_PATH` is set. Use `REQUIRE_SAMPLE_DEMO=1` when a missing sample must fail the gate. It does not replace manual browser QA; use `docs/release_candidate_qa_v1.md` for the full checklist.
+The RC helper wraps `./scripts/verify.sh`, Docker build/up, health, development diagnostics, no-sample cloud preview smoke, and sample smoke when `SAMPLE_DEMO_PATH` is set. Use `REQUIRE_SAMPLE_DEMO=1` when a missing sample must fail the gate. It is a development harness and does not replace production OIDC/owner/private-media validation or manual browser QA; use `docs/release_candidate_qa_v1.md` for the full checklist.
 
 For packaging evidence and reviewer handoff, follow `docs/internal_preview_packaging_v1.md` after the RC helper finishes.
 
@@ -243,7 +259,7 @@ Cloud preview smoke is documented in `docs/cloud_preview_deploy_v1.md` and can b
 API_BASE_URL=http://localhost:8000 FRONTEND_URL=http://localhost:3000 python3 scripts/cloud_preview_smoke.py
 ```
 
-Without `SAMPLE_DEMO_PATH`, the smoke still runs health, frontend, mock upload, replay/coaching, render job, media-route checks, and a compact diagnostics summary, then exits successfully with a sample-skip message. If any smoke step fails, it attempts to fetch `/diagnostics` and prints a compact summary; if that endpoint is unavailable, the original failure remains visible. With a configured sample, it uploads through `POST /uploads/demo`, waits for parse completion, and prints map, round, coaching, and map calibration/fallback status:
+The current script smoke is a development/test harness. Without `SAMPLE_DEMO_PATH`, it runs health, frontend, mock upload, replay/coaching, render job, private-media routing checks, and a compact development diagnostics summary, then exits successfully with a sample-skip message. It does not replace the production OIDC owner matrix. With a configured sample, it uploads through `POST /uploads/demo`, waits for parse completion, and prints map, round, coaching, and map calibration/fallback status:
 
 ```bash
 SAMPLE_DEMO_PATH=/absolute/path/to/sample.dem python3 scripts/cloud_preview_smoke.py
@@ -263,13 +279,15 @@ Manual first-run preview should start at `/dashboard`. Verify the empty/loading/
 - The default Compose frontend still uses `NEXT_PUBLIC_API_BASE_URL=http://localhost:8000` because browser requests originate from the host browser, not from the container network.
 - `docker-compose.preview.yml` switches the frontend to a production Next.js build via `frontend/Dockerfile.preview`.
 - Rebuild the preview frontend image whenever `NEXT_PUBLIC_API_BASE_URL` changes because it is bundled at build time.
-- Set `MEDIA_URL_BASE` to the public backend origin when the frontend and backend are served from different hosts and absolute media URLs are preferred.
-- The local storage adapter writes uploads, replay blobs, summaries, and videos under `/data` by default. Keep the adapter boundary when replacing local storage with S3/R2 later.
+- Private media always uses the API's owner-scoped `/demos/{demo_id}/media/video` route. Production frontend pages and API/auth/media paths must share one exact HTTPS origin so `__Host-` cookies and CSRF checks protect both API and native video requests.
+- The local storage adapter writes uploads, replay blobs, summaries, and videos under `/data` by default. Keep the adapter boundary when Stage 3 selects and introduces object storage.
 
 ## Deployable Boundaries
 
-Ready for mock MVP deployment:
+Ready at the Stage 2 application boundary:
 
+- Provider-neutral OIDC Authorization Code + PKCE/JWKS validation, Redis opaque browser sessions, stable owner mapping, logout revocation, and frontend session-expiry handling.
+- Owner-scoped private video GET/HEAD/Range delivery without a public static media mount.
 - Demo Library upload, search, status/map filtering, sorting, rename, and soft archive flows.
 - Upload/parser ingestion snapshots, failed parse metadata, stale/active indicators, and owner-scoped retry from stored source artifacts.
 - Mock upload and real `.dem` upload into local or mounted storage.
@@ -280,9 +298,9 @@ Ready for mock MVP deployment:
 - Render Worker V1 manifest claim, media upload, and terminal-safe result callback contract.
 - Compact backend/frontend parser quality fixtures for regression coverage.
 
-Still mock/dev-only:
+Remaining staged gaps:
 
-- `DEV_USER_ID` and `X-Dev-User-Id` are local owner scoping only, not production auth.
+- `DEV_USER_ID` and `X-Dev-User-Id` remain only as an explicit development/test harness and are not accepted in production.
 - `render-worker` fake and manual adapters are not real GPU rendering.
 - Local filesystem and Docker volumes are not final production object storage.
 - `.dem` uploads are untrusted inputs and need stronger production quarantine and scanning. Archive ingestion, where available, is a development compatibility path rather than the primary product flow.
@@ -305,14 +323,16 @@ For release-candidate sign-off, use `docs/release_candidate_qa_v1.md`. The short
    curl http://localhost:8000/health
    ```
 
-3. Open `http://localhost:3000/dashboard`.
+3. Open `http://localhost:3000/dashboard`. Development mode should use the explicit local harness; a production candidate must redirect an anonymous browser through the configured OIDC flow and return through the frontend callback without tokens in the URL.
 4. Create a mock upload and wait for it to complete.
 5. If a sample is available, set `SAMPLE_DEMO_PATH` and upload a real `.dem`.
 6. Open a demo detail page.
-7. Use round review quick jumps and confirm first-person shell/video, tactical map, timeline, parser markers, and coaching cards stay synchronized.
+7. Use round review quick jumps and confirm first-person shell/private video, tactical map, timeline, parser markers, and coaching cards stay synchronized.
 8. Confirm Replay Contract diagnostics show counts and no unexpected degraded fields for a healthy mock demo.
 9. For a failed parse fixture or seeded row, confirm the Dashboard and detail summary show compact failure metadata such as `INVALID_DEMO` or `UNSUPPORTED_PARSER_FORMAT`, and retry availability only when a source artifact exists.
 10. Click `Generate Clip` on a coaching event.
 11. Confirm render job status appears in the UI and `/demos/{demo_id}/render/jobs`.
 12. For render-worker callback validation, run either the fake adapter with `DEV_FAKE_VIDEO_PATH` or the manual adapter flow documented in `render-worker/README.md`.
-13. For hosted preview validation, run `python3 scripts/cloud_preview_smoke.py` with `API_BASE_URL` and `FRONTEND_URL` set to the public origins. Add `SAMPLE_DEMO_PATH` and `--require-sample` for strict parser-ingestion validation.
+13. Validate owner A, owner B, anonymous, expired, and revoked sessions across every surface in `docs/production_auth_owner_private_media_v1.md`, including private video GET/HEAD/Range and copied/guessed URL denial.
+14. Confirm production `/diagnostics` is `404`, public `/health` is coarse, and `/media/videos/...` is not mounted.
+15. For development-mode hosted preview validation, run `python3 scripts/cloud_preview_smoke.py` with `API_BASE_URL` and `FRONTEND_URL` set to the public origins. Add `SAMPLE_DEMO_PATH` and `--require-sample` for strict parser-ingestion validation.

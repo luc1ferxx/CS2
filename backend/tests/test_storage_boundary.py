@@ -27,11 +27,11 @@ class StorageBackedDemoServiceTest(unittest.IsolatedAsyncioTestCase):
                 return_value=FakeRedis(),
             ):
                 db = self.Session()
-                created = await DemoService(db).create_real_demo(
+                created = await DemoService(db, owner_id=settings.dev_user_id).create_real_demo(
                     FakeUpload("../match.dem", [b"demo-bytes"])
                 )
                 demo = db.query(Demo).filter(Demo.id == created.id).one()
-                service = DemoService(db)
+                service = DemoService.for_internal(db)
 
                 self.assertEqual(
                     demo.source_storage_key,
@@ -44,7 +44,7 @@ class StorageBackedDemoServiceTest(unittest.IsolatedAsyncioTestCase):
             with storage_dirs(Path(directory)):
                 db = self.Session()
                 demo = add_completed_demo(db, "demo-storage-replay")
-                service = DemoService(db)
+                service = DemoService.for_internal(db)
 
                 key = service.write_replay_blob(demo.id, replay_contract(demo.id))
                 demo.replay_storage_key = key
@@ -61,11 +61,25 @@ class StorageBackedDemoServiceTest(unittest.IsolatedAsyncioTestCase):
                 demo.original_filename = "../../match.dem"
                 demo.source_storage_key = "local://uploads/demo-storage-source-fallback/../evil.dem"
                 db.commit()
-                service = DemoService(db)
+                service = DemoService.for_internal(db)
 
                 self.assertEqual(
                     service.source_demo_storage_key(demo),
                     "local://uploads/demo-storage-source-fallback/match.dem",
+                )
+
+    async def test_cross_demo_source_storage_key_falls_back_to_demo_key(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            with storage_dirs(Path(directory)):
+                db = self.Session()
+                demo = add_completed_demo(db, "demo-storage-source-owner")
+                demo.source_storage_key = "local://uploads/another-demo/foreign.dem"
+                db.commit()
+                service = DemoService.for_internal(db)
+
+                self.assertEqual(
+                    service.source_demo_storage_key(demo),
+                    "local://uploads/demo-storage-source-owner/demo-storage-source-owner.dem",
                 )
 
     async def test_render_worker_local_media_path_must_stay_inside_video_storage(self) -> None:
@@ -73,7 +87,7 @@ class StorageBackedDemoServiceTest(unittest.IsolatedAsyncioTestCase):
             with storage_dirs(Path(directory)):
                 db = self.Session()
                 demo = add_completed_demo(db, "demo-render-path")
-                service = DemoService(db)
+                service = DemoService.for_internal(db)
                 service.write_replay_blob(demo.id, replay_contract(demo.id))
                 job = add_render_job(db, demo.id)
                 outside_path = Path(directory) / "outside.mp4"
@@ -91,6 +105,36 @@ class StorageBackedDemoServiceTest(unittest.IsolatedAsyncioTestCase):
                             durationSeconds=10,
                         ),
                     )
+
+    async def test_render_worker_cannot_attach_another_demos_video_key(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            with storage_dirs(Path(directory)):
+                db = self.Session()
+                demo_a = add_completed_demo(db, "demo-render-owner-a")
+                demo_b = add_completed_demo(db, "demo-render-owner-b")
+                service = DemoService.for_internal(db)
+                service.write_replay_blob(demo_a.id, replay_contract(demo_a.id))
+                service.write_replay_blob(demo_b.id, replay_contract(demo_b.id))
+                foreign_key = service.storage.video_key(demo_b.id, "clip.mp4")
+                service.storage.write_bytes(foreign_key, b"foreign-video")
+                job = add_render_job(db, demo_a.id)
+
+                with self.assertRaisesRegex(ValueError, "requested demo"):
+                    service.apply_render_worker_result(
+                        job,
+                        RenderWorkerResult(
+                            status="completed",
+                            storageKey=foreign_key,
+                            tickStart=0,
+                            tickEnd=640,
+                            tickRate=64,
+                            durationSeconds=10,
+                        ),
+                    )
+
+                db.refresh(job)
+                self.assertEqual(job.status, "rendering")
+                self.assertIsNone(service.get_video_status(demo_a)["url"])
 
 
 class FakeUpload:

@@ -13,7 +13,7 @@ class DemoServiceVideoTest(unittest.TestCase):
         demo = SimpleNamespace(id="demo-video-legacy", tick_rate=64)
 
         with tempfile.TemporaryDirectory() as directory:
-            service = DemoService(db=None)
+            service = DemoService.for_internal(db=None)
             replay = {
                 "demoId": demo.id,
                 "tickRate": 64,
@@ -40,7 +40,7 @@ class DemoServiceVideoTest(unittest.TestCase):
         demo = SimpleNamespace(id="demo-events-legacy", tick_rate=64)
 
         with tempfile.TemporaryDirectory() as directory:
-            service = DemoService(db=None)
+            service = DemoService.for_internal(db=None)
             replay = {
                 "demoId": demo.id,
                 "tickRate": 64,
@@ -69,7 +69,7 @@ class DemoServiceVideoTest(unittest.TestCase):
         demo = SimpleNamespace(id="demo-video-calibration", tick_rate=64)
 
         with tempfile.TemporaryDirectory() as directory:
-            service = DemoService(db=None)
+            service = DemoService.for_internal(db=None)
             replay = {
                 "demoId": demo.id,
                 "tickRate": 64,

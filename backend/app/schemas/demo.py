@@ -33,7 +33,6 @@ class DemoListItem(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
-    owner_id: str
     name: str
     original_filename: str
     map_name: str
@@ -48,7 +47,6 @@ class DemoListItem(BaseModel):
     completed_at: datetime | None
     video_status: str | None = None
     video_source: str | None = None
-    video_url: str | None = None
     latest_render_status: str | None = None
     ingestion: DemoIngestionStatus | None = None
 
@@ -57,7 +55,6 @@ class DemoStatus(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
-    owner_id: str
     name: str | None = None
     original_filename: str | None = None
     status: str
@@ -79,12 +76,12 @@ class DemoUpdate(BaseModel):
 class ReplayVideoStatus(BaseModel):
     status: str
     url: str | None
-    storageKey: str | None = None
     durationSeconds: float
     tickStart: int
     tickEnd: int
     tickRate: int
     source: str
+    errorCode: str | None = None
     errorMessage: str | None = None
     timeOriginSeconds: float = 0
 
@@ -115,7 +112,6 @@ class RenderJobStatus(BaseModel):
     status: str
     source: str
     video_status: str | None = None
-    video_url: str | None = None
     tick_start: int | None = None
     tick_end: int | None = None
     tick_rate: int | None = None
@@ -126,6 +122,7 @@ class RenderJobStatus(BaseModel):
     round_number: int | None = None
     render_preset: str | None = None
     metadata: dict[str, Any]
+    error_code: str | None = None
     error_message: str | None = None
     created_at: datetime
     started_at: datetime | None = None

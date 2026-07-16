@@ -32,7 +32,6 @@ export interface DemoIngestionStatus {
 
 export interface DemoSummary {
   id: string;
-  owner_id: string;
   name: string;
   original_filename: string;
   map_name: string;
@@ -47,14 +46,12 @@ export interface DemoSummary {
   completed_at: string | null;
   video_status: string | null;
   video_source: string | null;
-  video_url: string | null;
   latest_render_status: string | null;
   ingestion: DemoIngestionStatus | null;
 }
 
 export interface DemoStatus {
   id: string;
-  owner_id: string;
   name: string | null;
   original_filename: string | null;
   status: DemoProcessingStatus;
