@@ -1,18 +1,19 @@
-# CS2 Demo AI Coach Mock MVP
+# CS2 Demo AI Coach — Rules-Based 2D Beta V1
 
 这是一个网站型 CS2 demo 复盘与规则教练原型。当前项目重点已经从单纯 mock 流程推进到“真实 `.dem` 解析 spike + Demo Library + 回放复盘界面 + deterministic coaching + render clip 合约”。
 
-当前版本仍然是本地 mock MVP：没有生产登录系统、没有 OpenAI 调用、没有对象存储、没有真实 CS2 自动渲染。它只有一个 dev-only local owner boundary，用来把 demo/upload/render 管理动作先按 owner 隔离，方便后续替换成生产身份系统。它的核心价值是验证产品边界、replay 数据契约、规则分析结果、前端复盘体验，以及后续外部 GPU render worker 的 API 交接方式。
+当前版本是规则型 2D 公测 V1 的 Stage 2：已有 provider-neutral OIDC 登录、Redis opaque browser session、owner 授权和私有视频字节访问；仍使用本地 artifact storage，没有对象存储、可靠任务恢复、parser 隔离、生产 observability/backup、OpenAI 调用或真实 CS2 自动渲染。核心价值是验证 `.dem` 到 2D replay/coaching 的闭环，以及后续受控基础设施的交接边界。
 
 ## 当前状态
 
 已经具备的能力：
 
 - Docker Compose 本地栈：`frontend`、`api`、`worker`、`postgres`、`redis`。
-- Dev-only owner boundary：默认 `DEV_USER_ID=dev-user`，测试或本地调试可用 `X-Dev-User-Id` 模拟不同 owner；这不是生产认证。
+- Production identity boundary：OIDC Authorization Code + PKCE/JWKS 验证后创建 Redis-backed opaque `HttpOnly` session；所有 user API 从可信 session 派生稳定的 `owner_id`。`DEV_USER_ID` / `X-Dev-User-Id` 仅在显式 development/test mode 可用。
 - `/dashboard` Demo Library：搜索、状态/地图筛选、排序、bounded 上传/任务轮询、重命名、软归档、空/失败/无结果状态、渲染状态摘要。
 - Upload/parser observability：demo list/detail responses 包含 compact ingestion snapshot，失败解析有短错误、attempts、stale/active/retryable 状态，并支持 owner-scoped retry。
-- Safe diagnostics：`GET /diagnostics` 暴露 DB/Redis/storage/worker heartbeat/job failure 的 compact 状态，`GET /demos/{demo_id}/diagnostics` 暴露 owner-scoped demo 诊断；两者不返回 secrets、absolute local paths、stack traces、raw parser data 或上传内容。
+- Diagnostics boundary：`GET /diagnostics` 只在 development/test 提供 compact 排障信息，production 返回 `404`；`GET /demos/{demo_id}/diagnostics` 始终要求登录并按 owner 隔离。public `GET /health` 只返回 coarse status。
+- Private media：视频 metadata 只返回 `/demos/{demo_id}/media/video`；GET/HEAD/Range 在字节交付时再次验证 session、owner 和 artifact path，没有 public `/media/videos` static mount。
 - Mock demo flow：快速生成合成 replay、coaching events 和 mock first-person shell。
 - Real demo parser spike：主产品入口上传 `.dem`，后端队列异步解析；archive upload 只保留为开发兼容路径。
 - Replay contract：回合、玩家、采样帧、击杀/死亡、compact parser events、地图 metadata、视频 metadata、contract diagnostics。
@@ -27,7 +28,7 @@
 
 明确没有做的事情：
 
-- 不实现真实登录、OAuth、JWT、密码、账号管理 UI，且不集成第三方 auth provider。
+- 不提供密码、账号资料、团队或 provider-specific 管理 UI；浏览器不处理 provider token。
 - 不在 API 或 worker 容器里启动 CS2、Steam、OBS、ffmpeg。
 - 不控制用户电脑、不读取用户上传后的本地文件、不录屏。
 - 不把用户上传 MP4 设计成主产品路径。
@@ -65,7 +66,7 @@ frontend (Next.js)
     -> external process that calls token-gated render-worker API
 ```
 
-PostgreSQL 只存可索引的元数据、storage key、compact ingestion/render metadata 和 coaching event rows。Replay frames、parser event contract、video metadata 和 compact replay diagnostics 都在 replay JSON blob 内；上传 demo、replay artifact 和视频文件放在 Docker volumes 中，后续可以替换为 S3/R2 或其它对象存储。
+PostgreSQL 只存可索引的元数据、storage key、compact ingestion/render metadata 和 coaching event rows。Replay frames、parser event contract、video metadata 和 compact replay diagnostics 都在 replay JSON blob 内；上传 demo、replay artifact 和视频文件放在 Docker volumes 中，Stage 3 再替换为选定的对象存储。
 
 Artifact storage 通过 `backend/app/services/storage.py` 统一出入口。默认是 local filesystem implementation，root 为 `ARTIFACT_STORAGE_ROOT=/data`，分类 key 形如：
 
@@ -74,17 +75,21 @@ Artifact storage 通过 `backend/app/services/storage.py` 统一出入口。默�
 - `local://summaries/{demo_id}/{safe_filename}`
 - `local://videos/{demo_id}/{uuid_safe_filename}`
 
-不要把 `.dem`、replay JSON、大视频或 raw parser dump 存入 PostgreSQL。未来替换 S3/R2 时，应保留这些应用层 key 语义，把 local implementation 换成 object storage adapter，而不是把 cloud credentials 或 bucket-specific code 散落到 API routes、worker 或 parser 里。
+不要把 `.dem`、replay JSON、大视频或 raw parser dump 存入 PostgreSQL。Stage 3 替换对象存储时，应保留这些应用层 key 语义，把 local implementation 换成 object storage adapter，而不是把 cloud credentials 或 bucket-specific code 散落到 API routes、worker 或 parser 里。
 
-## Dev-Only Owner Boundary
+## Production Identity and Owner Boundary
 
-API 里的 demo、upload、manual video、coaching/replay read、library mutation 和 user-facing render job actions 都按当前 local owner 做隔离。默认 owner 是 `dev-user`，可用 `DEV_USER_ID` 覆盖。为了让本地测试能模拟多用户边界，请求也可以带：
+Production uses provider-neutral OIDC Authorization Code flow with PKCE. The backend validates state, nonce, issuer, audience, timestamps, the configured `RS256`/`ES256` asymmetric allow-list, and JWKS, then maps the verified `(issuer, subject)` pair to a stable opaque `owner_v1_...` value that fits the existing `owner_id` column. It stores an opaque session in Redis and sends only an `HttpOnly`, `SameSite=Lax`, `Secure`, `__Host-` production cookie to the browser. Production frontend/API use one exact HTTPS origin; `CORS_ORIGINS` must contain only that origin, and unsafe browser mutations require the same exact `Origin`. All browser-private responses disable shared caching and vary on cookie/origin. Provider tokens, raw subject/issuer claims, session tokens, storage keys, unknown internal replay fields, local paths, and worker-provided raw error text are not user-facing payloads or application logs; render failures use stable safe codes and copy.
+
+API 里的 demo、upload、manual video、coaching/replay read、library mutation、user-facing render job actions 和 private media 都从 session 派生 owner 并复用现有 owner-scoped queries。`GET /auth/login` starts the OIDC flow; the server-only `/auth/oidc/callback` creates the session and returns through the trusted frontend `/auth/callback` page; `GET /auth/session` checks it; `POST /auth/logout` revokes it.
+
+本地测试仍可显式设置 `AUTH_MODE=development` 或 `AUTH_MODE=test`，用 `DEV_USER_ID` 和请求头模拟 owner：
 
 ```bash
 X-Dev-User-Id: owner-a
 ```
 
-这是开发期边界，不是生产 authentication/authorization。它没有 session、OAuth、JWT、密码登录或账号管理 UI。生产化时应将这个 helper 替换为 Clerk、Auth0、Supabase Auth 或同类 identity provider 的 authenticated user id，并继续使用 `owner_id` 作为 demo ownership 字段。
+该 header 在 production mode 被忽略或拒绝，绝不作为 production identity fallback。完整身份、cookie、owner mapping、private media 和 acceptance matrix 见 `docs/production_auth_owner_private_media_v1.md`。
 
 ## 项目结构
 
@@ -132,7 +137,7 @@ docker compose up --build
 - Dashboard: http://localhost:3000/dashboard
 - API: http://localhost:8000
 - Health: http://localhost:8000/health
-- Diagnostics: http://localhost:8000/diagnostics
+- Diagnostics (development/test only): http://localhost:8000/diagnostics
 
 API 健康检查：
 
@@ -141,7 +146,7 @@ curl http://localhost:8000/health
 curl http://localhost:8000/diagnostics
 ```
 
-`/health` 会返回 API、PostgreSQL、Redis、worker dependency 配置和本地 storage path 的 readiness payload；`status=degraded` 表示至少一个依赖不可用或关键 worker 配置缺失。`/diagnostics` 是更安全的排障端点：它只返回 compact readiness、Redis queue/worker heartbeat、job counts、recent failed job summary 和 render-worker inferred status，不暴露本地 storage path、env dump、token、stack trace、raw parser data 或上传内容。
+`/health` 只返回 coarse `status=ok|degraded`，不会泄漏 dependency、URL 或 storage 配置。development/test 的 `/diagnostics` 返回 compact readiness、Redis queue/worker heartbeat、job counts、recent failed job summary 和 render-worker inferred status；production 对该 system endpoint 返回 `404`。它不暴露本地 storage path、env dump、token、stack trace、raw parser data 或上传内容。
 
 单独运行 frontend：
 
@@ -191,7 +196,7 @@ Release-candidate validation:
 
 `rc_check.sh` runs `./scripts/verify.sh`, Docker build/up, `/health`, `/diagnostics`, and cloud preview smoke. If `SAMPLE_DEMO_PATH` is set, it also runs sample smoke; set `REQUIRE_SAMPLE_DEMO=1` to fail when no sample is configured. Manual browser QA is still required and is listed in `docs/release_candidate_qa_v1.md`.
 
-下一次内部 preview 的部署目标决策见 `docs/deployment_target_decision_v1.md`。内部 preview 打包和 reviewer handoff checklist 见 `docs/internal_preview_packaging_v1.md`。部署准备、runtime env 和 smoke checklist 见 `docs/deployment_readiness_v1.md`。完整 RC runbook 见 `docs/release_candidate_qa_v1.md`。
+`docs/deployment_target_decision_v1.md` 记录的是 Stage 2 之前的内部 preview 决策；其 split-origin 和 public `/media/videos` 建议不是生产合同，已被本 README 与 `docs/production_auth_owner_private_media_v1.md` 的生产要求取代。开发模式的内部 preview 打包和 reviewer handoff checklist 见 `docs/internal_preview_packaging_v1.md`。当前部署准备、runtime env 和 smoke checklist 见 `docs/deployment_readiness_v1.md`，完整 RC runbook 见 `docs/release_candidate_qa_v1.md`。
 
 ## 主要流程
 
@@ -246,7 +251,7 @@ worker 使用 `demoparser2==0.41.0` 做 best-effort 解析：
 
 Parser/demo failure API responses and diagnostics 不包含本地路径、stack trace 或 raw parser dump；开发排障细节只保留在 worker process logs。
 
-在 Dashboard 和 Demo Detail 中，失败状态以 compact 文案呈现：invalid/corrupt demo 显示 `INVALID_DEMO` 和一句原因；unsupported parser/support 显示 `UNSUPPORTED_PARSER_FORMAT`；partial parse 的 missing event family 留在 Replay Contract diagnostics；API/Redis/worker 不可达时提示检查 `/diagnostics`；render clip 未连接 GPU worker 时显示 `GPU worker not connected for render_clip`；媒体 URL 缺失或加载失败时保留同步 mock shell 并提示 media route 不可用。
+在 Dashboard 和 Demo Detail 中，失败状态以 compact 文案呈现：invalid/corrupt demo 显示 `INVALID_DEMO` 和一句原因；unsupported parser/support 显示 `UNSUPPORTED_PARSER_FORMAT`；partial parse 的 missing event family 留在 Replay Contract diagnostics；development/test 中 API/Redis/worker 不可达时可检查 `/diagnostics`；render clip 未连接 GPU worker 时显示 `GPU worker not connected for render_clip`；媒体 URL 缺失、被拒绝或加载失败时保留同步 2D/mock shell 并提示 private media 不可用。
 
 Demo list/detail responses include an `ingestion` snapshot:
 
@@ -268,6 +273,7 @@ Failed parses keep short failure metadata with `errorCode`, `message`, `failedAt
 
 ```bash
 curl -X POST http://localhost:8000/demos/{demo_id}/parse/retry
+# development/test harness only:
 curl -X POST -H "X-Dev-User-Id: owner-a" http://localhost:8000/demos/{demo_id}/parse/retry
 ```
 
@@ -275,6 +281,7 @@ CLI 示例：
 
 ```bash
 curl -F "file=@sample.dem" http://localhost:8000/uploads/demo
+# development/test harness only:
 curl -H "X-Dev-User-Id: owner-a" -F "file=@sample.dem" http://localhost:8000/uploads/demo
 ```
 
@@ -310,7 +317,7 @@ For release-candidate sign-off, use `docs/release_candidate_qa_v1.md` as the sou
 
 打开 `/demos/{demoId}` 后，完成状态的 demo 会加载：
 
-- `FirstPersonReplay`：有视频 URL 时播放 MP4；没有 URL 时显示同步的 mock first-person shell。
+- `FirstPersonReplay`：有 owner-authorized `/demos/{demo_id}/media/video` 时用 credentialed GET/Range 播放 MP4；没有或无法访问时显示同步的 2D/mock first-person shell。
 - `Timeline`：play/pause、seek、0.5x/1x/2x/4x、coaching markers、parser event markers。
 - `ReplayViewer`：tactical map、玩家点位、死亡状态、bomb state、附近 parser events。
 - `RoundReviewPanel`：回合列表、winner、tick range、first kill、plant、kill/utility/coaching counts、quick jumps。
@@ -485,7 +492,7 @@ GPU worker not connected for render_clip. A separate Windows/Linux GPU worker or
 
 ## Render Worker V1 API
 
-Render worker API 使用 `X-Render-Worker-Token`。本地默认 token 是 `dev-render-worker-token`，可用 `RENDER_WORKER_TOKEN` 覆盖。它只是本地开发门禁，不是生产认证方案。
+Render worker API 使用独立的 `X-Render-Worker-Token` service credential，不接受 browser session 代替。本地默认 token 是 `dev-render-worker-token`；production 必须配置非默认 `RENDER_WORKER_TOKEN`，否则 startup validation fails closed。Stage 2 不重新设计 render-worker 的 service-to-service auth。
 
 获取下一个 queued manifest 并默认 claim 为 `rendering`：
 
@@ -534,6 +541,8 @@ curl -X POST http://localhost:8000/render-worker/jobs/{job_id}/result \
   }'
 ```
 
+这里的 `/media/videos/...` 只是在 render-worker callback 内解析为 local storage key 的兼容 reference，不是 public browser URL，也没有对应 static mount。Replay/video user payload 会把它投影成 `/demos/{demo_id}/media/video` 并移除 `storageKey`。
+
 失败回调只更新 job error；如果当前 replay video 是 `manual_upload`，失败不会清掉已有手动视频 metadata。已完成或已失败的 terminal render job 会拒绝后续 callback，避免 late callback 改写最终状态。
 
 ## Render Worker Skeleton
@@ -573,9 +582,9 @@ python3 render-worker/runner.py complete-prepared-job --job-id {job_id} --video-
 Demo 完成解析后，可在 detail page 的 `Video Setup / Sync Calibration`：
 
 1. 上传 `.mp4`。
-2. API 写入 `/data/videos/{demo_id}/...`，只把 metadata 写回 replay JSON。
+2. API 通过 storage service 写入本地 video artifact，只把内部 storage metadata 写回 replay JSON；user-facing payload 只投影 private route，不返回 storage key/path。
 3. 保存 `timeOriginSeconds`、`tickStart`、`tickEnd`、`tickRate`。
-4. `FirstPersonReplay` 使用 calibration 在视频时间和 demo tick 之间同步。
+4. `FirstPersonReplay` 通过 authenticated `/demos/{demo_id}/media/video` GET/Range 使用 calibration 在视频时间和 demo tick 之间同步。
 
 CLI：
 
@@ -594,7 +603,11 @@ curl -X POST http://localhost:8000/demos/{demo_id}/video/calibration \
 Core:
 
 - `GET /health`
-- `GET /diagnostics`
+- `GET /diagnostics` (development/test only; production returns `404`)
+- `GET /auth/login`
+- `GET /auth/oidc/callback`
+- `GET /auth/session`
+- `POST /auth/logout`
 - `GET /demos`
 - `PATCH /demos/{demo_id}`
 - `POST /demos/{demo_id}/archive`
@@ -612,6 +625,7 @@ Replay and coaching:
 Video and render:
 
 - `GET /demos/{demo_id}/video`
+- `GET|HEAD /demos/{demo_id}/media/video` (session + owner checked; supports byte ranges)
 - `POST /demos/{demo_id}/video/upload`
 - `POST /demos/{demo_id}/video/calibration`
 - `POST /demos/{demo_id}/render/mock`
@@ -627,14 +641,29 @@ Render worker:
 
 ## Configuration
 
-完整部署准备说明见 `docs/deployment_readiness_v1.md`，Cloud Preview runbook 见 `docs/cloud_preview_deploy_v1.md`。关键环境变量：
+身份和 private media 的完整合同见 `docs/production_auth_owner_private_media_v1.md`；runtime deployment 说明见 `docs/deployment_readiness_v1.md`，Cloud Preview runbook 见 `docs/cloud_preview_deploy_v1.md`。关键环境变量：
 
 | Name | Default | Used by |
 | --- | --- | --- |
 | `NEXT_PUBLIC_API_BASE_URL` | `http://localhost:8000` | frontend browser API/media URL |
-| `BACKEND_PUBLIC_URL` | `http://localhost:8000` | backend health/readiness public URL |
-| `MEDIA_URL_BASE` | unset | optional backend media URL base for `/media/videos` |
-| `CORS_ORIGINS` | `http://localhost:3000,http://127.0.0.1:3000` | backend API |
+| `AUTH_MODE` | unset (required) | backend identity mode: `development`, `test`, or `production` |
+| `FRONTEND_PUBLIC_URL` | `http://localhost:3000` | server-trusted frontend redirect origin; must equal the HTTPS API origin in production |
+| `BACKEND_PUBLIC_URL` | `http://localhost:8000` | backend public origin; same exact origin as frontend in production |
+| `OIDC_ISSUER` | unset | exact production issuer |
+| `OIDC_CLIENT_ID` | unset | production OIDC client/audience |
+| `OIDC_CLIENT_SECRET` | unset | optional server-side confidential-client secret |
+| `OIDC_ALLOWED_ALGORITHMS` | `RS256,ES256` | supported asymmetric signature allow-list |
+| `OIDC_AUTHORIZATION_ENDPOINT` | unset | production authorization endpoint |
+| `OIDC_TOKEN_ENDPOINT` | unset | production server-side code exchange endpoint |
+| `OIDC_JWKS_URL` | unset | production trusted signing keys |
+| `OIDC_REDIRECT_URI` | unset | production backend `/auth/oidc/callback` URL |
+| `AUTH_COOKIE_SECURE` | `false` | must be enabled in production |
+| `AUTH_SESSION_COOKIE_NAME` | `__Host-cs2_session` | opaque session cookie name |
+| `AUTH_STATE_COOKIE_NAME` | `__Host-cs2_oidc_state` | short-lived OIDC state cookie name |
+| `AUTH_SESSION_TTL_SECONDS` | `3600` | bounded Redis/browser session lifetime |
+| `AUTH_LOGIN_TTL_SECONDS` | `300` | bounded one-time login attempt lifetime |
+| `AUTH_CLOCK_SKEW_SECONDS` | `30` | bounded OIDC timestamp leeway |
+| `CORS_ORIGINS` | `http://localhost:3000,http://127.0.0.1:3000` | backend API; production requires only the exact `FRONTEND_PUBLIC_URL` origin |
 | `DATABASE_URL` | `postgresql+psycopg2://cs2coach:cs2coach@localhost:5432/cs2coach` | API, worker |
 | `REDIS_URL` | `redis://localhost:6379/0` | API, worker |
 | `REDIS_QUEUE_NAME` | `cs2-demo-jobs` | API, worker |
@@ -643,7 +672,7 @@ Render worker:
 | `DEMO_UPLOAD_STORAGE_DIR` | `/data/uploads` | API, worker |
 | `VIDEO_STORAGE_DIR` | `/data/videos` | API, worker |
 | `SUMMARY_STORAGE_DIR` | `/data/summaries` | API, worker |
-| `DEV_USER_ID` | `dev-user` | backend API |
+| `DEV_USER_ID` | `dev-user` | development/test owner harness only |
 | `MAX_RENDER_CLIP_SECONDS` | `60` | backend API |
 | `RENDER_WORKER_TOKEN` | `dev-render-worker-token` | API, render-worker |
 | `API_BASE_URL` | `http://localhost:8000` | render-worker runner |
@@ -657,7 +686,7 @@ Render worker:
 | `SAMPLE_DEMO_NAME` | unset | optional display name for smoke sample |
 | `REQUIRE_SAMPLE_DEMO` | `0` | make smoke fail when no sample is configured |
 
-Docker Compose uses service names inside containers (`postgres`, `redis`) and host-facing URLs for the browser (`NEXT_PUBLIC_API_BASE_URL=http://localhost:8000`). Artifact directories default under `ARTIFACT_STORAGE_ROOT=/data`, with per-category overrides for local development. Hosted preview builds can use `docker-compose.preview.yml`; rebuild the frontend image whenever `NEXT_PUBLIC_API_BASE_URL` changes because Next.js bundles public env values at build time. Do not commit production secrets or object storage credentials.
+Docker Compose uses service names inside containers (`postgres`, `redis`) and host-facing URLs for the browser (`NEXT_PUBLIC_API_BASE_URL=http://localhost:8000`). Local Compose must explicitly use `AUTH_MODE=development`. The production API requires the complete well-formed HTTPS OIDC/`__Host-` cookie/single-origin/CORS contract and a non-default render-worker credential or startup fails closed; unsafe browser mutations also require a trusted `Origin`. The queue worker validates only its narrower runtime: explicit mode plus a non-default worker credential in production, without receiving browser OIDC/client/cookie secrets. Artifact directories default under `ARTIFACT_STORAGE_ROOT=/data`, with per-category overrides for local development. Hosted preview builds can use `docker-compose.preview.yml`; rebuild the frontend image whenever `NEXT_PUBLIC_API_BASE_URL` changes because Next.js bundles that public origin at build time. Never put OIDC secrets or tokens in `NEXT_PUBLIC_*`, URLs, source, or checked-in env files.
 
 ## Deploy Smoke Checklist
 
@@ -665,21 +694,23 @@ Minimal local smoke for a clean environment. For internal preview handoff, use `
 
 1. `docker compose up --build`
 2. `curl http://localhost:8000/health`
-3. `curl http://localhost:8000/diagnostics`
-4. Open `http://localhost:3000/dashboard`
+3. In explicit development mode, `curl http://localhost:8000/diagnostics`; in production, confirm it returns `404`
+4. Open `http://localhost:3000/dashboard`; production should require OIDC sign-in, while development uses the explicit local harness
 5. Create a mock upload and wait for completion
 6. Upload a real `.dem` if a sample is available
 7. Open a demo detail page
 8. Use round review quick jumps and confirm replay, tactical map, timeline, parser markers, and coaching cards stay synchronized
-9. Click `Generate Clip`
-10. Confirm render job status appears in the UI and `/demos/{demo_id}/render/jobs`
-11. For Cloud Preview validation, run `API_BASE_URL=http://localhost:8000 FRONTEND_URL=http://localhost:3000 python3 scripts/cloud_preview_smoke.py` or point those variables at the public preview URLs
-12. For stricter parser validation, set `SAMPLE_DEMO_PATH` and rerun the smoke; add `--require-sample` when preview validation must fail without a fresh real upload
+9. If video exists, confirm `/demos/{demo_id}/media/video` supports authenticated GET/HEAD/Range and the 2D fallback remains available when media is denied
+10. Click `Generate Clip`
+11. Confirm render job status appears in the UI and `/demos/{demo_id}/render/jobs`
+12. Run the owner A/B/anonymous/expired/revoked matrix in `docs/production_auth_owner_private_media_v1.md`
+13. For development-mode Cloud Preview validation, run `API_BASE_URL=http://localhost:8000 FRONTEND_URL=http://localhost:3000 python3 scripts/cloud_preview_smoke.py` or point those variables at the preview URLs
+14. For stricter parser validation, set `SAMPLE_DEMO_PATH` and rerun the smoke; add `--require-sample` when preview validation must fail without a fresh real upload
 
 ## Current Limitations
 
-- 没有真实认证和授权；当前只有 `DEV_USER_ID` / `X-Dev-User-Id` 驱动的 dev-only owner boundary。
-- 生产 auth replacement path 仍待实现，建议接入 Clerk、Auth0、Supabase Auth 或其它 identity provider，并把 authenticated user id 映射到 `owner_id`。
+- Production identity is provider-neutral OIDC; selecting and provisioning a concrete provider remains a deployment decision, not an application-code dependency.
+- Redis-backed opaque sessions require Redis availability; Stage 4 has not yet added durable job delivery or crash recovery.
 - 本地文件和 Docker volumes 通过 local storage adapter 替代对象存储。
 - Parser frame 是采样数据，不是完整 tick density。
 - `demoparser2` 对不同 demo 的 event family 和字段可用性不稳定；normalizer 必须继续容错。
@@ -692,14 +723,6 @@ Minimal local smoke for a clean environment. For internal preview handoff, use `
 
 ## Next Useful Work
 
-优先级较高的下一步：
-
-- 更严格的 upload session / quarantine / S3-R2 storage boundary。
-- Parser telemetry 和更稳定的 damage/bomb/utility/round event extraction。
-- 更准确的 map-specific coordinate calibration，尤其是 Mirage、Inferno、Ancient、Nuke、Anubis。
-- Render worker lease/heartbeat 语义，避免外部 worker claim 后长时间卡住。
-- 真实受控 GPU worker adapter：拉取 `.dem`、渲染短 clip、上传 mp4/HLS、提交 result callback。
-- 更完整的 rules evidence，包括 economy、utility timing、line-of-sight 和 trade metadata。
-- 真实用户系统和 demo ownership。
+下一阶段必须是 Stage 3：对象存储和安全 Artifact Intake，包括受控 upload session/quarantine/size/type validation；不在 Stage 2 中预选云厂商。之后仍按冻结顺序推进可靠任务与崩溃恢复、parser 隔离、migration/CI/CD/observability/backup，最后建立真实 demo corpus 并进行邀请制公测。每个阶段一个 branch、一个 PR，不跨阶段捆绑。
 
 保持产品方向：核心复盘体验必须在 `.dem` 上传解析后立即可用；真实 first-person footage 是异步 clip 增强，而不是使用网站的前置条件。

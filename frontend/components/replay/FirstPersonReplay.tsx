@@ -3,9 +3,10 @@
 import { Crosshair, RadioTower, Scissors, Video } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import { useAuth } from "@/components/auth/AuthProvider";
 import type { RenderJobStatus } from "@/lib/api";
 import { friendlyErrorMessage, isRenderActiveStatus } from "@/lib/demo-library";
-import { resolveMediaUrl } from "@/lib/media-url";
+import { resolvePrivateMediaSource } from "@/lib/media-url";
 import { tickToVideoTime, videoTimeRange, videoTimeToTick } from "@/lib/replay-time";
 import type { ReplayData, ReplayFrame } from "@/types/replay";
 
@@ -38,11 +39,15 @@ export function FirstPersonReplay({
   onVideoDurationChange,
   onVideoTimeChange
 }: FirstPersonReplayProps) {
+  const { refreshSession } = useAuth();
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const lastSyncedTickRef = useRef<number | null>(null);
   const [mediaUnavailable, setMediaUnavailable] = useState(false);
   const frame = useMemo(() => getFrameForTick(replay.frames, currentTick), [currentTick, replay.frames]);
-  const videoSource = resolveMediaUrl(replay.video.url);
+  const mediaSource = resolvePrivateMediaSource(replay.video.url);
+  const videoSource = mediaSource?.src ?? null;
+  const activeVideoSource = mediaUnavailable ? null : videoSource;
+  const invalidMediaReference = Boolean(replay.video.url && !mediaSource);
   const timeRange = videoTimeRange(replay.video);
   const videoTime = tickToVideoTime(currentTick, replay.video);
   const clipJobBusy =
@@ -63,7 +68,7 @@ export function FirstPersonReplay({
 
   useEffect(() => {
     const element = videoRef.current;
-    if (!element || !videoSource) {
+    if (!element || !activeVideoSource) {
       return;
     }
 
@@ -77,11 +82,11 @@ export function FirstPersonReplay({
     } else {
       element.pause();
     }
-  }, [playing, speed, videoSource, videoTime]);
+  }, [activeVideoSource, playing, speed, videoTime]);
 
   useEffect(() => {
     const element = videoRef.current;
-    if (!element || !videoSource || !playing) {
+    if (!element || !activeVideoSource || !playing) {
       return;
     }
 
@@ -99,7 +104,7 @@ export function FirstPersonReplay({
 
     animationFrameId = window.requestAnimationFrame(syncTickFromVideo);
     return () => window.cancelAnimationFrame(animationFrameId);
-  }, [onSeekTick, onVideoTimeChange, playing, replay.video, videoSource]);
+  }, [activeVideoSource, onSeekTick, onVideoTimeChange, playing, replay.video]);
 
   return (
     <section className="panel first-person-panel" aria-label="First-person replay player">
@@ -107,7 +112,7 @@ export function FirstPersonReplay({
         <div>
           <h2>First-person Replay</h2>
           <span>
-            {videoSource ? videoLabel(replay.video.source) : "Mock first-person render"} /{" "}
+            {activeVideoSource ? videoLabel(replay.video.source) : "Mock first-person render"} /{" "}
             {formatTime(videoTime)} / Tick {Math.round(currentTick)}
           </span>
         </div>
@@ -147,15 +152,22 @@ export function FirstPersonReplay({
       </div>
 
       <div className="first-person-viewport">
-        {videoSource ? (
+        {activeVideoSource ? (
           <video
             ref={videoRef}
             className="first-person-video"
-            src={videoSource}
+            src={activeVideoSource}
+            crossOrigin={mediaSource?.crossOrigin}
             muted
             playsInline
             preload="metadata"
-            onError={() => setMediaUnavailable(true)}
+            onError={() => {
+              void refreshSession().then((authenticated) => {
+                if (authenticated) {
+                  setMediaUnavailable(true);
+                }
+              });
+            }}
             onLoadedMetadata={(event) => {
               setMediaUnavailable(false);
               const duration = event.currentTarget.duration;
@@ -190,7 +202,10 @@ export function FirstPersonReplay({
           <span className="hud-chip">{speed}x</span>
           <span className="hud-chip">{playing ? "Playing" : "Paused"}</span>
         </div>
-        <RenderStatusOverlay video={replay.video} mediaUnavailable={mediaUnavailable} />
+        <RenderStatusOverlay
+          video={replay.video}
+          mediaUnavailable={mediaUnavailable || invalidMediaReference}
+        />
         <div className="video-progress" aria-hidden="true">
           <span style={{ width: `${progress * 100}%` }} />
         </div>

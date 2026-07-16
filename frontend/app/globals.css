@@ -59,6 +59,46 @@ button {
     var(--bg);
 }
 
+.auth-shell {
+  display: grid;
+  min-height: 100vh;
+  place-items: center;
+  padding: 24px;
+  background:
+    radial-gradient(circle at 50% 18%, rgba(40, 199, 193, 0.12), transparent 34%),
+    var(--bg);
+}
+
+.auth-panel {
+  display: grid;
+  width: min(460px, 100%);
+  gap: 18px;
+  justify-items: start;
+  padding: 28px;
+}
+
+.auth-panel h1,
+.auth-panel p {
+  margin: 0;
+}
+
+.auth-panel p {
+  margin-top: 8px;
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+.auth-icon {
+  display: grid;
+  width: 44px;
+  height: 44px;
+  place-items: center;
+  border: 1px solid rgba(40, 199, 193, 0.3);
+  border-radius: 10px;
+  background: var(--teal-soft);
+  color: var(--teal);
+}
+
 .topbar {
   display: flex;
   align-items: center;

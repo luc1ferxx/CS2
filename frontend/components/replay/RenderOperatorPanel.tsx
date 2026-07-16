@@ -91,7 +91,7 @@ export function RenderOperatorPanel({
         </div>
         <div>
           <dt>Output</dt>
-          <dd className="metadata-url">{video.url ?? latestJob?.video_url ?? "not playable"}</dd>
+          <dd>{video.url ? "Private media bound" : "Not playable"}</dd>
         </div>
       </dl>
 

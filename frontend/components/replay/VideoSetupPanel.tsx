@@ -125,8 +125,8 @@ export function VideoSetupPanel({
 
       <dl className="video-metadata-grid">
         <div>
-          <dt>URL</dt>
-          <dd className="metadata-url">{video.url ?? "No video bound"}</dd>
+          <dt>Media</dt>
+          <dd>{video.url ? "Private media bound" : "No video bound"}</dd>
         </div>
         <div>
           <dt>Duration</dt>

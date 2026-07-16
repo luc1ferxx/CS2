@@ -12,6 +12,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.api import diagnostics
+from app import main
 from app.core.config import settings
 from app.core.database import Base, get_db
 from app.models import Demo, DemoJob
@@ -36,6 +37,8 @@ class DiagnosticsEndpointTest(unittest.TestCase):
             settings.video_storage_dir,
             settings.summary_storage_dir,
         )
+        self.original_auth_mode = settings.auth_mode
+        object.__setattr__(settings, "auth_mode", "test")
         root = Path(self.temp_dir.name)
         object.__setattr__(settings, "artifact_storage_root", root)
         object.__setattr__(settings, "replay_storage_dir", root / "replays")
@@ -66,6 +69,7 @@ class DiagnosticsEndpointTest(unittest.TestCase):
         object.__setattr__(settings, "demo_upload_storage_dir", upload_dir)
         object.__setattr__(settings, "video_storage_dir", video_dir)
         object.__setattr__(settings, "summary_storage_dir", summary_dir)
+        object.__setattr__(settings, "auth_mode", self.original_auth_mode)
         self.temp_dir.cleanup()
         self.engine.dispose()
 
@@ -165,6 +169,23 @@ class DiagnosticsEndpointTest(unittest.TestCase):
         self.assertEqual(heartbeat["ageSeconds"], 10)
         self.assertEqual(heartbeat["lastSeenAt"], now.isoformat())
 
+    def test_system_diagnostics_are_disabled_in_production(self) -> None:
+        object.__setattr__(settings, "auth_mode", "production")
+
+        response = self.client.get("/diagnostics")
+
+        self.assertEqual(response.status_code, 404)
+        self.assertNotIn("dependencies", response.text)
+
+    def test_public_health_returns_only_coarse_readiness(self) -> None:
+        with patch("app.main.SessionLocal", return_value=FakeDatabaseSession()), patch(
+            "app.main.get_redis_client",
+            return_value=self.redis,
+        ):
+            body = main.health()
+
+        self.assertEqual(body, {"status": "ok"})
+
 
 class FakeRedis:
     def __init__(self) -> None:
@@ -181,6 +202,17 @@ class FakeRedis:
 
     def setex(self, key: str, _: int, value: str) -> None:
         self.values[key] = value
+
+
+class FakeDatabaseSession:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        return None
+
+    def execute(self, _: object) -> None:
+        return None
 
 
 def add_demo(

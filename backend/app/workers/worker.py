@@ -1,6 +1,5 @@
 import json
 import time
-import traceback
 from datetime import datetime, timezone
 from typing import Any
 
@@ -14,16 +13,17 @@ from app.models.demo import Demo
 from app.models.job import DemoJob
 from app.parser.demo_parser import DemoParserError, parse_demo_file
 from app.parser.normalizer import normalize_parser_output
-from app.services.demo_service import RENDER_CLIP_JOB_TYPE, DemoService
+from app.services.demo_service import (
+    RENDER_CLIP_JOB_TYPE,
+    RENDER_CLIP_NOT_CONNECTED_ERROR,
+    RENDER_FAILED_ERROR_CODE,
+    RENDER_FAILED_PUBLIC_MESSAGE,
+    RENDER_WORKER_UNAVAILABLE_ERROR_CODE,
+    DemoService,
+)
 from app.services.diagnostics import write_worker_heartbeat
 from app.services.storage import StorageKeyError
 from app.services.mock_replay_service import build_mock_replay
-
-
-RENDER_CLIP_NOT_CONNECTED_ERROR = (
-    "GPU worker not connected for render_clip. "
-    "A separate Windows/Linux GPU worker or manual operator must process this job."
-)
 
 
 def utc_now() -> datetime:
@@ -52,7 +52,7 @@ def process_job(db: Session, job_id: str, demo_id: str) -> None:
 
 
 def process_mock_parse_job(db: Session, demo: Demo, job: DemoJob) -> None:
-    service = DemoService(db)
+    service = DemoService.for_internal(db)
     service.claim_parse_job(demo, job)
 
     time.sleep(1.2)
@@ -65,7 +65,7 @@ def process_mock_parse_job(db: Session, demo: Demo, job: DemoJob) -> None:
 
 
 def process_real_parse_job(db: Session, demo: Demo, job: DemoJob) -> None:
-    service = DemoService(db)
+    service = DemoService.for_internal(db)
 
     service.claim_parse_job(demo, job)
 
@@ -74,7 +74,7 @@ def process_real_parse_job(db: Session, demo: Demo, job: DemoJob) -> None:
     except BaseException as exc:
         if isinstance(exc, (KeyboardInterrupt, SystemExit)):
             raise
-        traceback.print_exc()
+        _log_job_failure(job.id, "parse", exc)
         _fail_classified_parse_job(service, demo, job, exc, phase="parse")
         return
 
@@ -84,7 +84,7 @@ def process_real_parse_job(db: Session, demo: Demo, job: DemoJob) -> None:
         replay = normalize_parser_output(demo.id, parsed)
         events = analyze_replay(replay)
     except Exception as exc:
-        traceback.print_exc()
+        _log_job_failure(job.id, "normalization", exc)
         _fail_classified_parse_job(service, demo, job, exc, phase="normalization")
         return
 
@@ -98,7 +98,7 @@ def process_real_parse_job(db: Session, demo: Demo, job: DemoJob) -> None:
 
 
 def process_mock_render_job(db: Session, demo: Demo, job: DemoJob) -> None:
-    service = DemoService(db)
+    service = DemoService.for_internal(db)
 
     job.status = "processing"
     job.attempts += 1
@@ -110,6 +110,7 @@ def process_mock_render_job(db: Session, demo: Demo, job: DemoJob) -> None:
             "status": "rendering",
             "source": "rendered",
             "url": None,
+            "errorCode": None,
             "errorMessage": None,
         },
     )
@@ -124,6 +125,7 @@ def process_mock_render_job(db: Session, demo: Demo, job: DemoJob) -> None:
             "status": "ready",
             "source": "rendered",
             "url": None,
+            "errorCode": None,
             "errorMessage": None,
         },
     )
@@ -134,7 +136,7 @@ def process_mock_render_job(db: Session, demo: Demo, job: DemoJob) -> None:
 
 
 def process_render_clip_job(db: Session, demo: Demo, job: DemoJob) -> None:
-    service = DemoService(db)
+    service = DemoService.for_internal(db)
 
     if job.status != "queued":
         return
@@ -149,7 +151,12 @@ def process_render_clip_job(db: Session, demo: Demo, job: DemoJob) -> None:
     service.update_render_clip_video_status(demo, "rendering", None)
     db.commit()
 
-    service.update_render_clip_video_status(demo, "failed", RENDER_CLIP_NOT_CONNECTED_ERROR)
+    service.update_render_clip_video_status(
+        demo,
+        "failed",
+        RENDER_CLIP_NOT_CONNECTED_ERROR,
+        error_code=RENDER_WORKER_UNAVAILABLE_ERROR_CODE,
+    )
     job.status = "failed"
     job.error_message = RENDER_CLIP_NOT_CONNECTED_ERROR
     job.finished_at = utc_now()
@@ -157,12 +164,11 @@ def process_render_clip_job(db: Session, demo: Demo, job: DemoJob) -> None:
 
 
 def fail_job(db: Session, job_id: str, demo_id: str, error: Any) -> None:
-    error_message = str(error)
     demo = db.query(Demo).filter(Demo.id == demo_id).one_or_none()
     job = db.query(DemoJob).filter(DemoJob.id == job_id).one_or_none()
     if demo is not None and job is not None and job.job_type == "mock_render":
         try:
-            service = DemoService(db)
+            service = DemoService.for_internal(db)
             service.update_replay_video(
                 demo,
                 {
@@ -170,20 +176,26 @@ def fail_job(db: Session, job_id: str, demo_id: str, error: Any) -> None:
                     "status": "failed",
                     "source": "rendered",
                     "url": None,
-                    "errorMessage": error_message[:1000],
+                    "errorCode": RENDER_FAILED_ERROR_CODE,
+                    "errorMessage": RENDER_FAILED_PUBLIC_MESSAGE,
                 },
             )
         except Exception:
-            traceback.print_exc()
+            _log_job_failure(job.id, "mock-render-failure-update", error)
     elif demo is not None and job is not None and job.job_type == RENDER_CLIP_JOB_TYPE:
         try:
-            service = DemoService(db)
-            service.update_render_clip_video_status(demo, "failed", error_message[:1000])
+            service = DemoService.for_internal(db)
+            service.update_render_clip_video_status(
+                demo,
+                "failed",
+                RENDER_FAILED_PUBLIC_MESSAGE,
+                error_code=RENDER_FAILED_ERROR_CODE,
+            )
         except Exception:
-            traceback.print_exc()
+            _log_job_failure(job.id, "render-clip-failure-update", error)
     elif demo is not None and job is not None and job.job_type in {"real_parse", "mock_parse"}:
         failure = _parse_failure_for_exception(error, phase="parse")
-        DemoService(db).fail_parse_job(
+        DemoService.for_internal(db).fail_parse_job(
             demo,
             job,
             failure["message"],
@@ -192,15 +204,20 @@ def fail_job(db: Session, job_id: str, demo_id: str, error: Any) -> None:
         return
     elif demo is not None:
         demo.status = "failed"
-        demo.error_message = error_message[:1000]
+        demo.error_message = "Background job failed. Retry the operation."
     if job is not None:
         job.status = "failed"
-        job.error_message = error_message[:1000]
+        job.error_message = (
+            RENDER_FAILED_PUBLIC_MESSAGE
+            if job.job_type in {"mock_render", RENDER_CLIP_JOB_TYPE}
+            else "Background job failed. Retry the operation."
+        )
         job.finished_at = utc_now()
     db.commit()
 
 
 def run_worker() -> None:
+    settings.validate_worker_runtime_configuration()
     init_db()
     redis_client = get_redis_client()
     print(f"Worker listening on Redis queue: {settings.redis_queue_name}", flush=True)
@@ -222,7 +239,7 @@ def run_worker() -> None:
                 process_job(db, job_id, demo_id)
                 print(f"Completed job {job_id} for demo {demo_id}", flush=True)
             except Exception as exc:
-                traceback.print_exc()
+                _log_job_failure(job_id, "process", exc)
                 fail_job(db, job_id, demo_id, exc)
             finally:
                 write_worker_heartbeat(redis_client)
@@ -268,6 +285,13 @@ def _parse_failure_for_exception(error: Any, *, phase: str) -> dict[str, str]:
         "errorCode": "PARSER_UNEXPECTED",
         "message": "Unexpected parser error. Retry or upload a different demo.",
     }
+
+
+def _log_job_failure(job_id: str, phase: str, error: BaseException) -> None:
+    print(
+        f"Worker job {job_id} failed during {phase}: {type(error).__name__}",
+        flush=True,
+    )
 
 
 if __name__ == "__main__":

@@ -154,6 +154,29 @@ class CloudPreviewSampleConfigTest(unittest.TestCase):
         self.assertIn("recentFailures=1", summary)
         self.assertNotIn("Invalid or unreadable demo file.", summary)
 
+    def test_smoke_uses_opaque_session_cookie_without_dev_owner_header(self) -> None:
+        self.smoke.AUTH_SESSION_COOKIE = "local-fixture-session"
+        self.smoke.FRONTEND_URL = "https://coach.example.test/dashboard"
+
+        get_headers = self.smoke.auth_headers("GET")
+        post_headers = self.smoke.auth_headers("POST")
+
+        self.assertEqual(
+            get_headers,
+            {"Cookie": "__Host-cs2_session=local-fixture-session"},
+        )
+        self.assertEqual(post_headers["Origin"], "https://coach.example.test")
+        self.assertNotIn("X-Dev-User-Id", post_headers)
+
+    def test_smoke_dev_mode_uses_only_the_explicit_dev_owner_header(self) -> None:
+        self.smoke.AUTH_SESSION_COOKIE = ""
+        self.smoke.OWNER_ID = "smoke-owner"
+
+        self.assertEqual(
+            self.smoke.auth_headers("POST"),
+            {"X-Dev-User-Id": "smoke-owner"},
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

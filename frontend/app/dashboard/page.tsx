@@ -20,6 +20,8 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 
 import { DemoUploader } from "@/components/upload/DemoUploader";
+import { AuthBoundary } from "@/components/auth/AuthBoundary";
+import { SessionControls } from "@/components/auth/SessionControls";
 import { archiveDemo, createDemoUpload, createMockUpload, listDemos, retryDemoParse, updateDemo } from "@/lib/api";
 import {
   canRetryParse,
@@ -53,6 +55,14 @@ interface LibraryNotice {
 }
 
 export default function DashboardPage() {
+  return (
+    <AuthBoundary>
+      <DashboardContent />
+    </AuthBoundary>
+  );
+}
+
+function DashboardContent() {
   const [demos, setDemos] = useState<DemoSummary[]>([]);
   const [filters, setFilters] = useState<DemoLibraryFilters>(DEFAULT_FILTERS);
   const [loading, setLoading] = useState(true);
@@ -232,12 +242,13 @@ export default function DashboardPage() {
         <div className="topbar-actions">
           <span className="status-pill">
             <span className="status-dot" />
-            Mock API
+            Private API
           </span>
           <span className="status-pill">
             <Activity size={15} />
             {activeJobs} active jobs
           </span>
+          <SessionControls />
         </div>
       </header>
 

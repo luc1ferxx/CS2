@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.core.auth import get_current_owner_id
+from app.core.config import settings
 from app.core.database import get_db
 from app.core.redis import get_redis_client
 from app.services.demo_service import DemoService
@@ -22,6 +23,8 @@ router = APIRouter(tags=["diagnostics"])
 
 @router.get("/diagnostics")
 def get_diagnostics(db: Session = Depends(get_db)) -> dict[str, Any]:
+    if settings.auth_mode == "production":
+        raise HTTPException(status_code=404, detail="Not found")
     return build_system_diagnostics(db, get_redis_client())
 
 

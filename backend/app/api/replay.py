@@ -21,7 +21,7 @@ def get_replay(
     if demo.status != "completed":
         raise HTTPException(status_code=409, detail="Replay is not ready")
 
-    replay = service.load_replay_blob(demo)
+    replay = service.public_replay(demo)
     if replay is None:
         raise HTTPException(status_code=404, detail="Replay blob not found")
     return replay

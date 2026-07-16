@@ -32,7 +32,7 @@ class DemoLibraryTest(unittest.TestCase):
             archived=True,
             created_at=datetime(2026, 5, 9, tzinfo=timezone.utc),
         )
-        service = DemoService(db)
+        service = DemoService(db, owner_id=settings.dev_user_id)
 
         default_items = service.list_demos()
         all_items = service.list_demos(include_archived=True)
@@ -71,7 +71,7 @@ class DemoLibraryTest(unittest.TestCase):
             status="completed",
             created_at=datetime(2026, 5, 2, tzinfo=timezone.utc),
         )
-        service = DemoService(db)
+        service = DemoService(db, owner_id=settings.dev_user_id)
 
         by_name = service.list_demos(
             search="dust",
@@ -96,7 +96,7 @@ class DemoLibraryTest(unittest.TestCase):
             status="failed",
         )
         add_demo(db, "demo-visible-ready", "Nuke Review", "nuke.dem", "de_nuke")
-        service = DemoService(db)
+        service = DemoService(db, owner_id=settings.dev_user_id)
 
         failed = service.list_demos(search="failed")
         ready = service.list_demos(search="ready")
@@ -113,7 +113,7 @@ class DemoLibraryTest(unittest.TestCase):
         timestamp = datetime(2026, 5, 10, tzinfo=timezone.utc)
         add_demo(db, "demo-tie-b", "Same Name", "b.dem", "de_dust2", created_at=timestamp)
         add_demo(db, "demo-tie-a", "Same Name", "a.dem", "de_dust2", created_at=timestamp)
-        service = DemoService(db)
+        service = DemoService(db, owner_id=settings.dev_user_id)
 
         by_name = service.list_demos(sort="name", order="asc")
         by_recent = service.list_demos(sort="recent", order="desc")
@@ -124,7 +124,7 @@ class DemoLibraryTest(unittest.TestCase):
     def test_update_demo_renames_demo_and_rejects_blank_name(self) -> None:
         db = self.Session()
         demo = add_demo(db, "demo-rename", "Old Name", "old.dem", "de_nuke")
-        service = DemoService(db)
+        service = DemoService(db, owner_id=settings.dev_user_id)
 
         updated = service.update_demo(demo.id, name="New Library Name")
 
@@ -137,7 +137,7 @@ class DemoLibraryTest(unittest.TestCase):
     def test_archive_demo_hides_from_default_list_but_detail_lookup_still_works(self) -> None:
         db = self.Session()
         demo = add_demo(db, "demo-archive", "Archive Me", "archive.dem", "de_ancient")
-        service = DemoService(db)
+        service = DemoService(db, owner_id=settings.dev_user_id)
 
         archived = service.archive_demo(demo.id)
 
@@ -149,7 +149,7 @@ class DemoLibraryTest(unittest.TestCase):
 
     def test_mock_upload_remains_visible_in_library(self) -> None:
         db = self.Session()
-        service = DemoService(db)
+        service = DemoService(db, owner_id=settings.dev_user_id)
 
         with patch("app.services.demo_service.get_redis_client", return_value=FakeRedis()) as redis_factory:
             created = service.create_mock_demo()
@@ -176,7 +176,7 @@ class DemoLibraryTest(unittest.TestCase):
             source_storage_key="local://uploads/demo-active-upload/active.dem",
         )
         add_parse_job(db, demo.id, "real_parse", status="queued", attempts=0)
-        service = DemoService(db)
+        service = DemoService(db, owner_id=settings.dev_user_id)
 
         item = service.demo_list_item(demo)
 
@@ -215,7 +215,7 @@ class DemoLibraryTest(unittest.TestCase):
             error_message="Parser exploded while reading demo\nTraceback should not leak",
             finished_at=failed_at,
         )
-        service = DemoService(db)
+        service = DemoService(db, owner_id=settings.dev_user_id)
 
         item = service.demo_list_item(demo)
 
@@ -252,7 +252,7 @@ class DemoLibraryTest(unittest.TestCase):
             attempts=1,
             started_at=old_timestamp,
         )
-        service = DemoService(db)
+        service = DemoService(db, owner_id=settings.dev_user_id)
 
         item = service.demo_list_item(demo)
 

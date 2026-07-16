@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+import os
+import stat
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, BinaryIO, Mapping
 from urllib.parse import urlparse
 
 from app.core.config import settings
@@ -70,6 +72,89 @@ class LocalStorageService:
         path = root.joinpath(*segments)
         self._ensure_within_root(path, root)
         return path
+
+    def video_path_for_demo(self, demo_id: str, storage_key: str) -> Path | None:
+        opened = self.open_video_for_demo(demo_id, storage_key)
+        if opened is None:
+            return None
+        handle, _ = opened
+        handle.close()
+
+        try:
+            category, segments = self._parse_key(storage_key)
+        except StorageKeyError:
+            return None
+        return self.category_roots[category].joinpath(*segments)
+
+    def open_video_for_demo(
+        self,
+        demo_id: str,
+        storage_key: str,
+    ) -> tuple[BinaryIO, os.stat_result] | None:
+        try:
+            category, segments = self._parse_key(storage_key)
+        except StorageKeyError:
+            return None
+        if category != "videos" or len(segments) != 2 or segments[0] != demo_id:
+            return None
+        if Path(segments[1]).suffix.lower() != ".mp4":
+            return None
+
+        no_follow = getattr(os, "O_NOFOLLOW", None)
+        directory = getattr(os, "O_DIRECTORY", None)
+        if no_follow is None or directory is None:
+            return None
+
+        root_fd: int | None = None
+        demo_fd: int | None = None
+        video_fd: int | None = None
+        try:
+            root = self.category_roots["videos"].resolve(strict=True)
+            common_flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
+            root_fd = os.open(root, common_flags | directory | no_follow)
+            demo_fd = os.open(
+                segments[0],
+                common_flags | directory | no_follow,
+                dir_fd=root_fd,
+            )
+            video_fd = os.open(
+                segments[1],
+                common_flags | no_follow,
+                dir_fd=demo_fd,
+            )
+            stat_result = os.fstat(video_fd)
+            if not stat.S_ISREG(stat_result.st_mode):
+                return None
+            handle = os.fdopen(video_fd, "rb", closefd=True)
+            video_fd = None
+            return handle, stat_result
+        except OSError:
+            return None
+        finally:
+            if video_fd is not None:
+                os.close(video_fd)
+            if demo_fd is not None:
+                os.close(demo_fd)
+            if root_fd is not None:
+                os.close(root_fd)
+
+    def replay_key_belongs_to_demo(self, demo_id: str, storage_key: str) -> bool:
+        try:
+            category, segments = self._parse_key(storage_key)
+        except StorageKeyError:
+            return False
+        return (
+            category == "replays"
+            and segments == [f"{demo_id}.json"]
+            and storage_key == self.replay_key(demo_id)
+        )
+
+    def upload_key_belongs_to_demo(self, demo_id: str, storage_key: str) -> bool:
+        try:
+            category, segments = self._parse_key(storage_key)
+        except StorageKeyError:
+            return False
+        return category == "uploads" and len(segments) == 2 and segments[0] == demo_id
 
     def exists(self, storage_key: str) -> bool:
         return self.path_for_key(storage_key).exists()
@@ -152,7 +237,14 @@ class LocalStorageService:
 
     def _parse_key(self, storage_key: str) -> tuple[str, list[str]]:
         parsed = urlparse(storage_key)
-        if parsed.scheme != "local" or not parsed.netloc:
+        if (
+            parsed.scheme != "local"
+            or not parsed.netloc
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.query
+            or parsed.fragment
+        ):
             raise StorageKeyError("Storage key must use local://<category>/...")
         category = parsed.netloc
         self._validate_category(category)
