@@ -1,6 +1,6 @@
 # Deployment Readiness V1
 
-This project now includes the Stage 2 production identity, owner-authorization, and private-video boundary for the rules-based 2D beta. It is still not a durable object-storage architecture, a reliable/crash-recoverable job system, an isolated parser runtime, a production observability/backup platform, or a real CS2 rendering service.
+This project now includes the Stage 3 provider-neutral private artifact store and safe `.dem` intake boundary on top of Stage 2 production identity, owner authorization, and private-video delivery. It is still not a reliable/crash-recoverable job system, an isolated parser runtime, a production observability/backup platform, or a real CS2 rendering service.
 
 The normative security contract and owner acceptance matrix are in `docs/production_auth_owner_private_media_v1.md`. For a repeatable development preview handoff, use `docs/internal_preview_packaging_v1.md`. This document remains the runtime configuration and readiness reference.
 
@@ -23,7 +23,26 @@ The normative security contract and owner acceptance matrix are in `docs/product
 | `REDIS_URL` | `redis://localhost:6379/0` | API, worker | Use `redis` as the host inside Docker Compose. |
 | `REDIS_QUEUE_NAME` | `cs2-demo-jobs` | API, worker | Queue used for parse, mock render, and render clip job dispatch. |
 
-### Local File Storage
+### Private Artifact Storage
+
+| Variable | Default | Used by | Notes |
+| --- | --- | --- | --- |
+| `ARTIFACT_STORAGE_BACKEND` | `local` | API, worker | `local` is development/test only. Production startup requires `s3`. |
+| `OBJECT_STORAGE_BUCKET` | unset | API, worker | Required private S3-compatible bucket in production. It is never returned to clients. |
+| `OBJECT_STORAGE_PREFIX` | `cs2-artifacts-v1` | API, worker | Bounded private namespace; logical references remain backend-neutral. |
+| `OBJECT_STORAGE_REGION` | `us-east-1` | API, worker | S3-compatible region setting; not a cloud-vendor selection. |
+| `OBJECT_STORAGE_ENDPOINT_URL` | unset | API, worker | Optional S3-compatible endpoint. Production accepts HTTPS only. |
+| `OBJECT_STORAGE_ACCESS_KEY_ID` | unset | API, worker | Optional server-side credential when no runtime credential chain is available. |
+| `OBJECT_STORAGE_SECRET_ACCESS_KEY` | unset | API, worker | Must be configured as a pair with the access key and never exposed to the browser. |
+| `ARTIFACT_QUARANTINE_TTL_SECONDS` | `3600` | API, maintenance | Deterministic cutoff for abandoned private quarantine cleanup. |
+| `MAX_DEMO_UPLOAD_BYTES` | `1073741824` | API, worker | Authoritative actual source-byte limit. |
+| `MAX_VIDEO_UPLOAD_BYTES` | `2147483648` | API, render-worker API | Authoritative actual video-byte limit for dev/QA/worker paths. |
+| `MAX_REPLAY_ARTIFACT_BYTES` | `134217728` | API, worker | Bound for replay JSON writes and reads. |
+| `UPLOAD_CHUNK_BYTES` | `1048576` | API, worker | Bounded streaming chunk; validation never loads a full large artifact into memory. |
+
+The provider-neutral boundary generates logical references that bind state, kind, owner, demo, and a server-generated artifact ID. It supports private streamed writes, exact size/SHA-256 metadata, conditional reads, HEAD, delete, promotion, range delivery, deterministic quarantine cleanup, and bounded source materialization. Production objects have no public ACL/URL and browser media continues to use only the owner-scoped route. The full contract is `docs/object_storage_safe_artifact_intake_v1.md`.
+
+### Local Adapter Compatibility
 
 | Variable | Default | Used by | Notes |
 | --- | --- | --- | --- |
@@ -33,9 +52,9 @@ The normative security contract and owner acceptance matrix are in `docs/product
 | `VIDEO_STORAGE_DIR` | `/data/videos` | API, worker | Stores manual or render-worker MP4 outputs. Browser bytes are delivered only through owner-scoped `/demos/{demo_id}/media/video`. |
 | `SUMMARY_STORAGE_DIR` | `/data/summaries` | API, worker | Reserved for compact generated summary artifacts. |
 
-Local paths and Docker volumes remain the Stage 2 adapter. Stage 3 must select and introduce object storage plus upload quarantine and lifecycle rules without bypassing this boundary.
+Local paths and Docker volumes remain a development/test adapter and legacy-read compatibility surface. They are rejected in production. New accepted source, replay, and video records use backend-neutral logical references; a legacy local key alone is never proof that a new source passed intake.
 
-Artifact storage keys use stable application-level categories:
+Legacy storage keys use these local-only categories:
 
 | Category | Key shape | Contents |
 | --- | --- | --- |
@@ -207,10 +226,14 @@ The script covers:
 - frontend typecheck
 - frontend build
 
-Stage 2 focused gates also run directly:
+Stage 2 and Stage 3 focused gates also run directly:
 
 ```bash
 PYTHONPATH=backend python3 -m unittest \
+  backend.tests.test_artifact_storage_config \
+  backend.tests.test_artifact_store_contract \
+  backend.tests.test_artifact_intake \
+  backend.tests.test_request_limits \
   backend.tests.test_production_auth \
   backend.tests.test_private_media \
   backend.tests.test_auth_owner_boundary \
@@ -280,18 +303,19 @@ Manual first-run preview should start at `/dashboard`. Verify the empty/loading/
 - `docker-compose.preview.yml` switches the frontend to a production Next.js build via `frontend/Dockerfile.preview`.
 - Rebuild the preview frontend image whenever `NEXT_PUBLIC_API_BASE_URL` changes because it is bundled at build time.
 - Private media always uses the API's owner-scoped `/demos/{demo_id}/media/video` route. Production frontend pages and API/auth/media paths must share one exact HTTPS origin so `__Host-` cookies and CSRF checks protect both API and native video requests.
-- The local storage adapter writes uploads, replay blobs, summaries, and videos under `/data` by default. Keep the adapter boundary when Stage 3 selects and introduces object storage.
+- The local artifact adapter writes private logical-reference objects under `/data` by default and remains development/test only. Production startup requires the private S3-compatible adapter and never exposes a bucket URL.
 
 ## Deployable Boundaries
 
-Ready at the Stage 2 application boundary:
+Ready at the Stage 3 application boundary:
 
 - Provider-neutral OIDC Authorization Code + PKCE/JWKS validation, Redis opaque browser sessions, stable owner mapping, logout revocation, and frontend session-expiry handling.
 - Owner-scoped private video GET/HEAD/Range delivery without a public static media mount.
 - Demo Library upload, search, status/map filtering, sorting, rename, and soft archive flows.
 - Upload/parser ingestion snapshots, failed parse metadata, stale/active indicators, and owner-scoped retry from stored source artifacts.
-- Mock upload and real `.dem` upload into local or mounted storage.
-- Storage-key backed uploads, replay blobs, and media URLs through the local storage adapter.
+- Mock upload plus public `.dem` intake through private quarantine, bounded streaming, SHA-256 metadata, verified promotion, accepted source binding, and parser dispatch gating.
+- Provider-neutral private source/replay/video operations through local development/test and S3-compatible production adapters; logical references bind owner, demo, kind, and lifecycle state.
+- Deterministic rejected/incomplete/quarantine cleanup and bounded, context-managed source materialization for the current parser compatibility layer.
 - Async parse queue using Redis plus backend worker.
 - Replay contract JSON blobs with backward-compatible normalization, compact parser events, contract diagnostics, and deterministic rules-based coaching rows.
 - Demo detail review: round navigation, timeline markers, tactical map sync, replay diagnostics, degraded states, coaching cards, manual video calibration, and render job status UI.
@@ -302,8 +326,10 @@ Remaining staged gaps:
 
 - `DEV_USER_ID` and `X-Dev-User-Id` remain only as an explicit development/test harness and are not accepted in production.
 - `render-worker` fake and manual adapters are not real GPU rendering.
-- Local filesystem and Docker volumes are not final production object storage.
-- `.dem` uploads are untrusted inputs and need stronger production quarantine and scanning. Archive ingestion, where available, is a development compatibility path rather than the primary product flow.
+- Object bucket/IAM/resource provisioning remains an external deployment decision; Stage 3 creates no cloud resources or real secrets.
+- Stage 3 byte-level intake cannot prove semantic `.dem` validity. The current parser still runs after accepted promotion; isolation and CPU/memory/disk/time limits remain Stage 5.
+- Redis dispatch still lacks durable delivery, crash recovery, atomic claim, redelivery, and idempotent execution. Those remain Stage 4 rather than being hidden inside artifact promotion.
+- Formal migration, production observability, CI/CD, and backup/restore remain Stage 6.
 - Real first-person CS2 rendering still belongs in an external controlled Windows/Linux GPU worker. API and worker containers must not run Steam, CS2, OBS, or ffmpeg automation.
 - Manual MP4 upload/calibration is a development and QA bridge, not the primary product path.
 

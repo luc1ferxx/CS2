@@ -35,20 +35,19 @@ class SessionCsrfMiddleware(BaseHTTPMiddleware):
             and not request.url.path.startswith("/render-worker/")
         ):
             session_token = request.cookies.get(self.settings.auth_session_cookie_name)
-            if session_token:
-                owner_id = self.auth_service_factory().resolve_session(session_token)
-                if owner_id is None:
-                    return _protect_browser_response(request, JSONResponse(
-                        status_code=401,
-                        content={"detail": "Authentication required"},
-                        headers={"WWW-Authenticate": "Session"},
-                    ))
-                request.state.authenticated_owner_id = owner_id
-                if request.headers.get("origin") not in self.settings.runtime_cors_origins:
-                    return _protect_browser_response(request, JSONResponse(
-                        status_code=403,
-                        content={"detail": "Untrusted request origin"},
-                    ))
+            owner_id = self.auth_service_factory().resolve_session(session_token)
+            if owner_id is None:
+                return _protect_browser_response(request, JSONResponse(
+                    status_code=401,
+                    content={"detail": "Authentication required"},
+                    headers={"WWW-Authenticate": "Session"},
+                ))
+            request.state.authenticated_owner_id = owner_id
+            if request.headers.get("origin") not in self.settings.runtime_cors_origins:
+                return _protect_browser_response(request, JSONResponse(
+                    status_code=403,
+                    content={"detail": "Untrusted request origin"},
+                ))
         response = await call_next(request)
         return _protect_browser_response(request, response)
 

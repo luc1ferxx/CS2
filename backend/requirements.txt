@@ -9,3 +9,4 @@ demoparser2==0.41.0
 pandas==2.2.3
 httpx==0.28.1
 PyJWT[crypto]==2.13.0
+boto3==1.43.49

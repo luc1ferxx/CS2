@@ -45,10 +45,13 @@ class FakeVideoAdapter:
 
         if fake_path_is_api_url:
             video_url = str(fake_video_path)
+            storage_key = None
         else:
-            video_url = client.upload_media(job_id, fake_video_path)
+            uploaded = client.upload_media(job_id, fake_video_path)
+            video_url = uploaded.video_url
+            storage_key = uploaded.storage_key
 
-        payload = completed_payload(manifest, video_url)
+        payload = completed_payload(manifest, video_url, storage_key)
         client.post_result(job_id, payload)
         return AdapterResult(
             action="completed",

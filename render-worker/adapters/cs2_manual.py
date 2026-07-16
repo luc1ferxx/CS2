@@ -103,8 +103,9 @@ class CS2ManualAdapter:
                 output_path=output_path,
             )
 
-        video_url = client.upload_media(job_id, output_path)
-        payload = completed_payload(manifest, video_url)
+        uploaded = client.upload_media(job_id, output_path)
+        video_url = uploaded.video_url
+        payload = completed_payload(manifest, video_url, uploaded.storage_key)
         client.post_result(job_id, payload)
         return AdapterResult(
             action="completed",
