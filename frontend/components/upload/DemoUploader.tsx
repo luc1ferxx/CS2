@@ -19,7 +19,7 @@ export function DemoUploader({
   const inputRef = useRef<HTMLInputElement | null>(null);
 
   return (
-    <div className="upload-actions">
+    <div className="upload-actions" aria-label="Create demo review">
       <input
         id={inputId}
         ref={inputRef}
@@ -34,7 +34,7 @@ export function DemoUploader({
           event.currentTarget.value = "";
         }}
       />
-      <div className="upload-action-stack">
+      <div className="upload-action-stack upload-real-action">
         <button
           className="secondary-button"
           type="button"
@@ -45,20 +45,20 @@ export function DemoUploader({
           <FileUp size={17} strokeWidth={2.2} />
           Upload .dem
         </button>
-        <span>real parser flow</span>
+        <span>parser intake</span>
       </div>
-      <div className="upload-action-stack">
+      <div className="upload-action-stack upload-mock-action">
         <button
           className="primary-button"
           type="button"
           onClick={onMockUpload}
           disabled={disabled}
-          title="Create a synthetic demo and queue a mock parse job"
+          title="Create a synthetic sandbox demo and queue a mock parse job"
         >
           <UploadCloud size={17} strokeWidth={2.2} />
-          Create mock demo
+          Mock sandbox
         </button>
-        <span>fast UI smoke</span>
+        <span>synthetic sandbox</span>
       </div>
     </div>
   );

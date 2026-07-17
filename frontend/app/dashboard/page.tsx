@@ -253,19 +253,20 @@ function DashboardContent() {
       </header>
 
       <section className="page">
-        <div className="page-header library-page-header">
-          <div>
+        <div className="page-header library-page-header archive-command-bar">
+          <div className="library-header-copy">
+            <span className="workspace-kicker">Tactical review workbench</span>
             <h1 className="page-title">Demo Library</h1>
             <p className="page-subtitle">
-              Manage uploaded demos, parser status, review readiness, and render clip state.
+              Match archives, parser readiness, and deterministic review signals in one working queue.
             </p>
           </div>
           <DemoUploader disabled={creating} onMockUpload={handleMockUpload} onDemoUpload={handleDemoUpload} />
         </div>
 
-        {error ? <div className="error-panel">{error}</div> : null}
+        {error ? <div className="error-panel" role="alert">{error}</div> : null}
         {notice ? (
-          <div className="library-notice">
+          <div className="library-notice" aria-live="polite">
             <span>{notice.message}</span>
             {notice.demoId ? (
               <Link className="secondary-button compact-button" href={`/demos/${notice.demoId}`}>
@@ -276,7 +277,7 @@ function DashboardContent() {
           </div>
         ) : null}
 
-        <section className="panel library-toolbar" aria-label="Demo library controls">
+        <section className="library-toolbar archive-control-spine" aria-label="Demo library controls">
           <label className="library-search">
             <Search size={16} />
             <input
@@ -380,144 +381,142 @@ function DashboardContent() {
           </label>
         </section>
 
-        <section className="library-stats" aria-label="Demo library summary">
+        <section className="archive-ledger-meta" aria-label="Demo library summary">
           <LibraryStat label="Visible" value={visibleDemos.length} />
           <LibraryStat label="Total loaded" value={demos.length} />
           <LibraryStat label="Active jobs" value={activeJobs} />
           <LibraryStat label="Failed" value={failedDemos} />
         </section>
 
-        <div className="panel table-panel demo-library-panel">
-          <table className="demo-table demo-library-table">
-            <thead>
-              <tr>
-                <th>Demo</th>
-                <th>Map</th>
-                <th>Review</th>
-                <th>Status</th>
-                <th>Render</th>
-                <th>Updated</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {emptyState ? (
-                <tr>
-                  <td colSpan={7}>
-                    <LibraryEmptyStateRow
-                      state={emptyState}
-                      creating={creating}
-                      onClearFilters={() => setFilters(DEFAULT_FILTERS)}
-                      onMockUpload={() => void handleMockUpload()}
-                      onRefresh={() => void loadDemos()}
-                      onShowArchived={() =>
-                        setFilters((current) => ({ ...current, includeArchived: true }))
-                      }
-                    />
-                  </td>
-                </tr>
-              ) : (
-                visibleDemos.map((demo) => (
-                  <tr key={demo.id} className={demo.archived ? "archived-row" : undefined}>
-                    <td data-label="Demo">
-                      {renamingDemoId === demo.id ? (
-                        <form className="rename-form" onSubmit={(event) => saveRename(event, demo)}>
-                          <input
-                            value={renameValue}
-                            onChange={(event) => setRenameValue(event.target.value)}
-                            aria-label={`Rename ${demo.name}`}
-                            autoFocus
-                          />
-                          <button className="icon-button" type="submit" disabled={busyDemoId === demo.id}>
-                            <Check size={15} />
-                          </button>
-                          <button
-                            className="icon-button"
-                            type="button"
-                            onClick={() => {
-                              setRenamingDemoId(null);
-                              setRenameValue("");
-                            }}
-                          >
-                            <X size={15} />
-                          </button>
-                        </form>
-                      ) : (
-                        <div className="demo-name">
-                          <span>{demo.name}</span>
-                          <span>{demo.original_filename}</span>
-                          {demo.archived ? <span className="archived-label">Archived</span> : null}
-                        </div>
-                      )}
-                    </td>
-                    <td data-label="Map">{demo.map_name}</td>
-                    <td data-label="Review">
-                      <div className="library-review-counts">
-                        <span>{demo.round_count || "-"} rounds</span>
-                        <span>{demo.coaching_event_count || "-"} coaching</span>
-                      </div>
-                    </td>
-                    <td data-label="Status">
-                      <StatusBadge status={demo.status} />
-                      <IngestionMeta demo={demo} />
-                      {parseFailureReason(demo) ? (
-                        <p className="library-error-text">{parseFailureReason(demo)}</p>
-                      ) : null}
-                    </td>
-                    <td data-label="Render">
-                      <span className={`mini-pill library-render-pill ${demo.latest_render_status ?? demo.video_status ?? "pending"}`}>
-                        {renderStatusLabel(demo)}
-                      </span>
-                    </td>
-                    <td data-label="Updated">
-                      <div className="library-date">
-                        <span>{formatDate(demo.updated_at)}</span>
-                        <span>Uploaded {formatDate(demo.created_at)}</span>
-                      </div>
-                    </td>
-                    <td data-label="Actions">
-                      <div className="library-actions">
-                        <Link className="secondary-button compact-button" href={`/demos/${demo.id}`}>
-                          <ExternalLink size={14} />
-                          Open
-                        </Link>
-                        <button
-                          className="secondary-button compact-button"
-                          type="button"
-                          onClick={() => startRename(demo)}
-                          disabled={busyDemoId === demo.id}
-                        >
-                          <Pencil size={14} />
-                          Rename
-                        </button>
-                        {canRetryParse(demo) ? (
-                          <button
-                            className="secondary-button compact-button"
-                            type="button"
-                            onClick={() => void handleRetryParse(demo)}
-                            disabled={busyDemoId === demo.id}
-                          >
-                            <RefreshCcw size={14} />
-                            Retry
-                          </button>
-                        ) : null}
-                        <button
-                          className="secondary-button compact-button"
-                          type="button"
-                          onClick={() => void handleArchive(demo)}
-                          disabled={busyDemoId === demo.id || demo.archived}
-                        >
-                          <Archive size={14} />
-                          Archive
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
+        <section className="archive-ledger" aria-label="Demo library archive">
+          <div className="archive-ledger-head" aria-hidden="true">
+            <span>Match archive</span>
+            <span>Map</span>
+            <span>Review signal</span>
+            <span>Readiness / render</span>
+            <span>Actions</span>
+          </div>
+          {emptyState ? (
+            <LibraryEmptyStateRow
+              state={emptyState}
+              creating={creating}
+              onClearFilters={() => setFilters(DEFAULT_FILTERS)}
+              onMockUpload={() => void handleMockUpload()}
+              onUpload={() => document.getElementById("demo-upload-input")?.click()}
+              onRefresh={() => void loadDemos()}
+              onShowArchived={() =>
+                setFilters((current) => ({ ...current, includeArchived: true }))
+              }
+            />
+          ) : (
+            visibleDemos.map((demo) => (
+              <article
+                key={demo.id}
+                className={`archive-record ${demo.archived ? "archived-row" : ""} ${demo.status}`}
+              >
+                <div className="archive-record-identity">
+                  {renamingDemoId === demo.id ? (
+                    <form className="rename-form" onSubmit={(event) => saveRename(event, demo)}>
+                      <input
+                        value={renameValue}
+                        onChange={(event) => setRenameValue(event.target.value)}
+                        aria-label={`Rename ${demo.name}`}
+                        autoFocus
+                      />
+                      <button
+                        className="icon-button"
+                        type="submit"
+                        disabled={busyDemoId === demo.id}
+                        aria-label={`Save name for ${demo.name}`}
+                      >
+                        <Check size={15} />
+                      </button>
+                      <button
+                        className="icon-button"
+                        type="button"
+                        aria-label={`Cancel renaming ${demo.name}`}
+                        onClick={() => {
+                          setRenamingDemoId(null);
+                          setRenameValue("");
+                        }}
+                      >
+                        <X size={15} />
+                      </button>
+                    </form>
+                  ) : (
+                    <div className="demo-name">
+                      <span>{demo.name}</span>
+                      <span>{demo.original_filename}</span>
+                      {demo.archived ? <span className="archived-label">Archived</span> : null}
+                    </div>
+                  )}
+                  <div className="archive-record-date">
+                    <span>Updated {formatDate(demo.updated_at)}</span>
+                    <span>Uploaded {formatDate(demo.created_at)}</span>
+                  </div>
+                </div>
+                <div className="archive-record-map">
+                  <span className="map-anchor">{demo.map_name}</span>
+                </div>
+                <div className="archive-record-signals">
+                  <div className="library-review-counts">
+                    <span><strong>{demo.round_count || "-"}</strong> rounds</span>
+                    <span><strong>{demo.coaching_event_count || "-"}</strong> coaching</span>
+                  </div>
+                </div>
+                <div className="archive-record-state">
+                  <div className="library-readiness">
+                    <StatusBadge status={demo.status} />
+                    <IngestionMeta demo={demo} />
+                    {parseFailureReason(demo) ? (
+                      <p className="library-error-text">{parseFailureReason(demo)}</p>
+                    ) : null}
+                  </div>
+                  <span className={`mini-pill library-render-pill ${demo.latest_render_status ?? demo.video_status ?? "pending"}`}>
+                    {renderStatusLabel(demo)}
+                  </span>
+                </div>
+                <div className="archive-record-actions">
+                  <div className="library-actions">
+                    <Link className="secondary-button compact-button" href={`/demos/${demo.id}`}>
+                      <ExternalLink size={14} />
+                      Open
+                    </Link>
+                    <button
+                      className="secondary-button compact-button"
+                      type="button"
+                      onClick={() => startRename(demo)}
+                      disabled={busyDemoId === demo.id}
+                    >
+                      <Pencil size={14} />
+                      Rename
+                    </button>
+                    {canRetryParse(demo) ? (
+                      <button
+                        className="secondary-button compact-button"
+                        type="button"
+                        onClick={() => void handleRetryParse(demo)}
+                        disabled={busyDemoId === demo.id}
+                      >
+                        <RefreshCcw size={14} />
+                        Retry
+                      </button>
+                    ) : null}
+                    <button
+                      className="secondary-button compact-button"
+                      type="button"
+                      onClick={() => void handleArchive(demo)}
+                      disabled={busyDemoId === demo.id || demo.archived}
+                    >
+                      <Archive size={14} />
+                      Archive
+                    </button>
+                  </div>
+                </div>
+              </article>
+            ))
+          )}
+        </section>
       </section>
     </main>
   );
@@ -525,7 +524,7 @@ function DashboardContent() {
 
 function LibraryStat({ label, value }: { label: string; value: number }) {
   return (
-    <div className="panel library-stat">
+    <div className="archive-ledger-stat">
       <span>{label}</span>
       <strong>{value}</strong>
     </div>
@@ -537,6 +536,7 @@ function LibraryEmptyStateRow({
   creating,
   onClearFilters,
   onMockUpload,
+  onUpload,
   onRefresh,
   onShowArchived
 }: {
@@ -544,6 +544,7 @@ function LibraryEmptyStateRow({
   creating: boolean;
   onClearFilters: () => void;
   onMockUpload: () => void;
+  onUpload: () => void;
   onRefresh: () => void;
   onShowArchived: () => void;
 }) {
@@ -566,19 +567,15 @@ function LibraryEmptyStateRow({
           </button>
         ) : null}
         {state.showUploadAction ? (
-          <label
-            className={`secondary-button compact-button ${creating ? "disabled-label" : ""}`}
-            htmlFor="demo-upload-input"
-            aria-disabled={creating}
-            onClick={(event) => {
-              if (creating) {
-                event.preventDefault();
-              }
-            }}
+          <button
+            className="secondary-button compact-button"
+            type="button"
+            disabled={creating}
+            onClick={onUpload}
           >
             <FileUp size={14} />
             Upload .dem
-          </label>
+          </button>
         ) : null}
         {state.showClearFiltersAction ? (
           <button className="secondary-button compact-button" type="button" onClick={onClearFilters}>
@@ -606,9 +603,10 @@ function LibraryEmptyStateRow({
 function StatusBadge({ status }: { status: DemoProcessingStatus }) {
   const Icon =
     status === "completed" ? CircleCheck : status === "failed" ? Clock3 : Loader2;
+  const active = status === "queued" || status === "parsing" || status === "analyzing";
   return (
     <span className={`status-badge ${status}`}>
-      <Icon size={14} className={status === "completed" ? "" : "spin-icon"} />
+      <Icon size={14} className={active ? "spin-icon" : ""} />
       {demoStatusLabel(status)}
     </span>
   );
