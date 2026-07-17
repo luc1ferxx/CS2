@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, Pause, Play } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 
@@ -389,6 +389,9 @@ function DemoDetailContent() {
       <section className="page">
         <div className="detail-top">
           <div className="detail-title">
+            <span className="workspace-kicker">
+              Tactical review / {status?.map_name ?? "map pending"}
+            </span>
             <h1>{status?.name ?? (status ? `Demo ${status.id.slice(0, 8)}` : "Loading demo")}</h1>
             <div className="detail-meta">
               {status?.original_filename ? <span>{status.original_filename}</span> : null}
@@ -401,35 +404,50 @@ function DemoDetailContent() {
           {status ? <span className={`status-badge ${status.status}`}>{status.status}</span> : null}
         </div>
 
-        {status ? <DetailSummary items={summaryItems} /> : null}
-
-        {error ? <div className="error-panel">{error}</div> : null}
+        {error ? <div className="error-panel" role="alert">{error}</div> : null}
 
         {!replay ? (
-          <div className="panel loading-panel">
-            {status?.status === "failed"
-              ? `Demo status: failed. ${parseFailureMessage ?? "Replay could not be generated."}`
-              : `Demo status: ${status?.status ?? "loading"}. Replay will load when the worker completes.`}
-          </div>
+          <>
+            <div className="panel loading-panel">
+              {status?.status === "failed"
+                ? `Demo status: failed. ${parseFailureMessage ?? "Replay could not be generated."}`
+                : `Demo status: ${status?.status ?? "loading"}. Replay will load when the worker completes.`}
+            </div>
+            {status ? <DetailSummary items={summaryItems} /> : null}
+          </>
         ) : (
           <>
-            {detailDiagnostics ? <ReplayDiagnosticsPanel diagnostics={detailDiagnostics} /> : null}
-            <div className="detail-grid first-person-detail-grid">
-              <div className="analysis-main-column">
-                <div className="review-focus-grid">
-                  <FirstPersonReplay
+            <ReviewCommandBar
+              mapName={status?.map_name ?? replay.mapName}
+              selectedRound={selectedRound}
+              currentTick={currentTick}
+              playing={playing}
+              speed={speed}
+              status={status?.status ?? "completed"}
+              onTogglePlay={() => setPlaying((value) => !value)}
+              onSpeedChange={setSpeed}
+            />
+            <RoundReviewPanel
+              replay={replay}
+              coachingEvents={events}
+              currentTick={currentTick}
+              selectedRound={selectedRound}
+              onSelectRound={changeRound}
+              onSeek={seek}
+            />
+            <div className="evidence-ledger-workbench">
+              <div className="evidence-canvas-column">
+                <div className="tactical-canvas-coordinate" aria-label={`Shared review coordinate: round ${selectedRound}, tick ${Math.round(currentTick)}`}>
+                  <span>Shared coordinate</span>
+                  <strong>R{selectedRound} · Tick {Math.round(currentTick)}</strong>
+                </div>
+                <div className="review-workbench">
+                  <ReplayViewer
                     replay={replay}
                     currentTick={currentTick}
-                    playing={playing}
-                    speed={speed}
-                    renderRequesting={renderRequesting}
-                    renderClipRequesting={tickClipRequesting}
-                    latestRenderClipJob={latestRenderClipJob}
-                    onRequestMockRender={requestMockRender}
-                    onRequestRenderClip={requestRenderClipAtCurrentTick}
-                    onSeekTick={seek}
-                    onVideoDurationChange={setDetectedVideoDuration}
-                    onVideoTimeChange={setCurrentVideoTime}
+                    selectedPlayerId={selectedPlayerId}
+                    onSelectPlayer={setSelectedPlayerId}
+                    variant="featured"
                   />
                   <Timeline
                     currentTick={currentTick}
@@ -444,37 +462,6 @@ function DemoDetailContent() {
                     onSpeedChange={setSpeed}
                     onRoundChange={changeRound}
                   />
-                  <ReplayViewer
-                    replay={replay}
-                    currentTick={currentTick}
-                    selectedPlayerId={selectedPlayerId}
-                    onSelectPlayer={setSelectedPlayerId}
-                    variant="featured"
-                  />
-                </div>
-                <RoundReviewPanel
-                  replay={replay}
-                  coachingEvents={events}
-                  currentTick={currentTick}
-                  selectedRound={selectedRound}
-                  onSelectRound={changeRound}
-                  onSeek={seek}
-                />
-                <div className="review-support-grid">
-                  <RenderOperatorPanel
-                    video={replay.video}
-                    latestJob={latestRenderClipJob}
-                    jobCount={renderJobs.length}
-                    refreshing={renderJobsRefreshing}
-                    onRefresh={() => void refreshRenderOperatorState()}
-                  />
-                  <VideoSetupPanel
-                    currentVideoTime={currentVideoTime}
-                    detectedDurationSeconds={detectedVideoDuration}
-                    video={replay.video}
-                    onSaveCalibration={saveManualVideoCalibration}
-                    onUploadVideo={uploadManualVideo}
-                  />
                 </div>
               </div>
               <CoachingPanel
@@ -488,10 +475,108 @@ function DemoDetailContent() {
                 onGenerateClip={requestRenderClipForEvent}
               />
             </div>
+            <section className="review-support-bay" aria-label="Media, render, and calibration support">
+              <FirstPersonReplay
+                replay={replay}
+                currentTick={currentTick}
+                playing={playing}
+                speed={speed}
+                renderRequesting={renderRequesting}
+                renderClipRequesting={tickClipRequesting}
+                latestRenderClipJob={latestRenderClipJob}
+                onRequestMockRender={requestMockRender}
+                onRequestRenderClip={requestRenderClipAtCurrentTick}
+                onSeekTick={seek}
+                onVideoDurationChange={setDetectedVideoDuration}
+                onVideoTimeChange={setCurrentVideoTime}
+              />
+              <RenderOperatorPanel
+                video={replay.video}
+                latestJob={latestRenderClipJob}
+                jobCount={renderJobs.length}
+                refreshing={renderJobsRefreshing}
+                onRefresh={() => void refreshRenderOperatorState()}
+              />
+              <VideoSetupPanel
+                currentVideoTime={currentVideoTime}
+                detectedDurationSeconds={detectedVideoDuration}
+                video={replay.video}
+                onSaveCalibration={saveManualVideoCalibration}
+                onUploadVideo={uploadManualVideo}
+              />
+            </section>
+            <details className="review-inspector">
+              <summary>
+                <span>Review inspector</span>
+                <small>Contract, calibration, parser and render diagnostics</small>
+              </summary>
+              <div className="review-inspector-content">
+                {status ? <DetailSummary items={summaryItems} /> : null}
+                {detailDiagnostics ? <ReplayDiagnosticsPanel diagnostics={detailDiagnostics} /> : null}
+              </div>
+            </details>
           </>
         )}
       </section>
     </main>
+  );
+}
+
+function ReviewCommandBar({
+  mapName,
+  selectedRound,
+  currentTick,
+  playing,
+  speed,
+  status,
+  onTogglePlay,
+  onSpeedChange
+}: {
+  mapName: string;
+  selectedRound: number;
+  currentTick: number;
+  playing: boolean;
+  speed: number;
+  status: string;
+  onTogglePlay: () => void;
+  onSpeedChange: (speed: number) => void;
+}) {
+  return (
+    <section className="review-command-bar" aria-label="Shared review controls">
+      <div className="review-command-coordinate">
+        <span className="workspace-kicker">Review coordinate</span>
+        <div>
+          <strong>{mapName}</strong>
+          <span>R{selectedRound}</span>
+          <span>Tick {Math.round(currentTick)}</span>
+        </div>
+      </div>
+      <div className="review-command-actions">
+        <button
+          className="icon-button coordinate-play-button"
+          type="button"
+          onClick={onTogglePlay}
+          aria-label={playing ? "Pause replay" : "Play replay"}
+        >
+          {playing ? <Pause size={17} /> : <Play size={17} />}
+        </button>
+        <label className="review-speed-control">
+          <span className="visually-hidden">Playback speed</span>
+          <select
+            className="speed-select"
+            value={speed}
+            onChange={(event) => onSpeedChange(Number(event.target.value))}
+            aria-label="Playback speed"
+          >
+            <option value={0.5}>0.5x</option>
+            <option value={1}>1x</option>
+            <option value={2}>2x</option>
+            <option value={4}>4x</option>
+          </select>
+        </label>
+        <span className={`status-badge review-command-status ${status}`}>{status}</span>
+      </div>
+    </section>
   );
 }
 

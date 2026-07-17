@@ -54,13 +54,26 @@ export function CoachingPanel({
     [currentTick, events]
   );
   const activeCount = activeEventIds.size;
+  const orderedRoundGroups = useMemo(() => {
+    const selectedGroup = reviewModel.roundGroups.find(
+      (roundGroup) => roundGroup.roundNumber === selectedRound
+    );
+    if (!selectedGroup) {
+      return reviewModel.roundGroups;
+    }
+    return [
+      selectedGroup,
+      ...reviewModel.roundGroups.filter((roundGroup) => roundGroup.roundNumber !== selectedRound)
+    ];
+  }, [reviewModel.roundGroups, selectedRound]);
 
   return (
-    <aside className="panel coaching-panel" aria-label="Coaching panel">
+    <aside className="coaching-panel review-queue" aria-label="Review Queue">
       <div className="coaching-header">
         <div>
-          <h2>Coaching</h2>
-          <p>{reviewModel.filteredCount} of {reviewModel.totalCount} events</p>
+          <span className="workspace-kicker">Deterministic review</span>
+          <h2>Review Queue</h2>
+          <p>{reviewModel.filteredCount} of {reviewModel.totalCount} findings</p>
         </div>
         <div className="coaching-header-pills">
           <span className="mini-pill">Round {selectedRound}</span>
@@ -117,7 +130,7 @@ export function CoachingPanel({
               : "No coaching events match these filters."}
           </div>
         ) : (
-          reviewModel.roundGroups.map((roundGroup) => (
+          orderedRoundGroups.map((roundGroup) => (
             <section
               key={roundGroup.roundNumber}
               className={`coaching-round-group ${
@@ -126,8 +139,8 @@ export function CoachingPanel({
               aria-label={`Round ${roundGroup.roundNumber} coaching events`}
             >
               <div className="coaching-round-header">
-                <h3>Round {roundGroup.roundNumber}</h3>
-                <span>{roundGroup.events.length}</span>
+                <h3>R{roundGroup.roundNumber} evidence</h3>
+                <span>{roundGroup.events.length} findings</span>
               </div>
               <div className="coaching-round-events">
                 {roundGroup.events.map((reviewEvent) => (

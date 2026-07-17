@@ -63,15 +63,18 @@ export function ReplayViewer({
     >
       <div className="viewer-header">
         <div className="viewer-header-main">
-          <span>
-            Tactical Map / {mapPresentation.displayName} / Round {currentRoundNumber} / Tick{" "}
-            {Math.round(currentTick)}
+          <span className="viewer-eyebrow">Tactical map</span>
+          <strong className="viewer-map-name">{mapPresentation.displayName}</strong>
+          <span className="viewer-position">
+            Round <strong>{currentRoundNumber}</strong> / Tick <strong>{Math.round(currentTick)}</strong>
           </span>
           <span className={`map-calibration-pill ${mapPresentation.confidence}`}>
             {mapPresentation.confidence}
           </span>
         </div>
-        <span>{round ? `${round.winnerSide} won round ${round.roundNumber}` : "Mock replay"}</span>
+        <span className="viewer-outcome">
+          {round ? `${round.winnerSide} won round ${round.roundNumber}` : "Mock replay"}
+        </span>
       </div>
 
       <div className={`map-frame ${hasRadarImage ? "radar-map-frame" : "fallback-map-frame"}`}>

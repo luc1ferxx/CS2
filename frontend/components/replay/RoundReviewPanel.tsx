@@ -44,58 +44,39 @@ export function RoundReviewPanel({
   const jumpTargets = jumpTargetsForRound(selectedSummary);
 
   return (
-    <section className="panel round-review-panel" aria-label="Round review">
-      <div className="round-review-header">
+    <section className="round-ribbon-panel" aria-label="Round review">
+      <div className="round-ribbon-heading">
         <div>
-          <h2>Round Review</h2>
-          <p>
-            {selectedSummary
-              ? `${selectedSummary.winnerSide} won round ${selectedSummary.roundNumber}`
-              : "No round selected"}
-          </p>
+          <span className="workspace-kicker">Match narrative</span>
+          <h2>Round ribbon</h2>
         </div>
-        <div className="round-review-header-pills">
-          <span className="mini-pill">Selected R{selectedRound}</span>
-          {model.currentRoundNumber ? (
-            <span className="mini-pill">Current R{model.currentRoundNumber}</span>
-          ) : null}
-        </div>
+        {selectedSummary ? (
+          <div className="round-ribbon-state" aria-label={`Selected round ${selectedSummary.roundNumber} state`}>
+            <span className="round-ribbon-selected">R{selectedSummary.roundNumber}</span>
+            <span className={`round-outcome-pill ${selectedSummary.winnerSide.toLowerCase()}`}>
+              {selectedSummary.winnerSide} won
+            </span>
+            <span className="round-ribbon-state-detail">
+              {selectedSummary.coachingEventCount} coaching · {selectedSummary.killCount} kills
+            </span>
+          </div>
+        ) : null}
       </div>
 
       {selectedSummary ? (
-        <div className="round-review-summary">
-          <div className="round-review-summary-main">
-            <div>
-              <span className={`round-outcome-pill ${selectedSummary.winnerSide.toLowerCase()}`}>
-                {selectedSummary.winnerSide}
-              </span>
-              <h3>Round {selectedSummary.roundNumber}</h3>
-            </div>
-            <span className="round-duration">{selectedSummary.durationSeconds}s</span>
+        <div className="round-ribbon-detail">
+          <div className="round-ribbon-metrics" aria-label={`Round ${selectedSummary.roundNumber} evidence summary`}>
+            <RoundRibbonMetric label="Start" value={selectedSummary.startTick} />
+            <RoundRibbonMetric label="Live" value={selectedSummary.freezeEndTick} />
+            <RoundRibbonMetric label="First kill" value={formatEventReference(selectedSummary.firstKill.tick, selectedSummary.firstKill.playerName)} />
+            <RoundRibbonMetric label="Plant" value={formatEventReference(selectedSummary.bombPlant.tick, selectedSummary.bombPlant.site)} />
+            <RoundRibbonMetric label="End" value={selectedSummary.endTick} />
           </div>
-
-          <div className="round-summary-grid">
-            <SummaryMetric label="Start" value={selectedSummary.startTick} />
-            <SummaryMetric label="Live" value={selectedSummary.freezeEndTick} />
-            <SummaryMetric label="End" value={selectedSummary.endTick} />
-            <SummaryMetric
-              label="First kill"
-              value={formatEventReference(selectedSummary.firstKill.tick, selectedSummary.firstKill.playerName)}
-            />
-            <SummaryMetric
-              label="Plant"
-              value={formatEventReference(selectedSummary.bombPlant.tick, selectedSummary.bombPlant.site)}
-            />
-            <SummaryMetric label="Kills" value={selectedSummary.killCount} />
-            <SummaryMetric label="Utility" value={selectedSummary.utilityEventCount} />
-            <SummaryMetric label="Coaching" value={selectedSummary.coachingEventCount} />
-          </div>
-
-          <div className="round-jump-actions" aria-label="Round quick jumps">
+          <div className="round-ribbon-actions" aria-label="Round quick jumps">
             {jumpTargets.map((target) => (
               <button
                 key={target.id}
-                className="secondary-button compact-button round-jump-button"
+                className="round-ribbon-jump"
                 type="button"
                 disabled={!target.available || target.tick === null}
                 onClick={() => {
@@ -118,31 +99,34 @@ export function RoundReviewPanel({
         </div>
       )}
 
-      <div className="round-review-list" aria-label="Round list">
+      <div className="round-ribbon-track" aria-label="Round ribbon track">
         {model.rounds.map((round) => (
           <button
             key={round.roundNumber}
-            className={`round-review-item ${round.isSelected ? "selected" : ""} ${
+            className={`round-ribbon-item ${round.isSelected ? "selected" : ""} ${
               round.isCurrent ? "current" : ""
-            }`}
+            } ${round.coachingEventCount > 0 ? "has-coaching" : ""}`}
             type="button"
             onClick={() => onSelectRound(round.roundNumber)}
             aria-current={round.isSelected ? "true" : undefined}
+            aria-label={`Round ${round.roundNumber}, ${round.winnerSide} won, ${round.coachingEventCount} coaching events`}
+            title={`Select round ${round.roundNumber}: ${round.killCount} kills, ${round.bombEventCount} bomb events, ${round.utilityEventCount} utility events, ${round.coachingEventCount} coaching events`}
           >
-            <div className="round-review-item-top">
+            <div className="round-ribbon-item-top">
               <strong>R{round.roundNumber}</strong>
               <span className={`round-side-chip ${round.winnerSide.toLowerCase()}`}>
                 {round.winnerSide}
               </span>
             </div>
-            <div className="round-review-ticks">
-              {round.startTick}-{round.endTick}
-            </div>
-            <div className="round-review-counts">
+            <div className="round-ribbon-event-line">
               <span>K {round.killCount}</span>
               <span>B {round.bombEventCount}</span>
               <span>U {round.utilityEventCount}</span>
-              <span>Co {round.coachingEventCount}</span>
+            </div>
+            <div className="round-ribbon-review-count">
+              <span aria-hidden="true" />
+              <strong>{round.coachingEventCount}</strong>
+              <small>review</small>
             </div>
           </button>
         ))}
@@ -151,9 +135,9 @@ export function RoundReviewPanel({
   );
 }
 
-function SummaryMetric({ label, value }: { label: string; value: number | string }) {
+function RoundRibbonMetric({ label, value }: { label: string; value: number | string }) {
   return (
-    <div className="round-summary-metric">
+    <div className="round-ribbon-metric">
       <span>{label}</span>
       <strong>{value}</strong>
     </div>

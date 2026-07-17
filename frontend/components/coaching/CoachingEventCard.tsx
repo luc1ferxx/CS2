@@ -26,73 +26,93 @@ export function CoachingEventCard({
 }: CoachingEventCardProps) {
   const { event } = reviewEvent;
   const clipBusy = clipRequesting || isRenderActiveStatus(renderJob?.status);
+  const primaryEvidence = reviewEvent.evidence[0];
 
   return (
     <article
-      className={`event-card ${event.severity} ${active ? "active" : ""}`}
+      className={`event-card evidence-ledger-item ${event.severity} ${active ? "active" : ""}`}
     >
       <button
-        className="event-card-seek"
+        className="event-card-seek evidence-ledger-seek"
         type="button"
         onClick={() => onSeek(event.tick_start)}
         title={`Jump to tick ${event.tick_start}`}
       >
-        <div className="event-card-top">
+        <div className="evidence-ledger-leading">
+          <span className={`event-severity-pill ${event.severity}`}>{event.severity}</span>
           <div className="event-title-block">
-            <span className={`event-severity-pill ${event.severity}`}>{event.severity}</span>
             <h3 className="event-title">{event.title}</h3>
+            <span className="event-rule-label">{reviewEvent.ruleLabel}</span>
           </div>
-          <ChevronsRight size={16} />
         </div>
-        <div className="event-rule-row">
-          <span className="event-rule-label">{reviewEvent.ruleLabel}</span>
+        <div className="evidence-ledger-coordinates">
+          <span>R{event.round_number}</span>
+          <span>Tick {event.tick_start}</span>
           <span className="event-rule-id">{reviewEvent.ruleId}</span>
+          {primaryEvidence ? (
+            <span className="event-ledger-evidence-preview">
+              {primaryEvidence.label}: {primaryEvidence.value}
+            </span>
+          ) : null}
         </div>
-        <p className="event-message">{event.message}</p>
-        <div className="event-meta">
-          <span className="mini-pill">R{event.round_number}</span>
-          <span className="mini-pill">Tick {event.tick_start}</span>
-          <span className="mini-pill">{event.category}</span>
-        </div>
-        <div className="event-involved">
-          <span>Players</span>
-          <strong>
-            {reviewEvent.involvedPlayers.length > 0
-              ? reviewEvent.involvedPlayers.join(", ")
-              : "Unknown"}
-          </strong>
-        </div>
-        {reviewEvent.evidence.length > 0 ? (
-          <dl className="event-evidence">
-            {reviewEvent.evidence.map((item) => (
-              <div key={`${event.id}-${item.label}`} className="event-evidence-chip">
-                <dt>{item.label}</dt>
-                <dd>{item.value}</dd>
-              </div>
-            ))}
-          </dl>
-        ) : null}
+        <ChevronsRight size={16} className="event-ledger-seek-icon" aria-hidden="true" />
       </button>
-      <div className="event-card-actions">
-        {renderJob ? (
+      {active ? (
+        <div className="event-ledger-inspector">
+          <p className="event-message">{event.message}</p>
+          <div className="event-meta">
+            <span className="mini-pill">{event.category}</span>
+            <span className="mini-pill">Evidence tick {event.tick_start}</span>
+          </div>
+          <div className="event-involved">
+            <span>Players</span>
+            <strong>
+              {reviewEvent.involvedPlayers.length > 0
+                ? reviewEvent.involvedPlayers.join(", ")
+                : "Unknown"}
+            </strong>
+          </div>
+          {reviewEvent.evidence.length > 0 ? (
+            <dl className="event-evidence">
+              {reviewEvent.evidence.map((item) => (
+                <div key={`${event.id}-${item.label}`} className="event-evidence-chip">
+                  <dt>{item.label}</dt>
+                  <dd>{item.value}</dd>
+                </div>
+              ))}
+            </dl>
+          ) : null}
+          <div className="event-card-actions">
+            {renderJob ? (
+              <span
+                className={`mini-pill clip-job-pill ${renderJob.status}`}
+                title={renderJob.error_message ?? `Clip job ${renderJob.status}`}
+              >
+                Clip {renderJob.status}
+              </span>
+            ) : null}
+            <button
+              className="secondary-button compact-button generate-clip-button"
+              type="button"
+              onClick={() => onGenerateClip(event)}
+              disabled={clipBusy}
+              title="Create a first-person clip job for this coaching event"
+            >
+              <Scissors size={14} />
+              {clipRequesting ? "Queuing" : "Generate Clip for this event"}
+            </button>
+          </div>
+        </div>
+      ) : renderJob ? (
+        <div className="event-ledger-render-state">
           <span
             className={`mini-pill clip-job-pill ${renderJob.status}`}
             title={renderJob.error_message ?? `Clip job ${renderJob.status}`}
           >
             Clip {renderJob.status}
           </span>
-        ) : null}
-        <button
-          className="secondary-button compact-button generate-clip-button"
-          type="button"
-          onClick={() => onGenerateClip(event)}
-          disabled={clipBusy}
-          title="Create a first-person clip job for this coaching event"
-        >
-          <Scissors size={14} />
-          {clipRequesting ? "Queuing" : "Generate Clip for this event"}
-        </button>
-      </div>
+        </div>
+      ) : null}
     </article>
   );
 }

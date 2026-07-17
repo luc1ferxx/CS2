@@ -112,7 +112,7 @@ export function FirstPersonReplay({
         <div>
           <h2>First-person Replay</h2>
           <span>
-            {activeVideoSource ? videoLabel(replay.video.source) : "Mock first-person render"} /{" "}
+            {activeVideoSource ? videoLabel(replay.video.source) : "Mock playback shell — not real CS2 video"} /{" "}
             {formatTime(videoTime)} / Tick {Math.round(currentTick)}
           </span>
         </div>
@@ -294,7 +294,7 @@ function MockFirstPersonFrame({
       <div className="mock-crosshair" style={{ transform: `translateY(${recoilOffset * -0.4}px)` }}>
         <Crosshair size={44} strokeWidth={1.6} />
       </div>
-      <div className="mock-render-label">Mock render shell</div>
+      <div className="mock-render-label">Mock render shell · not gameplay capture</div>
       <div className="mock-fps-stats">
         <span>Alive CT: {aliveEnemies}</span>
         <span>Bomb: {frame.bombState.status}</span>
