@@ -155,8 +155,26 @@ const coachingEvents = [
 
 {
   assert.equal(findRoundNumberForTick(rounds, 99), 1);
+  assert.equal(findRoundNumberForTick(rounds, 550), 1);
   assert.equal(findRoundNumberForTick(rounds, 600), 2);
+  assert.equal(findRoundNumberForTick(rounds, 1150), 2);
   assert.equal(findRoundNumberForTick(rounds, 1501), 3);
+}
+
+{
+  const model = buildRoundReviewModel({
+    rounds,
+    parserEvents,
+    coachingEvents,
+    currentTick: 845,
+    selectedRoundNumber: 1,
+    tickRate: 64
+  });
+
+  assert.equal(model.rounds[0].isSelected, true);
+  assert.equal(model.rounds[0].isCurrent, false);
+  assert.equal(model.rounds[1].isSelected, false);
+  assert.equal(model.rounds[1].isCurrent, true);
 }
 
 function round(overrides) {

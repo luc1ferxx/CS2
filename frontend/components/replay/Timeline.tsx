@@ -1,42 +1,28 @@
 "use client";
 
-import { Pause, Play } from "lucide-react";
 import type { CSSProperties } from "react";
 
 import { timelineMarkersForRound } from "@/lib/coaching-review";
 import { timelineParserEventMarkersForRound } from "@/lib/replay-events";
 import type { CoachingEvent } from "@/types/coaching";
 import type { ReplayEvent, ReplayRound } from "@/types/replay";
-import { RoundSelector } from "./RoundSelector";
 
 interface TimelineProps {
   currentTick: number;
   selectedRound: number;
   rounds: ReplayRound[];
-  speed: number;
-  playing: boolean;
   events: CoachingEvent[];
   parserEvents?: ReplayEvent[];
   onSeek: (tick: number) => void;
-  onTogglePlay: () => void;
-  onSpeedChange: (speed: number) => void;
-  onRoundChange: (roundNumber: number) => void;
 }
-
-const SPEEDS = [0.5, 1, 2, 4];
 
 export function Timeline({
   currentTick,
   selectedRound,
   rounds,
-  speed,
-  playing,
   events,
   parserEvents = [],
-  onSeek,
-  onTogglePlay,
-  onSpeedChange,
-  onRoundChange
+  onSeek
 }: TimelineProps) {
   const round = rounds.find((item) => item.roundNumber === selectedRound) ?? rounds[0];
   const minTick = round?.startTick ?? 0;
@@ -59,35 +45,7 @@ export function Timeline({
       <div className="timeline-heading">
         <div>
           <span>Evidence timeline</span>
-          <strong>Round {selectedRound} / Tick {Math.round(currentTick)}</strong>
-        </div>
-        <div className="timeline-transport-controls">
-          <button
-            className="icon-button"
-            type="button"
-            onClick={onTogglePlay}
-            disabled={!hasRounds}
-            aria-label={playing ? "Pause replay" : "Play replay"}
-          >
-            {playing ? <Pause size={17} /> : <Play size={17} />}
-          </button>
-          <select
-            className="speed-select"
-            value={speed}
-            onChange={(event) => onSpeedChange(Number(event.target.value))}
-            aria-label="Playback speed"
-          >
-            {SPEEDS.map((speedValue) => (
-              <option key={speedValue} value={speedValue}>
-                {speedValue}x
-              </option>
-            ))}
-          </select>
-          <RoundSelector
-            rounds={rounds}
-            selectedRound={selectedRound}
-            onSelectRound={onRoundChange}
-          />
+          <strong>{parserEventMarkers.length} parser events · {markers.length} findings</strong>
         </div>
       </div>
 

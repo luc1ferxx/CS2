@@ -1,7 +1,15 @@
 "use client";
 
 import { Crosshair, RadioTower, Scissors, Video } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  forwardRef,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  useState
+} from "react";
 
 import { useAuth } from "@/components/auth/AuthProvider";
 import type { RenderJobStatus } from "@/lib/api";
@@ -20,12 +28,16 @@ interface FirstPersonReplayProps {
   latestRenderClipJob: RenderJobStatus | null;
   onRequestMockRender: () => void;
   onRequestRenderClip: () => void;
-  onSeekTick: (tick: number) => void;
+  onVideoTickChange: (tick: number) => void;
   onVideoDurationChange?: (durationSeconds: number) => void;
   onVideoTimeChange?: (seconds: number) => void;
 }
 
-export function FirstPersonReplay({
+export interface FirstPersonReplayHandle {
+  seekToTick: (tick: number) => void;
+}
+
+export const FirstPersonReplay = forwardRef<FirstPersonReplayHandle, FirstPersonReplayProps>(function FirstPersonReplay({
   replay,
   currentTick,
   playing,
@@ -35,13 +47,15 @@ export function FirstPersonReplay({
   latestRenderClipJob,
   onRequestMockRender,
   onRequestRenderClip,
-  onSeekTick,
+  onVideoTickChange,
   onVideoDurationChange,
   onVideoTimeChange
-}: FirstPersonReplayProps) {
+}: FirstPersonReplayProps, ref) {
   const { refreshSession } = useAuth();
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const lastSyncedTickRef = useRef<number | null>(null);
+  const pendingSeekTickRef = useRef<number | null>(null);
+  const pendingSeekTimeRef = useRef<number | null>(null);
   const [mediaUnavailable, setMediaUnavailable] = useState(false);
   const frame = useMemo(() => getFrameForTick(replay.frames, currentTick), [currentTick, replay.frames]);
   const mediaSource = resolvePrivateMediaSource(replay.video.url);
@@ -58,12 +72,67 @@ export function FirstPersonReplay({
     Math.max(0, (videoTime - timeRange.start) / Math.max(1, timeRange.end - timeRange.start))
   );
 
+  const seekVideoToTick = useCallback((tick: number) => {
+    if (!activeVideoSource) {
+      return;
+    }
+
+    const nextVideoTime = tickToVideoTime(tick, replay.video);
+    const nextVideoTick = videoTimeToTick(nextVideoTime, replay.video);
+    pendingSeekTickRef.current = nextVideoTick;
+    pendingSeekTimeRef.current = nextVideoTime;
+    lastSyncedTickRef.current = nextVideoTick;
+
+    const element = videoRef.current;
+    if (!element) {
+      return;
+    }
+
+    try {
+      element.currentTime = nextVideoTime;
+      pendingSeekTimeRef.current = null;
+      const appliedTick = videoTimeToTick(element.currentTime, replay.video);
+      if (Math.abs(appliedTick - nextVideoTick) <= 1) {
+        pendingSeekTickRef.current = null;
+      } else if (playing) {
+        pendingSeekTickRef.current = null;
+      }
+      onVideoTimeChange?.(element.currentTime);
+    } catch {
+      // Metadata load will apply the pending seek before video feedback is accepted.
+    }
+  }, [activeVideoSource, onVideoTimeChange, playing, replay.video]);
+
+  useImperativeHandle(ref, () => ({ seekToTick: seekVideoToTick }), [seekVideoToTick]);
+
+  const publishVideoTime = useCallback((nextVideoTime: number) => {
+    onVideoTimeChange?.(nextVideoTime);
+    const nextTick = videoTimeToTick(nextVideoTime, replay.video);
+    const pendingSeekTick = pendingSeekTickRef.current;
+
+    if (pendingSeekTick !== null) {
+      if (Math.abs(nextTick - pendingSeekTick) > 1) {
+        return;
+      }
+      pendingSeekTickRef.current = null;
+    }
+
+    const lastSyncedTick = lastSyncedTickRef.current;
+    if (lastSyncedTick === null || Math.abs(nextTick - lastSyncedTick) >= 1) {
+      lastSyncedTickRef.current = nextTick;
+      onVideoTickChange(nextTick);
+    }
+  }, [onVideoTickChange, onVideoTimeChange, replay.video]);
+
   useEffect(() => {
     onVideoTimeChange?.(videoTime);
   }, [onVideoTimeChange, videoTime]);
 
   useEffect(() => {
     setMediaUnavailable(false);
+    lastSyncedTickRef.current = null;
+    pendingSeekTickRef.current = null;
+    pendingSeekTimeRef.current = null;
   }, [videoSource]);
 
   useEffect(() => {
@@ -73,16 +142,26 @@ export function FirstPersonReplay({
     }
 
     element.playbackRate = speed;
-    if (Math.abs(element.currentTime - videoTime) > 0.35) {
-      element.currentTime = videoTime;
-    }
-
     if (playing) {
+      if (element.readyState >= HTMLMediaElement.HAVE_METADATA) {
+        pendingSeekTickRef.current = null;
+      }
       void element.play();
     } else {
       element.pause();
     }
-  }, [activeVideoSource, playing, speed, videoTime]);
+  }, [activeVideoSource, playing, speed]);
+
+  useEffect(() => {
+    const element = videoRef.current;
+    if (!element || !activeVideoSource || playing) {
+      return;
+    }
+
+    if (Math.abs(element.currentTime - videoTime) > 0.35) {
+      seekVideoToTick(currentTick);
+    }
+  }, [activeVideoSource, currentTick, playing, seekVideoToTick, videoTime]);
 
   useEffect(() => {
     const element = videoRef.current;
@@ -92,19 +171,13 @@ export function FirstPersonReplay({
 
     let animationFrameId = 0;
     const syncTickFromVideo = () => {
-      onVideoTimeChange?.(element.currentTime);
-      const nextTick = videoTimeToTick(element.currentTime, replay.video);
-      const lastSyncedTick = lastSyncedTickRef.current;
-      if (lastSyncedTick === null || Math.abs(nextTick - lastSyncedTick) >= 1) {
-        lastSyncedTickRef.current = nextTick;
-        onSeekTick(nextTick);
-      }
+      publishVideoTime(element.currentTime);
       animationFrameId = window.requestAnimationFrame(syncTickFromVideo);
     };
 
     animationFrameId = window.requestAnimationFrame(syncTickFromVideo);
     return () => window.cancelAnimationFrame(animationFrameId);
-  }, [activeVideoSource, onSeekTick, onVideoTimeChange, playing, replay.video]);
+  }, [activeVideoSource, playing, publishVideoTime]);
 
   return (
     <section className="panel first-person-panel" aria-label="First-person replay player">
@@ -174,14 +247,22 @@ export function FirstPersonReplay({
               if (Number.isFinite(duration) && duration > 0) {
                 onVideoDurationChange?.(duration);
               }
+              const pendingSeekTime = pendingSeekTimeRef.current;
+              if (pendingSeekTime !== null) {
+                event.currentTarget.currentTime = pendingSeekTime;
+                pendingSeekTimeRef.current = null;
+                const pendingSeekTick = pendingSeekTickRef.current;
+                if (pendingSeekTick !== null) {
+                  const appliedTick = videoTimeToTick(event.currentTarget.currentTime, replay.video);
+                  if (Math.abs(appliedTick - pendingSeekTick) <= 1) {
+                    pendingSeekTickRef.current = null;
+                  }
+                }
+                onVideoTimeChange?.(event.currentTarget.currentTime);
+              }
             }}
             onTimeUpdate={(event) => {
-              onVideoTimeChange?.(event.currentTarget.currentTime);
-              const nextTick = videoTimeToTick(event.currentTarget.currentTime, replay.video);
-              if (Math.abs(nextTick - currentTick) > 1) {
-                lastSyncedTickRef.current = nextTick;
-                onSeekTick(nextTick);
-              }
+              publishVideoTime(event.currentTarget.currentTime);
             }}
           />
         ) : (
@@ -212,7 +293,7 @@ export function FirstPersonReplay({
       </div>
     </section>
   );
-}
+});
 
 function RenderStatusOverlay({
   mediaUnavailable,

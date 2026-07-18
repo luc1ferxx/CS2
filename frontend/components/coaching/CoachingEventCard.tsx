@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronsRight, Scissors } from "lucide-react";
+import { ChevronDown, Crosshair, Scissors } from "lucide-react";
 
 import type { ReviewEvent } from "@/lib/coaching-review";
 import type { RenderJobStatus } from "@/lib/api";
@@ -10,8 +10,10 @@ import type { CoachingEvent } from "@/types/coaching";
 interface CoachingEventCardProps {
   reviewEvent: ReviewEvent;
   active: boolean;
+  inspected: boolean;
   renderJob?: RenderJobStatus;
   clipRequesting: boolean;
+  onToggleInspect: () => void;
   onSeek: (tick: number) => void;
   onGenerateClip: (event: CoachingEvent) => void;
 }
@@ -19,24 +21,30 @@ interface CoachingEventCardProps {
 export function CoachingEventCard({
   reviewEvent,
   active,
+  inspected,
   renderJob,
   clipRequesting,
+  onToggleInspect,
   onSeek,
   onGenerateClip
 }: CoachingEventCardProps) {
   const { event } = reviewEvent;
   const clipBusy = clipRequesting || isRenderActiveStatus(renderJob?.status);
   const primaryEvidence = reviewEvent.evidence[0];
+  const inspectorId = `coaching-event-${event.id}-evidence`;
 
   return (
     <article
-      className={`event-card evidence-ledger-item ${event.severity} ${active ? "active" : ""}`}
+      className={`event-card evidence-ledger-item ${event.severity} ${active ? "active" : ""} ${inspected ? "inspected" : ""}`}
     >
       <button
-        className="event-card-seek evidence-ledger-seek"
+        className="event-card-seek event-card-inspect evidence-ledger-seek evidence-ledger-inspect"
         type="button"
-        onClick={() => onSeek(event.tick_start)}
-        title={`Jump to tick ${event.tick_start}`}
+        onClick={onToggleInspect}
+        aria-expanded={inspected}
+        aria-controls={inspectorId}
+        aria-label={`${inspected ? "Hide" : "Inspect"} evidence for ${event.title} at tick ${event.tick_start}`}
+        title={`${inspected ? "Hide" : "Inspect"} evidence without changing the review tick`}
       >
         <div className="evidence-ledger-leading">
           <span className={`event-severity-pill ${event.severity}`}>{event.severity}</span>
@@ -55,10 +63,10 @@ export function CoachingEventCard({
             </span>
           ) : null}
         </div>
-        <ChevronsRight size={16} className="event-ledger-seek-icon" aria-hidden="true" />
+        <ChevronDown size={16} className="event-ledger-seek-icon" aria-hidden="true" />
       </button>
-      {active ? (
-        <div className="event-ledger-inspector">
+      {inspected ? (
+        <div id={inspectorId} className="event-ledger-inspector">
           <p className="event-message">{event.message}</p>
           <div className="event-meta">
             <span className="mini-pill">{event.category}</span>
@@ -91,6 +99,15 @@ export function CoachingEventCard({
                 Clip {renderJob.status}
               </span>
             ) : null}
+            <button
+              className="secondary-button compact-button locate-tick-button"
+              type="button"
+              onClick={() => onSeek(event.tick_start)}
+              title={`Locate the shared review coordinate at tick ${event.tick_start}`}
+            >
+              <Crosshair size={14} aria-hidden="true" />
+              Locate at Tick {event.tick_start}
+            </button>
             <button
               className="secondary-button compact-button generate-clip-button"
               type="button"

@@ -99,7 +99,15 @@ export function findRoundNumberForTick(rounds: ReplayRound[], tick: number): num
   if (tick < sortedRounds[0].startTick) {
     return sortedRounds[0].roundNumber;
   }
-  return sortedRounds[sortedRounds.length - 1].roundNumber;
+
+  let nearestPreviousRound = sortedRounds[0];
+  for (const round of sortedRounds) {
+    if (round.startTick > tick) {
+      break;
+    }
+    nearestPreviousRound = round;
+  }
+  return nearestPreviousRound.roundNumber;
 }
 
 export function jumpTargetsForRound(round: RoundReviewSummary | null | undefined): RoundJumpTarget[] {

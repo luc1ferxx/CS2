@@ -1,14 +1,17 @@
 "use client";
 
 import Link from "next/link";
-import { ArrowLeft, Pause, Play } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { ArrowLeft, ChevronLeft, ChevronRight, Pause, Play } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 
 import { CoachingPanel } from "@/components/coaching/CoachingPanel";
 import { AuthBoundary } from "@/components/auth/AuthBoundary";
 import { SessionControls } from "@/components/auth/SessionControls";
-import { FirstPersonReplay } from "@/components/replay/FirstPersonReplay";
+import {
+  FirstPersonReplay,
+  type FirstPersonReplayHandle
+} from "@/components/replay/FirstPersonReplay";
 import { RenderOperatorPanel } from "@/components/replay/RenderOperatorPanel";
 import { ReplayViewer } from "@/components/replay/ReplayViewer";
 import { RoundReviewPanel } from "@/components/replay/RoundReviewPanel";
@@ -68,6 +71,7 @@ function DemoDetailContent() {
   const [renderJobsRefreshing, setRenderJobsRefreshing] = useState(false);
   const [currentVideoTime, setCurrentVideoTime] = useState(0);
   const [detectedVideoDuration, setDetectedVideoDuration] = useState<number | null>(null);
+  const firstPersonReplayRef = useRef<FirstPersonReplayHandle | null>(null);
 
   const loadStatus = useCallback(async () => {
     try {
@@ -151,6 +155,26 @@ function DemoDetailContent() {
   const selectedRoundData = useMemo(
     () => replay?.rounds.find((round) => round.roundNumber === selectedRound),
     [replay?.rounds, selectedRound]
+  );
+  const selectedPlayer = useMemo(
+    () => replay?.players.find((player) => player.id === selectedPlayerId) ?? null,
+    [replay?.players, selectedPlayerId]
+  );
+  const orderedFindings = useMemo(
+    () => [...events].sort((left, right) => left.tick_start - right.tick_start),
+    [events]
+  );
+  const previousFinding = useMemo(() => {
+    for (let index = orderedFindings.length - 1; index >= 0; index -= 1) {
+      if (orderedFindings[index].tick_start < currentTick - 0.5) {
+        return orderedFindings[index];
+      }
+    }
+    return null;
+  }, [currentTick, orderedFindings]);
+  const nextFinding = useMemo(
+    () => orderedFindings.find((event) => event.tick_start > currentTick + 0.5) ?? null,
+    [currentTick, orderedFindings]
   );
   const renderJobByEventId = useMemo(() => {
     const jobsByEventId = new Map<string, RenderJobStatus>();
@@ -255,7 +279,7 @@ function DemoDetailContent() {
     return () => window.clearInterval(intervalId);
   }, [playing, replay, selectedRoundData, speed]);
 
-  const seek = useCallback((tick: number) => {
+  const updateCoordinateFromTick = useCallback((tick: number) => {
     setCurrentTick(tick);
     const nextRound = replay?.rounds.find(
       (round) => tick >= round.startTick && tick <= round.endTick
@@ -265,13 +289,19 @@ function DemoDetailContent() {
     }
   }, [replay?.rounds]);
 
-  function changeRound(roundNumber: number) {
+  const seek = useCallback((tick: number) => {
+    firstPersonReplayRef.current?.seekToTick(tick);
+    updateCoordinateFromTick(tick);
+  }, [updateCoordinateFromTick]);
+
+  const changeRound = useCallback((roundNumber: number) => {
     const nextRound = replay?.rounds.find((round) => round.roundNumber === roundNumber);
-    setSelectedRound(roundNumber);
     if (nextRound) {
-      setCurrentTick(nextRound.startTick);
+      seek(nextRound.startTick);
+    } else {
+      setSelectedRound(roundNumber);
     }
-  }
+  }, [replay?.rounds, seek]);
 
   async function requestMockRender() {
     if (!replay) {
@@ -371,7 +401,7 @@ function DemoDetailContent() {
   }
 
   return (
-    <main className="app-shell">
+    <main className="app-shell review-detail-shell">
       <header className="topbar">
         <div className="brand">
           <div className="brand-mark">C</div>
@@ -421,11 +451,23 @@ function DemoDetailContent() {
               mapName={status?.map_name ?? replay.mapName}
               selectedRound={selectedRound}
               currentTick={currentTick}
+              currentPovName={selectedPlayer?.name ?? "No player selected"}
               playing={playing}
               speed={speed}
-              status={status?.status ?? "completed"}
+              previousFinding={previousFinding}
+              nextFinding={nextFinding}
               onTogglePlay={() => setPlaying((value) => !value)}
               onSpeedChange={setSpeed}
+              onPreviousFinding={() => {
+                if (previousFinding) {
+                  seek(previousFinding.tick_start);
+                }
+              }}
+              onNextFinding={() => {
+                if (nextFinding) {
+                  seek(nextFinding.tick_start);
+                }
+              }}
             />
             <RoundReviewPanel
               replay={replay}
@@ -437,10 +479,6 @@ function DemoDetailContent() {
             />
             <div className="evidence-ledger-workbench">
               <div className="evidence-canvas-column">
-                <div className="tactical-canvas-coordinate" aria-label={`Shared review coordinate: round ${selectedRound}, tick ${Math.round(currentTick)}`}>
-                  <span>Shared coordinate</span>
-                  <strong>R{selectedRound} · Tick {Math.round(currentTick)}</strong>
-                </div>
                 <div className="review-workbench">
                   <ReplayViewer
                     replay={replay}
@@ -453,14 +491,9 @@ function DemoDetailContent() {
                     currentTick={currentTick}
                     selectedRound={selectedRound}
                     rounds={replay.rounds}
-                    speed={speed}
-                    playing={playing}
                     events={events}
                     parserEvents={replay.events ?? []}
                     onSeek={seek}
-                    onTogglePlay={() => setPlaying((value) => !value)}
-                    onSpeedChange={setSpeed}
-                    onRoundChange={changeRound}
                   />
                 </div>
               </div>
@@ -477,6 +510,7 @@ function DemoDetailContent() {
             </div>
             <section className="review-support-bay" aria-label="Media, render, and calibration support">
               <FirstPersonReplay
+                ref={firstPersonReplayRef}
                 replay={replay}
                 currentTick={currentTick}
                 playing={playing}
@@ -486,7 +520,7 @@ function DemoDetailContent() {
                 latestRenderClipJob={latestRenderClipJob}
                 onRequestMockRender={requestMockRender}
                 onRequestRenderClip={requestRenderClipAtCurrentTick}
-                onSeekTick={seek}
+                onVideoTickChange={updateCoordinateFromTick}
                 onVideoDurationChange={setDetectedVideoDuration}
                 onVideoTimeChange={setCurrentVideoTime}
               />
@@ -526,42 +560,52 @@ function ReviewCommandBar({
   mapName,
   selectedRound,
   currentTick,
+  currentPovName,
   playing,
   speed,
-  status,
+  previousFinding,
+  nextFinding,
   onTogglePlay,
-  onSpeedChange
+  onSpeedChange,
+  onPreviousFinding,
+  onNextFinding
 }: {
   mapName: string;
   selectedRound: number;
   currentTick: number;
+  currentPovName: string;
   playing: boolean;
   speed: number;
-  status: string;
+  previousFinding: CoachingEvent | null;
+  nextFinding: CoachingEvent | null;
   onTogglePlay: () => void;
   onSpeedChange: (speed: number) => void;
+  onPreviousFinding: () => void;
+  onNextFinding: () => void;
 }) {
   return (
-    <section className="review-command-bar" aria-label="Shared review controls">
+    <section className="review-command-bar" aria-label="Review transport">
       <div className="review-command-coordinate">
-        <span className="workspace-kicker">Review coordinate</span>
-        <div>
-          <strong>{mapName}</strong>
-          <span>R{selectedRound}</span>
-          <span>Tick {Math.round(currentTick)}</span>
+        <span className="workspace-kicker">Review transport</span>
+        <div className="review-transport-readouts">
+          <TransportReadout label="Map" value={mapName} />
+          <TransportReadout label="Round" value={`R${selectedRound}`} />
+          <TransportReadout label="Tick" value={String(Math.round(currentTick))} emphasis />
+          <TransportReadout label="POV target" value={currentPovName} />
         </div>
       </div>
       <div className="review-command-actions">
         <button
-          className="icon-button coordinate-play-button"
+          className="secondary-button compact-button coordinate-play-button"
           type="button"
           onClick={onTogglePlay}
           aria-label={playing ? "Pause replay" : "Play replay"}
         >
           {playing ? <Pause size={17} /> : <Play size={17} />}
+          <span>{playing ? "Pause" : "Play"}</span>
         </button>
         <label className="review-speed-control">
-          <span className="visually-hidden">Playback speed</span>
+          <span>Speed</span>
           <select
             className="speed-select"
             value={speed}
@@ -574,9 +618,47 @@ function ReviewCommandBar({
             <option value={4}>4x</option>
           </select>
         </label>
-        <span className={`status-badge review-command-status ${status}`}>{status}</span>
+        <div className="review-finding-navigation" aria-label="Finding navigation">
+          <button
+            className="secondary-button compact-button"
+            type="button"
+            onClick={onPreviousFinding}
+            disabled={!previousFinding}
+            title={previousFinding ? `Previous finding at tick ${previousFinding.tick_start}` : "No previous finding"}
+          >
+            <ChevronLeft size={15} aria-hidden="true" />
+            <span>Prev finding</span>
+          </button>
+          <button
+            className="secondary-button compact-button"
+            type="button"
+            onClick={onNextFinding}
+            disabled={!nextFinding}
+            title={nextFinding ? `Next finding at tick ${nextFinding.tick_start}` : "No next finding"}
+          >
+            <span>Next finding</span>
+            <ChevronRight size={15} aria-hidden="true" />
+          </button>
+        </div>
       </div>
     </section>
+  );
+}
+
+function TransportReadout({
+  label,
+  value,
+  emphasis = false
+}: {
+  label: string;
+  value: string;
+  emphasis?: boolean;
+}) {
+  return (
+    <span className={`review-transport-readout ${emphasis ? "emphasis" : ""}`}>
+      <small>{label}</small>
+      <strong>{value}</strong>
+    </span>
   );
 }
 

@@ -1,7 +1,7 @@
 "use client";
 
-import { Search } from "lucide-react";
-import { useMemo, useState } from "react";
+import { ChevronDown, Search } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 
 import {
   buildCoachingReviewModel,
@@ -37,6 +37,10 @@ export function CoachingPanel({
   const [severity, setSeverity] = useState<SeverityFilter>("all");
   const [rule, setRule] = useState<RuleFilter>("all");
   const [search, setSearch] = useState("");
+  const [inspectedEventId, setInspectedEventId] = useState<string | null>(null);
+  const [expandedRoundNumbers, setExpandedRoundNumbers] = useState<Set<number>>(
+    () => new Set([selectedRound])
+  );
   const reviewModel = useMemo(
     () => buildCoachingReviewModel(events, players, { severity, rule, search }),
     [events, players, rule, search, severity]
@@ -66,6 +70,22 @@ export function CoachingPanel({
       ...reviewModel.roundGroups.filter((roundGroup) => roundGroup.roundNumber !== selectedRound)
     ];
   }, [reviewModel.roundGroups, selectedRound]);
+
+  useEffect(() => {
+    setExpandedRoundNumbers(new Set([selectedRound]));
+  }, [selectedRound]);
+
+  function toggleRound(roundNumber: number) {
+    setExpandedRoundNumbers((current) => {
+      const next = new Set(current);
+      if (next.has(roundNumber)) {
+        next.delete(roundNumber);
+      } else {
+        next.add(roundNumber);
+      }
+      return next;
+    });
+  }
 
   return (
     <aside className="coaching-panel review-queue" aria-label="Review Queue">
@@ -130,33 +150,54 @@ export function CoachingPanel({
               : "No coaching events match these filters."}
           </div>
         ) : (
-          orderedRoundGroups.map((roundGroup) => (
-            <section
-              key={roundGroup.roundNumber}
-              className={`coaching-round-group ${
-                roundGroup.roundNumber === selectedRound ? "selected" : ""
-              }`}
-              aria-label={`Round ${roundGroup.roundNumber} coaching events`}
-            >
-              <div className="coaching-round-header">
-                <h3>R{roundGroup.roundNumber} evidence</h3>
-                <span>{roundGroup.events.length} findings</span>
-              </div>
-              <div className="coaching-round-events">
-                {roundGroup.events.map((reviewEvent) => (
-                  <CoachingEventCard
-                    key={reviewEvent.event.id}
-                    reviewEvent={reviewEvent}
-                    active={activeEventIds.has(reviewEvent.event.id)}
-                    renderJob={renderJobByEventId.get(reviewEvent.event.id)}
-                    clipRequesting={requestingEventId === reviewEvent.event.id}
-                    onSeek={onSeek}
-                    onGenerateClip={onGenerateClip}
-                  />
-                ))}
-              </div>
-            </section>
-          ))
+          orderedRoundGroups.map((roundGroup) => {
+            const expanded = expandedRoundNumbers.has(roundGroup.roundNumber);
+            const eventsId = `coaching-round-${roundGroup.roundNumber}-events`;
+            return (
+              <section
+                key={roundGroup.roundNumber}
+                className={`coaching-round-group ${
+                  roundGroup.roundNumber === selectedRound ? "selected" : ""
+                }`}
+                aria-label={`Round ${roundGroup.roundNumber} coaching events`}
+              >
+                <button
+                  className="coaching-round-header"
+                  type="button"
+                  onClick={() => toggleRound(roundGroup.roundNumber)}
+                  aria-expanded={expanded}
+                  aria-controls={eventsId}
+                >
+                  <span className="coaching-round-header-copy">
+                    <strong>R{roundGroup.roundNumber} evidence</strong>
+                    <small>{roundGroup.events.length} findings</small>
+                  </span>
+                  <ChevronDown className="coaching-round-chevron" size={15} aria-hidden="true" />
+                </button>
+                {expanded ? (
+                  <div id={eventsId} className="coaching-round-events">
+                    {roundGroup.events.map((reviewEvent) => (
+                      <CoachingEventCard
+                        key={reviewEvent.event.id}
+                        reviewEvent={reviewEvent}
+                        active={activeEventIds.has(reviewEvent.event.id)}
+                        inspected={inspectedEventId === reviewEvent.event.id}
+                        renderJob={renderJobByEventId.get(reviewEvent.event.id)}
+                        clipRequesting={requestingEventId === reviewEvent.event.id}
+                        onToggleInspect={() => {
+                          setInspectedEventId((current) =>
+                            current === reviewEvent.event.id ? null : reviewEvent.event.id
+                          );
+                        }}
+                        onSeek={onSeek}
+                        onGenerateClip={onGenerateClip}
+                      />
+                    ))}
+                  </div>
+                ) : null}
+              </section>
+            );
+          })
         )}
       </div>
     </aside>

@@ -65,9 +65,6 @@ export function ReplayViewer({
         <div className="viewer-header-main">
           <span className="viewer-eyebrow">Tactical map</span>
           <strong className="viewer-map-name">{mapPresentation.displayName}</strong>
-          <span className="viewer-position">
-            Round <strong>{currentRoundNumber}</strong> / Tick <strong>{Math.round(currentTick)}</strong>
-          </span>
           <span className={`map-calibration-pill ${mapPresentation.confidence}`}>
             {mapPresentation.confidence}
           </span>
