@@ -1,8 +1,8 @@
 # Deployment Readiness V1
 
-This project now includes the Stage 3 provider-neutral private artifact store and safe `.dem` intake boundary on top of Stage 2 production identity, owner authorization, and private-video delivery. It is still not a reliable/crash-recoverable job system, an isolated parser runtime, a production observability/backup platform, or a real CS2 rendering service.
+This project includes the Stage 3 provider-neutral private artifact store and safe `.dem` intake boundary plus the Steam-first Phase 1 account foundation. It is still not a match-history sync/download service, reliable/crash-recoverable job system, isolated parser runtime, production observability/backup platform, or real CS2 rendering service.
 
-The normative security contract and owner acceptance matrix are in `docs/production_auth_owner_private_media_v1.md`. For a repeatable development preview handoff, use `docs/internal_preview_packaging_v1.md`. This document remains the runtime configuration and readiness reference.
+The Steam/account contract is in `docs/steam_auth_accounts_v1.md`; the shared owner/private-media acceptance matrix is in `docs/production_auth_owner_private_media_v1.md`. For a repeatable development preview handoff, use `docs/internal_preview_packaging_v1.md`. This document remains the runtime configuration and readiness reference.
 
 ## Runtime Configuration
 
@@ -11,7 +11,8 @@ The normative security contract and owner acceptance matrix are in `docs/product
 | Variable | Default | Used by | Notes |
 | --- | --- | --- | --- |
 | `NEXT_PUBLIC_API_BASE_URL` | `http://localhost:8000` | Frontend | Public browser-facing API origin used by the credentialed API client and private media URL resolution. It is not a secret. |
-| `FRONTEND_PUBLIC_URL` | `http://localhost:3000` | Backend API | Trusted post-OIDC frontend redirect origin. Production requires the exact same HTTPS origin as `BACKEND_PUBLIC_URL` and the sole value in `CORS_ORIGINS`. |
+| `NEXT_PUBLIC_AUTH_PROVIDER` | `steam` | Frontend | Public login selector; must match backend `AUTH_PROVIDER`. It contains no credential. |
+| `FRONTEND_PUBLIC_URL` | `http://localhost:3000` | Backend API | Trusted post-login frontend redirect origin. Production requires the exact same HTTPS origin as `BACKEND_PUBLIC_URL` and the sole value in `CORS_ORIGINS`. |
 | `BACKEND_PUBLIC_URL` | `http://localhost:8000` | Backend API, worker | Public API origin. Production requires an HTTPS origin with no path/query/fragment; `/health` does not echo it. |
 | `CORS_ORIGINS` | `http://localhost:3000,http://127.0.0.1:3000` | Backend API | Credentialed browser origins. Production requires exactly one HTTPS origin equal to `FRONTEND_PUBLIC_URL`; wildcard, stale, and sibling origins are rejected. |
 
@@ -70,6 +71,10 @@ PostgreSQL should store compact metadata and storage keys only. Large `.dem`, re
 | Variable | Default | Used by | Notes |
 | --- | --- | --- | --- |
 | `AUTH_MODE` | unset | Backend API | Required explicit value: `development`, `test`, or `production`. Unsupported or missing values fail runtime validation. |
+| `AUTH_PROVIDER` | unset | Backend API | Required explicitly in production: `steam`, or `oidc` for the existing compatibility flow. Local Compose selects `steam`. |
+| `STEAM_AUTH_STATE_COOKIE_NAME` | `__Host-cs2_steam_state` | Backend API | Single-use Steam state cookie; production requires a distinct `__Host-` name. |
+| `STEAM_OPENID_NONCE_TTL_SECONDS` | `600` | Backend API, Redis | Steam assertion freshness and replay-reservation window; must cover login TTL plus skew. |
+| `STEAM_WEB_API_KEY` | unset | Backend API | Optional server-only GetPlayerSummaries key for display metadata. It is not needed for SteamID64 authentication. |
 | `OIDC_ISSUER` | unset | Backend API | Exact HTTPS production issuer expected in verified identity tokens. |
 | `OIDC_CLIENT_ID` | unset | Backend API | OIDC client identifier and required audience. |
 | `OIDC_CLIENT_SECRET` | unset | Backend API | Optional server-side secret for confidential clients. Never expose it to the frontend. |
@@ -80,13 +85,13 @@ PostgreSQL should store compact metadata and storage keys only. Large `.dem`, re
 | `OIDC_REDIRECT_URI` | unset | Backend API | Exact registered HTTPS backend `/auth/oidc/callback` URL, distinct from the frontend `/auth/callback` page. |
 | `AUTH_COOKIE_SECURE` | `false` | Backend API | Must be enabled in production. |
 | `AUTH_SESSION_COOKIE_NAME` | `__Host-cs2_session` | Backend API | Opaque `HttpOnly` browser session cookie; production requires the `__Host-` prefix. |
-| `AUTH_STATE_COOKIE_NAME` | `__Host-cs2_oidc_state` | Backend API | Short-lived `HttpOnly` OIDC state cookie; production requires a distinct `__Host-` name. |
+| `AUTH_STATE_COOKIE_NAME` | `__Host-cs2_oidc_state` | Backend API | Compatibility OIDC state cookie, used only when `AUTH_PROVIDER=oidc`. |
 | `AUTH_SESSION_TTL_SECONDS` | `3600` | Backend API, Redis | Session TTL; production accepts `1..86400` and caps it at identity-token expiry. |
 | `AUTH_LOGIN_TTL_SECONDS` | `300` | Backend API, Redis | One-time state/nonce/PKCE attempt TTL; production accepts `1..600`. |
-| `AUTH_CLOCK_SKEW_SECONDS` | `30` | Backend API | Bounded OIDC timestamp leeway; production accepts `0..300`. |
+| `AUTH_CLOCK_SKEW_SECONDS` | `30` | Backend API | Bounded identity timestamp leeway; production accepts `0..300`. |
 | `DEV_USER_ID` | `dev-user` | Backend API | Development/test owner harness only. `X-Dev-User-Id` is never a production identity source. |
 
-Production API startup fails closed unless the complete well-formed HTTPS OIDC, secure `__Host-` cookie, exact single application origin, exact single-origin CORS, bounded algorithm/clock configuration, and non-default render-worker credential are present. OIDC URLs reject missing hosts, userinfo, fragments, whitespace/backslashes, and invalid ports. The queue worker uses a narrower validation path: it needs explicit `AUTH_MODE` and a non-default production worker credential, but it does not receive browser OIDC/client/cookie secrets. The verified issuer/subject maps to a stable opaque `owner_v1_...` value; browser sessions are random opaque Redis entries. Unsafe browser mutations require the exact `FRONTEND_PUBLIC_URL` origin. No provider token, raw identity claim, auth secret, or owner ID belongs in a frontend-visible payload.
+Production API startup fails closed unless the selected provider, secure `__Host-` cookie, exact single HTTPS application origin, exact single-origin CORS, bounded session/nonce settings, and non-default render-worker credential are valid. Steam realm and callback are derived from `BACKEND_PUBLIC_URL`; complete OIDC configuration is required only when `AUTH_PROVIDER=oidc`. The queue worker uses a narrower validation path and does not receive browser Steam/OIDC secrets. Verified identities resolve through `accounts` and `external_identities` to a stable opaque `owner_v1_...`; browser sessions remain random opaque Redis entries. Unsafe browser mutations require the exact `FRONTEND_PUBLIC_URL` origin. No SteamID64, provider token, raw identity claim, auth secret, or owner ID belongs in a frontend-visible payload.
 
 Every browser-private auth, demo, upload, replay, coaching, diagnostics, render-job, and media response—including `4xx` failures—sets `Cache-Control: private, no-store` and merges `Cookie, Origin` into `Vary`. Render failures persist and expose only the stable `RENDER_FAILED` or `RENDER_WORKER_UNAVAILABLE` code and safe message; callback-provided error text and background exception strings do not enter the database, replay payload, user JSON, or logs.
 
@@ -272,7 +277,7 @@ Release-candidate non-browser checks can be run together:
 ./scripts/rc_check.sh
 ```
 
-The RC helper wraps `./scripts/verify.sh`, Docker build/up, health, development diagnostics, no-sample cloud preview smoke, and sample smoke when `SAMPLE_DEMO_PATH` is set. Use `REQUIRE_SAMPLE_DEMO=1` when a missing sample must fail the gate. It is a development harness and does not replace production OIDC/owner/private-media validation or manual browser QA; use `docs/release_candidate_qa_v1.md` for the full checklist.
+The RC helper wraps `./scripts/verify.sh`, Docker build/up, health, development diagnostics, no-sample cloud preview smoke, and sample smoke when `SAMPLE_DEMO_PATH` is set. Use `REQUIRE_SAMPLE_DEMO=1` when a missing sample must fail the gate. It is a development harness and does not replace production Steam/account/owner/private-media validation or manual browser QA; use `docs/release_candidate_qa_v1.md` for the full checklist.
 
 For packaging evidence and reviewer handoff, follow `docs/internal_preview_packaging_v1.md` after the RC helper finishes.
 
@@ -282,7 +287,7 @@ Cloud preview smoke is documented in `docs/cloud_preview_deploy_v1.md` and can b
 API_BASE_URL=http://localhost:8000 FRONTEND_URL=http://localhost:3000 python3 scripts/cloud_preview_smoke.py
 ```
 
-The current script smoke is a development/test harness. Without `SAMPLE_DEMO_PATH`, it runs health, frontend, mock upload, replay/coaching, render job, private-media routing checks, and a compact development diagnostics summary, then exits successfully with a sample-skip message. It does not replace the production OIDC owner matrix. With a configured sample, it uploads through `POST /uploads/demo`, waits for parse completion, and prints map, round, coaching, and map calibration/fallback status:
+The current script smoke is a development/test harness. Without `SAMPLE_DEMO_PATH`, it runs health, frontend, mock upload, replay/coaching, render job, private-media routing checks, and a compact development diagnostics summary, then exits successfully with a sample-skip message. It does not replace the production provider/account/owner matrix. With a configured sample, it uploads through `POST /uploads/demo`, waits for parse completion, and prints map, round, coaching, and map calibration/fallback status:
 
 ```bash
 SAMPLE_DEMO_PATH=/absolute/path/to/sample.dem python3 scripts/cloud_preview_smoke.py
@@ -301,7 +306,7 @@ Manual first-run preview should start at `/dashboard`. Verify the empty/loading/
 - `frontend` waits for the API service health check before starting.
 - The default Compose frontend still uses `NEXT_PUBLIC_API_BASE_URL=http://localhost:8000` because browser requests originate from the host browser, not from the container network.
 - `docker-compose.preview.yml` switches the frontend to a production Next.js build via `frontend/Dockerfile.preview`.
-- Rebuild the preview frontend image whenever `NEXT_PUBLIC_API_BASE_URL` changes because it is bundled at build time.
+- Rebuild the preview frontend image whenever `NEXT_PUBLIC_API_BASE_URL` or `NEXT_PUBLIC_AUTH_PROVIDER` changes because both are bundled at build time.
 - Private media always uses the API's owner-scoped `/demos/{demo_id}/media/video` route. Production frontend pages and API/auth/media paths must share one exact HTTPS origin so `__Host-` cookies and CSRF checks protect both API and native video requests.
 - The local artifact adapter writes private logical-reference objects under `/data` by default and remains development/test only. Production startup requires the private S3-compatible adapter and never exposes a bucket URL.
 
@@ -309,7 +314,7 @@ Manual first-run preview should start at `/dashboard`. Verify the empty/loading/
 
 Ready at the Stage 3 application boundary:
 
-- Provider-neutral OIDC Authorization Code + PKCE/JWKS validation, Redis opaque browser sessions, stable owner mapping, logout revocation, and frontend session-expiry handling.
+- Steam OpenID 2.0 direct verification, formal account/external-identity mapping, Redis opaque browser sessions, logout revocation, frontend session-expiry handling, and an explicit OIDC compatibility provider.
 - Owner-scoped private video GET/HEAD/Range delivery without a public static media mount.
 - Demo Library upload, search, status/map filtering, sorting, rename, and soft archive flows.
 - Upload/parser ingestion snapshots, failed parse metadata, stale/active indicators, and owner-scoped retry from stored source artifacts.
@@ -329,7 +334,7 @@ Remaining staged gaps:
 - Object bucket/IAM/resource provisioning remains an external deployment decision; Stage 3 creates no cloud resources or real secrets.
 - Stage 3 byte-level intake cannot prove semantic `.dem` validity. The current parser still runs after accepted promotion; isolation and CPU/memory/disk/time limits remain Stage 5.
 - Redis dispatch still lacks durable delivery, crash recovery, atomic claim, redelivery, and idempotent execution. Those remain Stage 4 rather than being hidden inside artifact promotion.
-- Formal migration, production observability, CI/CD, and backup/restore remain Stage 6.
+- Account/external-identity DDL now uses a tracked forward-only migration; legacy schema backfills, production observability, CI/CD, and backup/restore remain broader Stage 6 work.
 - Real first-person CS2 rendering still belongs in an external controlled Windows/Linux GPU worker. API and worker containers must not run Steam, CS2, OBS, or ffmpeg automation.
 - Manual MP4 upload/calibration is a development and QA bridge, not the primary product path.
 
@@ -349,7 +354,7 @@ For release-candidate sign-off, use `docs/release_candidate_qa_v1.md`. The short
    curl http://localhost:8000/health
    ```
 
-3. Open `http://localhost:3000/dashboard`. Development mode should use the explicit local harness; a production candidate must redirect an anonymous browser through the configured OIDC flow and return through the frontend callback without tokens in the URL.
+3. Open `http://localhost:3000/dashboard`. Development mode should use the explicit local harness; a production candidate must redirect an anonymous browser through Steam OpenID (or the explicitly selected OIDC compatibility flow) and return through the frontend callback without assertion/session tokens in the URL.
 4. Create a mock upload and wait for it to complete.
 5. If a sample is available, set `SAMPLE_DEMO_PATH` and upload a real `.dem`.
 6. Open a demo detail page.

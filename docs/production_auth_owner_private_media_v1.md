@@ -1,10 +1,10 @@
-# Production Auth, Owner Authorization, and Private Media V1
+# OIDC Compatibility, Owner Authorization, and Private Media V1
 
-This document freezes the Stage 2 security contract for the rules-based 2D public beta. It is provider-neutral: the application uses OpenID Connect (OIDC) standards and does not depend on a vendor SDK. Stage 2 does not add object storage, queue recovery, parser sandboxing, database migrations, production observability, backup automation, LLM coaching, or GPU rendering.
+This document preserves the Stage 2 OIDC and shared owner/private-media contract. Steam-first Phase 1 supersedes its identity-model sections: Steam deployments explicitly set `AUTH_PROVIDER=steam`, and `docs/steam_auth_accounts_v1.md` is authoritative for Steam OpenID, accounts, external identities, and the schema migration. Production rejects a missing provider. The OIDC flow below remains supported only when `AUTH_PROVIDER=oidc`; both providers use the same opaque Redis session and owner/private-media authorization boundary.
 
 ## Decision
 
-Production browser identity uses OIDC Authorization Code flow with PKCE. The backend validates the returned identity token against the configured issuer, audience, nonce, timestamps, signature, algorithm, and JWKS before it creates an opaque Redis-backed session. Browser requests carry only an `HttpOnly` session cookie; provider tokens and raw identity claims are not exposed to frontend JavaScript, URLs, API responses, PostgreSQL, or local storage.
+When `AUTH_PROVIDER=oidc`, production browser identity uses OIDC Authorization Code flow with PKCE. The backend validates the returned identity token against the configured issuer, audience, nonce, timestamps, signature, algorithm, and JWKS before it resolves an account and creates an opaque Redis-backed session. Browser requests carry only an `HttpOnly` session cookie; provider tokens and raw identity claims are not exposed to frontend JavaScript, URLs, API responses, or local storage.
 
 Every user API derives `owner_id` from the trusted session. Existing owner-scoped database queries remain the authorization boundary. Demo metadata, replay, coaching, demo diagnostics, upload/retry actions, render actions, and video bytes are private by default.
 
@@ -12,7 +12,7 @@ Every user API derives `owner_id` from the trusted session. Existing owner-scope
 
 `AUTH_MODE` must be set explicitly to `development`, `test`, or `production`. An empty or unsupported value stops startup validation.
 
-- The production API requires complete, well-formed HTTPS OIDC configuration, secure `__Host-` cookies, one exact HTTPS application origin shared by frontend and API, exactly that single CORS origin, Redis, and a non-default render-worker credential. Missing or insecure configuration fails startup; production never falls back to `DEV_USER_ID`.
+- The production API requires an explicit supported provider, that provider's complete configuration, secure `__Host-` cookies, one exact HTTPS application origin shared by frontend and API, exactly that single CORS origin, Redis, and a non-default render-worker credential. Missing or insecure configuration fails startup; production never falls back to `DEV_USER_ID`.
 - The queue worker validates its own narrower runtime: explicit `AUTH_MODE`, plus a non-default `RENDER_WORKER_TOKEN` in production. It does not need browser OIDC endpoints, client credentials, or cookie configuration.
 - `development` and `test` retain `DEV_USER_ID` and `X-Dev-User-Id` only as an explicit local/test harness. They are not accepted as proof of identity in production.
 - An absent, unknown, expired, or revoked session returns `401 Authentication required` from authenticated user APIs.
@@ -23,28 +23,28 @@ Every user API derives `owner_id` from the trusted session. Existing owner-scope
 - Every browser-auth/session, demo, upload, replay, coaching, diagnostics, render-job, and private-media response is marked `Cache-Control: private, no-store` and varies on `Cookie, Origin`, including error responses. A shared edge cannot replay one owner's response to another owner before application authorization runs.
 - Render-worker callback text and background exception strings are never persisted or projected to users. Failed render state exposes only `RENDER_FAILED` or `RENDER_WORKER_UNAVAILABLE` with stable safe copy; logs record the job ID and stable code, not callback-provided text, credentials, paths, or traceback content.
 
-## Browser Authentication Flow
+## OIDC Compatibility Flow
 
 1. The frontend sends the browser to `GET /auth/login?return_to=<safe-relative-path>`.
 2. The backend stores a short-lived, single-use login attempt in Redis and redirects to the configured OIDC authorization endpoint with `state`, `nonce`, and a PKCE S256 challenge.
 3. The provider redirects to the server-only `OIDC_REDIRECT_URI` at `GET /auth/oidc/callback` with an authorization code and state. This API path is intentionally distinct from the frontend completion page.
 4. The backend requires the state cookie to match, consumes the Redis login attempt, exchanges the code with its PKCE verifier, fetches the configured JWKS, and accepts only a valid token using the configured supported asymmetric allow-list (`RS256` and/or `ES256`) for the exact issuer and client audience. Required claims include `iss`, `sub`, `aud`, `iat`, and `exp`; nonce must match and timestamps allow only the configured bounded clock skew. Multi-audience tokens must identify this client through `azp`.
-5. The backend derives the owner ID, creates a random opaque session token, stores only its hashable lookup and compact owner/expiry record in Redis, and sets the token in the configured `HttpOnly`, `SameSite=Lax` cookie. Production cookies are `Secure` and use path `/`.
+5. The backend resolves `(issuer, subject)` through the account/external-identity mapping, creates a random opaque session token, stores only its hashable lookup and compact owner/expiry record in Redis, and sets the token in the configured `HttpOnly`, `SameSite=Lax` cookie. Production cookies are `Secure` and use path `/`.
 6. The backend redirects only to `FRONTEND_PUBLIC_URL/auth/callback`, carrying the sanitized relative `return_to`. The redirect never carries the authorization code, state, provider token, raw subject, or session token.
 7. The frontend callback checks `GET /auth/session` with credentials and then returns to the sanitized in-app path.
 8. `POST /auth/logout` deletes the Redis session and clears the browser cookie. A copied old cookie stops working after logout; natural Redis expiry enforces session expiry.
 
 Only relative application paths up to 2,048 characters are accepted for `return_to`; oversized values, absolute URLs, scheme-relative URLs, and malformed values fall back to `/dashboard`.
 
-## Stable Owner Mapping
+## Legacy OIDC Owner Preservation
 
-The verified `(issuer, subject)` pair maps deterministically to an opaque ID:
+For an OIDC identity first seen before the account migration, the verified `(issuer, subject)` pair retains its deterministic opaque ID:
 
 ```text
 owner_v1_<base64url(sha256(issuer + NUL + subject))>
 ```
 
-The value is stable for the same issuer and subject, contains neither input in plaintext, and fits the existing `VARCHAR(64)` owner column. Stage 2 does not add a user table or a schema migration. Blank issuer or subject claims are rejected. Production backfill must never assign an ownerless row to `dev-user`.
+The account migration creates an account and issuer-specific external identity using that preferred owner, so existing demos do not change owner. New Steam accounts receive a random opaque `owner_v1_...` value. The schema does not add a foreign key from legacy `demos.owner_id` to accounts, and production backfill must never assign an ownerless row to `dev-user`.
 
 ## Authenticated User API Boundary
 
@@ -108,6 +108,7 @@ All identity-provider values are server-side. Do not place secrets in `NEXT_PUBL
 | Variable | Production requirement | Purpose |
 | --- | --- | --- |
 | `AUTH_MODE` | Must be `production` | Enables fail-closed API identity rules; the worker also requires an explicit mode. |
+| `AUTH_PROVIDER` | Must be `oidc` for this compatibility flow | Selects this flow instead of the explicitly configured Steam provider. |
 | `FRONTEND_PUBLIC_URL` | Exact HTTPS application origin; must equal `BACKEND_PUBLIC_URL` and be the sole value in `CORS_ORIGINS` | Trusted destination for the post-callback frontend redirect. |
 | `BACKEND_PUBLIC_URL` | Exact HTTPS application origin with no path/query/fragment | API origin; `OIDC_REDIRECT_URI` must use this exact origin. |
 | `OIDC_ISSUER` | Exact HTTPS issuer | Required `iss` value. |
@@ -128,7 +129,7 @@ All identity-provider values are server-side. Do not place secrets in `NEXT_PUBL
 | `CORS_ORIGINS` | Exactly one HTTPS origin equal to `FRONTEND_PUBLIC_URL`; no wildcard or additional stale/sibling origin | Credentialed browser API access. |
 | `RENDER_WORKER_TOKEN` | Non-empty and not the development default | Separate render-worker service credential. |
 
-`NEXT_PUBLIC_API_BASE_URL` remains a public API origin, not a secret. Split-origin local development uses the explicit development harness. Production requires one HTTPS origin routing frontend pages and API/auth/media paths, so `__Host-` cookies, callback redirects, CSRF origin checks, and native private-media requests share the same origin. The edge must send `/auth/oidc/callback`, `/auth/login`, `/auth/session`, and `/auth/logout` to FastAPI while preserving the frontend `/auth/callback` page in Next.js.
+`NEXT_PUBLIC_API_BASE_URL` remains a public API origin, not a secret. Split-origin local development uses the explicit development harness. Production requires one HTTPS origin routing frontend pages and API/auth/media paths, so `__Host-` cookies, callback redirects, CSRF origin checks, and native private-media requests share the same origin. The edge must send `/auth/steam/login`, `/auth/steam/callback`, `/auth/me`, `/auth/logout`, and any explicitly enabled compatibility OIDC routes to FastAPI while preserving the frontend `/auth/callback` page in Next.js.
 
 ## Acceptance Matrix
 
@@ -144,7 +145,7 @@ Run the owner matrix with two independently authenticated identities A and B, pl
 | Mock/clip render and job list | A resource succeeds | Generic `404`; no job/mutation | `401`; no job/mutation |
 | Private video GET/HEAD/Range | `200`/`206` as applicable | Generic `404`, no bytes/path details | `401`, no bytes/path details |
 
-In production, also prove that `X-Dev-User-Id` cannot select an owner, missing/inconsistent OIDC or application-origin configuration stops startup, invalid issuer/audience/signature/algorithm/claims/nonce/timestamps are denied, unsafe-method requests from missing/untrusted origins cause no mutation, logout revokes the server session, `/diagnostics` is `404`, `/health` is coarse, and `/media/videos/...` is not mounted.
+In production, also prove that `X-Dev-User-Id` cannot select an owner, missing/inconsistent selected-provider or application-origin configuration stops startup, unsafe-method requests from missing/untrusted origins cause no mutation, logout revokes the server session, `/diagnostics` is `404`, `/health` is coarse, and `/media/videos/...` is not mounted. Run the provider-specific Steam matrix in `docs/steam_auth_accounts_v1.md`; when OIDC is selected, also deny invalid issuer/audience/signature/algorithm/claims/nonce/timestamps.
 
 Also inspect successful and failure responses for every cookie-authenticated JSON surface: each must include `Cache-Control: private, no-store` and `Vary` containing both `Cookie` and `Origin`. Inject render-worker callback and worker exception strings containing a fake path, token, and traceback marker; the database, replay/video payload, render-job payload, and logs must contain only the stable safe code/copy.
 
@@ -157,7 +158,7 @@ The older `docs/deployment_target_decision_v1.md` and `docs/internal_preview_pac
 1. Stage 3: object storage and secure Artifact Intake.
 2. Stage 4: reliable delivery, crash recovery, atomic claim, and idempotent execution.
 3. Stage 5: isolated untrusted `.dem` parsing with CPU, memory, disk, and timeout limits.
-4. Stage 6: formal migrations, CI/CD, observability, and backup/restore.
+4. Stage 6: CI/CD, observability, and backup/restore. Account schema now has a forward-only tracked migration; legacy tables still use their existing compatibility backfills.
 5. Stage 7: real demo corpus and invite-only beta.
 
 No Stage 2 decision makes LLM coaching, real first-person GPU rendering, user-uploaded MP4 as the primary flow, billing, or team collaboration part of V1.

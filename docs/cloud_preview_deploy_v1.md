@@ -1,6 +1,6 @@
 # Cloud Preview Deploy V1
 
-This preview path uses Docker Compose with the FastAPI API, Redis worker, PostgreSQL, Redis, and a built Next.js frontend. The default checked-in shape is an explicit development-mode preview. A production-auth candidate requires the complete HTTPS OIDC/cookie/frontend/CORS configuration and the owner/private-media acceptance matrix; the script smoke alone is not production sign-off.
+This preview path uses Docker Compose with the FastAPI API, Redis worker, PostgreSQL, Redis, and a built Next.js frontend. The default checked-in shape is an explicit development-mode preview. A production-auth candidate requires the selected provider's complete HTTPS/cookie/frontend/CORS configuration and the Steam/account plus owner/private-media acceptance matrices; the script smoke alone is not production sign-off.
 
 For the complete internal reviewer package, including local RC commands, strict sample validation, browser smoke, known limitations, and handoff evidence, use `docs/internal_preview_packaging_v1.md`.
 
@@ -31,6 +31,7 @@ Set these before building a hosted preview:
 ```bash
 export FRONTEND_URL=https://cs2-preview.example.com
 export NEXT_PUBLIC_API_BASE_URL=https://cs2-preview.example.com
+export NEXT_PUBLIC_AUTH_PROVIDER=steam
 export FRONTEND_PUBLIC_URL=https://cs2-preview.example.com
 export BACKEND_PUBLIC_URL=https://cs2-preview.example.com
 export CORS_ORIGINS=https://cs2-preview.example.com
@@ -40,20 +41,15 @@ For a production-auth candidate, also configure server-side values through the d
 
 ```bash
 export AUTH_MODE=production
+export AUTH_PROVIDER=steam
 export AUTH_COOKIE_SECURE=1
-export OIDC_ISSUER=https://issuer.example.com
-export OIDC_CLIENT_ID=cs2-coach
-export OIDC_AUTHORIZATION_ENDPOINT=https://issuer.example.com/authorize
-export OIDC_TOKEN_ENDPOINT=https://issuer.example.com/token
-export OIDC_JWKS_URL=https://issuer.example.com/.well-known/jwks.json
-export OIDC_REDIRECT_URI=https://cs2-preview.example.com/auth/oidc/callback
 ```
 
-Set optional `OIDC_CLIENT_SECRET` and required non-default `RENDER_WORKER_TOKEN` only through server-side secret injection. Production API startup rejects malformed/missing identity configuration and the development worker token. The queue worker uses its separate narrow validation path and does not need browser OIDC/client/cookie secrets.
+Set optional `STEAM_WEB_API_KEY` and required non-default `RENDER_WORKER_TOKEN` only through server-side secret injection. `STEAM_WEB_API_KEY` enriches display metadata and is not required to authenticate SteamID64. If the legacy-compatible OIDC provider is selected, also provide the complete `OIDC_*` configuration documented in `docs/production_auth_owner_private_media_v1.md`. Production API startup rejects malformed selected-provider configuration and the development worker token. The queue worker uses its separate narrow validation path and does not receive browser Steam/OIDC secrets.
 
-`NEXT_PUBLIC_API_BASE_URL` is baked into the frontend browser bundle during `next build`, so rebuild the frontend image whenever it changes.
+`NEXT_PUBLIC_API_BASE_URL` and `NEXT_PUBLIC_AUTH_PROVIDER` are baked into the frontend browser bundle during `next build`, so rebuild the frontend image whenever either changes. The public provider selector must match server `AUTH_PROVIDER`.
 
-The repository does not provision an edge proxy or cloud resource. A production candidate must supply provider-neutral same-origin routing externally: frontend pages and static assets, including frontend `/auth/callback`, go to Next.js; `/auth/login`, `/auth/oidc/callback`, `/auth/session`, `/auth/logout`, `/demos/*`, `/uploads/*`, `/health`, and render-worker API paths go to FastAPI on the same public origin. The two callback paths must remain distinct. The checked-in two-port localhost layout remains development mode.
+The repository does not provision an edge proxy or cloud resource. A production candidate must supply same-origin routing externally: frontend pages and static assets, including frontend `/auth/callback`, go to Next.js; `/auth/steam/login`, `/auth/steam/callback`, `/auth/me`, `/auth/logout`, compatibility auth routes, `/demos/*`, `/uploads/*`, `/health`, and render-worker API paths go to FastAPI on the same public origin. The backend Steam callback and frontend completion page must remain distinct. The checked-in two-port localhost layout remains development mode.
 
 User-facing video metadata contains only `/demos/{demo_id}/media/video`, which the frontend resolves against `NEXT_PUBLIC_API_BASE_URL`. The API checks the opaque session and owner again for every GET/HEAD/Range request. There is no public `/media/videos` mount. Production must route frontend pages plus API/auth/media paths through the same exact HTTPS origin; split subdomains fail runtime validation.
 
@@ -77,16 +73,17 @@ Required preview values:
 | `DATABASE_URL` | API, worker | Use the Compose `postgres` hostname in containers. |
 | `REDIS_URL` | API, worker | Use the Compose `redis` hostname in containers. |
 | `AUTH_MODE` | API | Explicit `development`, `test`, or `production`. Production never falls back to a dev owner. |
+| `AUTH_PROVIDER` | API | Required explicitly in production: `steam`, or `oidc` for the compatibility provider. |
 | `FRONTEND_PUBLIC_URL` | API | Trusted frontend callback origin. Production requires it to equal `BACKEND_PUBLIC_URL` exactly and be the sole value in `CORS_ORIGINS`. |
 | `BACKEND_PUBLIC_URL` | API, worker | Public API origin; exact HTTPS application origin in production and not echoed by `/health`. |
 | `NEXT_PUBLIC_API_BASE_URL` | Frontend | Public API origin for credentialed fetches and private media resolution. This is public configuration, not a secret. |
+| `NEXT_PUBLIC_AUTH_PROVIDER` | Frontend | Public login selector; must equal backend `AUTH_PROVIDER`. |
 | `CORS_ORIGINS` | API | Credentialed frontend origin. Production requires exactly `FRONTEND_PUBLIC_URL` and rejects wildcard, stale, or sibling origins. |
 | `ARTIFACT_STORAGE_ROOT` and category dirs | API, worker | Local volume roots for uploads, replay blobs, summaries, and videos. |
-| `OIDC_ISSUER`, `OIDC_CLIENT_ID` | API | Exact production issuer and audience/client. |
-| `OIDC_AUTHORIZATION_ENDPOINT`, `OIDC_TOKEN_ENDPOINT`, `OIDC_JWKS_URL`, `OIDC_REDIRECT_URI` | API | HTTPS production OIDC endpoints and exact backend callback. |
-| `OIDC_CLIENT_SECRET` | API | Optional server-only confidential-client secret. Never prefix with `NEXT_PUBLIC_`. |
-| `OIDC_ALLOWED_ALGORITHMS`, `AUTH_CLOCK_SKEW_SECONDS` | API | Supported asymmetric signature allow-list and bounded timestamp leeway. |
-| `AUTH_COOKIE_SECURE`, `AUTH_SESSION_COOKIE_NAME`, `AUTH_STATE_COOKIE_NAME` | API | Secure opaque session/state cookie controls. Production requires secure cookies. |
+| `STEAM_AUTH_STATE_COOKIE_NAME`, `STEAM_OPENID_NONCE_TTL_SECONDS` | API, Redis | Steam state cookie and assertion freshness/replay window. |
+| `STEAM_WEB_API_KEY` | API | Optional server-only GetPlayerSummaries key. Never prefix with `NEXT_PUBLIC_` or send to workers. |
+| `OIDC_*` | API | Required only when `AUTH_PROVIDER=oidc`; see the compatibility contract. |
+| `AUTH_COOKIE_SECURE`, `AUTH_SESSION_COOKIE_NAME` | API | Secure opaque session cookie controls. Production requires secure cookies. |
 | `AUTH_SESSION_TTL_SECONDS`, `AUTH_LOGIN_TTL_SECONDS` | API, Redis | Bounded session and one-time login attempt lifetimes. |
 | `DEV_USER_ID` | API | Development/test owner harness only; `X-Dev-User-Id` is not a production identity source. |
 | `MAX_RENDER_CLIP_SECONDS` | API, worker | Render clip duration guard. |
@@ -100,7 +97,7 @@ Required preview values:
 
 ## Smoke Checklist
 
-For release-candidate sign-off, use the full checklist in `docs/release_candidate_qa_v1.md`. For reviewer handoff evidence, use `docs/internal_preview_packaging_v1.md`. The script smoke below covers the explicit development-mode API/frontend/mock/render/private-media projection and optional sample upload; it does not acquire production OIDC sessions or replace the owner matrix.
+For release-candidate sign-off, use the full checklist in `docs/release_candidate_qa_v1.md`. For reviewer handoff evidence, use `docs/internal_preview_packaging_v1.md`. The script smoke below covers the explicit development-mode API/frontend/mock/render/private-media projection and optional sample upload; it does not acquire a production Steam/OIDC session or replace the account/owner matrices.
 
 API/script smoke:
 
@@ -132,7 +129,7 @@ Place local samples under ignored directories such as `sample-demos/`, `samples/
 
 Manual browser smoke:
 
-1. Open the public dashboard URL. A production candidate must show the shared auth boundary, complete OIDC Code + PKCE sign-in, return through the frontend callback, and leave no provider/session token in the URL or browser storage.
+1. Open the public dashboard URL. A production candidate must show the shared auth boundary, complete Steam OpenID sign-in, return through the frontend callback, show only compact account metadata, and leave no assertion/session token in the URL or browser storage.
 2. On a clean or filtered library, confirm empty/loading/no-result states show direct actions for create mock, upload `.dem`, refresh, clear filters, or show archived.
 3. Create a mock upload and wait until it completes.
 4. Open the demo detail page from the post-create notice or table action.
@@ -162,7 +159,7 @@ Use `DEV_FAKE_VIDEO_PATH` for the fake MP4 adapter, or `prepare-job` / `complete
 ## Limitations
 
 - `DEV_USER_ID` and `X-Dev-User-Id` are an explicit development/test harness and do not select an owner in production.
-- The checked-in Compose preview defaults are not a provisioned OIDC provider or a production public-beta environment. Production requires external provider registration, HTTPS, secure secrets, and the full acceptance matrix.
+- The checked-in Compose preview defaults are not a registered Steam OpenID production origin or a production public-beta environment. Production requires HTTPS routing, secure secrets, real Steam callback smoke, and the full acceptance matrix.
 - Local volumes are not durable object storage; do not store large artifacts in PostgreSQL.
 - Uploaded `.dem` files are untrusted input. Archive ingestion, where available, is development compatibility rather than the primary product path. Real match demos can contain player data or licensed match content; only use samples you are allowed to store and upload to the preview.
 - Do not commit `.dem`, demo archives, generated replay blobs, or media outputs; keep them in ignored local sample/storage paths.

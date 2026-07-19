@@ -57,12 +57,30 @@ function loadTypeScriptModule(relativePath, overrides = {}) {
 }
 
 {
-  const api = loadTypeScriptModule("./api.ts", { URLSearchParams });
+  const previousProvider = process.env.NEXT_PUBLIC_AUTH_PROVIDER;
+  try {
+    process.env.NEXT_PUBLIC_AUTH_PROVIDER = "steam";
+    const api = loadTypeScriptModule("./api.ts", { URLSearchParams });
+    assert.equal(
+      api.getAuthLoginUrl("/demos/demo-1"),
+      "http://localhost:8000/auth/steam/login?return_to=%2Fdemos%2Fdemo-1"
+    );
+    assert.equal(api.getConfiguredAuthProvider(), "steam");
 
-  assert.equal(
-    api.getAuthLoginUrl("/demos/demo-1"),
-    "http://localhost:8000/auth/login?return_to=%2Fdemos%2Fdemo-1"
-  );
+    process.env.NEXT_PUBLIC_AUTH_PROVIDER = "oidc";
+    const oidcApi = loadTypeScriptModule("./api.ts", { URLSearchParams });
+    assert.equal(
+      oidcApi.getAuthLoginUrl("/dashboard"),
+      "http://localhost:8000/auth/login?return_to=%2Fdashboard"
+    );
+    assert.equal(oidcApi.getConfiguredAuthProvider(), "oidc");
+  } finally {
+    if (previousProvider === undefined) {
+      delete process.env.NEXT_PUBLIC_AUTH_PROVIDER;
+    } else {
+      process.env.NEXT_PUBLIC_AUTH_PROVIDER = previousProvider;
+    }
+  }
 }
 
 {
@@ -154,10 +172,24 @@ function loadTypeScriptModule(relativePath, overrides = {}) {
     {
       ...auth.reduceAuthState(
         { status: "checking" },
-        { type: "sessionAuthenticated" }
+        {
+          type: "sessionAuthenticated",
+          account: {
+            displayName: "Reviewer",
+            avatarUrl: null,
+            provider: "steam"
+          }
+        }
       )
     },
-    { status: "authenticated" }
+    {
+      status: "authenticated",
+      account: {
+        displayName: "Reviewer",
+        avatarUrl: null,
+        provider: "steam"
+      }
+    }
   );
 }
 
@@ -205,7 +237,14 @@ function loadTypeScriptModule(relativePath, overrides = {}) {
   const api = loadTypeScriptModule("./api.ts", {
     fetch: async (url, init) => {
       requests.push({ url, init });
-      return new Response(JSON.stringify({ authenticated: true }), {
+      return new Response(JSON.stringify({
+        authenticated: true,
+        account: {
+          displayName: "Reviewer",
+          avatarUrl: null,
+          provider: "steam"
+        }
+      }), {
         status: 200,
         headers: { "Content-Type": "application/json" }
       });
@@ -213,10 +252,11 @@ function loadTypeScriptModule(relativePath, overrides = {}) {
     Response
   });
 
-  const session = await api.getAuthSession();
+  const session = await api.getAuthMe();
 
   assert.equal(session.authenticated, true);
-  assert.equal(requests[0].url, "http://localhost:8000/auth/session");
+  assert.equal(session.account.displayName, "Reviewer");
+  assert.equal(requests[0].url, "http://localhost:8000/auth/me");
   assert.equal(requests[0].init.credentials, "include");
 }
 
@@ -252,7 +292,8 @@ function loadTypeScriptModule(relativePath, overrides = {}) {
 
   assert.doesNotMatch(sources, /localStorage|sessionStorage/);
   assert.doesNotMatch(sources, /Authorization|Bearer|X-Dev-User-Id/);
-  assert.doesNotMatch(sources, /NEXT_PUBLIC_.*(?:TOKEN|SECRET|SESSION|AUTH)/i);
+  assert.doesNotMatch(sources, /NEXT_PUBLIC_.*(?:TOKEN|SECRET|SESSION_COOKIE|API_KEY)/i);
+  assert.match(sources, /NEXT_PUBLIC_AUTH_PROVIDER/);
 }
 
 {

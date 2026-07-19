@@ -1,6 +1,6 @@
 # Release Candidate QA V1
 
-This runbook defines the repeatable Stage 2 release-candidate validation pass for local Docker development, short-lived previews, production identity/owner authorization, and private video access. Passing it does not complete later object-storage, reliable-job, parser-isolation, migration/observability/backup, or beta-corpus stages.
+This runbook defines the repeatable release-candidate validation pass for local Docker development, short-lived previews, Steam-first production identity/account/owner authorization, and private video access. Passing it does not complete match sync, Demo source download, reliable-job, parser-isolation, observability/backup, or beta-corpus stages.
 
 ## Scope
 
@@ -9,7 +9,7 @@ RC QA validates that the demo-first review flow still works:
 1. Local checks compile, test, lint, typecheck, and build.
 2. Docker services build and start.
 3. Public API health is coarse; production system diagnostics are disabled; demo diagnostics remain authenticated and owner-scoped.
-4. Provider-neutral OIDC Code + PKCE/JWKS validation, Redis opaque sessions, logout revocation, and frontend session-expiry handling pass focused tests and browser smoke.
+4. Steam OpenID assertion/discovery/direct verification, account mapping, Redis opaque sessions, logout revocation, and frontend session-expiry handling pass focused tests and browser smoke; the explicitly selected OIDC compatibility path remains covered.
 5. Owner A/B/anonymous/invalid/expired/revoked requests are denied or allowed consistently across every user surface.
 6. Private video GET/HEAD/Range rechecks session, owner, and safe artifact binding without a public static-media bypass.
 7. Development Cloud Preview smoke creates a mock demo, opens replay/coaching data, creates a `render_clip` job, checks private-media projection, and prints development diagnostics.
@@ -22,7 +22,7 @@ RC QA validates that the demo-first review flow still works:
 - No password/account-management system, provider-specific SDK, billing, or team collaboration.
 - No real CS2, Steam, OBS, ffmpeg, screen recording, or local game-client control in API/worker containers.
 - No object-storage migration or production media durability work.
-- No queue crash recovery, parser resource sandbox, formal migration, production observability, or backup/restore implementation.
+- No queue crash recovery, parser resource sandbox, production observability, or backup/restore implementation. The account schema has only its focused forward-only migration.
 - No checked-in `.dem`, video, replay blob, parser dump, or generated media artifacts.
 
 ## Required Local RC Checklist
@@ -38,6 +38,8 @@ Then run the non-browser gates:
 
 ```bash
 PYTHONPATH=backend python3 -m unittest \
+  backend.tests.test_database_migrations \
+  backend.tests.test_steam_auth \
   backend.tests.test_production_auth \
   backend.tests.test_private_media \
   backend.tests.test_auth_owner_boundary \
@@ -61,7 +63,7 @@ You can run the same non-browser sequence with:
 ./scripts/rc_check.sh
 ```
 
-`scripts/rc_check.sh` remains a development-mode harness. It does not acquire independent production OIDC sessions and therefore does not replace the owner matrix, private-media denial tests, or manual browser QA.
+`scripts/rc_check.sh` remains a development-mode harness. It does not acquire independent production Steam/OIDC sessions and therefore does not replace the account/owner matrix, private-media denial tests, or manual browser QA.
 
 ## Optional Sample `.dem` Validation
 
@@ -102,6 +104,8 @@ export NEXT_PUBLIC_API_BASE_URL=https://cs2-preview.example.com
 export FRONTEND_PUBLIC_URL=https://cs2-preview.example.com
 export BACKEND_PUBLIC_URL=https://cs2-preview.example.com
 export CORS_ORIGINS=https://cs2-preview.example.com
+export AUTH_PROVIDER=steam
+export NEXT_PUBLIC_AUTH_PROVIDER=steam
 
 docker compose -f docker-compose.yml -f docker-compose.preview.yml up --build -d
 ```
@@ -118,7 +122,7 @@ FRONTEND_URL="$FRONTEND_URL" \
 python3 scripts/cloud_preview_smoke.py
 ```
 
-For a production-auth RC, set `AUTH_MODE=production`, secure `__Host-` cookies, one exact HTTPS origin for frontend/API/auth/media routing, the complete OIDC server configuration, and a non-default render-worker service credential through the deployment secret/config system. Verify that `/diagnostics` returns `404`; do not run the development script as a substitute for independently authenticated owner A/B browser/API sessions.
+For a production-auth RC, set `AUTH_MODE=production`, explicitly set `AUTH_PROVIDER=steam` (or compatibility `oidc`) and matching `NEXT_PUBLIC_AUTH_PROVIDER`, secure `__Host-` cookies, one exact HTTPS origin for frontend/API/auth/media routing, the selected provider's complete configuration, and a non-default render-worker service credential through the deployment secret/config system. Verify that `/diagnostics` returns `404`; do not run the development script as a substitute for independently authenticated owner A/B browser/API sessions.
 
 If a sample is available for the preview environment:
 
@@ -131,7 +135,7 @@ python3 scripts/cloud_preview_smoke.py --require-sample
 
 ## Production Identity and Owner Matrix
 
-Use two independent OIDC identities, A and B, plus anonymous, invalid, expired, and explicitly logged-out/revoked browser sessions. Do not simulate this production gate with `X-Dev-User-Id`.
+Use two independent Steam identities, A and B (or two identities from the explicitly selected compatibility provider), plus anonymous, invalid, expired, and explicitly logged-out/revoked browser sessions. Do not simulate this production gate with `X-Dev-User-Id`.
 
 For demos owned separately by A and B, exercise all of these surfaces:
 
@@ -162,7 +166,7 @@ Record the status/body summary and mutation check for each cell. The concise ref
 
 Open `/dashboard` in the target frontend and verify:
 
-- Anonymous production load shows the login boundary; sign-in completes through OIDC and the frontend callback without exposing code/state/token/subject in the final URL or browser storage.
+- Anonymous production load shows the selected-provider login boundary; Steam sign-in completes through OpenID and the frontend callback without exposing assertion/state/session/SteamID64 in the final URL or browser storage. Callback query strings are redacted in Uvicorn and ingress logs.
 - Dashboard and Demo Detail use the same session boundary; expiry shows a clear `Session expired` recovery action, and sign-out returns to the anonymous boundary.
 - Dashboard loads with no current console errors.
 - Empty, loading, fetch-failed, archived-only, and search/filter no-result states are clear when practical to exercise.
@@ -185,7 +189,7 @@ Open `/dashboard` in the target frontend and verify:
 
 RC sign-off must preserve these boundaries:
 
-- Production identity is provider-neutral OIDC with an opaque Redis session; `DEV_USER_ID` and `X-Dev-User-Id` remain development/test-only.
+- Production identity is explicitly selected Steam OpenID or compatibility OIDC with account/external-identity mapping and one opaque Redis session; `DEV_USER_ID` and `X-Dev-User-Id` remain development/test-only.
 - User media is private and demo-scoped. No public static `/media/videos` mount, tokenized query string, or user-facing storage key is allowed.
 - Render-worker service credentials remain separate from browser identity.
 - Fake/manual render-worker flows are not real GPU rendering.
@@ -201,7 +205,7 @@ For a release-candidate handoff, record:
 - Git commit SHA and `git status --short` output.
 - Non-browser command output, or `./scripts/rc_check.sh` output.
 - Whether optional sample smoke was skipped, optional, or strict.
-- Production OIDC negative-case results and the complete owner A/B/anonymous/expired/revoked matrix, including no-mutation evidence.
+- Production Steam assertion/state/discovery/replay negative-case results, compatibility OIDC results when selected, and the complete owner A/B/anonymous/expired/revoked matrix, including no-mutation evidence.
 - Private media GET/HEAD/Range, copied/guessed URL, legacy static path, traversal, symlink, logout, and expiry results.
 - Manual browser smoke result, including callback/session-expired/sign-out behavior, desktop/mobile viewport coverage, screenshots, and known limitations.
 - Coarse `/health` status and proof that system `/diagnostics` is `404` in production while demo diagnostics remain owner-scoped.

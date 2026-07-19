@@ -35,7 +35,7 @@ class ProductionAuthConfigurationTest(unittest.TestCase):
                     Settings(auth_mode=auth_mode).validate_runtime_configuration()
 
     def test_production_auth_fails_closed_when_oidc_configuration_is_missing(self) -> None:
-        settings = Settings(auth_mode="production")
+        settings = Settings(auth_mode="production", auth_provider="oidc")
 
         with self.assertRaisesRegex(RuntimeError, "OIDC_ISSUER"):
             settings.validate_runtime_configuration()
@@ -210,6 +210,7 @@ class ProductionAuthConfigurationTest(unittest.TestCase):
 def valid_production_settings_kwargs() -> dict[str, object]:
     return {
         "auth_mode": "production",
+        "auth_provider": "oidc",
         "oidc_issuer": "https://issuer.example.test",
         "oidc_client_id": "cs2-coach",
         "oidc_authorization_endpoint": "https://issuer.example.test/authorize",
@@ -511,6 +512,17 @@ class OidcBrowserSessionTest(unittest.TestCase):
         session = client.get("/auth/session")
         self.assertEqual(session.status_code, 200)
         self.assertEqual(session.json(), {"authenticated": True})
+        self.assertEqual(
+            client.get("/auth/me").json(),
+            {
+                "authenticated": True,
+                "account": {
+                    "displayName": "Account",
+                    "avatarUrl": None,
+                    "provider": "oidc",
+                },
+            },
+        )
         session_token = client.cookies.get("__Host-cs2_session")
         self.assertIsNotNone(session_token)
         self.assertNotIn(str(session_token), json.dumps(redis.values))
@@ -888,6 +900,13 @@ def make_id_token(
 
 
 def auth_client(service: AuthService) -> TestClient:
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(bind=engine)
+    session_factory = sessionmaker(bind=engine, autocommit=False, autoflush=False)
     app = FastAPI()
     app.add_middleware(
         SessionCsrfMiddleware,
@@ -905,6 +924,15 @@ def auth_client(service: AuthService) -> TestClient:
         return {"owner_id": owner_id}
 
     app.dependency_overrides[get_auth_service] = lambda: service
+
+    def override_get_db():
+        db = session_factory()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    app.dependency_overrides[get_db] = override_get_db
     return TestClient(app, base_url="https://coach.example.test")
 
 

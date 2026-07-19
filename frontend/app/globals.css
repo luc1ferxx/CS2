@@ -2873,6 +2873,77 @@ select:disabled {
   gap: 8px;
 }
 
+.session-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.account-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  max-width: 220px;
+  min-height: 32px;
+  padding: 3px 8px 3px 4px;
+  border: 1px solid rgba(80, 105, 116, 0.5);
+  border-radius: 7px;
+  background: rgba(23, 32, 40, 0.64);
+}
+
+.account-avatar {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  overflow: hidden;
+  border: 1px solid rgba(76, 201, 194, 0.36);
+  border-radius: 6px;
+  background: rgba(76, 201, 194, 0.08);
+  color: var(--accent-radar);
+}
+
+.account-avatar-image {
+  background-position: center;
+  background-size: cover;
+}
+
+.account-copy {
+  display: grid;
+  min-width: 0;
+  line-height: 1.08;
+}
+
+.account-copy strong,
+.account-copy small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-copy strong {
+  color: var(--text-primary);
+  font-size: 11px;
+  font-weight: 760;
+}
+
+.account-copy small {
+  margin-top: 2px;
+  color: var(--text-secondary);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.account-sign-out {
+  min-height: 32px;
+}
+
 .status-pill {
   min-height: 30px;
   height: auto;

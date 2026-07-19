@@ -1,6 +1,6 @@
 # Object Storage and Safe Artifact Intake V1
 
-This document freezes the implemented Stage 3 storage and intake contract for the rules-based 2D public beta. Stage 3 keeps the Stage 2 OIDC/session, owner authorization, private-media, and deterministic 2D review contracts. It does not implement reliable queue recovery, parser sandboxing, formal database migrations, CI/CD, production observability, backup/restore, a real demo corpus, LLM coaching, or GPU rendering.
+This document freezes the implemented Stage 3 storage and intake contract for the rules-based 2D public beta. Steam-first Phase 1 later added a focused account/external-identity migration without changing this artifact contract. Reliable queue recovery, parser sandboxing, full legacy-schema migration, CI/CD, production observability, backup/restore, a real demo corpus, LLM coaching, and GPU rendering remain outside this document.
 
 ## Decision
 

@@ -1,11 +1,15 @@
 import time
 from collections.abc import Generator
+from contextlib import contextmanager
 
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from app.core.config import settings
+
+
+SCHEMA_UPGRADE_LOCK_ID = 7_302_202_607_190_001
 
 
 class Base(DeclarativeBase):
@@ -25,17 +29,44 @@ def get_db() -> Generator[Session, None, None]:
 
 
 def init_db() -> None:
-    from app.models import coaching, demo, job  # noqa: F401
+    from app.migrations import run_schema_migrations
+    from app.models import account, coaching, demo, job  # noqa: F401
 
     for attempt in range(1, 31):
         try:
-            Base.metadata.create_all(bind=engine)
-            ensure_schema_backfills()
+            with schema_upgrade_lock():
+                with engine.begin() as connection:
+                    run_schema_migrations(connection)
+                Base.metadata.create_all(bind=engine)
+                ensure_schema_backfills()
             return
         except OperationalError:
             if attempt == 30:
                 raise
             time.sleep(1)
+
+
+@contextmanager
+def schema_upgrade_lock() -> Generator[None, None, None]:
+    if engine.dialect.name != "postgresql":
+        yield
+        return
+
+    connection = engine.connect()
+    try:
+        connection.execute(
+            text("SELECT pg_advisory_lock(:lock_id)"),
+            {"lock_id": SCHEMA_UPGRADE_LOCK_ID},
+        )
+        yield
+    finally:
+        try:
+            connection.execute(
+                text("SELECT pg_advisory_unlock(:lock_id)"),
+                {"lock_id": SCHEMA_UPGRADE_LOCK_ID},
+            )
+        finally:
+            connection.close()
 
 
 def ensure_schema_backfills() -> None:

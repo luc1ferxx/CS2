@@ -32,6 +32,10 @@ services:
       BACKEND_PUBLIC_URL: ${BACKEND_PUBLIC_URL:-http://localhost:8000}
       FRONTEND_PUBLIC_URL: ${FRONTEND_PUBLIC_URL:-http://localhost:3000}
       AUTH_MODE: ${AUTH_MODE:-development}
+      AUTH_PROVIDER: ${AUTH_PROVIDER:-steam}
+      STEAM_AUTH_STATE_COOKIE_NAME: ${STEAM_AUTH_STATE_COOKIE_NAME:-__Host-cs2_steam_state}
+      STEAM_OPENID_NONCE_TTL_SECONDS: ${STEAM_OPENID_NONCE_TTL_SECONDS:-600}
+      STEAM_WEB_API_KEY: ${STEAM_WEB_API_KEY:-}
       OIDC_ISSUER: ${OIDC_ISSUER:-}
       OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-}
       OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:-}
@@ -141,6 +145,7 @@ services:
     command: npm run dev -- --hostname 0.0.0.0 --port 3000
     environment:
       NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8000}
+      NEXT_PUBLIC_AUTH_PROVIDER: ${AUTH_PROVIDER:-steam}
     ports:
       - "3000:3000"
     depends_on:

@@ -80,6 +80,7 @@ class ArtifactStorageConfigurationTest(unittest.TestCase):
 def production_values() -> dict[str, object]:
     return {
         "auth_mode": "production",
+        "auth_provider": "oidc",
         "oidc_issuer": "https://issuer.example.test",
         "oidc_client_id": "cs2-coach",
         "oidc_authorization_endpoint": "https://issuer.example.test/authorize",

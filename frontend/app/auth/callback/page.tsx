@@ -8,7 +8,7 @@ import { sanitizeReturnTo } from "@/lib/auth";
 
 export default function AuthCallbackPage() {
   const router = useRouter();
-  const { refreshSession, signIn } = useAuth();
+  const { provider, refreshSession, signIn } = useAuth();
   const [failed, setFailed] = useState(false);
 
   useEffect(() => {
@@ -48,7 +48,7 @@ export default function AuthCallbackPage() {
             type="button"
             onClick={() => signIn("/dashboard")}
           >
-            Sign in again
+            {provider === "steam" ? "Sign in with Steam again" : "Sign in again"}
           </button>
         ) : null}
       </section>

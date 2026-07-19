@@ -6,13 +6,13 @@ import type { ReactNode } from "react";
 import { useAuth } from "@/components/auth/AuthProvider";
 
 export function AuthBoundary({ children }: { children: ReactNode }) {
-  const { refreshSession, signIn, state } = useAuth();
+  const { provider, refreshSession, signIn, state } = useAuth();
 
   if (state.status === "authenticated") {
     return children;
   }
 
-  const copy = authBoundaryCopy(state.status, state.message);
+  const copy = authBoundaryCopy(state.status, provider, state.message);
 
   return (
     <main className="auth-shell">
@@ -27,7 +27,7 @@ export function AuthBoundary({ children }: { children: ReactNode }) {
         {state.status === "anonymous" || state.status === "expired" ? (
           <button className="primary-button" type="button" onClick={() => signIn()}>
             <LogIn size={16} />
-            Sign in
+            {provider === "steam" ? "Sign in with Steam" : "Sign in"}
           </button>
         ) : null}
         {state.status === "error" ? (
@@ -45,7 +45,11 @@ export function AuthBoundary({ children }: { children: ReactNode }) {
   );
 }
 
-function authBoundaryCopy(status: string, message?: string) {
+function authBoundaryCopy(
+  status: string,
+  provider: "steam" | "oidc",
+  message?: string
+) {
   if (status === "checking") {
     return {
       title: "Checking your session",
@@ -65,7 +69,10 @@ function authBoundaryCopy(status: string, message?: string) {
     };
   }
   return {
-    title: "Sign in to CS2 Demo Coach",
-    message: "Your demo library, replay data, coaching, and media are private."
+    title: provider === "steam" ? "Sign in with Steam" : "Sign in",
+    message:
+      provider === "steam"
+        ? "Steam confirms your SteamID64; your private review data stays owner-scoped."
+        : "Continue with the configured identity provider to open your private demo library."
   };
 }

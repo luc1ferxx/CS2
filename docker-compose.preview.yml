@@ -1,21 +1,25 @@
 # Preview override for a built frontend image.
-# Hosted preview is a production-auth shape. Required OIDC and service
-# credentials have no development fallback.
+# Hosted preview is a production-auth shape. Steam OpenID is the default login
+# provider; server and storage credentials have no development fallback.
 services:
   api:
     environment:
       AUTH_MODE: production
+      AUTH_PROVIDER: ${AUTH_PROVIDER:?Set the production identity provider to steam or oidc}
       BACKEND_PUBLIC_URL: ${BACKEND_PUBLIC_URL:?Set the public HTTPS API origin}
       FRONTEND_PUBLIC_URL: ${FRONTEND_PUBLIC_URL:?Set the public HTTPS frontend origin}
       CORS_ORIGINS: ${CORS_ORIGINS:?Set the exact public HTTPS frontend origin}
-      OIDC_ISSUER: ${OIDC_ISSUER:?Set the trusted OIDC issuer}
-      OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:?Set the OIDC client id}
+      STEAM_AUTH_STATE_COOKIE_NAME: ${STEAM_AUTH_STATE_COOKIE_NAME:-__Host-cs2_steam_state}
+      STEAM_OPENID_NONCE_TTL_SECONDS: ${STEAM_OPENID_NONCE_TTL_SECONDS:-600}
+      STEAM_WEB_API_KEY: ${STEAM_WEB_API_KEY:-}
+      OIDC_ISSUER: ${OIDC_ISSUER:-}
+      OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-}
       OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:-}
       OIDC_ALLOWED_ALGORITHMS: ${OIDC_ALLOWED_ALGORITHMS:-RS256,ES256}
-      OIDC_AUTHORIZATION_ENDPOINT: ${OIDC_AUTHORIZATION_ENDPOINT:?Set the OIDC authorization endpoint}
-      OIDC_TOKEN_ENDPOINT: ${OIDC_TOKEN_ENDPOINT:?Set the OIDC token endpoint}
-      OIDC_JWKS_URL: ${OIDC_JWKS_URL:?Set the OIDC JWKS URL}
-      OIDC_REDIRECT_URI: ${OIDC_REDIRECT_URI:?Set the API OIDC callback URL}
+      OIDC_AUTHORIZATION_ENDPOINT: ${OIDC_AUTHORIZATION_ENDPOINT:-}
+      OIDC_TOKEN_ENDPOINT: ${OIDC_TOKEN_ENDPOINT:-}
+      OIDC_JWKS_URL: ${OIDC_JWKS_URL:-}
+      OIDC_REDIRECT_URI: ${OIDC_REDIRECT_URI:-}
       AUTH_COOKIE_SECURE: "1"
       AUTH_SESSION_COOKIE_NAME: ${AUTH_SESSION_COOKIE_NAME:-__Host-cs2_session}
       AUTH_STATE_COOKIE_NAME: ${AUTH_STATE_COOKIE_NAME:-__Host-cs2_oidc_state}
@@ -63,6 +67,8 @@ services:
       dockerfile: Dockerfile.preview
       args:
         NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:?Set the public HTTPS API origin}
+        NEXT_PUBLIC_AUTH_PROVIDER: ${AUTH_PROVIDER:?Set the production identity provider to steam or oidc}
     command: npm run start -- --hostname 0.0.0.0 --port 3000
     environment:
       NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:?Set the public HTTPS API origin}
+      NEXT_PUBLIC_AUTH_PROVIDER: ${AUTH_PROVIDER:?Set the production identity provider to steam or oidc}

@@ -2,14 +2,14 @@
 
 这是一个网站型 CS2 demo 复盘与规则教练原型。当前项目重点已经从单纯 mock 流程推进到“真实 `.dem` 解析 spike + Demo Library + 回放复盘界面 + deterministic coaching + render clip 合约”。
 
-当前版本是规则型 2D 公测 V1 的 Stage 3：在 Stage 2 的 provider-neutral OIDC、Redis opaque browser session、owner 授权和私有视频字节访问之上，加入 provider-neutral private artifact storage、`.dem` quarantine/intake/promotion、完整性 metadata 和确定性清理。仍没有可靠任务恢复、parser 隔离、生产 observability/backup、OpenAI 调用或真实 CS2 自动渲染。核心价值是验证 `.dem` 到 2D replay/coaching 的闭环，以及后续受控基础设施的交接边界。
+当前版本保留规则型 2D 公测 V1 Stage 3 的 artifact/replay 能力，并增加 Steam-first 账号基础：Steam OpenID 2.0、正式 account/external identity 映射、Redis opaque browser session 和 authenticated `owner_id`。本阶段尚未加入比赛历史授权、近期比赛同步或自动 Demo 获取。仍没有可靠任务恢复、parser 隔离、生产 observability/backup、OpenAI 调用或真实 CS2 自动渲染。
 
 ## 当前状态
 
 已经具备的能力：
 
 - Docker Compose 本地栈：`frontend`、`api`、`worker`、`postgres`、`redis`。
-- Production identity boundary：OIDC Authorization Code + PKCE/JWKS 验证后创建 Redis-backed opaque `HttpOnly` session；所有 user API 从可信 session 派生稳定的 `owner_id`。`DEV_USER_ID` / `X-Dev-User-Id` 仅在显式 development/test mode 可用。
+- Production identity boundary：Steam-first 部署显式选择 Steam OpenID 2.0 验证 SteamID64，再通过 `accounts` / `external_identities` 创建 Redis-backed opaque `HttpOnly` session；所有 user API 从可信 session 派生稳定的 `owner_id`。原 OIDC 实现仅作为 `AUTH_PROVIDER=oidc` 兼容路径；production 缺少 provider 时 fail closed，`DEV_USER_ID` / `X-Dev-User-Id` 仅在显式 development/test mode 可用。
 - `/dashboard` Demo Library：搜索、状态/地图筛选、排序、bounded 上传/任务轮询、重命名、软归档、空/失败/无结果状态、渲染状态摘要。
 - Upload/parser observability：demo list/detail responses 包含 compact ingestion snapshot，失败解析有短错误、attempts、stale/active/retryable 状态，并支持 owner-scoped retry。
 - Diagnostics boundary：`GET /diagnostics` 只在 development/test 提供 compact 排障信息，production 返回 `404`；`GET /demos/{demo_id}/diagnostics` 始终要求登录并按 owner 隔离。public `GET /health` 只返回 coarse status。
@@ -30,7 +30,7 @@
 
 明确没有做的事情：
 
-- 不提供密码、账号资料、团队或 provider-specific 管理 UI；浏览器不处理 provider token。
+- 不提供密码、Steam Guard、团队或通用账号管理 UI；只提供紧凑的 Steam 登录、当前账号和退出入口，浏览器不处理 provider token。
 - 不在 API 或 worker 容器里启动 CS2、Steam、OBS、ffmpeg。
 - 不控制用户电脑、不读取用户上传后的本地文件、不录屏。
 - 不把用户上传 MP4 设计成主产品路径。
@@ -59,7 +59,7 @@ user uploads .dem
 ```text
 frontend (Next.js)
   -> FastAPI API
-    -> PostgreSQL metadata: owner-scoped demos, demo_jobs, coaching_events
+    -> PostgreSQL metadata: accounts, external identities, owner-scoped demos, demo_jobs, coaching_events
     -> Redis queue: parse/render job dispatch
     -> artifact storage service: uploads, replay blobs, summaries, videos
   -> worker process
@@ -76,9 +76,11 @@ Artifact storage 通过 `backend/app/services/storage.py` 的 provider-neutral c
 
 ## Production Identity and Owner Boundary
 
-Production uses provider-neutral OIDC Authorization Code flow with PKCE. The backend validates state, nonce, issuer, audience, timestamps, the configured `RS256`/`ES256` asymmetric allow-list, and JWKS, then maps the verified `(issuer, subject)` pair to a stable opaque `owner_v1_...` value that fits the existing `owner_id` column. It stores an opaque session in Redis and sends only an `HttpOnly`, `SameSite=Lax`, `Secure`, `__Host-` production cookie to the browser. Production frontend/API use one exact HTTPS origin; `CORS_ORIGINS` must contain only that origin, and unsafe browser mutations require the same exact `Origin`. All browser-private responses disable shared caching and vary on cookie/origin. Provider tokens, raw subject/issuer claims, session tokens, storage keys, unknown internal replay fields, local paths, and worker-provided raw error text are not user-facing payloads or application logs; render failures use stable safe codes and copy.
+The Steam-first production path explicitly sets `AUTH_PROVIDER=steam`; production startup rejects a missing provider instead of silently changing identity authority. `GET /auth/steam/login` starts Steam OpenID 2.0; the backend pins Valve's provider endpoint and verifies state, exact realm/`return_to`, claimed-ID XRDS discovery, required signed fields, SteamID64, nonce freshness/replay, and the assertion through direct `check_authentication` before touching account or session state. Steam OpenID only supplies SteamID64. Optional nickname/avatar enrichment uses the server-only `STEAM_WEB_API_KEY`; failure degrades to a generic account label and never fails login.
 
-API 里的 demo、upload、manual video、coaching/replay read、library mutation、user-facing render job actions 和 private media 都从 session 派生 owner 并复用现有 owner-scoped queries。`GET /auth/login` starts the OIDC flow; the server-only `/auth/oidc/callback` creates the session and returns through the trusted frontend `/auth/callback` page; `GET /auth/session` checks it; `POST /auth/logout` revokes it.
+`accounts` owns stable opaque `owner_v1_...` identifiers. `external_identities` enforces unique `(provider, subject)` and unique `(owner_id, provider)` mappings. There is no implicit profile-based merge or Phase 1 identity-binding endpoint. A future binding flow must re-authenticate both sides and reject an identity already owned by another account. The existing OIDC implementation remains available only when explicitly selected with `AUTH_PROVIDER=oidc` and resolves through the same account/session boundary.
+
+After verification, the backend creates one opaque Redis session and sends only an `HttpOnly`, `SameSite=Lax`, `Secure`, `__Host-` production cookie. API demo/upload/replay/coaching/library/render/private-media routes continue deriving owner from that session and reuse their existing owner-scoped queries. `GET /auth/me` returns compact display metadata without SteamID64 or `owner_id`; `POST /auth/logout` revokes the session.
 
 本地测试仍可显式设置 `AUTH_MODE=development` 或 `AUTH_MODE=test`，用 `DEV_USER_ID` 和请求头模拟 owner：
 
@@ -86,7 +88,7 @@ API 里的 demo、upload、manual video、coaching/replay read、library mutatio
 X-Dev-User-Id: owner-a
 ```
 
-该 header 在 production mode 被忽略或拒绝，绝不作为 production identity fallback。完整身份、cookie、owner mapping、private media 和 acceptance matrix 见 `docs/production_auth_owner_private_media_v1.md`。
+该 header 在 production mode 被忽略或拒绝，绝不作为 production identity fallback。Steam/account 合同见 `docs/steam_auth_accounts_v1.md`；共享 cookie、owner、private media 和 acceptance matrix 见 `docs/production_auth_owner_private_media_v1.md`。
 
 ## 项目结构
 
@@ -114,6 +116,8 @@ render-worker/
   adapters/               fake video and manual CS2 operator adapters
 
 docs/
+  steam_auth_accounts_v1.md
+  production_auth_owner_private_media_v1.md
   deployment_target_decision_v1.md
   internal_preview_packaging_v1.md
   release_candidate_qa_v1.md
@@ -602,10 +606,11 @@ Core:
 
 - `GET /health`
 - `GET /diagnostics` (development/test only; production returns `404`)
-- `GET /auth/login`
-- `GET /auth/oidc/callback`
-- `GET /auth/session`
+- `GET /auth/steam/login`
+- `GET /auth/steam/callback`
+- `GET /auth/me`
 - `POST /auth/logout`
+- `GET /auth/login`, `GET /auth/oidc/callback`, `GET /auth/session` (`AUTH_PROVIDER=oidc` / legacy frontend compatibility)
 - `GET /demos`
 - `PATCH /demos/{demo_id}`
 - `POST /demos/{demo_id}/archive`
@@ -639,28 +644,27 @@ Render worker:
 
 ## Configuration
 
-身份和 private media 的完整合同见 `docs/production_auth_owner_private_media_v1.md`；runtime deployment 说明见 `docs/deployment_readiness_v1.md`，Cloud Preview runbook 见 `docs/cloud_preview_deploy_v1.md`。关键环境变量：
+Steam/account 合同见 `docs/steam_auth_accounts_v1.md`；共享 owner/private media 合同见 `docs/production_auth_owner_private_media_v1.md`；runtime deployment 说明见 `docs/deployment_readiness_v1.md`，Cloud Preview runbook 见 `docs/cloud_preview_deploy_v1.md`。关键环境变量：
 
 | Name | Default | Used by |
 | --- | --- | --- |
 | `NEXT_PUBLIC_API_BASE_URL` | `http://localhost:8000` | frontend browser API/media URL |
+| `NEXT_PUBLIC_AUTH_PROVIDER` | `steam` | public frontend login label/path; must match server `AUTH_PROVIDER` |
 | `AUTH_MODE` | unset (required) | backend identity mode: `development`, `test`, or `production` |
+| `AUTH_PROVIDER` | unset (required in production) | production browser identity provider: `steam` or compatibility `oidc`; local Compose sets `steam` |
 | `FRONTEND_PUBLIC_URL` | `http://localhost:3000` | server-trusted frontend redirect origin; must equal the HTTPS API origin in production |
 | `BACKEND_PUBLIC_URL` | `http://localhost:8000` | backend public origin; same exact origin as frontend in production |
-| `OIDC_ISSUER` | unset | exact production issuer |
-| `OIDC_CLIENT_ID` | unset | production OIDC client/audience |
-| `OIDC_CLIENT_SECRET` | unset | optional server-side confidential-client secret |
-| `OIDC_ALLOWED_ALGORITHMS` | `RS256,ES256` | supported asymmetric signature allow-list |
-| `OIDC_AUTHORIZATION_ENDPOINT` | unset | production authorization endpoint |
-| `OIDC_TOKEN_ENDPOINT` | unset | production server-side code exchange endpoint |
-| `OIDC_JWKS_URL` | unset | production trusted signing keys |
-| `OIDC_REDIRECT_URI` | unset | production backend `/auth/oidc/callback` URL |
 | `AUTH_COOKIE_SECURE` | `false` | must be enabled in production |
 | `AUTH_SESSION_COOKIE_NAME` | `__Host-cs2_session` | opaque session cookie name |
-| `AUTH_STATE_COOKIE_NAME` | `__Host-cs2_oidc_state` | short-lived OIDC state cookie name |
+| `STEAM_AUTH_STATE_COOKIE_NAME` | `__Host-cs2_steam_state` | short-lived Steam state cookie name |
+| `STEAM_OPENID_NONCE_TTL_SECONDS` | `600` | Steam assertion freshness/replay reservation window |
+| `STEAM_WEB_API_KEY` | unset | optional server-only GetPlayerSummaries key; never frontend/worker-visible |
 | `AUTH_SESSION_TTL_SECONDS` | `3600` | bounded Redis/browser session lifetime |
 | `AUTH_LOGIN_TTL_SECONDS` | `300` | bounded one-time login attempt lifetime |
-| `AUTH_CLOCK_SKEW_SECONDS` | `30` | bounded OIDC timestamp leeway |
+| `AUTH_CLOCK_SKEW_SECONDS` | `30` | bounded identity timestamp leeway |
+| `OIDC_ISSUER`, `OIDC_CLIENT_ID` | unset | required only when `AUTH_PROVIDER=oidc` |
+| `OIDC_AUTHORIZATION_ENDPOINT`, `OIDC_TOKEN_ENDPOINT`, `OIDC_JWKS_URL`, `OIDC_REDIRECT_URI` | unset | legacy-compatible OIDC endpoints, required only when selected |
+| `OIDC_CLIENT_SECRET`, `OIDC_ALLOWED_ALGORITHMS`, `AUTH_STATE_COOKIE_NAME` | unset / existing defaults | server-only OIDC compatibility configuration |
 | `CORS_ORIGINS` | `http://localhost:3000,http://127.0.0.1:3000` | backend API; production requires only the exact `FRONTEND_PUBLIC_URL` origin |
 | `DATABASE_URL` | `postgresql+psycopg2://cs2coach:cs2coach@localhost:5432/cs2coach` | API, worker |
 | `REDIS_URL` | `redis://localhost:6379/0` | API, worker |
@@ -696,7 +700,7 @@ Render worker:
 | `SAMPLE_DEMO_NAME` | unset | optional display name for smoke sample |
 | `REQUIRE_SAMPLE_DEMO` | `0` | make smoke fail when no sample is configured |
 
-Docker Compose uses service names inside containers (`postgres`, `redis`) and host-facing URLs for the browser (`NEXT_PUBLIC_API_BASE_URL=http://localhost:8000`). Local Compose must explicitly use `AUTH_MODE=development` and may use the local adapter. Production requires the complete well-formed HTTPS OIDC/`__Host-` cookie/single-origin/CORS contract, a non-default render-worker credential, and a private S3-compatible artifact configuration or startup fails closed. The queue worker validates its narrower auth contract plus the same production storage boundary, without receiving browser OIDC/client/cookie secrets. Local artifacts default under `ARTIFACT_STORAGE_ROOT=/data`; production credentials may come from the runtime credential chain and must never enter `NEXT_PUBLIC_*`, URLs, source, logs, or checked-in env files. Hosted preview builds can use `docker-compose.preview.yml`; rebuild the frontend image whenever `NEXT_PUBLIC_API_BASE_URL` changes because Next.js bundles that public origin at build time.
+Docker Compose uses service names inside containers (`postgres`, `redis`) and host-facing URLs for the browser (`NEXT_PUBLIC_API_BASE_URL=http://localhost:8000`). Local Compose must explicitly use `AUTH_MODE=development` and may use the local adapter. Production requires an explicit supported provider, the complete HTTPS/`__Host-` cookie/single-origin/CORS contract, a non-default render-worker credential, and a private S3-compatible artifact configuration or startup fails closed. Steam realm/callback are derived from `BACKEND_PUBLIC_URL`; OIDC fields are required only when `AUTH_PROVIDER=oidc`. The queue worker validates its narrower auth/storage contract and never receives Steam/OIDC browser secrets. Local artifacts default under `ARTIFACT_STORAGE_ROOT=/data`; production credentials must never enter `NEXT_PUBLIC_*`, URLs, source, logs, or checked-in env files.
 
 ## Deploy Smoke Checklist
 
@@ -705,7 +709,7 @@ Minimal local smoke for a clean environment. For internal preview handoff, use `
 1. `docker compose up --build`
 2. `curl http://localhost:8000/health`
 3. In explicit development mode, `curl http://localhost:8000/diagnostics`; in production, confirm it returns `404`
-4. Open `http://localhost:3000/dashboard`; production should require OIDC sign-in, while development uses the explicit local harness
+4. Open `http://localhost:3000/dashboard`; production should require Steam sign-in (or explicitly selected compatibility OIDC), while development uses the explicit local harness
 5. Create a mock upload and wait for completion
 6. Upload a real `.dem` if a sample is available
 7. Open a demo detail page
@@ -719,7 +723,7 @@ Minimal local smoke for a clean environment. For internal preview handoff, use `
 
 ## Current Limitations
 
-- Production identity is provider-neutral OIDC; selecting and provisioning a concrete provider remains a deployment decision, not an application-code dependency.
+- Steam-first production explicitly selects Steam OpenID 2.0, but real HTTPS callback/provider availability and optional profile enrichment still require deployment smoke. No match-history authorization, match sync, sharing-code storage, or automatic Demo download exists in Phase 1.
 - Redis-backed opaque sessions require Redis availability; Stage 4 has not yet added durable job delivery or crash recovery.
 - Development/test 可使用 private local adapter；production 必须提供 private S3-compatible storage，但具体 bucket/IAM/credential provisioning 不由仓库创建。
 - Parser frame 是采样数据，不是完整 tick density。

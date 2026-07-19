@@ -10,11 +10,18 @@ export type AuthStatus =
 export interface AuthState {
   status: AuthStatus;
   message?: string;
+  account?: AuthAccount;
+}
+
+export interface AuthAccount {
+  displayName: string;
+  avatarUrl: string | null;
+  provider: "steam" | "oidc" | "development";
 }
 
 export type AuthAction =
   | { type: "unauthorized" }
-  | { type: "sessionAuthenticated" }
+  | { type: "sessionAuthenticated"; account: AuthAccount }
   | { type: "signedOut" }
   | { type: "sessionFailed"; message: string };
 
@@ -29,7 +36,7 @@ export function reduceAuthState(
     return { status: "error", message: action.message };
   }
   if (action.type === "sessionAuthenticated") {
-    return { status: "authenticated" };
+    return { status: "authenticated", account: action.account };
   }
   if (action.type === "unauthorized") {
     return state.status === "authenticated" || state.status === "expired"

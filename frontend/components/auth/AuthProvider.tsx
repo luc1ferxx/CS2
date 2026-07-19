@@ -12,7 +12,8 @@ import {
 
 import {
   getAuthLoginUrl,
-  getAuthSession,
+  getAuthMe,
+  getConfiguredAuthProvider,
   isApiError,
   logoutAuthSession,
   onUnauthorized
@@ -25,6 +26,7 @@ import {
 
 interface AuthContextValue {
   state: AuthState;
+  provider: "steam" | "oidc";
   refreshSession: () => Promise<boolean>;
   signIn: (returnTo?: string) => void;
   signOut: () => Promise<void>;
@@ -34,11 +36,12 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(reduceAuthState, { status: "checking" });
+  const provider = getConfiguredAuthProvider();
 
   const refreshSession = useCallback(async () => {
     try {
-      await getAuthSession();
-      dispatch({ type: "sessionAuthenticated" });
+      const session = await getAuthMe();
+      dispatch({ type: "sessionAuthenticated", account: session.account });
       return true;
     } catch (error) {
       if (isApiError(error) && error.status === 401) {
@@ -83,8 +86,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const value = useMemo(
-    () => ({ state, refreshSession, signIn, signOut }),
-    [refreshSession, signIn, signOut, state]
+    () => ({ state, provider, refreshSession, signIn, signOut }),
+    [provider, refreshSession, signIn, signOut, state]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

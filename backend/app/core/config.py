@@ -7,6 +7,7 @@ from urllib.parse import urlparse
 
 DEFAULT_ARTIFACT_STORAGE_ROOT = Path(os.getenv("ARTIFACT_STORAGE_ROOT", "/data"))
 SUPPORTED_AUTH_MODES = {"development", "test", "production"}
+SUPPORTED_AUTH_PROVIDERS = {"oidc", "steam"}
 SUPPORTED_OIDC_ALGORITHMS = {"RS256", "ES256"}
 SUPPORTED_ARTIFACT_STORAGE_BACKENDS = {"local", "s3"}
 MAX_STAGE3_DEMO_UPLOAD_BYTES = 1024 * 1024 * 1024
@@ -53,6 +54,7 @@ def _validate_https_url(env_name: str, value: str) -> None:
 @dataclass(frozen=True)
 class Settings:
     auth_mode: str = os.getenv("AUTH_MODE", "").strip().lower()
+    auth_provider: str = os.getenv("AUTH_PROVIDER", "").strip().lower()
     oidc_issuer: str = _base_url_from_env("OIDC_ISSUER")
     oidc_client_id: str = os.getenv("OIDC_CLIENT_ID", "").strip()
     oidc_client_secret: str = os.getenv("OIDC_CLIENT_SECRET", "").strip()
@@ -73,6 +75,13 @@ class Settings:
     auth_state_cookie_name: str = os.getenv(
         "AUTH_STATE_COOKIE_NAME", "__Host-cs2_oidc_state"
     ).strip()
+    steam_auth_state_cookie_name: str = os.getenv(
+        "STEAM_AUTH_STATE_COOKIE_NAME", "__Host-cs2_steam_state"
+    ).strip()
+    steam_openid_nonce_ttl_seconds: int = int(
+        os.getenv("STEAM_OPENID_NONCE_TTL_SECONDS", "600")
+    )
+    steam_web_api_key: str = os.getenv("STEAM_WEB_API_KEY", "").strip()
     auth_session_ttl_seconds: int = int(os.getenv("AUTH_SESSION_TTL_SECONDS", "3600"))
     auth_login_ttl_seconds: int = int(os.getenv("AUTH_LOGIN_TTL_SECONDS", "300"))
     auth_clock_skew_seconds: int = int(os.getenv("AUTH_CLOCK_SKEW_SECONDS", "30"))
@@ -162,35 +171,26 @@ class Settings:
             if algorithm.strip()
         ]
 
+    @property
+    def steam_openid_realm(self) -> str:
+        return f"{self.backend_public_url}/"
+
+    @property
+    def steam_openid_callback_url(self) -> str:
+        return f"{self.backend_public_url}/auth/steam/callback"
+
     def validate_runtime_configuration(self) -> None:
         self._validate_explicit_auth_mode()
+        self._validate_auth_provider()
         if self.auth_mode != "production":
             self._validate_artifact_storage_configuration()
             return
 
-        required = (
-            ("OIDC_ISSUER", self.oidc_issuer),
-            ("OIDC_CLIENT_ID", self.oidc_client_id),
-            ("OIDC_AUTHORIZATION_ENDPOINT", self.oidc_authorization_endpoint),
-            ("OIDC_TOKEN_ENDPOINT", self.oidc_token_endpoint),
-            ("OIDC_JWKS_URL", self.oidc_jwks_url),
-            ("OIDC_REDIRECT_URI", self.oidc_redirect_uri),
-            ("FRONTEND_PUBLIC_URL", self.frontend_public_url),
-        )
-        for env_name, value in required:
-            if not value:
-                raise RuntimeError(f"{env_name} is required when AUTH_MODE=production")
-
-        https_urls = (
-            ("OIDC_ISSUER", self.oidc_issuer),
-            ("OIDC_AUTHORIZATION_ENDPOINT", self.oidc_authorization_endpoint),
-            ("OIDC_TOKEN_ENDPOINT", self.oidc_token_endpoint),
-            ("OIDC_JWKS_URL", self.oidc_jwks_url),
-            ("OIDC_REDIRECT_URI", self.oidc_redirect_uri),
-            ("FRONTEND_PUBLIC_URL", self.frontend_public_url),
-        )
-        for env_name, value in https_urls:
-            _validate_https_url(env_name, value)
+        if self.auth_provider == "oidc":
+            self._validate_production_oidc_configuration()
+        if not self.frontend_public_url:
+            raise RuntimeError("FRONTEND_PUBLIC_URL is required when AUTH_MODE=production")
+        _validate_https_url("FRONTEND_PUBLIC_URL", self.frontend_public_url)
 
         self._validate_production_render_worker_token()
         if not self.auth_cookie_secure:
@@ -199,6 +199,24 @@ class Settings:
             raise RuntimeError("AUTH_SESSION_TTL_SECONDS must be between 1 and 86400")
         if not 1 <= self.auth_login_ttl_seconds <= 600:
             raise RuntimeError("AUTH_LOGIN_TTL_SECONDS must be between 1 and 600")
+        if not 0 <= self.auth_clock_skew_seconds <= 300:
+            raise RuntimeError("AUTH_CLOCK_SKEW_SECONDS must be between 0 and 300")
+        if self.auth_provider == "steam":
+            if not (
+                self.auth_login_ttl_seconds + self.auth_clock_skew_seconds
+                <= self.steam_openid_nonce_ttl_seconds
+                <= 3_600
+            ):
+                raise RuntimeError(
+                    "STEAM_OPENID_NONCE_TTL_SECONDS must cover login TTL and clock skew "
+                    "and be at most 3600"
+                )
+            if self.steam_web_api_key and not re.fullmatch(
+                r"[A-Fa-f0-9]{32}", self.steam_web_api_key
+            ):
+                raise RuntimeError(
+                    "STEAM_WEB_API_KEY must be a 32-character hexadecimal key"
+                )
         if not self.cors_origins:
             raise RuntimeError("CORS_ORIGINS must contain at least one browser origin")
         for origin in self.cors_origins:
@@ -221,21 +239,23 @@ class Settings:
             raise RuntimeError(
                 "CORS_ORIGINS must exactly match FRONTEND_PUBLIC_URL in production"
             )
-        if not self.oidc_allowed_algorithms or not set(
-            self.oidc_allowed_algorithms
-        ).issubset(SUPPORTED_OIDC_ALGORITHMS):
-            raise RuntimeError(
-                "OIDC_ALLOWED_ALGORITHMS must contain only supported asymmetric algorithms"
-            )
         if not self.auth_session_cookie_name.startswith("__Host-"):
             raise RuntimeError("AUTH_SESSION_COOKIE_NAME must use the __Host- prefix")
-        if not self.auth_state_cookie_name.startswith("__Host-"):
-            raise RuntimeError("AUTH_STATE_COOKIE_NAME must use the __Host- prefix")
-        if self.auth_session_cookie_name == self.auth_state_cookie_name:
+        active_state_cookie_name = (
+            self.auth_state_cookie_name
+            if self.auth_provider == "oidc"
+            else self.steam_auth_state_cookie_name
+        )
+        if not active_state_cookie_name.startswith("__Host-"):
+            state_cookie_env = (
+                "AUTH_STATE_COOKIE_NAME"
+                if self.auth_provider == "oidc"
+                else "STEAM_AUTH_STATE_COOKIE_NAME"
+            )
+            raise RuntimeError(f"{state_cookie_env} must use the __Host- prefix")
+        if self.auth_session_cookie_name == active_state_cookie_name:
             raise RuntimeError("Authentication cookie names must be distinct")
-        if not 0 <= self.auth_clock_skew_seconds <= 300:
-            raise RuntimeError("AUTH_CLOCK_SKEW_SECONDS must be between 0 and 300")
-
+        _validate_https_url("BACKEND_PUBLIC_URL", self.backend_public_url)
         backend_url = urlparse(self.backend_public_url)
         if (
             backend_url.scheme != "https"
@@ -247,17 +267,6 @@ class Settings:
         ):
             raise RuntimeError("BACKEND_PUBLIC_URL must be an https origin in production")
 
-        redirect_url = urlparse(self.oidc_redirect_uri)
-        if (
-            _url_origin(self.oidc_redirect_uri) != _url_origin(self.backend_public_url)
-            or redirect_url.path != "/auth/oidc/callback"
-            or redirect_url.params
-            or redirect_url.query
-            or redirect_url.fragment
-        ):
-            raise RuntimeError(
-                "OIDC_REDIRECT_URI must be the API origin followed by /auth/oidc/callback"
-            )
         if _url_origin(self.frontend_public_url) != _url_origin(self.backend_public_url):
             raise RuntimeError(
                 "FRONTEND_PUBLIC_URL must share the exact API origin in production"
@@ -344,6 +353,57 @@ class Settings:
         if self.auth_mode not in SUPPORTED_AUTH_MODES:
             raise RuntimeError(
                 "AUTH_MODE must be explicitly set to development, test, or production"
+            )
+
+    def _validate_auth_provider(self) -> None:
+        if self.auth_mode == "production" and self.auth_provider not in SUPPORTED_AUTH_PROVIDERS:
+            raise RuntimeError(
+                "AUTH_PROVIDER must be explicitly set to steam or oidc in production"
+            )
+        if self.auth_mode != "production" and self.auth_provider not in {
+            "",
+            *SUPPORTED_AUTH_PROVIDERS,
+        }:
+            raise RuntimeError("AUTH_PROVIDER must be empty, steam, or oidc")
+
+    def _validate_production_oidc_configuration(self) -> None:
+        required = (
+            ("OIDC_ISSUER", self.oidc_issuer),
+            ("OIDC_CLIENT_ID", self.oidc_client_id),
+            ("OIDC_AUTHORIZATION_ENDPOINT", self.oidc_authorization_endpoint),
+            ("OIDC_TOKEN_ENDPOINT", self.oidc_token_endpoint),
+            ("OIDC_JWKS_URL", self.oidc_jwks_url),
+            ("OIDC_REDIRECT_URI", self.oidc_redirect_uri),
+        )
+        for env_name, value in required:
+            if not value:
+                raise RuntimeError(f"{env_name} is required when AUTH_PROVIDER=oidc")
+        https_urls = (
+            ("OIDC_ISSUER", self.oidc_issuer),
+            ("OIDC_AUTHORIZATION_ENDPOINT", self.oidc_authorization_endpoint),
+            ("OIDC_TOKEN_ENDPOINT", self.oidc_token_endpoint),
+            ("OIDC_JWKS_URL", self.oidc_jwks_url),
+            ("OIDC_REDIRECT_URI", self.oidc_redirect_uri),
+        )
+        for env_name, value in https_urls:
+            _validate_https_url(env_name, value)
+        if not self.oidc_allowed_algorithms or not set(
+            self.oidc_allowed_algorithms
+        ).issubset(SUPPORTED_OIDC_ALGORITHMS):
+            raise RuntimeError(
+                "OIDC_ALLOWED_ALGORITHMS must contain only supported asymmetric algorithms"
+            )
+        redirect_url = urlparse(self.oidc_redirect_uri)
+        if (
+            _url_origin(self.oidc_redirect_uri) != _url_origin(self.backend_public_url)
+            or redirect_url.path != "/auth/oidc/callback"
+            or redirect_url.params
+            or redirect_url.query
+            or redirect_url.fragment
+        ):
+            raise RuntimeError(
+                "BACKEND_PUBLIC_URL and OIDC_REDIRECT_URI must share the API origin, "
+                "with /auth/oidc/callback as the callback path"
             )
 
     def _validate_production_render_worker_token(self) -> None:

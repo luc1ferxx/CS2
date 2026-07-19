@@ -1,9 +1,15 @@
 import type { CoachingEvent } from "@/types/coaching";
 import type { DemoStatus, DemoSummary } from "@/types/demo";
 import type { ReplayData, ReplayVideo } from "@/types/replay";
+import type { AuthAccount } from "@/lib/auth";
 
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
+const AUTH_PROVIDER = configuredAuthProvider(
+  process.env.NEXT_PUBLIC_AUTH_PROVIDER ?? "steam"
+);
+
+export type ConfiguredAuthProvider = "steam" | "oidc";
 
 export type ApiErrorCode = "unauthenticated" | "request_failed";
 
@@ -107,9 +113,9 @@ export interface DemoUpdateRequest {
   archived?: boolean;
 }
 
-export interface AuthSession {
+export interface AuthMe {
   authenticated: true;
-  expires_at?: string | null;
+  account: AuthAccount;
 }
 
 async function requestJson<T>(
@@ -160,8 +166,8 @@ export function listDemos(params: DemoListParams = {}): Promise<DemoSummary[]> {
   return requestJson<DemoSummary[]>(`/demos${suffix}`);
 }
 
-export function getAuthSession(): Promise<AuthSession> {
-  return requestJson<AuthSession>("/auth/session");
+export function getAuthMe(): Promise<AuthMe> {
+  return requestJson<AuthMe>("/auth/me");
 }
 
 export async function logoutAuthSession(): Promise<void> {
@@ -177,11 +183,23 @@ export async function logoutAuthSession(): Promise<void> {
 
 export function getAuthLoginUrl(returnTo: string): string {
   const query = new URLSearchParams({ return_to: returnTo });
-  return `${API_BASE_URL}/auth/login?${query.toString()}`;
+  const path = AUTH_PROVIDER === "steam" ? "/auth/steam/login" : "/auth/login";
+  return `${API_BASE_URL}${path}?${query.toString()}`;
+}
+
+export function getConfiguredAuthProvider(): ConfiguredAuthProvider {
+  return AUTH_PROVIDER;
 }
 
 export function createMockUpload(): Promise<DemoSummary> {
   return requestJson<DemoSummary>("/uploads/mock", { method: "POST" });
+}
+
+function configuredAuthProvider(value: string): ConfiguredAuthProvider {
+  if (value === "steam" || value === "oidc") {
+    return value;
+  }
+  throw new Error("NEXT_PUBLIC_AUTH_PROVIDER must be steam or oidc");
 }
 
 export function createDemoUpload(file: File): Promise<DemoSummary> {

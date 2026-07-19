@@ -30,6 +30,15 @@ class SessionGrant:
     return_to: str
 
 
+@dataclass(frozen=True)
+class VerifiedLogin:
+    provider: str
+    subject: str
+    preferred_owner_id: str
+    max_age: int
+    return_to: str
+
+
 class AuthenticationError(RuntimeError):
     pass
 
@@ -82,6 +91,19 @@ class AuthService:
         )
 
     def complete_login(self, code: str, state: str, state_cookie: str | None) -> SessionGrant:
+        verified = self.verify_login(code, state, state_cookie)
+        return self.create_session(
+            verified.preferred_owner_id,
+            max_age=verified.max_age,
+            return_to=verified.return_to,
+        )
+
+    def verify_login(
+        self,
+        code: str,
+        state: str,
+        state_cookie: str | None,
+    ) -> VerifiedLogin:
         if (
             not code
             or len(code) > 4096
@@ -130,24 +152,50 @@ class AuthService:
         except Exception as exc:
             raise AuthenticationError("OIDC callback could not be verified") from exc
 
-        owner_id = derive_owner_id(str(claims["iss"]), str(claims["sub"]))
+        issuer = str(claims["iss"])
+        subject = str(claims["sub"])
+        owner_id = derive_owner_id(issuer, subject)
         now = int(time.time())
         max_age = min(self.settings.auth_session_ttl_seconds, int(claims["exp"]) - now)
         if max_age <= 0:
             raise AuthenticationError("OIDC callback could not be verified")
+        return VerifiedLogin(
+            provider=oidc_provider_key(issuer),
+            subject=subject,
+            preferred_owner_id=owner_id,
+            max_age=max_age,
+            return_to=return_to,
+        )
+
+    def create_session(
+        self,
+        owner_id: str,
+        *,
+        max_age: int | None = None,
+        return_to: str = "/dashboard",
+    ) -> SessionGrant:
+        if not owner_id.startswith("owner_v1_") or len(owner_id) > 64:
+            raise AuthenticationError("Verified account owner is invalid")
+        bounded_max_age = min(
+            max_age if max_age is not None else self.settings.auth_session_ttl_seconds,
+            self.settings.auth_session_ttl_seconds,
+        )
+        if bounded_max_age <= 0:
+            raise AuthenticationError("Verified session lifetime is invalid")
+        now = int(time.time())
         session_token = secrets.token_urlsafe(32)
         self.redis.setex(
             _hashed_key("auth:session", session_token),
-            max_age,
+            bounded_max_age,
             json.dumps(
-                {"ownerId": owner_id, "expiresAt": now + max_age},
+                {"ownerId": owner_id, "expiresAt": now + bounded_max_age},
                 separators=(",", ":"),
             ),
         )
         return SessionGrant(
             session_token=session_token,
-            max_age=max_age,
-            return_to=return_to,
+            max_age=bounded_max_age,
+            return_to=_safe_return_to(return_to),
         )
 
     def resolve_session(self, session_token: str | None) -> str | None:
@@ -233,6 +281,14 @@ def derive_owner_id(issuer: str, subject: str) -> str:
     digest = hashlib.sha256(f"{issuer}\0{subject}".encode("utf-8")).digest()
     encoded = base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
     return f"owner_v1_{encoded}"
+
+
+def oidc_provider_key(issuer: str) -> str:
+    normalized = issuer.strip()
+    if not normalized:
+        raise ValueError("Verified issuer must be non-empty")
+    digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+    return f"oidc_{digest[:40]}"
 
 
 def _base64url(value: bytes) -> str:
