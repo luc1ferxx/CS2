@@ -1,3 +1,4 @@
+import base64
 import json
 import hashlib
 import time
@@ -25,6 +26,9 @@ from app.services.auth_service import (
     derive_owner_id,
     get_auth_service,
 )
+
+
+PRODUCTION_TEST_STEAM_KEY = base64.urlsafe_b64encode(b"p" * 32).decode("ascii")
 
 
 class ProductionAuthConfigurationTest(unittest.TestCase):
@@ -74,6 +78,62 @@ class ProductionAuthConfigurationTest(unittest.TestCase):
 
     def test_complete_production_auth_configuration_is_accepted(self) -> None:
         Settings(**valid_production_settings_kwargs()).validate_runtime_configuration()
+
+    def test_production_requires_server_side_steam_sync_secrets(self) -> None:
+        for overrides, expected_message in (
+            ({"steam_web_api_key": ""}, "STEAM_WEB_API_KEY"),
+            ({"steam_credential_encryption_key": ""}, "STEAM_CREDENTIAL_ENCRYPTION_KEY"),
+            (
+                {
+                    "steam_credential_encryption_key": (
+                        "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8="
+                    )
+                },
+                "development key",
+            ),
+            (
+                {
+                    "steam_credential_encryption_key": (
+                        "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+                    )
+                },
+                "development key",
+            ),
+        ):
+            with self.subTest(overrides=overrides):
+                values = valid_production_settings_kwargs()
+                values.update(overrides)
+                with self.assertRaisesRegex(RuntimeError, expected_message):
+                    Settings(**values).validate_runtime_configuration()
+
+    def test_steam_sync_limits_and_disabled_scheduler_fail_closed(self) -> None:
+        invalid_overrides = (
+            ({"steam_sync_max_matches": 0}, "STEAM_SYNC_MAX_MATCHES"),
+            ({"steam_sync_max_matches": 21}, "STEAM_SYNC_MAX_MATCHES"),
+            ({"steam_sync_timeout_seconds": 0}, "STEAM_SYNC_TIMEOUT_SECONDS"),
+            (
+                {"steam_sync_retry_base_seconds": 0},
+                "STEAM_SYNC_RETRY_BASE_SECONDS",
+            ),
+            (
+                {
+                    "steam_sync_retry_base_seconds": 60,
+                    "steam_sync_retry_max_seconds": 30,
+                },
+                "STEAM_SYNC_RETRY_MAX_SECONDS",
+            ),
+            ({"steam_scheduled_sync_enabled": True}, "STEAM_SCHEDULED_SYNC_ENABLED"),
+            (
+                {"steam_credential_encryption_key_version": "bad version"},
+                "STEAM_CREDENTIAL_ENCRYPTION_KEY_VERSION",
+            ),
+        )
+        for overrides, env_name in invalid_overrides:
+            with self.subTest(overrides=overrides):
+                values = valid_production_settings_kwargs()
+                values.update(overrides)
+                with self.assertRaisesRegex(RuntimeError, env_name):
+                    Settings(**values).validate_runtime_configuration()
 
     def test_production_rejects_the_development_render_worker_credential(self) -> None:
         values = valid_production_settings_kwargs()
@@ -222,6 +282,9 @@ def valid_production_settings_kwargs() -> dict[str, object]:
         "auth_cookie_secure": True,
         "cors_origins_raw": "https://coach.example.test",
         "render_worker_token": "test-worker-secret-that-is-not-a-default",
+        "steam_web_api_key": "a" * 32,
+        "steam_credential_encryption_key": PRODUCTION_TEST_STEAM_KEY,
+        "steam_credential_encryption_key_version": "test-v1",
         "artifact_storage_backend": "s3",
         "object_storage_bucket": "private-cs2-artifacts",
         "object_storage_prefix": "cs2-artifacts-v1",

@@ -6,7 +6,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker
 
 from app.migrations.runner import MIGRATION_TABLE_NAME, MIGRATIONS, run_schema_migrations
-from app.models import Account, ExternalIdentity
+from app.models import Account, ExternalIdentity, SteamConnection, SteamMatch
 
 
 class DatabaseMigrationTest(unittest.TestCase):
@@ -16,7 +16,7 @@ class DatabaseMigrationTest(unittest.TestCase):
     def tearDown(self) -> None:
         self.engine.dispose()
 
-    def test_fresh_and_repeated_upgrade_apply_one_tracked_migration(self) -> None:
+    def test_fresh_and_repeated_upgrade_apply_all_tracked_migrations(self) -> None:
         with self.engine.begin() as connection:
             run_schema_migrations(connection)
         with self.engine.begin() as connection:
@@ -24,19 +24,145 @@ class DatabaseMigrationTest(unittest.TestCase):
 
         table_names = set(inspect(self.engine).get_table_names())
         self.assertTrue(
-            {"accounts", "external_identities", MIGRATION_TABLE_NAME}.issubset(
-                table_names
-            )
+            {
+                "accounts",
+                "external_identities",
+                "steam_connections",
+                "steam_matches",
+                MIGRATION_TABLE_NAME,
+            }.issubset(table_names)
         )
         with self.engine.connect() as connection:
             rows = connection.execute(
                 text(
                     f"SELECT version, name, checksum FROM {MIGRATION_TABLE_NAME}"
+                    " ORDER BY version"
                 )
             ).mappings().all()
-        self.assertEqual(len(rows), 1)
+        self.assertEqual(len(rows), 2)
         self.assertEqual(rows[0]["version"], MIGRATIONS[0].version)
         self.assertEqual(rows[0]["checksum"], MIGRATIONS[0].checksum)
+        self.assertEqual(
+            MIGRATIONS[0].checksum,
+            "51184be59b6bd615d8cd830dc8125d8e53ed85891c5c427583f1cf81d6cab9eb",
+        )
+        self.assertEqual(rows[1]["version"], "2026071902")
+        self.assertEqual(rows[1]["checksum"], MIGRATIONS[1].checksum)
+
+    def test_steam_sync_schema_enforces_owner_and_match_idempotency(self) -> None:
+        with self.engine.connect() as connection:
+            connection.execute(text("PRAGMA foreign_keys=ON"))
+        with self.engine.begin() as connection:
+            run_schema_migrations(connection)
+        Session = sessionmaker(bind=self.engine)
+        now = datetime.now(timezone.utc)
+        owner_id = "owner_v1_" + ("a" * 43)
+        with Session() as db:
+            db.add(Account(owner_id=owner_id, created_at=now, updated_at=now))
+            db.commit()
+            connection = SteamConnection(
+                id="connection-a",
+                owner_id=owner_id,
+                steam_id64="76561202255233022",
+                game_auth_code_ciphertext=b"ciphertext-and-tag",
+                game_auth_code_nonce=b"1" * 12,
+                known_code_ciphertext=b"ciphertext-and-tag",
+                known_code_nonce=b"2" * 12,
+                encryption_key_version="test-v1",
+                status="connected",
+                consecutive_failures=0,
+                created_at=now,
+                updated_at=now,
+            )
+            db.add(connection)
+            db.commit()
+            db.add_all(
+                [
+                    SteamMatch(
+                        id="match-a",
+                        connection_id=connection.id,
+                        owner_id=owner_id,
+                        share_code_hash="a" * 64,
+                        share_code_ciphertext=b"ciphertext-and-tag",
+                        share_code_nonce=b"3" * 12,
+                        encryption_key_version="test-v1",
+                        status="discovered",
+                        discovered_at=now,
+                        updated_at=now,
+                    ),
+                    SteamMatch(
+                        id="match-b",
+                        connection_id=connection.id,
+                        owner_id=owner_id,
+                        share_code_hash="a" * 64,
+                        share_code_ciphertext=b"other-ciphertext-tag",
+                        share_code_nonce=b"4" * 12,
+                        encryption_key_version="test-v1",
+                        status="discovered",
+                        discovered_at=now,
+                        updated_at=now,
+                    ),
+                ]
+            )
+            with self.assertRaises(IntegrityError):
+                db.commit()
+            db.rollback()
+
+            db.add(
+                SteamConnection(
+                    id="connection-b",
+                    owner_id=owner_id,
+                    steam_id64="76561202255233021",
+                    game_auth_code_ciphertext=b"ciphertext-and-tag",
+                    game_auth_code_nonce=b"5" * 12,
+                    known_code_ciphertext=b"ciphertext-and-tag",
+                    known_code_nonce=b"6" * 12,
+                    encryption_key_version="test-v1",
+                    status="connected",
+                    consecutive_failures=0,
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+            with self.assertRaises(IntegrityError):
+                db.commit()
+            db.rollback()
+
+            invalid_status = SteamMatch(
+                id="match-invalid",
+                connection_id=connection.id,
+                owner_id=owner_id,
+                share_code_hash="b" * 64,
+                share_code_ciphertext=b"ciphertext-and-tag",
+                share_code_nonce=b"7" * 12,
+                encryption_key_version="test-v1",
+                status="downloaded",
+                discovered_at=now,
+                updated_at=now,
+            )
+            db.add(invalid_status)
+            with self.assertRaises(IntegrityError):
+                db.commit()
+            db.rollback()
+
+            owner_b = "owner_v1_" + ("b" * 43)
+            db.add(Account(owner_id=owner_b, created_at=now, updated_at=now))
+            db.commit()
+            cross_owner_match = SteamMatch(
+                id="match-cross-owner",
+                connection_id=connection.id,
+                owner_id=owner_b,
+                share_code_hash="c" * 64,
+                share_code_ciphertext=b"ciphertext-and-tag",
+                share_code_nonce=b"8" * 12,
+                encryption_key_version="test-v1",
+                status="discovered",
+                discovered_at=now,
+                updated_at=now,
+            )
+            db.add(cross_owner_match)
+            with self.assertRaises(IntegrityError):
+                db.commit()
 
     def test_legacy_demo_owners_are_not_backfilled_into_accounts(self) -> None:
         with self.engine.begin() as connection:

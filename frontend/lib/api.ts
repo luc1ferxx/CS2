@@ -1,6 +1,12 @@
 import type { CoachingEvent } from "@/types/coaching";
 import type { DemoStatus, DemoSummary } from "@/types/demo";
 import type { ReplayData, ReplayVideo } from "@/types/replay";
+import type {
+  SteamConnection,
+  SteamConnectionCredentials,
+  SteamMatch,
+  SteamSyncResult
+} from "@/types/steam";
 import type { AuthAccount } from "@/lib/auth";
 
 const API_BASE_URL =
@@ -16,12 +22,14 @@ export type ApiErrorCode = "unauthenticated" | "request_failed";
 export class ApiError extends Error {
   readonly status: number;
   readonly code: ApiErrorCode;
+  readonly detailCode: string | null;
 
-  constructor(status: number, message: string) {
+  constructor(status: number, message: string, detailCode: string | null = null) {
     super(message);
     this.name = "ApiError";
     this.status = status;
     this.code = status === 401 ? "unauthenticated" : "request_failed";
+    this.detailCode = detailCode;
   }
 }
 
@@ -139,6 +147,22 @@ async function requestJson<T>(
   return response.json() as Promise<T>;
 }
 
+async function requestNoContent(path: string, init?: RequestInit): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    ...init,
+    credentials: "include",
+    headers: {
+      "Content-Type": "application/json",
+      ...(init?.headers ?? {})
+    },
+    cache: "no-store"
+  });
+
+  if (!response.ok) {
+    await throwResponseError(response);
+  }
+}
+
 async function requestForm<T>(path: string, formData: FormData): Promise<T> {
   const response = await fetch(`${API_BASE_URL}${path}`, {
     method: "POST",
@@ -189,6 +213,31 @@ export function getAuthLoginUrl(returnTo: string): string {
 
 export function getConfiguredAuthProvider(): ConfiguredAuthProvider {
   return AUTH_PROVIDER;
+}
+
+export function getSteamConnection(): Promise<SteamConnection> {
+  return requestJson<SteamConnection>("/steam/connection");
+}
+
+export function deleteSteamConnection(): Promise<void> {
+  return requestNoContent("/steam/connection", { method: "DELETE" });
+}
+
+export function saveSteamConnectionCredentials(
+  credentials: SteamConnectionCredentials
+): Promise<SteamConnection> {
+  return requestJson<SteamConnection>("/steam/connection/credentials", {
+    method: "POST",
+    body: JSON.stringify(credentials)
+  });
+}
+
+export function syncSteamMatches(): Promise<SteamSyncResult> {
+  return requestJson<SteamSyncResult>("/steam/sync", { method: "POST" });
+}
+
+export function listSteamMatches(): Promise<SteamMatch[]> {
+  return requestJson<SteamMatch[]>("/steam/matches");
 }
 
 export function createMockUpload(): Promise<DemoSummary> {
@@ -276,26 +325,37 @@ export function getCoaching(demoId: string): Promise<CoachingEvent[]> {
   return requestJson<CoachingEvent[]>(`/demos/${demoId}/coaching`);
 }
 
-async function responseErrorMessage(response: Response): Promise<string> {
+interface ResponseErrorDetails {
+  message: string;
+  detailCode: string | null;
+}
+
+async function responseErrorDetails(response: Response): Promise<ResponseErrorDetails> {
   const body = await response.text();
   if (!body) {
-    return "";
+    return { message: "", detailCode: null };
   }
 
   try {
     const parsed = JSON.parse(body) as { detail?: unknown };
     if (typeof parsed.detail === "string") {
-      return parsed.detail;
+      return { message: parsed.detail, detailCode: null };
+    }
+    if (isStructuredApiDetail(parsed.detail)) {
+      return {
+        message: parsed.detail.message,
+        detailCode: parsed.detail.code
+      };
     }
   } catch {
-    return body;
+    return { message: body, detailCode: null };
   }
 
-  return body;
+  return { message: body, detailCode: null };
 }
 
 async function throwResponseError(response: Response): Promise<never> {
-  const detail = await responseErrorMessage(response);
+  const detail = await responseErrorDetails(response);
   if (response.status === 401) {
     for (const listener of unauthorizedListeners) {
       listener();
@@ -303,6 +363,17 @@ async function throwResponseError(response: Response): Promise<never> {
   }
   throw new ApiError(
     response.status,
-    detail || `Request failed with ${response.status}`
+    detail.message || `Request failed with ${response.status}`,
+    detail.detailCode
   );
+}
+
+function isStructuredApiDetail(
+  value: unknown
+): value is { code: string; message: string } {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+  const detail = value as { code?: unknown; message?: unknown };
+  return typeof detail.code === "string" && typeof detail.message === "string";
 }

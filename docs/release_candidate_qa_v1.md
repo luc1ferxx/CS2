@@ -1,6 +1,6 @@
 # Release Candidate QA V1
 
-This runbook defines the repeatable release-candidate validation pass for local Docker development, short-lived previews, Steam-first production identity/account/owner authorization, and private video access. Passing it does not complete match sync, Demo source download, reliable-job, parser-isolation, observability/backup, or beta-corpus stages.
+This runbook defines the repeatable release-candidate validation pass for local Docker development, short-lived previews, Steam-first production identity/account/owner authorization, encrypted match-history discovery, and private video access. Passing it does not complete Demo source download, reliable-job, parser-isolation, observability/backup, or beta-corpus stages.
 
 ## Scope
 
@@ -9,7 +9,7 @@ RC QA validates that the demo-first review flow still works:
 1. Local checks compile, test, lint, typecheck, and build.
 2. Docker services build and start.
 3. Public API health is coarse; production system diagnostics are disabled; demo diagnostics remain authenticated and owner-scoped.
-4. Steam OpenID assertion/discovery/direct verification, account mapping, Redis opaque sessions, logout revocation, and frontend session-expiry handling pass focused tests and browser smoke; the explicitly selected OIDC compatibility path remains covered.
+4. Steam OpenID assertion/discovery/direct verification, account mapping, Redis opaque sessions, logout revocation, encrypted match-history connection/sync, and frontend session-expiry handling pass focused tests and browser smoke; the explicitly selected OIDC compatibility path remains covered.
 5. Owner A/B/anonymous/invalid/expired/revoked requests are denied or allowed consistently across every user surface.
 6. Private video GET/HEAD/Range rechecks session, owner, and safe artifact binding without a public static-media bypass.
 7. Development Cloud Preview smoke creates a mock demo, opens replay/coaching data, creates a `render_clip` job, checks private-media projection, and prints development diagnostics.
@@ -122,7 +122,7 @@ FRONTEND_URL="$FRONTEND_URL" \
 python3 scripts/cloud_preview_smoke.py
 ```
 
-For a production-auth RC, set `AUTH_MODE=production`, explicitly set `AUTH_PROVIDER=steam` (or compatibility `oidc`) and matching `NEXT_PUBLIC_AUTH_PROVIDER`, secure `__Host-` cookies, one exact HTTPS origin for frontend/API/auth/media routing, the selected provider's complete configuration, and a non-default render-worker service credential through the deployment secret/config system. Verify that `/diagnostics` returns `404`; do not run the development script as a substitute for independently authenticated owner A/B browser/API sessions.
+For a production-auth RC, set `AUTH_MODE=production`, explicitly set `AUTH_PROVIDER=steam` (or compatibility `oidc`) and matching `NEXT_PUBLIC_AUTH_PROVIDER`, secure `__Host-` cookies, one exact HTTPS origin for frontend/API/auth/media routing, a real server-only `STEAM_WEB_API_KEY`, random `STEAM_CREDENTIAL_ENCRYPTION_KEY`, disabled V1 scheduler, the selected provider's complete configuration, and a non-default render-worker service credential through the deployment secret/config system. Verify that `/diagnostics` returns `404`; do not run the development script as a substitute for independently authenticated owner A/B browser/API sessions.
 
 If a sample is available for the preview environment:
 
@@ -145,6 +145,7 @@ For demos owned separately by A and B, exercise all of these surfaces:
 - Video status; development/QA video upload; calibration.
 - Mock render; `render_clip`; render-job list.
 - Private video full GET, HEAD, satisfiable Range, and unsatisfiable Range.
+- Steam connection read/write/delete, manual sync, retry/repair state, and Recent Steam Matches list.
 
 Expected results:
 
@@ -156,6 +157,7 @@ Expected results:
 - Invalid signature or algorithm, issuer, audience, nonce, timestamps, missing required claims, unknown JWKS key, reused/mismatched state, and unsafe or oversized `return_to` inputs are denied or reduced to the safe dashboard target.
 - Unsafe cookie-authenticated mutations with a missing or untrusted `Origin` receive `403` and create no row, job, metadata, or artifact change; render-worker service calls remain on their independent credential boundary.
 - User-facing demo/replay/video payloads contain no `owner_id`, `storageKey`, unknown internal replay fields, `local://`, absolute local path, issuer, subject, or token; replay/source keys and replay `demoId` remain bound to the requested demo.
+- Steam connection/match payloads contain no SteamID64, Game Authentication Code, Match Sharing Code, Web API key, ciphertext, nonce, fingerprint, or fabricated map/score/player fields. Disconnect A deletes only A's connection/discovery data and does not delete A's independently owned parsed demos or B's rows.
 - Production startup rejects more than one CORS origin, and a stale or sibling configured origin cannot read credentialed responses or pass the unsafe-method origin gate.
 - Every auth/session and owner-private JSON/media response, including failures, has `Cache-Control: private, no-store` and `Vary` containing `Cookie` and `Origin`; a shared-cache harness never replays owner A content to owner B.
 - Render callback and worker exception probes containing fake local paths, credentials, and traceback markers persist and return only `RENDER_FAILED`/`RENDER_WORKER_UNAVAILABLE` with safe copy; the injected text is absent from DB, replay/video JSON, render-job JSON, and logs.
@@ -168,6 +170,8 @@ Open `/dashboard` in the target frontend and verify:
 
 - Anonymous production load shows the selected-provider login boundary; Steam sign-in completes through OpenID and the frontend callback without exposing assertion/state/session/SteamID64 in the final URL or browser storage. Callback query strings are redacted in Uvicorn and ingress logs.
 - Dashboard and Demo Detail use the same session boundary; expiry shows a clear `Session expired` recovery action, and sign-out returns to the anonymous boundary.
+- Recent Steam Matches accepts exactly the two user authorization codes, clears them after submission, supports Sync now/refresh/disconnect, and shows only real source/discovered/status data. Exercise caught-up, repair, retry, empty, and disconnected states where possible; manual `.dem` upload remains available when no Demo source exists.
+- Keep live credentials out of evidence; rely on the automated Stage 2 regressions for the 3/owner/minute and 30/global/minute Redis limits, shared 429 breaker, concurrent lease claim, and oversized response/body rejection.
 - Dashboard loads with no current console errors.
 - Empty, loading, fetch-failed, archived-only, and search/filter no-result states are clear when practical to exercise.
 - Mock upload creates a demo and the post-create notice/table action opens it.

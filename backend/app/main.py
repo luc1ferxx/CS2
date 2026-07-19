@@ -4,13 +4,19 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 
-from app.api import auth, coaching, demos, diagnostics, private_media, replay, uploads
-from app.core.access_log import install_auth_callback_access_log_redaction
+from app.api import auth, coaching, demos, diagnostics, private_media, replay, steam, uploads
+from app.core.access_log import (
+    install_auth_callback_access_log_redaction,
+    suppress_outbound_http_request_logging,
+)
 from app.core.auth import SessionCsrfMiddleware
 from app.core.config import settings
 from app.core.database import SessionLocal, init_db
 from app.core.redis import get_redis_client
-from app.core.request_limits import MultipartRequestLimitMiddleware
+from app.core.request_limits import (
+    MultipartRequestLimitMiddleware,
+    SensitiveJsonRequestLimitMiddleware,
+)
 from app.services.artifact_intake import ArtifactIntakeError, ArtifactIntakePolicy, ArtifactIntakeService
 from app.services.storage import artifact_store_from_settings
 
@@ -18,6 +24,7 @@ from app.services.storage import artifact_store_from_settings
 app = FastAPI(title="CS2 Demo AI Coach Mock API", version="0.1.0")
 logger = logging.getLogger(__name__)
 install_auth_callback_access_log_redaction()
+suppress_outbound_http_request_logging()
 
 multipart_envelope_overhead = 8 * 1024 * 1024
 app.add_middleware(
@@ -30,6 +37,7 @@ app.add_middleware(
     render_worker_token=settings.render_worker_token,
     max_concurrent_uploads=1,
 )
+app.add_middleware(SensitiveJsonRequestLimitMiddleware)
 app.add_middleware(SessionCsrfMiddleware)
 app.add_middleware(
     CORSMiddleware,
@@ -46,6 +54,7 @@ app.include_router(replay.router)
 app.include_router(coaching.router)
 app.include_router(diagnostics.router)
 app.include_router(private_media.router)
+app.include_router(steam.router)
 
 
 @app.on_event("startup")

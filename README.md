@@ -2,7 +2,7 @@
 
 这是一个网站型 CS2 demo 复盘与规则教练原型。当前项目重点已经从单纯 mock 流程推进到“真实 `.dem` 解析 spike + Demo Library + 回放复盘界面 + deterministic coaching + render clip 合约”。
 
-当前版本保留规则型 2D 公测 V1 Stage 3 的 artifact/replay 能力，并增加 Steam-first 账号基础：Steam OpenID 2.0、正式 account/external identity 映射、Redis opaque browser session 和 authenticated `owner_id`。本阶段尚未加入比赛历史授权、近期比赛同步或自动 Demo 获取。仍没有可靠任务恢复、parser 隔离、生产 observability/backup、OpenAI 调用或真实 CS2 自动渲染。
+当前版本保留规则型 2D 公测 V1 Stage 3 的 artifact/replay 能力，并增加 Steam-first 账号与比赛发现基础：Steam OpenID 2.0、正式 account/external identity 映射、Redis opaque browser session、encrypted match-history authorization、近期 sharing-code cursor sync 和 authenticated `owner_id`。本阶段仍不提供自动 Demo 获取；比赛发现与 Demo intake/解析保持分离。仍没有可靠任务恢复、parser 隔离、生产 observability/backup、OpenAI 调用或真实 CS2 自动渲染。
 
 ## 当前状态
 
@@ -10,6 +10,7 @@
 
 - Docker Compose 本地栈：`frontend`、`api`、`worker`、`postgres`、`redis`。
 - Production identity boundary：Steam-first 部署显式选择 Steam OpenID 2.0 验证 SteamID64，再通过 `accounts` / `external_identities` 创建 Redis-backed opaque `HttpOnly` session；所有 user API 从可信 session 派生稳定的 `owner_id`。原 OIDC 实现仅作为 `AUTH_PROVIDER=oidc` 兼容路径；production 缺少 provider 时 fail closed，`DEV_USER_ID` / `X-Dev-User-Id` 仅在显式 development/test mode 可用。
+- Steam match discovery：登录账号可提交 Game Authentication Code 和一个初始 Match Sharing Code；服务端 AES-GCM 加密凭证和 cursor，通过 Valve 官方 `GetNextMatchSharingCode` 每次最多发现 20 场，Dashboard 只展示真实 discovery/status，不伪造地图、比分、玩家或 Demo 来源。
 - `/dashboard` Demo Library：搜索、状态/地图筛选、排序、bounded 上传/任务轮询、重命名、软归档、空/失败/无结果状态、渲染状态摘要。
 - Upload/parser observability：demo list/detail responses 包含 compact ingestion snapshot，失败解析有短错误、attempts、stale/active/retryable 状态，并支持 owner-scoped retry。
 - Diagnostics boundary：`GET /diagnostics` 只在 development/test 提供 compact 排障信息，production 返回 `404`；`GET /demos/{demo_id}/diagnostics` 始终要求登录并按 owner 隔离。public `GET /health` 只返回 coarse status。
@@ -31,6 +32,7 @@
 明确没有做的事情：
 
 - 不提供密码、Steam Guard、团队或通用账号管理 UI；只提供紧凑的 Steam 登录、当前账号和退出入口，浏览器不处理 provider token。
+- 不从 replay CDN 自动下载 Demo、不抓取 Steam 私有网页、不模拟 Game Coordinator；发现的比赛继续支持独立手动 `.dem` 上传兜底。
 - 不在 API 或 worker 容器里启动 CS2、Steam、OBS、ffmpeg。
 - 不控制用户电脑、不读取用户上传后的本地文件、不录屏。
 - 不把用户上传 MP4 设计成主产品路径。
@@ -59,7 +61,7 @@ user uploads .dem
 ```text
 frontend (Next.js)
   -> FastAPI API
-    -> PostgreSQL metadata: accounts, external identities, owner-scoped demos, demo_jobs, coaching_events
+    -> PostgreSQL metadata: accounts, external identities, encrypted Steam connections/matches, owner-scoped demos, demo_jobs, coaching_events
     -> Redis queue: parse/render job dispatch
     -> artifact storage service: uploads, replay blobs, summaries, videos
   -> worker process
@@ -76,11 +78,13 @@ Artifact storage 通过 `backend/app/services/storage.py` 的 provider-neutral c
 
 ## Production Identity and Owner Boundary
 
-The Steam-first production path explicitly sets `AUTH_PROVIDER=steam`; production startup rejects a missing provider instead of silently changing identity authority. `GET /auth/steam/login` starts Steam OpenID 2.0; the backend pins Valve's provider endpoint and verifies state, exact realm/`return_to`, claimed-ID XRDS discovery, required signed fields, SteamID64, nonce freshness/replay, and the assertion through direct `check_authentication` before touching account or session state. Steam OpenID only supplies SteamID64. Optional nickname/avatar enrichment uses the server-only `STEAM_WEB_API_KEY`; failure degrades to a generic account label and never fails login.
+The Steam-first production path explicitly sets `AUTH_PROVIDER=steam`; production startup rejects a missing provider instead of silently changing identity authority. `GET /auth/steam/login` starts Steam OpenID 2.0; the backend pins Valve's provider endpoint and verifies state, exact realm/`return_to`, claimed-ID XRDS discovery, required signed fields, SteamID64, nonce freshness/replay, and the assertion through direct `check_authentication` before touching account or session state. Steam OpenID only supplies SteamID64. Nickname/avatar enrichment uses the server-only `STEAM_WEB_API_KEY`; profile failure degrades to a generic account label and never fails login, while Stage 2 production startup requires the same publisher key for match-history sync.
 
 `accounts` owns stable opaque `owner_v1_...` identifiers. `external_identities` enforces unique `(provider, subject)` and unique `(owner_id, provider)` mappings. There is no implicit profile-based merge or Phase 1 identity-binding endpoint. A future binding flow must re-authenticate both sides and reject an identity already owned by another account. The existing OIDC implementation remains available only when explicitly selected with `AUTH_PROVIDER=oidc` and resolves through the same account/session boundary.
 
 After verification, the backend creates one opaque Redis session and sends only an `HttpOnly`, `SameSite=Lax`, `Secure`, `__Host-` production cookie. API demo/upload/replay/coaching/library/render/private-media routes continue deriving owner from that session and reuse their existing owner-scoped queries. `GET /auth/me` returns compact display metadata without SteamID64 or `owner_id`; `POST /auth/logout` revokes the session.
+
+Match-history authorization is separate from OpenID. The Dashboard accepts only a Game Authentication Code and one initial Match Sharing Code; SteamID64 is resolved from the authenticated external identity. Credentials, cursor, and discovered sharing codes are AES-256-GCM encrypted server-side and never returned to the browser. Manual Sync now uses Valve's fixed HTTPS `GetNextMatchSharingCode/v1` endpoint, persists bounded retry/repair state, and stops after at most 20 new codes. Valve does not return map, score, players, match time, or a supported Demo URL from this endpoint, so those fields stay absent until a real `.dem` is parsed. See `docs/steam_match_sync_v1.md`.
 
 本地测试仍可显式设置 `AUTH_MODE=development` 或 `AUTH_MODE=test`，用 `DEV_USER_ID` 和请求头模拟 owner：
 
@@ -117,6 +121,7 @@ render-worker/
 
 docs/
   steam_auth_accounts_v1.md
+  steam_match_sync_v1.md
   production_auth_owner_private_media_v1.md
   deployment_target_decision_v1.md
   internal_preview_packaging_v1.md
@@ -187,6 +192,7 @@ node lib/round-review.test.mjs
 node lib/coaching-review.test.mjs
 node lib/replay-quality-fixtures.test.mjs
 node lib/map-config.test.mjs
+node lib/steam-matches.test.mjs
 ```
 
 Release-candidate validation:
@@ -218,11 +224,23 @@ Release-candidate validation:
 - soft archive；归档 demo 默认隐藏，但仍可通过 ID 打开。
 - 展示 parse/coaching/review/render/video 摘要状态。
 
-### 2. Mock Upload
+### 2. Recent Steam Matches
+
+Dashboard 的紧凑 Steam 区域提供：
+
+- 只输入 Game Authentication Code 和一个初始 Match Sharing Code；每次提交后立即清空，不写 browser storage。
+- `Sync now` 调用官方 match-history cursor API，每次最多枚举 20 场。
+- 真实展示 `discovered`、`demo_pending`、`downloading`、`parsing`、`ready`、`unavailable` 状态；本阶段只会生成 `discovered`。
+- 403/412 进入需要修复授权的停止状态；429/503 记录指数退避和下一次允许时间，不在请求中 sleep。
+- Redis 对手动同步执行 `3/owner/minute` 与 `30/global/minute` 的原子调用预算；Valve 429 会触发共享 publisher-key breaker，Redis 不可用时 fail closed。
+- Disconnect 删除 server-side credentials、cursor、connection 和 discovered match rows，并停止后续同步。未来已导入的 owner-owned Demo 保留在 Demo Library。
+- Valve 接口不提供 Demo URL 或比赛详情；自动 Demo import 尚未实现，手动 `.dem` 上传始终可用。
+
+### 3. Mock Upload
 
 `POST /uploads/mock` 创建 `mock_parse` job。worker 会写入 mock replay JSON 和 coaching rows，然后把 demo 标记为 `completed`。这条路径用于快速验证前端 replay、timeline、coaching 和 render UI。
 
-### 3. Real Demo Upload
+### 4. Real Demo Upload
 
 `POST /uploads/demo` 的唯一公开产品类型是 `.dem`，实际字节上限为 1 GiB；`.zip` 和其它 archive 在写入前拒绝。API 不运行 parser：它先把请求流式写入 private quarantine，计算真实长度和 SHA-256，执行已固化的 extension/MIME/content policy，再把验证通过的 generation promotion 为 immutable accepted source。只有 accepted metadata 已绑定 owner/demo 并随 `Demo` + `real_parse` job 一起提交后才会推入 Redis。语义损坏但无法由 byte-level intake 证明的 `.dem` 仍由异步 parser 安全归类为 `INVALID_DEMO`。
 
@@ -611,6 +629,11 @@ Core:
 - `GET /auth/me`
 - `POST /auth/logout`
 - `GET /auth/login`, `GET /auth/oidc/callback`, `GET /auth/session` (`AUTH_PROVIDER=oidc` / legacy frontend compatibility)
+- `GET /steam/connection`
+- `POST /steam/connection/credentials`
+- `DELETE /steam/connection`
+- `POST /steam/sync`
+- `GET /steam/matches`
 - `GET /demos`
 - `PATCH /demos/{demo_id}`
 - `POST /demos/{demo_id}/archive`
@@ -644,7 +667,7 @@ Render worker:
 
 ## Configuration
 
-Steam/account 合同见 `docs/steam_auth_accounts_v1.md`；共享 owner/private media 合同见 `docs/production_auth_owner_private_media_v1.md`；runtime deployment 说明见 `docs/deployment_readiness_v1.md`，Cloud Preview runbook 见 `docs/cloud_preview_deploy_v1.md`。关键环境变量：
+Steam/account 合同见 `docs/steam_auth_accounts_v1.md`；比赛授权、加密、同步状态与删除策略见 `docs/steam_match_sync_v1.md`；共享 owner/private media 合同见 `docs/production_auth_owner_private_media_v1.md`；runtime deployment 说明见 `docs/deployment_readiness_v1.md`，Cloud Preview runbook 见 `docs/cloud_preview_deploy_v1.md`。关键环境变量：
 
 | Name | Default | Used by |
 | --- | --- | --- |
@@ -658,7 +681,14 @@ Steam/account 合同见 `docs/steam_auth_accounts_v1.md`；共享 owner/private 
 | `AUTH_SESSION_COOKIE_NAME` | `__Host-cs2_session` | opaque session cookie name |
 | `STEAM_AUTH_STATE_COOKIE_NAME` | `__Host-cs2_steam_state` | short-lived Steam state cookie name |
 | `STEAM_OPENID_NONCE_TTL_SECONDS` | `600` | Steam assertion freshness/replay reservation window |
-| `STEAM_WEB_API_KEY` | unset | optional server-only GetPlayerSummaries key; never frontend/worker-visible |
+| `STEAM_WEB_API_KEY` | unset | server-only GetPlayerSummaries + match-history publisher key; required in production, never frontend/worker-visible |
+| `STEAM_CREDENTIAL_ENCRYPTION_KEY` | unset | URL-safe base64 of 32 random bytes; required in production and never logged/returned |
+| `STEAM_CREDENTIAL_ENCRYPTION_KEY_VERSION` | `dev-v1` | bounded active AES-GCM key version stored with ciphertext; production should set its own version |
+| `STEAM_SYNC_MAX_MATCHES` | `20` | hard maximum new sharing codes per Sync-now request |
+| `STEAM_SYNC_TIMEOUT_SECONDS` | `5` | bounded Valve request timeout |
+| `STEAM_SYNC_RETRY_BASE_SECONDS` | `30` | first persisted transient backoff |
+| `STEAM_SYNC_RETRY_MAX_SECONDS` | `3600` | maximum persisted transient backoff |
+| `STEAM_SCHEDULED_SYNC_ENABLED` | `false` | independent fail-closed gate; V1 has no scheduler and rejects true |
 | `AUTH_SESSION_TTL_SECONDS` | `3600` | bounded Redis/browser session lifetime |
 | `AUTH_LOGIN_TTL_SECONDS` | `300` | bounded one-time login attempt lifetime |
 | `AUTH_CLOCK_SKEW_SECONDS` | `30` | bounded identity timestamp leeway |
@@ -700,7 +730,7 @@ Steam/account 合同见 `docs/steam_auth_accounts_v1.md`；共享 owner/private 
 | `SAMPLE_DEMO_NAME` | unset | optional display name for smoke sample |
 | `REQUIRE_SAMPLE_DEMO` | `0` | make smoke fail when no sample is configured |
 
-Docker Compose uses service names inside containers (`postgres`, `redis`) and host-facing URLs for the browser (`NEXT_PUBLIC_API_BASE_URL=http://localhost:8000`). Local Compose must explicitly use `AUTH_MODE=development` and may use the local adapter. Production requires an explicit supported provider, the complete HTTPS/`__Host-` cookie/single-origin/CORS contract, a non-default render-worker credential, and a private S3-compatible artifact configuration or startup fails closed. Steam realm/callback are derived from `BACKEND_PUBLIC_URL`; OIDC fields are required only when `AUTH_PROVIDER=oidc`. The queue worker validates its narrower auth/storage contract and never receives Steam/OIDC browser secrets. Local artifacts default under `ARTIFACT_STORAGE_ROOT=/data`; production credentials must never enter `NEXT_PUBLIC_*`, URLs, source, logs, or checked-in env files.
+Docker Compose uses service names inside containers (`postgres`, `redis`) and host-facing URLs for the browser (`NEXT_PUBLIC_API_BASE_URL=http://localhost:8000`). Local Compose must explicitly use `AUTH_MODE=development` and may use the local adapter plus the clearly marked non-production Steam encryption key. Production requires an explicit supported provider, the complete HTTPS/`__Host-` cookie/single-origin/CORS contract, a real server-only Steam Web API key, a random non-development Steam credential encryption key, a non-default render-worker credential, and a private S3-compatible artifact configuration or startup fails closed. Steam realm/callback are derived from `BACKEND_PUBLIC_URL`; OIDC fields are required only when `AUTH_PROVIDER=oidc`. The parser/render queue worker validates its narrower auth/storage contract and never receives Steam/OIDC browser secrets or match-history credentials. Local artifacts default under `ARTIFACT_STORAGE_ROOT=/data`; production credentials must never enter `NEXT_PUBLIC_*`, source, logs, checked-in env files, or browser responses.
 
 ## Deploy Smoke Checklist
 
@@ -710,20 +740,22 @@ Minimal local smoke for a clean environment. For internal preview handoff, use `
 2. `curl http://localhost:8000/health`
 3. In explicit development mode, `curl http://localhost:8000/diagnostics`; in production, confirm it returns `404`
 4. Open `http://localhost:3000/dashboard`; production should require Steam sign-in (or explicitly selected compatibility OIDC), while development uses the explicit local harness
-5. Create a mock upload and wait for completion
-6. Upload a real `.dem` if a sample is available
-7. Open a demo detail page
-8. Use round review quick jumps and confirm replay, tactical map, timeline, parser markers, and coaching cards stay synchronized
-9. If video exists, confirm `/demos/{demo_id}/media/video` supports authenticated GET/HEAD/Range and the 2D fallback remains available when media is denied
-10. Click `Generate Clip`
-11. Confirm render job status appears in the UI and `/demos/{demo_id}/render/jobs`
-12. Run the owner A/B/anonymous/expired/revoked matrix in `docs/production_auth_owner_private_media_v1.md`
-13. For development-mode Cloud Preview validation, run `API_BASE_URL=http://localhost:8000 FRONTEND_URL=http://localhost:3000 python3 scripts/cloud_preview_smoke.py` or point those variables at the preview URLs
-14. For stricter parser validation, set `SAMPLE_DEMO_PATH` and rerun the smoke; add `--require-sample` when preview validation must fail without a fresh real upload
+5. With a formal Steam account, configure two match-history codes, run Sync now, and confirm only real discovered/status/timestamp fields appear; do not use real credentials in shared evidence
+6. Disconnect Steam match history and confirm authorization plus discovered rows disappear while existing Demo Library entries remain
+7. Create a mock upload and wait for completion
+8. Upload a real `.dem` if a sample is available
+9. Open a demo detail page
+10. Use round review quick jumps and confirm replay, tactical map, timeline, parser markers, and coaching cards stay synchronized
+11. If video exists, confirm `/demos/{demo_id}/media/video` supports authenticated GET/HEAD/Range and the 2D fallback remains available when media is denied
+12. Click `Generate Clip`
+13. Confirm render job status appears in the UI and `/demos/{demo_id}/render/jobs`
+14. Run the owner A/B/anonymous/expired/revoked matrix in `docs/production_auth_owner_private_media_v1.md` plus Stage 2 owner isolation tests
+15. For development-mode Cloud Preview validation, run `API_BASE_URL=http://localhost:8000 FRONTEND_URL=http://localhost:3000 python3 scripts/cloud_preview_smoke.py` or point those variables at the preview URLs
+16. For stricter parser validation, set `SAMPLE_DEMO_PATH` and rerun the smoke; add `--require-sample` when preview validation must fail without a fresh real upload
 
 ## Current Limitations
 
-- Steam-first production explicitly selects Steam OpenID 2.0, but real HTTPS callback/provider availability and optional profile enrichment still require deployment smoke. No match-history authorization, match sync, sharing-code storage, or automatic Demo download exists in Phase 1.
+- Steam-first production explicitly selects Steam OpenID 2.0, but real HTTPS callback/provider availability, publisher-key eligibility, Game Authentication Code behavior, rate limiting, and encrypted-key deployment still require a live deployment smoke. Phase 2 provides match-history authorization and sharing-code discovery only; no automatic Demo download exists.
 - Redis-backed opaque sessions require Redis availability; Stage 4 has not yet added durable job delivery or crash recovery.
 - Development/test 可使用 private local adapter；production 必须提供 private S3-compatible storage，但具体 bucket/IAM/credential provisioning 不由仓库创建。
 - Parser frame 是采样数据，不是完整 tick density。
@@ -737,6 +769,6 @@ Minimal local smoke for a clean environment. For internal preview handoff, use `
 
 ## Next Useful Work
 
-下一阶段必须是 Stage 4：可靠任务投递、崩溃恢复、原子 claim 和幂等执行。之后仍按冻结顺序推进 parser 隔离，migration/CI/CD/observability/backup，最后建立真实 demo corpus 并进行邀请制公测。每个阶段一个 branch、一个 PR，不跨阶段捆绑。
+Steam-first 路线的下一阶段必须是独立审阅后的 Demo 导入适配器：仅允许 Valve 明确授权的 partner endpoint 或正式许可 Provider 默认启用，任何社区 share-code/CDN 路径都必须默认关闭并标为 unsupported/experimental，且下载内容必须进入现有 artifact intake。手动 `.dem` 上传始终保留为可靠兜底。之后再按独立阶段推进可靠任务投递、parser 隔离、migration/CI/CD/observability/backup 和真实 demo corpus；不跨阶段捆绑。
 
 保持产品方向：核心复盘体验必须在 `.dem` 上传解析后立即可用；真实 first-person footage 是异步 clip 增强，而不是使用网站的前置条件。

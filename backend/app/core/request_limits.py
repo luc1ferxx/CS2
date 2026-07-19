@@ -12,6 +12,7 @@ DEMO_ENVELOPE_LIMIT_BYTES = (1024 * 1024 * 1024) + (8 * 1024 * 1024)
 VIDEO_ENVELOPE_LIMIT_BYTES = (2 * 1024 * 1024 * 1024) + (8 * 1024 * 1024)
 WORKER_MEDIA_ENVELOPE_LIMIT_BYTES = VIDEO_ENVELOPE_LIMIT_BYTES
 WORKER_RESULT_ENVELOPE_LIMIT_BYTES = 64 * 1024
+STEAM_CREDENTIALS_JSON_LIMIT_BYTES = 4 * 1024
 
 _VIDEO_UPLOAD_PATH = re.compile(r"^/demos/[^/]+/video/upload$")
 _WORKER_MEDIA_PATH = re.compile(r"^/render-worker/jobs/[^/]+/media$")
@@ -140,6 +141,56 @@ class MultipartRequestLimitMiddleware:
         return secrets.compare_digest(candidate, self.render_worker_token)
 
 
+class SensitiveJsonRequestLimitMiddleware:
+    def __init__(
+        self,
+        app: AsgiApp,
+        *,
+        steam_credentials_limit_bytes: int = STEAM_CREDENTIALS_JSON_LIMIT_BYTES,
+    ) -> None:
+        if steam_credentials_limit_bytes <= 0:
+            raise ValueError("steam_credentials_limit_bytes must be positive")
+        self.app = app
+        self.steam_credentials_limit_bytes = steam_credentials_limit_bytes
+
+    async def __call__(
+        self,
+        scope: dict[str, Any],
+        receive: Receive,
+        send: Send,
+    ) -> None:
+        if not (
+            scope.get("type") == "http"
+            and scope.get("method", "").upper() == "POST"
+            and scope.get("path") == "/steam/connection/credentials"
+        ):
+            await self.app(scope, receive, send)
+            return
+
+        if _has_trustworthy_oversized_content_length(
+            scope.get("headers", ()),
+            self.steam_credentials_limit_bytes,
+        ):
+            await _send_sensitive_request_too_large(scope, receive, send)
+            return
+
+        received_bytes = 0
+
+        async def limited_receive() -> AsgiMessage:
+            nonlocal received_bytes
+            message = await receive()
+            if message.get("type") == "http.request":
+                received_bytes += len(message.get("body", b""))
+                if received_bytes > self.steam_credentials_limit_bytes:
+                    raise _RequestBodyTooLarge
+            return message
+
+        try:
+            await self.app(scope, limited_receive, send)
+        except _RequestBodyTooLarge:
+            await _send_sensitive_request_too_large(scope, receive, send)
+
+
 def _has_trustworthy_oversized_content_length(
     headers: list[tuple[bytes, bytes]] | tuple[tuple[bytes, bytes], ...],
     limit: int,
@@ -180,6 +231,22 @@ async def _send_invalid_worker_token(
         status_code=401,
         content={"detail": "Invalid render worker token"},
         headers={"Cache-Control": "private, no-store"},
+    )
+    await response(scope, receive, send)
+
+
+async def _send_sensitive_request_too_large(
+    scope: dict[str, Any],
+    receive: Receive,
+    send: Send,
+) -> None:
+    response = JSONResponse(
+        status_code=413,
+        content={
+            "detail": "Request body too large",
+            "errorCode": "REQUEST_TOO_LARGE",
+        },
+        headers={"Cache-Control": "private, no-store", "Vary": "Cookie, Origin"},
     )
     await response(scope, receive, send)
 

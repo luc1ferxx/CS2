@@ -32,3 +32,10 @@ def install_auth_callback_access_log_redaction() -> None:
     if any(isinstance(item, AuthCallbackAccessLogFilter) for item in access_logger.filters):
         return
     access_logger.addFilter(AuthCallbackAccessLogFilter())
+
+
+def suppress_outbound_http_request_logging() -> None:
+    # httpx request logs include the complete query string. Steam match-history
+    # authorization is transported in that query by Valve's GET contract.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)

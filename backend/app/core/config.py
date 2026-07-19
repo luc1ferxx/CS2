@@ -1,3 +1,5 @@
+import base64
+import binascii
 import os
 import re
 from dataclasses import dataclass
@@ -13,6 +15,9 @@ SUPPORTED_ARTIFACT_STORAGE_BACKENDS = {"local", "s3"}
 MAX_STAGE3_DEMO_UPLOAD_BYTES = 1024 * 1024 * 1024
 MAX_STAGE3_VIDEO_UPLOAD_BYTES = 2 * 1024 * 1024 * 1024
 MAX_STAGE3_REPLAY_ARTIFACT_BYTES = 128 * 1024 * 1024
+DEVELOPMENT_STEAM_CREDENTIAL_ENCRYPTION_KEY = (
+    "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8="
+)
 
 
 def _base_url_from_env(name: str, default: str = "") -> str:
@@ -51,6 +56,24 @@ def _validate_https_url(env_name: str, value: str) -> None:
         raise RuntimeError(f"{env_name} must be a valid https URL in production")
 
 
+def _is_32_byte_urlsafe_base64(value: str) -> bool:
+    if not value or not re.fullmatch(r"[A-Za-z0-9_-]+={0,2}", value):
+        return False
+    unpadded = value.rstrip("=")
+    try:
+        decoded = base64.b64decode(
+            unpadded + ("=" * (-len(unpadded) % 4)),
+            altchars=b"-_",
+            validate=True,
+        )
+    except (binascii.Error, ValueError):
+        return False
+    if len(decoded) != 32:
+        return False
+    canonical = base64.urlsafe_b64encode(decoded).decode("ascii").rstrip("=")
+    return unpadded == canonical
+
+
 @dataclass(frozen=True)
 class Settings:
     auth_mode: str = os.getenv("AUTH_MODE", "").strip().lower()
@@ -82,6 +105,26 @@ class Settings:
         os.getenv("STEAM_OPENID_NONCE_TTL_SECONDS", "600")
     )
     steam_web_api_key: str = os.getenv("STEAM_WEB_API_KEY", "").strip()
+    steam_credential_encryption_key: str = os.getenv(
+        "STEAM_CREDENTIAL_ENCRYPTION_KEY",
+        DEVELOPMENT_STEAM_CREDENTIAL_ENCRYPTION_KEY,
+    ).strip()
+    steam_credential_encryption_key_version: str = os.getenv(
+        "STEAM_CREDENTIAL_ENCRYPTION_KEY_VERSION", "dev-v1"
+    ).strip()
+    steam_sync_max_matches: int = int(os.getenv("STEAM_SYNC_MAX_MATCHES", "20"))
+    steam_sync_timeout_seconds: float = float(
+        os.getenv("STEAM_SYNC_TIMEOUT_SECONDS", "5")
+    )
+    steam_sync_retry_base_seconds: int = int(
+        os.getenv("STEAM_SYNC_RETRY_BASE_SECONDS", "30")
+    )
+    steam_sync_retry_max_seconds: int = int(
+        os.getenv("STEAM_SYNC_RETRY_MAX_SECONDS", "3600")
+    )
+    steam_scheduled_sync_enabled: bool = _bool_from_env(
+        "STEAM_SCHEDULED_SYNC_ENABLED"
+    )
     auth_session_ttl_seconds: int = int(os.getenv("AUTH_SESSION_TTL_SECONDS", "3600"))
     auth_login_ttl_seconds: int = int(os.getenv("AUTH_LOGIN_TTL_SECONDS", "300"))
     auth_clock_skew_seconds: int = int(os.getenv("AUTH_CLOCK_SKEW_SECONDS", "30"))
@@ -183,6 +226,7 @@ class Settings:
         self._validate_explicit_auth_mode()
         self._validate_auth_provider()
         if self.auth_mode != "production":
+            self._validate_steam_sync_configuration()
             self._validate_artifact_storage_configuration()
             return
 
@@ -210,12 +254,6 @@ class Settings:
                 raise RuntimeError(
                     "STEAM_OPENID_NONCE_TTL_SECONDS must cover login TTL and clock skew "
                     "and be at most 3600"
-                )
-            if self.steam_web_api_key and not re.fullmatch(
-                r"[A-Fa-f0-9]{32}", self.steam_web_api_key
-            ):
-                raise RuntimeError(
-                    "STEAM_WEB_API_KEY must be a 32-character hexadecimal key"
                 )
         if not self.cors_origins:
             raise RuntimeError("CORS_ORIGINS must contain at least one browser origin")
@@ -272,6 +310,7 @@ class Settings:
                 "FRONTEND_PUBLIC_URL must share the exact API origin in production"
             )
         self._validate_artifact_storage_configuration()
+        self._validate_steam_sync_configuration()
 
     def validate_worker_runtime_configuration(self) -> None:
         self._validate_explicit_auth_mode()
@@ -365,6 +404,55 @@ class Settings:
             *SUPPORTED_AUTH_PROVIDERS,
         }:
             raise RuntimeError("AUTH_PROVIDER must be empty, steam, or oidc")
+
+    def _validate_steam_sync_configuration(self) -> None:
+        if not 1 <= self.steam_sync_max_matches <= 20:
+            raise RuntimeError("STEAM_SYNC_MAX_MATCHES must be between 1 and 20")
+        if not 0.1 <= self.steam_sync_timeout_seconds <= 30:
+            raise RuntimeError(
+                "STEAM_SYNC_TIMEOUT_SECONDS must be between 0.1 and 30"
+            )
+        if not 1 <= self.steam_sync_retry_base_seconds <= 3_600:
+            raise RuntimeError(
+                "STEAM_SYNC_RETRY_BASE_SECONDS must be between 1 and 3600"
+            )
+        if not (
+            self.steam_sync_retry_base_seconds
+            <= self.steam_sync_retry_max_seconds
+            <= 86_400
+        ):
+            raise RuntimeError(
+                "STEAM_SYNC_RETRY_MAX_SECONDS must be between the retry base and 86400"
+            )
+        if self.steam_scheduled_sync_enabled:
+            raise RuntimeError(
+                "STEAM_SCHEDULED_SYNC_ENABLED is not supported until a scheduler exists"
+            )
+        if not re.fullmatch(
+            r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}",
+            self.steam_credential_encryption_key_version,
+        ):
+            raise RuntimeError(
+                "STEAM_CREDENTIAL_ENCRYPTION_KEY_VERSION is invalid"
+            )
+        if not _is_32_byte_urlsafe_base64(
+            self.steam_credential_encryption_key
+        ):
+            raise RuntimeError(
+                "STEAM_CREDENTIAL_ENCRYPTION_KEY must be URL-safe base64 for 32 bytes"
+            )
+        if self.auth_mode != "production":
+            return
+        if not re.fullmatch(r"[A-Fa-f0-9]{32}", self.steam_web_api_key):
+            raise RuntimeError(
+                "STEAM_WEB_API_KEY must be a 32-character hexadecimal key in production"
+            )
+        if self.steam_credential_encryption_key.rstrip("=") == (
+            DEVELOPMENT_STEAM_CREDENTIAL_ENCRYPTION_KEY.rstrip("=")
+        ):
+            raise RuntimeError(
+                "STEAM_CREDENTIAL_ENCRYPTION_KEY must not use the development key in production"
+            )
 
     def _validate_production_oidc_configuration(self) -> None:
         required = (

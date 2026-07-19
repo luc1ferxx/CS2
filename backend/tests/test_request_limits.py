@@ -6,10 +6,12 @@ from typing import Any
 
 from app.core.request_limits import (
     DEMO_ENVELOPE_LIMIT_BYTES,
+    STEAM_CREDENTIALS_JSON_LIMIT_BYTES,
     VIDEO_ENVELOPE_LIMIT_BYTES,
     WORKER_MEDIA_ENVELOPE_LIMIT_BYTES,
     WORKER_RESULT_ENVELOPE_LIMIT_BYTES,
     MultipartRequestLimitMiddleware,
+    SensitiveJsonRequestLimitMiddleware,
 )
 
 
@@ -111,6 +113,43 @@ class MultipartRequestLimitMiddlewareTest(unittest.TestCase):
         self.assertEqual(VIDEO_ENVELOPE_LIMIT_BYTES, (2 * 1024**3) + (8 * 1024**2))
         self.assertEqual(WORKER_MEDIA_ENVELOPE_LIMIT_BYTES, VIDEO_ENVELOPE_LIMIT_BYTES)
         self.assertEqual(WORKER_RESULT_ENVELOPE_LIMIT_BYTES, 64 * 1024)
+        self.assertEqual(STEAM_CREDENTIALS_JSON_LIMIT_BYTES, 4 * 1024)
+
+    def test_steam_credentials_json_has_a_small_streaming_limit(self) -> None:
+        downstream = RecordingBodyApp()
+        app = SensitiveJsonRequestLimitMiddleware(
+            downstream,
+            steam_credentials_limit_bytes=8,
+        )
+
+        status, headers, body, receive_calls = invoke_asgi(
+            app,
+            path="/steam/connection/credentials",
+            chunks=[b"1234", b"56789"],
+            headers=[(b"content-length", b"4")],
+        )
+
+        self.assertEqual(status, 413)
+        self.assertEqual(json.loads(body)["errorCode"], "REQUEST_TOO_LARGE")
+        self.assertEqual(headers["cache-control"], "private, no-store")
+        self.assertEqual(receive_calls, 2)
+        self.assertEqual(downstream.received_body, b"1234")
+
+    def test_steam_credentials_limit_does_not_cover_other_json_routes(self) -> None:
+        downstream = RecordingBodyApp()
+        app = SensitiveJsonRequestLimitMiddleware(
+            downstream,
+            steam_credentials_limit_bytes=8,
+        )
+
+        status, _, body, _ = invoke_asgi(
+            app,
+            path="/steam/sync",
+            chunks=[b"123456789"],
+        )
+
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body), {"received": 9})
 
     def test_rejects_trustworthy_oversized_content_length_before_receiving_body(self) -> None:
         downstream = RecordingBodyApp()

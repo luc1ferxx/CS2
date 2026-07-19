@@ -22,6 +22,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } fro
 import { DemoUploader } from "@/components/upload/DemoUploader";
 import { AuthBoundary } from "@/components/auth/AuthBoundary";
 import { SessionControls } from "@/components/auth/SessionControls";
+import { RecentSteamMatches } from "@/components/steam/RecentSteamMatches";
 import { archiveDemo, createDemoUpload, createMockUpload, listDemos, retryDemoParse, updateDemo } from "@/lib/api";
 import {
   canRetryParse,
@@ -276,6 +277,8 @@ function DashboardContent() {
             ) : null}
           </div>
         ) : null}
+
+        <RecentSteamMatches />
 
         <section className="library-toolbar archive-control-spine" aria-label="Demo library controls">
           <label className="library-search">

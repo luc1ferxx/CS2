@@ -92,6 +92,18 @@ class AccountService:
             return None
         return _account_identity(account, identity.provider)
 
+    def get_external_subject(self, owner_id: str, provider: str) -> str | None:
+        normalized_owner_id = _normalize_identity_value(owner_id, "owner_id", 64)
+        normalized_provider = _normalize_identity_value(provider, "provider", 96)
+        return (
+            self.db.query(ExternalIdentity.subject)
+            .filter(
+                ExternalIdentity.owner_id == normalized_owner_id,
+                ExternalIdentity.provider == normalized_provider,
+            )
+            .scalar()
+        )
+
     def _resolve_or_create(
         self,
         *,

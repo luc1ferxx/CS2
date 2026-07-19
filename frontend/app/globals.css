@@ -5891,3 +5891,517 @@ select:disabled {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
+
+/* Steam match discovery — compact operational connection and recent-record ledger. */
+.steam-match-sync {
+  margin-bottom: 10px;
+  border: 1px solid rgba(82, 111, 122, 0.58);
+  border-radius: 8px;
+  overflow: hidden;
+  background: #10191f;
+}
+
+.steam-sync-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 14px;
+  border-bottom: 1px solid rgba(82, 111, 122, 0.46);
+  background: #0e171d;
+}
+
+.steam-sync-header > div:first-child {
+  min-width: 0;
+}
+
+.steam-sync-title-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 3px;
+}
+
+.steam-sync-title-row h2 {
+  margin: 0;
+  font-size: 16px;
+  line-height: 1.2;
+}
+
+.steam-sync-header p {
+  max-width: 720px;
+  margin: 5px 0 0;
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.steam-sync-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.steam-sync-actions .compact-button,
+.steam-credentials-actions .compact-button,
+.steam-sync-message .compact-button,
+.steam-match-demo-action .compact-button {
+  min-height: 30px;
+  padding-right: 9px;
+  padding-left: 9px;
+  font-size: 11px;
+}
+
+.steam-disconnect-button {
+  color: var(--status-danger);
+}
+
+.steam-state-pill {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  min-height: 22px;
+  padding: 0 7px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  background: rgba(9, 13, 16, 0.44);
+  color: var(--text-secondary);
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1.15;
+  text-transform: uppercase;
+}
+
+.steam-state-pill.waiting {
+  border-color: rgba(230, 180, 92, 0.36);
+  background: var(--risk-amber-soft);
+  color: var(--risk-amber);
+}
+
+.steam-state-pill.active {
+  border-color: rgba(88, 208, 199, 0.36);
+  background: var(--accent-radar-soft);
+  color: var(--accent-radar);
+}
+
+.steam-state-pill.ready {
+  border-color: rgba(89, 201, 149, 0.32);
+  background: rgba(89, 201, 149, 0.09);
+  color: var(--status-ready);
+}
+
+.steam-state-pill.danger {
+  border-color: rgba(237, 107, 107, 0.36);
+  background: var(--status-danger-soft);
+  color: var(--status-danger);
+}
+
+.steam-sync-message {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 14px;
+  border-bottom: 1px solid rgba(82, 111, 122, 0.38);
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.steam-sync-message.danger {
+  border-color: rgba(237, 107, 107, 0.28);
+  background: var(--status-danger-soft);
+  color: var(--text-primary);
+}
+
+.steam-sync-message.success {
+  border-color: rgba(89, 201, 149, 0.26);
+  background: rgba(89, 201, 149, 0.08);
+  color: var(--text-primary);
+}
+
+.steam-sync-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 132px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.steam-sync-layout {
+  display: grid;
+  grid-template-columns: minmax(340px, 0.72fr) minmax(0, 1.6fr);
+  min-width: 0;
+}
+
+.steam-connection-pane,
+.steam-matches-pane {
+  min-width: 0;
+  padding: 11px 13px;
+}
+
+.steam-matches-pane {
+  border-left: 1px solid rgba(82, 111, 122, 0.42);
+}
+
+.steam-pane-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+  margin-bottom: 9px;
+}
+
+.steam-pane-heading > div {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.steam-pane-heading span,
+.steam-connection-meta dt,
+.steam-source-label,
+.steam-schedule-label {
+  color: var(--text-tertiary);
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.steam-pane-heading strong {
+  color: var(--text-primary);
+  font-size: 12px;
+}
+
+.steam-source-label,
+.steam-schedule-label {
+  padding-top: 2px;
+  text-align: right;
+}
+
+.steam-connection-meta {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  margin: 0 0 9px;
+}
+
+.steam-connection-meta div {
+  min-width: 0;
+  padding: 7px 8px;
+  border: 1px solid rgba(82, 111, 122, 0.38);
+  border-radius: 6px;
+  background: #0c1419;
+}
+
+.steam-connection-meta dt,
+.steam-connection-meta dd {
+  margin: 0;
+}
+
+.steam-connection-meta dd {
+  margin-top: 4px;
+  color: var(--text-secondary);
+  font-size: 10px;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.steam-connection-warning {
+  margin: 0 0 9px;
+  padding: 7px 8px;
+  border-left: 2px solid var(--status-danger);
+  background: var(--status-danger-soft);
+  color: var(--text-secondary);
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.steam-credentials-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  padding-top: 9px;
+  border-top: 1px solid rgba(82, 111, 122, 0.36);
+}
+
+.steam-credentials-heading,
+.steam-credentials-form > p,
+.steam-credentials-actions {
+  grid-column: 1 / -1;
+}
+
+.steam-credentials-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.steam-credentials-heading strong {
+  color: var(--text-primary);
+  font-size: 11px;
+}
+
+.steam-credentials-heading a {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--accent-radar);
+  font-size: 9px;
+}
+
+.steam-credentials-form label {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+  color: var(--text-secondary);
+  font-size: 9px;
+  font-weight: 760;
+}
+
+.steam-credentials-form input {
+  width: 100%;
+  min-width: 0;
+  min-height: 32px;
+  padding: 0 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  outline: 0;
+  background: #0c1419;
+  color: var(--text-primary);
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Consolas, monospace;
+  font-size: 11px;
+}
+
+.steam-credentials-form input:focus-visible {
+  border-color: var(--focus-ring);
+  box-shadow: 0 0 0 2px rgba(120, 226, 220, 0.12);
+}
+
+.steam-credentials-form > p {
+  margin: 0;
+  color: var(--text-tertiary);
+  font-size: 9px;
+  line-height: 1.4;
+}
+
+.steam-credentials-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.steam-credentials-saved {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  padding: 8px;
+  border-top: 1px solid rgba(82, 111, 122, 0.36);
+  color: var(--text-secondary);
+  font-size: 10px;
+  line-height: 1.35;
+}
+
+.steam-credentials-saved svg {
+  flex: 0 0 auto;
+  color: var(--status-ready);
+}
+
+.steam-matches-empty {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 9px;
+  min-height: 92px;
+  padding: 20px 12px;
+  border: 1px dashed rgba(82, 111, 122, 0.46);
+  border-radius: 6px;
+  color: var(--text-tertiary);
+}
+
+.steam-matches-empty strong {
+  display: block;
+  color: var(--text-primary);
+  font-size: 12px;
+}
+
+.steam-matches-empty p {
+  margin: 4px 0 0;
+  color: var(--text-secondary);
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.steam-match-list {
+  border: 1px solid rgba(82, 111, 122, 0.42);
+  border-radius: 6px;
+  overflow: hidden;
+  background: #121b22;
+}
+
+.steam-match-list-head,
+.steam-match-record {
+  display: grid;
+  grid-template-columns: minmax(160px, 1fr) minmax(130px, 0.72fr) 104px 112px;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 0 10px;
+}
+
+.steam-match-list-head {
+  min-height: 28px;
+  border-bottom: 1px solid rgba(82, 111, 122, 0.42);
+  background: #0c1419;
+  color: var(--text-tertiary);
+  font-size: 8px;
+  font-weight: 820;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.steam-match-record {
+  min-height: 48px;
+  border-bottom: 1px solid rgba(82, 111, 122, 0.28);
+}
+
+.steam-match-record:last-child {
+  border-bottom: 0;
+}
+
+.steam-match-record:hover {
+  background: rgba(88, 208, 199, 0.04);
+}
+
+.steam-match-record > div:first-child {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.steam-match-record > div:first-child strong {
+  color: var(--text-primary);
+  font-size: 11px;
+}
+
+.steam-match-record > div:first-child span,
+.steam-match-record time,
+.steam-match-demo-action > span {
+  color: var(--text-tertiary);
+  font-size: 9px;
+}
+
+.steam-match-demo-action {
+  display: flex;
+  justify-content: flex-start;
+}
+
+.steam-sync-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 7px 13px;
+  border-top: 1px solid rgba(82, 111, 122, 0.42);
+  background: #0c1419;
+  color: var(--text-tertiary);
+  font-size: 9px;
+  line-height: 1.35;
+}
+
+.steam-sync-footer span:first-child {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.steam-sync-actions button:focus-visible,
+.steam-credentials-form a:focus-visible,
+.steam-credentials-form button:focus-visible,
+.steam-match-list a:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+@media (max-width: 980px) {
+  .steam-sync-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .steam-sync-actions {
+    justify-content: flex-start;
+    width: 100%;
+  }
+
+  .steam-sync-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .steam-matches-pane {
+    border-top: 1px solid rgba(82, 111, 122, 0.42);
+    border-left: 0;
+  }
+
+  .steam-match-list-head,
+  .steam-match-record {
+    grid-template-columns: minmax(140px, 1fr) minmax(120px, 0.72fr) 100px 108px;
+  }
+}
+
+@media (max-width: 620px) {
+  .steam-sync-actions .compact-button {
+    flex: 1 1 calc(50% - 6px);
+  }
+
+  .steam-sync-message,
+  .steam-pane-heading,
+  .steam-credentials-heading,
+  .steam-sync-footer {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .steam-source-label,
+  .steam-schedule-label {
+    text-align: left;
+  }
+
+  .steam-connection-meta,
+  .steam-credentials-form {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .steam-credentials-heading,
+  .steam-credentials-form > p,
+  .steam-credentials-actions {
+    grid-column: auto;
+  }
+
+  .steam-match-list-head {
+    display: none;
+  }
+
+  .steam-match-record {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 7px 10px;
+    padding: 9px 10px;
+  }
+
+  .steam-match-record time {
+    text-align: right;
+  }
+
+  .steam-match-demo-action {
+    justify-content: flex-end;
+  }
+}

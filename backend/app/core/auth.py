@@ -132,5 +132,6 @@ def _is_private_browser_path(path: str) -> bool:
         or path.startswith("/demos/")
         or path.startswith("/uploads/")
         or path.startswith("/auth/")
+        or path.startswith("/steam/")
         or path == "/diagnostics"
     )

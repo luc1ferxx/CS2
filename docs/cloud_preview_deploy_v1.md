@@ -45,11 +45,11 @@ export AUTH_PROVIDER=steam
 export AUTH_COOKIE_SECURE=1
 ```
 
-Set optional `STEAM_WEB_API_KEY` and required non-default `RENDER_WORKER_TOKEN` only through server-side secret injection. `STEAM_WEB_API_KEY` enriches display metadata and is not required to authenticate SteamID64. If the legacy-compatible OIDC provider is selected, also provide the complete `OIDC_*` configuration documented in `docs/production_auth_owner_private_media_v1.md`. Production API startup rejects malformed selected-provider configuration and the development worker token. The queue worker uses its separate narrow validation path and does not receive browser Steam/OIDC secrets.
+Set required `STEAM_WEB_API_KEY`, a random `STEAM_CREDENTIAL_ENCRYPTION_KEY`, and the non-default `RENDER_WORKER_TOKEN` only through server-side secret injection. `STEAM_WEB_API_KEY` enriches display metadata and authorizes the official match-history publisher call; it is still not part of Steam OpenID verification. If the legacy-compatible OIDC provider is selected, also provide the complete `OIDC_*` configuration documented in `docs/production_auth_owner_private_media_v1.md`. Production API startup rejects malformed/missing Steam keys, the checked-in development encryption key, an enabled V1 scheduler, malformed selected-provider configuration, and the development worker token. The parser/render queue worker uses its separate narrow validation path and does not receive browser Steam/OIDC or match-history secrets.
 
-`NEXT_PUBLIC_API_BASE_URL` and `NEXT_PUBLIC_AUTH_PROVIDER` are baked into the frontend browser bundle during `next build`, so rebuild the frontend image whenever either changes. The public provider selector must match server `AUTH_PROVIDER`.
+`NEXT_PUBLIC_API_BASE_URL` and `NEXT_PUBLIC_AUTH_PROVIDER` are baked into the frontend browser bundle during `next build`, so rebuild the frontend image whenever either changes. The public provider selector must match server `AUTH_PROVIDER`. Steam publisher/encryption keys have no `NEXT_PUBLIC_*` form.
 
-The repository does not provision an edge proxy or cloud resource. A production candidate must supply same-origin routing externally: frontend pages and static assets, including frontend `/auth/callback`, go to Next.js; `/auth/steam/login`, `/auth/steam/callback`, `/auth/me`, `/auth/logout`, compatibility auth routes, `/demos/*`, `/uploads/*`, `/health`, and render-worker API paths go to FastAPI on the same public origin. The backend Steam callback and frontend completion page must remain distinct. The checked-in two-port localhost layout remains development mode.
+The repository does not provision an edge proxy or cloud resource. A production candidate must supply same-origin routing externally: frontend pages and static assets, including frontend `/auth/callback`, go to Next.js; `/auth/steam/login`, `/auth/steam/callback`, `/auth/me`, `/auth/logout`, compatibility auth routes, `/steam/*`, `/demos/*`, `/uploads/*`, `/health`, and render-worker API paths go to FastAPI on the same public origin. The backend Steam callback and frontend completion page must remain distinct. The checked-in two-port localhost layout remains development mode.
 
 User-facing video metadata contains only `/demos/{demo_id}/media/video`, which the frontend resolves against `NEXT_PUBLIC_API_BASE_URL`. The API checks the opaque session and owner again for every GET/HEAD/Range request. There is no public `/media/videos` mount. Production must route frontend pages plus API/auth/media paths through the same exact HTTPS origin; split subdomains fail runtime validation.
 
@@ -81,7 +81,10 @@ Required preview values:
 | `CORS_ORIGINS` | API | Credentialed frontend origin. Production requires exactly `FRONTEND_PUBLIC_URL` and rejects wildcard, stale, or sibling origins. |
 | `ARTIFACT_STORAGE_ROOT` and category dirs | API, worker | Local volume roots for uploads, replay blobs, summaries, and videos. |
 | `STEAM_AUTH_STATE_COOKIE_NAME`, `STEAM_OPENID_NONCE_TTL_SECONDS` | API, Redis | Steam state cookie and assertion freshness/replay window. |
-| `STEAM_WEB_API_KEY` | API | Optional server-only GetPlayerSummaries key. Never prefix with `NEXT_PUBLIC_` or send to workers. |
+| `STEAM_WEB_API_KEY` | API | Required production server-only GetPlayerSummaries/match-history publisher key. Never prefix with `NEXT_PUBLIC_` or send to workers. |
+| `STEAM_CREDENTIAL_ENCRYPTION_KEY`, `STEAM_CREDENTIAL_ENCRYPTION_KEY_VERSION` | API | AES-256-GCM key material/version for authorization, cursor, and discovered sharing codes. |
+| `STEAM_SYNC_MAX_MATCHES`, `STEAM_SYNC_TIMEOUT_SECONDS`, `STEAM_SYNC_RETRY_BASE_SECONDS`, `STEAM_SYNC_RETRY_MAX_SECONDS` | API | Bounded manual-sync and persisted-backoff policy. |
+| `STEAM_SCHEDULED_SYNC_ENABLED` | API | Must remain false in V1; no scheduler is registered. |
 | `OIDC_*` | API | Required only when `AUTH_PROVIDER=oidc`; see the compatibility contract. |
 | `AUTH_COOKIE_SECURE`, `AUTH_SESSION_COOKIE_NAME` | API | Secure opaque session cookie controls. Production requires secure cookies. |
 | `AUTH_SESSION_TTL_SECONDS`, `AUTH_LOGIN_TTL_SECONDS` | API, Redis | Bounded session and one-time login attempt lifetimes. |

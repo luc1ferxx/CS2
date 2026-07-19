@@ -1,3 +1,4 @@
+import base64
 import hashlib
 import json
 import logging
@@ -78,7 +79,7 @@ class SteamAuthConfigurationTest(unittest.TestCase):
                 "auth_login_ttl_seconds": 600,
                 "auth_clock_skew_seconds": 30,
                 "steam_openid_nonce_ttl_seconds": 1,
-                "steam_web_api_key": "not-a-steam-key",
+                "steam_web_api_key": "b" * 32,
                 "oidc_issuer": "https://issuer.example.test",
                 "oidc_client_id": "cs2-coach",
                 "oidc_authorization_endpoint": "https://issuer.example.test/authorize",
@@ -479,6 +480,25 @@ class AccountIdentityConflictTest(unittest.TestCase):
                     preferred_owner_id=owner_id,
                 )
 
+    def test_external_subject_lookup_is_owner_and_provider_scoped(self) -> None:
+        owner_id = "owner_v1_" + ("a" * 43)
+        with self.Session() as db:
+            service = AccountService(db)
+            service.resolve_or_create_identity(
+                provider="steam",
+                subject=STEAM_ID_A,
+                preferred_owner_id=owner_id,
+            )
+
+            self.assertEqual(
+                service.get_external_subject(owner_id, "steam"),
+                STEAM_ID_A,
+            )
+            self.assertIsNone(service.get_external_subject(owner_id, "oidc"))
+            self.assertIsNone(
+                service.get_external_subject("owner_v1_" + ("b" * 43), "steam")
+            )
+
 
 class LoginAttempt:
     def __init__(self, state: str, callback_url: str):
@@ -627,6 +647,10 @@ def steam_production_settings() -> dict[str, object]:
         "object_storage_bucket": "private-cs2-artifacts",
         "object_storage_prefix": "cs2-artifacts-v1",
         "steam_web_api_key": "a" * 32,
+        "steam_credential_encryption_key": base64.urlsafe_b64encode(
+            b"p" * 32
+        ).decode("ascii"),
+        "steam_credential_encryption_key_version": "test-v1",
     }
 
 

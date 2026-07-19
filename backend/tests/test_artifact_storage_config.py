@@ -1,3 +1,4 @@
+import base64
 import unittest
 
 from app.core.config import Settings
@@ -92,6 +93,11 @@ def production_values() -> dict[str, object]:
         "auth_cookie_secure": True,
         "cors_origins_raw": "https://coach.example.test",
         "render_worker_token": "production-worker-secret",
+        "steam_web_api_key": "a" * 32,
+        "steam_credential_encryption_key": base64.urlsafe_b64encode(
+            b"p" * 32
+        ).decode("ascii"),
+        "steam_credential_encryption_key_version": "test-v1",
         "artifact_storage_backend": "s3",
         "object_storage_bucket": "private-cs2-artifacts",
         "object_storage_prefix": "cs2-artifacts-v1",
