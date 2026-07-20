@@ -1,6 +1,20 @@
 import type { Metadata } from "next";
+import { Chakra_Petch, Inter } from "next/font/google";
 import { AuthProvider } from "@/components/auth/AuthProvider";
 import "./globals.css";
+
+const inter = Inter({
+  subsets: ["latin"],
+  display: "swap",
+  variable: "--font-body"
+});
+
+const chakraPetch = Chakra_Petch({
+  subsets: ["latin"],
+  weight: ["400", "500", "600", "700"],
+  display: "swap",
+  variable: "--font-display"
+});
 
 export const metadata: Metadata = {
   title: "CS2 Demo Coach",
@@ -16,7 +30,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
+    <html lang="en" className={`${inter.variable} ${chakraPetch.variable}`}>
       <body>
         <AuthProvider>{children}</AuthProvider>
       </body>
