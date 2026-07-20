@@ -11,6 +11,7 @@ from sqlalchemy import (
     Integer,
     LargeBinary,
     String,
+    Text,
     UniqueConstraint,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -132,6 +133,10 @@ class SteamMatch(Base):
             "share_code_hash",
             name="uq_steam_matches_owner_share_code_hash",
         ),
+        UniqueConstraint(
+            "demo_id",
+            name="uq_steam_matches_demo_id",
+        ),
         CheckConstraint(
             "status IN ("
             + ", ".join(f"'{status}'" for status in STEAM_MATCH_STATUSES)
@@ -169,6 +174,32 @@ class SteamMatch(Base):
     share_code_nonce: Mapped[bytes] = mapped_column(LargeBinary(12), nullable=False)
     encryption_key_version: Mapped[str] = mapped_column(String(64), nullable=False)
     status: Mapped[str] = mapped_column(String(32), default="discovered", nullable=False)
+    demo_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    import_run_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    import_lease_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    import_attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    provider_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    last_import_error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    last_import_error_message: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    import_started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    import_completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    parser_dispatched_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    parser_dispatched_job_id: Mapped[str | None] = mapped_column(
+        String(36), nullable=True
+    )
+    map_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    duration_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    ct_round_wins: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    t_round_wins: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    players_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     discovered_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, nullable=False
     )

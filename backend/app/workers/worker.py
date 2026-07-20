@@ -54,7 +54,8 @@ def process_job(db: Session, job_id: str, demo_id: str) -> None:
 
 def process_mock_parse_job(db: Session, demo: Demo, job: DemoJob) -> None:
     service = DemoService.for_internal(db)
-    service.claim_parse_job(demo, job)
+    if not service.claim_parse_job(demo, job):
+        return
 
     time.sleep(1.2)
 
@@ -68,7 +69,8 @@ def process_mock_parse_job(db: Session, demo: Demo, job: DemoJob) -> None:
 def process_real_parse_job(db: Session, demo: Demo, job: DemoJob) -> None:
     service = DemoService.for_internal(db)
 
-    service.claim_parse_job(demo, job)
+    if not service.claim_parse_job(demo, job):
+        return
 
     try:
         with service.materialized_source_demo(demo, job) as source_path:

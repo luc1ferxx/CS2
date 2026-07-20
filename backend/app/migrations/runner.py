@@ -21,6 +21,7 @@ from sqlalchemy import (
     inspect,
     insert,
     select,
+    text,
 )
 from sqlalchemy.engine import Connection
 
@@ -216,6 +217,69 @@ def _create_steam_sync_v1(connection: Connection) -> None:
     steam_matches.create(connection)
 
 
+def _add_steam_demo_import_v1(connection: Connection) -> None:
+    inspector = inspect(connection)
+    if "steam_matches" not in set(inspector.get_table_names()):
+        raise RuntimeError("Steam sync schema is required before Demo import migration")
+    added_columns = {
+        "demo_id",
+        "import_run_id",
+        "import_lease_expires_at",
+        "import_attempts",
+        "provider_id",
+        "last_import_error_code",
+        "last_import_error_message",
+        "import_started_at",
+        "import_completed_at",
+        "parser_dispatched_at",
+        "parser_dispatched_job_id",
+        "map_name",
+        "duration_seconds",
+        "ct_round_wins",
+        "t_round_wins",
+        "players_json",
+    }
+    existing_columns = {
+        column["name"] for column in inspector.get_columns("steam_matches")
+    }
+    if added_columns.intersection(existing_columns):
+        raise RuntimeError(
+            "Steam Demo import schema exists without its tracked schema migration"
+        )
+
+    timestamp_type = (
+        "TIMESTAMP WITH TIME ZONE"
+        if connection.dialect.name == "postgresql"
+        else "TIMESTAMP"
+    )
+    statements = (
+        "ALTER TABLE steam_matches ADD COLUMN demo_id VARCHAR(36)",
+        "ALTER TABLE steam_matches ADD COLUMN import_run_id VARCHAR(36)",
+        f"ALTER TABLE steam_matches ADD COLUMN import_lease_expires_at {timestamp_type}",
+        "ALTER TABLE steam_matches ADD COLUMN import_attempts INTEGER DEFAULT 0 NOT NULL",
+        "ALTER TABLE steam_matches ADD COLUMN provider_id VARCHAR(64)",
+        "ALTER TABLE steam_matches ADD COLUMN last_import_error_code VARCHAR(64)",
+        "ALTER TABLE steam_matches ADD COLUMN last_import_error_message VARCHAR(255)",
+        f"ALTER TABLE steam_matches ADD COLUMN import_started_at {timestamp_type}",
+        f"ALTER TABLE steam_matches ADD COLUMN import_completed_at {timestamp_type}",
+        f"ALTER TABLE steam_matches ADD COLUMN parser_dispatched_at {timestamp_type}",
+        "ALTER TABLE steam_matches ADD COLUMN parser_dispatched_job_id VARCHAR(36)",
+        "ALTER TABLE steam_matches ADD COLUMN map_name VARCHAR(64)",
+        "ALTER TABLE steam_matches ADD COLUMN duration_seconds INTEGER",
+        "ALTER TABLE steam_matches ADD COLUMN ct_round_wins INTEGER",
+        "ALTER TABLE steam_matches ADD COLUMN t_round_wins INTEGER",
+        "ALTER TABLE steam_matches ADD COLUMN players_json TEXT",
+    )
+    for statement in statements:
+        connection.execute(text(statement))
+    connection.execute(
+        text(
+            "CREATE UNIQUE INDEX uq_steam_matches_demo_id "
+            "ON steam_matches (demo_id)"
+        )
+    )
+
+
 MIGRATIONS = (
     SchemaMigration(
         version="2026071901",
@@ -235,6 +299,16 @@ MIGRATIONS = (
             "connection-owner-foreign-key,encrypted-share-code,share-code-hash,status,timestamps"
         ),
         upgrade=_create_steam_sync_v1,
+    ),
+    SchemaMigration(
+        version="2026071903",
+        name="add_steam_demo_import_state",
+        checksum=_checksum(
+            "steam-demo-import-v1:demo-link,run-lease,attempts,provider,error-state,"
+            "timestamps,parser-dispatch-job,parsed-map,duration,side-round-wins,players,"
+            "unique-demo"
+        ),
+        upgrade=_add_steam_demo_import_v1,
     ),
 )
 

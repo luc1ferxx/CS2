@@ -6216,6 +6216,27 @@ select:disabled {
   color: var(--status-ready);
 }
 
+.steam-import-boundary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 0 0 9px;
+  padding: 7px 8px;
+  border-left: 2px solid var(--risk-amber);
+  background: var(--risk-amber-soft);
+  color: var(--text-secondary);
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.steam-import-boundary .compact-button {
+  flex: 0 0 auto;
+  min-height: 28px;
+  padding: 0 8px;
+  font-size: 10px;
+}
+
 .steam-matches-empty {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
@@ -6251,7 +6272,7 @@ select:disabled {
 .steam-match-list-head,
 .steam-match-record {
   display: grid;
-  grid-template-columns: minmax(160px, 1fr) minmax(130px, 0.72fr) 104px 112px;
+  grid-template-columns: minmax(160px, 1fr) minmax(130px, 0.72fr) 104px 142px;
   align-items: center;
   gap: 10px;
   min-width: 0;
@@ -6300,9 +6321,18 @@ select:disabled {
   font-size: 9px;
 }
 
+.steam-match-record > div:first-child .steam-match-import-error {
+  color: var(--status-danger);
+  line-height: 1.3;
+}
+
 .steam-match-demo-action {
   display: flex;
   justify-content: flex-start;
+}
+
+.steam-match-demo-action button {
+  white-space: nowrap;
 }
 
 .steam-sync-footer {
@@ -6327,6 +6357,8 @@ select:disabled {
 .steam-sync-actions button:focus-visible,
 .steam-credentials-form a:focus-visible,
 .steam-credentials-form button:focus-visible,
+.steam-import-boundary button:focus-visible,
+.steam-match-list button:focus-visible,
 .steam-match-list a:focus-visible {
   outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
@@ -6354,7 +6386,7 @@ select:disabled {
 
   .steam-match-list-head,
   .steam-match-record {
-    grid-template-columns: minmax(140px, 1fr) minmax(120px, 0.72fr) 100px 108px;
+    grid-template-columns: minmax(140px, 1fr) minmax(120px, 0.72fr) 100px 142px;
   }
 }
 
@@ -6366,6 +6398,7 @@ select:disabled {
   .steam-sync-message,
   .steam-pane-heading,
   .steam-credentials-heading,
+  .steam-import-boundary,
   .steam-sync-footer {
     align-items: flex-start;
     flex-direction: column;

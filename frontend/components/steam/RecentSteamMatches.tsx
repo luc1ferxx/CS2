@@ -3,6 +3,7 @@
 import Link from "next/link";
 import {
   Clock3,
+  Download,
   ExternalLink,
   FileUp,
   Link2,
@@ -16,6 +17,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } fro
 import {
   deleteSteamConnection,
   getSteamConnection,
+  importSteamMatch,
   isApiError,
   listSteamMatches,
   saveSteamConnectionCredentials,
@@ -24,6 +26,7 @@ import {
 import {
   buildSteamConnectionDisplay,
   buildSteamMatchDisplay,
+  steamMatchImportAction,
   steamRequestErrorMessage,
   steamSyncResultMessage,
   type SteamRequestAction
@@ -41,6 +44,7 @@ export function RecentSteamMatches() {
   const [notice, setNotice] = useState<string | null>(null);
   const [busyAction, setBusyAction] = useState<BusyAction | null>(null);
   const [editingCredentials, setEditingCredentials] = useState(false);
+  const [importingMatchId, setImportingMatchId] = useState<string | null>(null);
   const [gameAuthCode, setGameAuthCode] = useState("");
   const [initialMatchSharingCode, setInitialMatchSharingCode] = useState("");
   const [, setRetryTimerVersion] = useState(0);
@@ -98,6 +102,19 @@ export function RecentSteamMatches() {
     }, retryAt - Date.now() + 50);
     return () => window.clearTimeout(timeoutId);
   }, [connection?.next_retry_at]);
+
+  useEffect(() => {
+    const hasActiveImport = matches.some((match) =>
+      ["demo_pending", "downloading", "parsing"].includes(match.status)
+    );
+    if (!hasActiveImport) {
+      return;
+    }
+    const intervalId = window.setInterval(() => {
+      void loadSteamData();
+    }, 2500);
+    return () => window.clearInterval(intervalId);
+  }, [loadSteamData, matches]);
 
   const connectionDisplay = useMemo(
     () => (connection ? buildSteamConnectionDisplay(connection) : null),
@@ -206,6 +223,33 @@ export function RecentSteamMatches() {
     setBusyAction(null);
   }
 
+  async function handleImport(matchId: string) {
+    setImportingMatchId(matchId);
+    setActionError(null);
+    setNotice(null);
+    try {
+      const imported = await importSteamMatch(matchId);
+      setMatches((current) =>
+        current.map((match) => (match.id === imported.id ? imported : match))
+      );
+      if (imported.status === "ready" && imported.demo_id) {
+        setNotice("The imported Demo is ready for 2D review.");
+      } else {
+        setNotice("The Demo is queued for parsing.");
+      }
+      await loadSteamData();
+    } catch (error) {
+      setActionError(requestErrorMessage(error, "import"));
+      await loadSteamData();
+    } finally {
+      setImportingMatchId(null);
+    }
+  }
+
+  function openManualUpload() {
+    document.getElementById("demo-upload-input")?.click();
+  }
+
   return (
     <section className="steam-match-sync" aria-labelledby="recent-steam-matches-title">
       <header className="steam-sync-header">
@@ -220,7 +264,8 @@ export function RecentSteamMatches() {
             ) : null}
           </div>
           <p>
-            Discover official match-history records first. Automatic Demo import is not implemented in this phase.
+            Discover official match-history records, then import only through the configured licensed Demo provider.
+            Manual .dem upload remains independent.
           </p>
         </div>
         <div className="steam-sync-actions">
@@ -335,6 +380,22 @@ export function RecentSteamMatches() {
               <p className="steam-connection-warning">{connectionDisplay.errorMessage}</p>
             ) : null}
 
+            {connectionDisplay?.demoImportMessage ? (
+              <div className="steam-import-boundary">
+                <span>{connectionDisplay.demoImportMessage}</span>
+                {connectionDisplay.manualUploadSupported ? (
+                  <button
+                    className="secondary-button compact-button"
+                    type="button"
+                    onClick={openManualUpload}
+                  >
+                    <FileUp size={13} />
+                    Upload .dem
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
+
             {connection === null ? (
               <p className="steam-connection-warning">
                 Connection status is unavailable. Refresh before entering or replacing codes.
@@ -436,33 +497,81 @@ export function RecentSteamMatches() {
             ) : (
               <div className="steam-match-list" role="list">
                 <div className="steam-match-list-head" aria-hidden="true">
-                  <span>Discovery</span>
+                  <span>Match / parser summary</span>
                   <span>Discovered</span>
                   <span>Status</span>
-                  <span>Demo</span>
+                  <span>Demo action</span>
                 </div>
-                {matchDisplays.map((match) => (
-                  <article className="steam-match-record" key={match.id} role="listitem">
-                    <div>
-                      <strong>Match record</strong>
-                      <span>{match.sourceLabel}</span>
-                    </div>
-                    <time dateTime={match.discoveredAt}>{formatSteamDate(match.discoveredAt)}</time>
-                    <span className={`steam-state-pill ${match.statusTone}`}>
-                      {match.statusLabel}
-                    </span>
-                    <div className="steam-match-demo-action">
-                      {match.demoHref ? (
-                        <Link className="secondary-button compact-button" href={match.demoHref}>
-                          <ExternalLink size={13} />
-                          Open demo
-                        </Link>
-                      ) : (
-                        <span>Not imported</span>
-                      )}
-                    </div>
-                  </article>
-                ))}
+                {matchDisplays.map((match) => {
+                  const importAction = steamMatchImportAction(
+                    match.status,
+                    match.demoId,
+                    connectionDisplay?.demoImportAvailable ?? false,
+                    match.errorCode,
+                    match.parserDispatchPending,
+                    match.importRetryable
+                  );
+                  const isImporting = importingMatchId === match.id;
+                  const parserSummary = [
+                    match.durationLabel,
+                    match.sideRoundsLabel,
+                    match.playersLabel
+                  ].filter((value): value is string => value !== null);
+                  return (
+                    <article className="steam-match-record" key={match.id} role="listitem">
+                      <div>
+                        <strong>{match.mapName ?? "Match record"}</strong>
+                        <span>
+                          {parserSummary.length > 0
+                            ? parserSummary.join(" · ")
+                            : match.sourceLabel}
+                        </span>
+                        {match.errorMessage ? (
+                          <span className="steam-match-import-error">{match.errorMessage}</span>
+                        ) : null}
+                      </div>
+                      <time dateTime={match.discoveredAt}>{formatSteamDate(match.discoveredAt)}</time>
+                      <span className={`steam-state-pill ${match.statusTone}`}>
+                        {match.statusLabel}
+                      </span>
+                      <div className="steam-match-demo-action">
+                        {match.demoHref && match.status === "ready" ? (
+                          <Link className="secondary-button compact-button" href={match.demoHref}>
+                            <ExternalLink size={13} />
+                            Open 2D review
+                          </Link>
+                        ) : importAction.enabled ? (
+                          <button
+                            className="secondary-button compact-button"
+                            type="button"
+                            disabled={importingMatchId !== null || busyAction !== null}
+                            onClick={() => void handleImport(match.id)}
+                          >
+                            {isImporting ? (
+                              <Loader2 size={13} className="spin-icon" />
+                            ) : (
+                              <Download size={13} />
+                            )}
+                            {isImporting ? "Starting" : importAction.label}
+                          </button>
+                        ) : connectionDisplay?.manualUploadSupported &&
+                          !connectionDisplay.demoImportAvailable &&
+                          !match.demoId ? (
+                          <button
+                            className="secondary-button compact-button"
+                            type="button"
+                            onClick={openManualUpload}
+                          >
+                            <FileUp size={13} />
+                            Manual upload
+                          </button>
+                        ) : (
+                          <span>{importAction.label}</span>
+                        )}
+                      </div>
+                    </article>
+                  );
+                })}
               </div>
             )}
           </div>
@@ -516,6 +625,9 @@ function disconnectedConnection(): SteamConnection {
     last_sync_completed_at: null,
     next_retry_at: null,
     last_error_code: null,
-    last_error_message: null
+    last_error_message: null,
+    demo_import_available: false,
+    demo_source_provider: "disabled",
+    manual_upload_supported: true
   };
 }

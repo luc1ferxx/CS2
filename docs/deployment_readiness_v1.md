@@ -1,8 +1,8 @@
 # Deployment Readiness V1
 
-This project includes the Stage 3 provider-neutral private artifact store and safe `.dem` intake boundary plus the Steam-first account foundation and Phase 2 official sharing-code match discovery. It is still not a Demo download service, reliable/crash-recoverable job system, isolated parser runtime, production observability/backup platform, or real CS2 rendering service.
+This project includes the Stage 3 provider-neutral private artifact store and safe `.dem` intake boundary plus the Steam-first account foundation, official sharing-code match discovery, and a fail-closed Demo import adapter. No licensed automatic Demo source is registered, so the shipped provider is disabled and manual `.dem` upload remains the supported path. It is still not a public Valve Demo download service, reliable/crash-recoverable job system, isolated parser runtime, production observability/backup platform, or real CS2 rendering service.
 
-The Steam/account contract is in `docs/steam_auth_accounts_v1.md`; match authorization/encryption/sync is in `docs/steam_match_sync_v1.md`; the shared owner/private-media acceptance matrix is in `docs/production_auth_owner_private_media_v1.md`. For a repeatable development preview handoff, use `docs/internal_preview_packaging_v1.md`. This document remains the runtime configuration and readiness reference.
+The Steam/account contract is in `docs/steam_auth_accounts_v1.md`; match authorization/encryption/sync is in `docs/steam_match_sync_v1.md`; provider/import/download policy is in `docs/steam_demo_import_v1.md`; the shared owner/private-media acceptance matrix is in `docs/production_auth_owner_private_media_v1.md`. For a repeatable development preview handoff, use `docs/internal_preview_packaging_v1.md`. This document remains the runtime configuration and readiness reference.
 
 ## Runtime Configuration
 
@@ -81,6 +81,13 @@ PostgreSQL should store compact metadata and storage keys only. Large `.dem`, re
 | `STEAM_SYNC_TIMEOUT_SECONDS` | `5` | Backend API | Bounded Valve request timeout. |
 | `STEAM_SYNC_RETRY_BASE_SECONDS`, `STEAM_SYNC_RETRY_MAX_SECONDS` | `30`, `3600` | Backend API | Persisted exponential backoff bounds. |
 | `STEAM_SCHEDULED_SYNC_ENABLED` | `false` | Backend API | Independent V1 gate; true fails closed because no scheduler is installed. |
+| `STEAM_DEMO_PROVIDER` | `disabled` | Backend API | This build registers no licensed source and rejects every other value in every runtime mode. |
+| `STEAM_DEMO_EXPERIMENTAL_REPLAY_CDN_ENABLED` | `false` | Backend API | Unsupported community/undocumented replay path gate; true always fails startup. |
+| `STEAM_DEMO_DOWNLOAD_ALLOWED_HOSTS` | unset | Backend API | Reserved exact-host allowlist for a separately reviewed licensed provider; setting hosts alone cannot enable downloads. |
+| `STEAM_DEMO_DOWNLOAD_MAX_BYTES`, `STEAM_DEMO_DOWNLOAD_MAX_REDIRECTS` | `536870912`, `3` | Backend API | Raw uncompressed `.dem` transfer and independently revalidated redirect bounds. |
+| `STEAM_DEMO_DOWNLOAD_CONNECT_TIMEOUT_SECONDS`, `STEAM_DEMO_DOWNLOAD_READ_TIMEOUT_SECONDS`, `STEAM_DEMO_DOWNLOAD_TOTAL_TIMEOUT_SECONDS` | `5`, `10`, `60` | Backend API | Bounded future licensed-provider network deadlines. |
+| `STEAM_DEMO_DOWNLOAD_GLOBAL_CONCURRENCY`, `STEAM_DEMO_DOWNLOAD_OWNER_CONCURRENCY` | `4`, `1` | Backend API | Cross-process and owner-specific budgets; Redis stores only the expiring lease state. |
+| `STEAM_DEMO_DOWNLOAD_CONCURRENCY_LEASE_SECONDS` | `120` | Backend API | Expiring Redis-backed concurrency claim; must cover the total timeout. |
 | `OIDC_ISSUER` | unset | Backend API | Exact HTTPS production issuer expected in verified identity tokens. |
 | `OIDC_CLIENT_ID` | unset | Backend API | OIDC client identifier and required audience. |
 | `OIDC_CLIENT_SECRET` | unset | Backend API | Optional server-side secret for confidential clients. Never expose it to the frontend. |
@@ -97,7 +104,7 @@ PostgreSQL should store compact metadata and storage keys only. Large `.dem`, re
 | `AUTH_CLOCK_SKEW_SECONDS` | `30` | Backend API | Bounded identity timestamp leeway; production accepts `0..300`. |
 | `DEV_USER_ID` | `dev-user` | Backend API | Development/test owner harness only. `X-Dev-User-Id` is never a production identity source. |
 
-Production API startup fails closed unless the selected provider, secure `__Host-` cookie, exact single HTTPS application origin, exact single-origin CORS, bounded session/nonce settings, server-only Steam publisher/encryption keys, disabled V1 scheduler, and non-default render-worker credential are valid. Steam realm and callback are derived from `BACKEND_PUBLIC_URL`; complete OIDC configuration is required only when `AUTH_PROVIDER=oidc`. The parser/render queue worker uses a narrower validation path and does not receive browser Steam/OIDC secrets or match-history credentials. Verified identities resolve through `accounts` and `external_identities` to a stable opaque `owner_v1_...`; browser sessions remain random opaque Redis entries. Unsafe browser mutations require the exact `FRONTEND_PUBLIC_URL` origin. No SteamID64, provider token, Game Authentication Code, Match Sharing Code, encryption metadata, raw identity claim, auth secret, or owner ID belongs in a frontend-visible payload.
+Production API startup fails closed unless the selected identity provider, secure `__Host-` cookie, exact single HTTPS application origin, exact single-origin CORS, bounded session/nonce settings, server-only Steam publisher/encryption keys, disabled V1 scheduler, disabled Demo source/experimental CDN, bounded download policy, and non-default render-worker credential are valid. Steam realm and callback are derived from `BACKEND_PUBLIC_URL`; complete OIDC configuration is required only when `AUTH_PROVIDER=oidc`. Demo source/download configuration is API-only. The parser/render queue worker uses a narrower validation path and does not receive browser Steam/OIDC secrets, match-history credentials, provider configuration, or provider secrets. Verified identities resolve through `accounts` and `external_identities` to a stable opaque `owner_v1_...`; browser sessions remain random opaque Redis entries. Unsafe browser mutations require the exact `FRONTEND_PUBLIC_URL` origin. No SteamID64, provider token, Game Authentication Code, Match Sharing Code, encryption metadata, raw identity claim, auth secret, provider source URL, or owner ID belongs in a frontend-visible payload.
 
 Every browser-private auth, demo, upload, replay, coaching, diagnostics, render-job, and media response—including `4xx` failures—sets `Cache-Control: private, no-store` and merges `Cookie, Origin` into `Vary`. Render failures persist and expose only the stable `RENDER_FAILED` or `RENDER_WORKER_UNAVAILABLE` code and safe message; callback-provided error text and background exception strings do not enter the database, replay payload, user JSON, or logs.
 
@@ -244,6 +251,7 @@ PYTHONPATH=backend python3 -m unittest \
   backend.tests.test_artifact_storage_config \
   backend.tests.test_artifact_store_contract \
   backend.tests.test_artifact_intake \
+  backend.tests.test_steam_demo_import_config \
   backend.tests.test_request_limits \
   backend.tests.test_production_auth \
   backend.tests.test_private_media \
@@ -322,6 +330,7 @@ Ready at the Stage 3 application boundary:
 
 - Steam OpenID 2.0 direct verification, formal account/external-identity mapping, Redis opaque browser sessions, logout revocation, frontend session-expiry handling, and an explicit OIDC compatibility provider.
 - AES-GCM protected Steam match-history authorization, owner-scoped manual sharing-code cursor sync, persisted repair/backoff state, Redis owner/global invocation limits plus a Valve-429 publisher breaker, and compact Recent Steam Matches discovery UI.
+- Owner-scoped, idempotent Steam match import boundary with truthful lifecycle states and reuse of the existing quarantine/accepted/parser pipeline; the shipped source provider is deliberately disabled.
 - Owner-scoped private video GET/HEAD/Range delivery without a public static media mount.
 - Demo Library upload, search, status/map filtering, sorting, rename, and soft archive flows.
 - Upload/parser ingestion snapshots, failed parse metadata, stale/active indicators, and owner-scoped retry from stored source artifacts.
@@ -337,11 +346,12 @@ Ready at the Stage 3 application boundary:
 Remaining staged gaps:
 
 - `DEV_USER_ID` and `X-Dev-User-Id` remain only as an explicit development/test harness and are not accepted in production.
-- Valve match-history discovery returns only sharing codes. No supported Demo URL, automatic download, map/score/player metadata, scheduler, or Steam payload in the parser/render worker exists in Phase 2; manual `.dem` upload remains the reliable fallback.
+- Valve match-history discovery returns only sharing codes. No public supported Demo URL or licensed source is configured; automatic download therefore remains unavailable, and manual `.dem` upload is the reliable fallback. Map/duration/side wins/player metadata must remain absent until parser success.
 - `render-worker` fake and manual adapters are not real GPU rendering.
 - Object bucket/IAM/resource provisioning remains an external deployment decision; Stage 3 creates no cloud resources or real secrets.
 - Stage 3 byte-level intake cannot prove semantic `.dem` validity. The current parser still runs after accepted promotion; isolation and CPU/memory/disk/time limits remain Stage 5.
-- Redis dispatch still lacks durable delivery, crash recovery, atomic claim, redelivery, and idempotent execution. Those remain Stage 4 rather than being hidden inside artifact promotion.
+- Redis dispatch still lacks automatic durable delivery, stale-processing recovery, and terminal reconciliation. Steam imports expose a bounded manual requeue after a queued job's 30-second dispatch marker becomes stale, and the worker's queued-to-processing database CAS makes duplicate Redis delivery harmless; broader reconciliation remains Stage 4.
+- A hard API process loss in the narrow interval after accepted artifact promotion but before the Demo binding transaction can leave an unbound accepted object. In-process failures are cleaned, but accepted-object orphan enumeration/GC remains storage lifecycle work; quarantine TTL alone does not cover this interval.
 - Account/external-identity DDL now uses a tracked forward-only migration; legacy schema backfills, production observability, CI/CD, and backup/restore remain broader Stage 6 work.
 - Real first-person CS2 rendering still belongs in an external controlled Windows/Linux GPU worker. API and worker containers must not run Steam, CS2, OBS, or ffmpeg automation.
 - Manual MP4 upload/calibration is a development and QA bridge, not the primary product path.

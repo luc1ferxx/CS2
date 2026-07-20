@@ -184,7 +184,7 @@ Automated evidence must prove:
 
 ## Stage Boundary
 
-Stage 3 does not solve Redis loss, worker crash recovery, atomic claim, redelivery, or terminal job reconciliation. It only guarantees that dispatch happens after accepted artifact binding and that rejected/partial artifacts never dispatch. Those reliability outcomes are Stage 4.
+Stage 3 does not provide automatic durable Redis delivery, stale-processing recovery, or terminal job reconciliation. Steam Demo import adds a bounded manual re-dispatch path for a queued job whose dispatch marker has gone stale, and the worker uses a database `queued -> processing` compare-and-set so duplicate deliveries cannot execute the same job twice. Broader automatic recovery and reconciliation remain Stage 4. Artifact Intake still guarantees that dispatch happens only after accepted artifact binding and that rejected or partial artifacts never dispatch.
 
 Stage 3 does not add parser CPU, memory, disk, output, or wall-clock containment. Materialization is bounded storage compatibility; hostile parser isolation is Stage 5.
 

@@ -156,7 +156,7 @@ Stage 2 intentionally keeps the local storage adapter and the existing Redis job
 The older `docs/deployment_target_decision_v1.md` and `docs/internal_preview_packaging_v1.md` remain development-preview history and tooling. Their no-production-auth, split-origin, or public `/media/videos` guidance must not be used for a production candidate; this document and the current deployment/RC documents are authoritative for the Stage 2 production boundary.
 
 1. Stage 3: object storage and secure Artifact Intake.
-2. Stage 4: reliable delivery, crash recovery, atomic claim, and idempotent execution.
+2. Stage 4: broader automatic reliable delivery, crash recovery, stale-processing recovery, and terminal reconciliation. The current worker database compare-and-set and Steam import's bounded manual queued-job re-dispatch are narrower safeguards, not a complete durable delivery system.
 3. Stage 5: isolated untrusted `.dem` parsing with CPU, memory, disk, and timeout limits.
 4. Stage 6: CI/CD, observability, and backup/restore. Account schema now has a forward-only tracked migration; legacy tables still use their existing compatibility backfills.
 5. Stage 7: real demo corpus and invite-only beta.

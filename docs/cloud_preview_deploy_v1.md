@@ -43,9 +43,11 @@ For a production-auth candidate, also configure server-side values through the d
 export AUTH_MODE=production
 export AUTH_PROVIDER=steam
 export AUTH_COOKIE_SECURE=1
+export STEAM_DEMO_PROVIDER=disabled
+export STEAM_DEMO_EXPERIMENTAL_REPLAY_CDN_ENABLED=0
 ```
 
-Set required `STEAM_WEB_API_KEY`, a random `STEAM_CREDENTIAL_ENCRYPTION_KEY`, and the non-default `RENDER_WORKER_TOKEN` only through server-side secret injection. `STEAM_WEB_API_KEY` enriches display metadata and authorizes the official match-history publisher call; it is still not part of Steam OpenID verification. If the legacy-compatible OIDC provider is selected, also provide the complete `OIDC_*` configuration documented in `docs/production_auth_owner_private_media_v1.md`. Production API startup rejects malformed/missing Steam keys, the checked-in development encryption key, an enabled V1 scheduler, malformed selected-provider configuration, and the development worker token. The parser/render queue worker uses its separate narrow validation path and does not receive browser Steam/OIDC or match-history secrets.
+Set required `STEAM_WEB_API_KEY`, a random `STEAM_CREDENTIAL_ENCRYPTION_KEY`, and the non-default `RENDER_WORKER_TOKEN` only through server-side secret injection. `STEAM_WEB_API_KEY` enriches display metadata and authorizes the official match-history publisher call; it is still not part of Steam OpenID verification. If the legacy-compatible OIDC provider is selected, also provide the complete `OIDC_*` configuration documented in `docs/production_auth_owner_private_media_v1.md`. Production API startup rejects malformed/missing Steam keys, the checked-in development encryption key, an enabled V1 scheduler, any Demo provider other than `disabled`, an enabled experimental replay-CDN switch, malformed bounded download configuration, malformed selected identity-provider configuration, and the development worker token. The parser/render queue worker uses its separate narrow validation path and does not receive browser Steam/OIDC, match-history, or Demo-source secrets/configuration.
 
 `NEXT_PUBLIC_API_BASE_URL` and `NEXT_PUBLIC_AUTH_PROVIDER` are baked into the frontend browser bundle during `next build`, so rebuild the frontend image whenever either changes. The public provider selector must match server `AUTH_PROVIDER`. Steam publisher/encryption keys have no `NEXT_PUBLIC_*` form.
 
@@ -85,6 +87,9 @@ Required preview values:
 | `STEAM_CREDENTIAL_ENCRYPTION_KEY`, `STEAM_CREDENTIAL_ENCRYPTION_KEY_VERSION` | API | AES-256-GCM key material/version for authorization, cursor, and discovered sharing codes. |
 | `STEAM_SYNC_MAX_MATCHES`, `STEAM_SYNC_TIMEOUT_SECONDS`, `STEAM_SYNC_RETRY_BASE_SECONDS`, `STEAM_SYNC_RETRY_MAX_SECONDS` | API | Bounded manual-sync and persisted-backoff policy. |
 | `STEAM_SCHEDULED_SYNC_ENABLED` | API | Must remain false in V1; no scheduler is registered. |
+| `STEAM_DEMO_PROVIDER`, `STEAM_DEMO_EXPERIMENTAL_REPLAY_CDN_ENABLED` | API | Must remain `disabled` / false; this build has no licensed automatic Demo source. |
+| `STEAM_DEMO_DOWNLOAD_ALLOWED_HOSTS` | API | Leave empty for the disabled provider; exact hosts require a separately reviewed licensed adapter. |
+| `STEAM_DEMO_DOWNLOAD_*` limits | API | Bounded size, redirects, deadlines, owner/global concurrency, and expiring lease policy; Redis stores only the resulting lease state, and these values never enter frontend/worker configuration. |
 | `OIDC_*` | API | Required only when `AUTH_PROVIDER=oidc`; see the compatibility contract. |
 | `AUTH_COOKIE_SECURE`, `AUTH_SESSION_COOKIE_NAME` | API | Secure opaque session cookie controls. Production requires secure cookies. |
 | `AUTH_SESSION_TTL_SECONDS`, `AUTH_LOGIN_TTL_SECONDS` | API, Redis | Bounded session and one-time login attempt lifetimes. |

@@ -27,6 +27,9 @@ export interface SteamConnection {
   next_retry_at: string | null;
   last_error_code: string | null;
   last_error_message: string | null;
+  demo_import_available: boolean;
+  demo_source_provider: string;
+  manual_upload_supported: boolean;
 }
 
 export interface SteamConnectionCredentials {
@@ -41,6 +44,17 @@ export interface SteamMatch {
   discovered_at: string;
   updated_at: string;
   demo_id: string | null;
+  provider_id: string | null;
+  map_name: string | null;
+  duration_seconds: number | null;
+  ct_round_wins: number | null;
+  t_round_wins: number | null;
+  players: string[] | null;
+  import_error_code: string | null;
+  import_error_message: string | null;
+  import_retryable: boolean;
+  parser_dispatch_pending: boolean;
+  manual_upload_supported: boolean;
 }
 
 export interface SteamSyncResult {

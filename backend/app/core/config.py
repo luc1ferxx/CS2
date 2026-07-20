@@ -1,5 +1,6 @@
 import base64
 import binascii
+import ipaddress
 import os
 import re
 from dataclasses import dataclass
@@ -12,6 +13,7 @@ SUPPORTED_AUTH_MODES = {"development", "test", "production"}
 SUPPORTED_AUTH_PROVIDERS = {"oidc", "steam"}
 SUPPORTED_OIDC_ALGORITHMS = {"RS256", "ES256"}
 SUPPORTED_ARTIFACT_STORAGE_BACKENDS = {"local", "s3"}
+SUPPORTED_STEAM_DEMO_PROVIDERS = {"disabled"}
 MAX_STAGE3_DEMO_UPLOAD_BYTES = 1024 * 1024 * 1024
 MAX_STAGE3_VIDEO_UPLOAD_BYTES = 2 * 1024 * 1024 * 1024
 MAX_STAGE3_REPLAY_ARTIFACT_BYTES = 128 * 1024 * 1024
@@ -125,6 +127,42 @@ class Settings:
     steam_scheduled_sync_enabled: bool = _bool_from_env(
         "STEAM_SCHEDULED_SYNC_ENABLED"
     )
+    steam_demo_provider: str = os.getenv(
+        "STEAM_DEMO_PROVIDER", "disabled"
+    ).strip().lower()
+    steam_demo_experimental_replay_cdn_enabled: bool = _bool_from_env(
+        "STEAM_DEMO_EXPERIMENTAL_REPLAY_CDN_ENABLED"
+    )
+    steam_demo_experimental_replay_cdn_raw: str = os.getenv(
+        "STEAM_DEMO_EXPERIMENTAL_REPLAY_CDN_ENABLED", "0"
+    ).strip().lower()
+    steam_demo_download_allowed_hosts_raw: str = os.getenv(
+        "STEAM_DEMO_DOWNLOAD_ALLOWED_HOSTS", ""
+    ).strip()
+    steam_demo_download_max_bytes: int = int(
+        os.getenv("STEAM_DEMO_DOWNLOAD_MAX_BYTES", str(512 * 1024 * 1024))
+    )
+    steam_demo_download_max_redirects: int = int(
+        os.getenv("STEAM_DEMO_DOWNLOAD_MAX_REDIRECTS", "3")
+    )
+    steam_demo_download_connect_timeout_seconds: float = float(
+        os.getenv("STEAM_DEMO_DOWNLOAD_CONNECT_TIMEOUT_SECONDS", "5")
+    )
+    steam_demo_download_read_timeout_seconds: float = float(
+        os.getenv("STEAM_DEMO_DOWNLOAD_READ_TIMEOUT_SECONDS", "10")
+    )
+    steam_demo_download_total_timeout_seconds: float = float(
+        os.getenv("STEAM_DEMO_DOWNLOAD_TOTAL_TIMEOUT_SECONDS", "60")
+    )
+    steam_demo_download_global_concurrency: int = int(
+        os.getenv("STEAM_DEMO_DOWNLOAD_GLOBAL_CONCURRENCY", "4")
+    )
+    steam_demo_download_owner_concurrency: int = int(
+        os.getenv("STEAM_DEMO_DOWNLOAD_OWNER_CONCURRENCY", "1")
+    )
+    steam_demo_download_concurrency_lease_seconds: int = int(
+        os.getenv("STEAM_DEMO_DOWNLOAD_CONCURRENCY_LEASE_SECONDS", "120")
+    )
     auth_session_ttl_seconds: int = int(os.getenv("AUTH_SESSION_TTL_SECONDS", "3600"))
     auth_login_ttl_seconds: int = int(os.getenv("AUTH_LOGIN_TTL_SECONDS", "300"))
     auth_clock_skew_seconds: int = int(os.getenv("AUTH_CLOCK_SKEW_SECONDS", "30"))
@@ -215,6 +253,16 @@ class Settings:
         ]
 
     @property
+    def steam_demo_download_allowed_hosts(self) -> frozenset[str]:
+        if not self.steam_demo_download_allowed_hosts_raw:
+            return frozenset()
+        return frozenset(
+            host.strip()
+            for host in self.steam_demo_download_allowed_hosts_raw.split(",")
+            if host.strip()
+        )
+
+    @property
     def steam_openid_realm(self) -> str:
         return f"{self.backend_public_url}/"
 
@@ -227,6 +275,7 @@ class Settings:
         self._validate_auth_provider()
         if self.auth_mode != "production":
             self._validate_steam_sync_configuration()
+            self._validate_steam_demo_import_configuration()
             self._validate_artifact_storage_configuration()
             return
 
@@ -311,6 +360,7 @@ class Settings:
             )
         self._validate_artifact_storage_configuration()
         self._validate_steam_sync_configuration()
+        self._validate_steam_demo_import_configuration()
 
     def validate_worker_runtime_configuration(self) -> None:
         self._validate_explicit_auth_mode()
@@ -454,6 +504,96 @@ class Settings:
                 "STEAM_CREDENTIAL_ENCRYPTION_KEY must not use the development key in production"
             )
 
+    def _validate_steam_demo_import_configuration(self) -> None:
+        if self.steam_demo_provider not in SUPPORTED_STEAM_DEMO_PROVIDERS:
+            raise RuntimeError(
+                "STEAM_DEMO_PROVIDER must be disabled in this build; no licensed "
+                "Demo source provider is registered"
+            )
+        if self.steam_demo_experimental_replay_cdn_raw not in {
+            "0",
+            "false",
+            "no",
+            "off",
+            "1",
+            "true",
+            "yes",
+            "on",
+        }:
+            raise RuntimeError(
+                "STEAM_DEMO_EXPERIMENTAL_REPLAY_CDN_ENABLED must be an explicit "
+                "boolean"
+            )
+        if self.steam_demo_experimental_replay_cdn_enabled:
+            raise RuntimeError(
+                "STEAM_DEMO_EXPERIMENTAL_REPLAY_CDN_ENABLED is unsupported and must "
+                "remain disabled"
+            )
+
+        raw_hosts = self.steam_demo_download_allowed_hosts_raw
+        hosts = self.steam_demo_download_allowed_hosts
+        raw_entries = raw_hosts.split(",") if raw_hosts else []
+        if (
+            len(raw_hosts) > 4096
+            or len(hosts) > 16
+            or len(raw_entries) != len(hosts)
+            or any(not _valid_exact_download_host(host) for host in hosts)
+        ):
+            raise RuntimeError(
+                "STEAM_DEMO_DOWNLOAD_ALLOWED_HOSTS must contain at most 16 unique "
+                "lowercase exact DNS hostnames without ports, wildcards, or IP literals"
+            )
+        if not 16 <= self.steam_demo_download_max_bytes <= MAX_STAGE3_DEMO_UPLOAD_BYTES:
+            raise RuntimeError(
+                "STEAM_DEMO_DOWNLOAD_MAX_BYTES must be between 16 and 1073741824"
+            )
+        if not 0 <= self.steam_demo_download_max_redirects <= 3:
+            raise RuntimeError(
+                "STEAM_DEMO_DOWNLOAD_MAX_REDIRECTS must be between 0 and 3"
+            )
+        if not 0.1 <= self.steam_demo_download_connect_timeout_seconds <= 30:
+            raise RuntimeError(
+                "STEAM_DEMO_DOWNLOAD_CONNECT_TIMEOUT_SECONDS must be between 0.1 and 30"
+            )
+        if not 0.1 <= self.steam_demo_download_read_timeout_seconds <= 30:
+            raise RuntimeError(
+                "STEAM_DEMO_DOWNLOAD_READ_TIMEOUT_SECONDS must be between 0.1 and 30"
+            )
+        if not (
+            max(
+                self.steam_demo_download_connect_timeout_seconds,
+                self.steam_demo_download_read_timeout_seconds,
+            )
+            <= self.steam_demo_download_total_timeout_seconds
+            <= 120
+        ):
+            raise RuntimeError(
+                "STEAM_DEMO_DOWNLOAD_TOTAL_TIMEOUT_SECONDS must cover the connect/read "
+                "timeouts and be at most 120"
+            )
+        if not 1 <= self.steam_demo_download_global_concurrency <= 32:
+            raise RuntimeError(
+                "STEAM_DEMO_DOWNLOAD_GLOBAL_CONCURRENCY must be between 1 and 32"
+            )
+        if not (
+            1
+            <= self.steam_demo_download_owner_concurrency
+            <= self.steam_demo_download_global_concurrency
+        ):
+            raise RuntimeError(
+                "STEAM_DEMO_DOWNLOAD_OWNER_CONCURRENCY must be between 1 and the "
+                "global concurrency limit"
+            )
+        if not (
+            self.steam_demo_download_total_timeout_seconds
+            <= self.steam_demo_download_concurrency_lease_seconds
+            <= 3_600
+        ):
+            raise RuntimeError(
+                "STEAM_DEMO_DOWNLOAD_CONCURRENCY_LEASE_SECONDS must cover the total "
+                "timeout and be at most 3600"
+            )
+
     def _validate_production_oidc_configuration(self) -> None:
         required = (
             ("OIDC_ISSUER", self.oidc_issuer),
@@ -518,6 +658,27 @@ def _valid_object_prefix(value: str) -> bool:
         segment not in {"", ".", ".."}
         and re.fullmatch(r"[A-Za-z0-9._-]+", segment)
         for segment in segments
+    )
+
+
+def _valid_exact_download_host(value: str) -> bool:
+    if not value or len(value) > 253 or value != value.lower():
+        return False
+    try:
+        ipaddress.ip_address(value)
+    except ValueError:
+        pass
+    else:
+        return False
+    labels = value.split(".")
+    return (
+        len(labels) >= 2
+        and value != "localhost"
+        and all(
+            1 <= len(label) <= 63
+            and re.fullmatch(r"[a-z0-9](?:[a-z0-9-]*[a-z0-9])?", label)
+            for label in labels
+        )
     )
 
 

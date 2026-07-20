@@ -240,6 +240,12 @@ export function listSteamMatches(): Promise<SteamMatch[]> {
   return requestJson<SteamMatch[]>("/steam/matches");
 }
 
+export function importSteamMatch(matchId: string): Promise<SteamMatch> {
+  return requestJson<SteamMatch>(`/steam/matches/${encodeURIComponent(matchId)}/import`, {
+    method: "POST"
+  });
+}
+
 export function createMockUpload(): Promise<DemoSummary> {
   return requestJson<DemoSummary>("/uploads/mock", { method: "POST" });
 }

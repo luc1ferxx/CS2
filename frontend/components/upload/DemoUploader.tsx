@@ -26,6 +26,7 @@ export function DemoUploader({
         className="file-input"
         type="file"
         accept=".dem"
+        disabled={disabled}
         onChange={(event) => {
           const file = event.currentTarget.files?.[0];
           if (file) {

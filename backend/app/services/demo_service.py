@@ -1,6 +1,7 @@
 import io
 import json
 import logging
+import math
 import os
 import uuid
 from contextlib import contextmanager
@@ -18,6 +19,7 @@ from app.core.redis import get_redis_client
 from app.models.coaching import CoachingEvent
 from app.models.demo import Demo
 from app.models.job import DemoJob
+from app.models.steam import SteamMatch
 from app.parser.replay_contract import normalize_replay_contract
 from app.schemas.coaching import CoachingEventOut
 from app.schemas.demo import (
@@ -41,7 +43,11 @@ from app.services.artifact_binding import (
     read_accepted_replay_json,
     verify_accepted_artifact,
 )
-from app.services.artifact_intake import ArtifactIntakePolicy, ArtifactIntakeService
+from app.services.artifact_intake import (
+    AcceptedArtifact,
+    ArtifactIntakePolicy,
+    ArtifactIntakeService,
+)
 from app.services.storage import (
     ArtifactMetadata,
     ArtifactStore,
@@ -68,6 +74,12 @@ DEMO_STATUS_ORDER = ("queued", "parsing", "analyzing", "completed", "failed")
 ACTIVE_DEMO_STATUSES = {"queued", "parsing", "analyzing"}
 ACTIVE_PARSE_JOB_STATUSES = {"queued", "pending", "processing"}
 STALE_PARSE_AFTER_SECONDS = 15 * 60
+STEAM_MATCH_PLAYER_LIMIT = 20
+STEAM_MATCH_PLAYER_ID_LIMIT = 64
+STEAM_MATCH_PLAYER_NAME_LIMIT = 64
+STEAM_MATCH_PARSE_FAILED_MESSAGE = (
+    "Imported Demo could not be parsed. Upload a valid .dem file manually or retry later."
+)
 DEMO_STATUS_SEARCH_ALIASES = {
     "uploaded": "queued",
     "upload": "queued",
@@ -91,6 +103,13 @@ class _PendingReplayUpdate:
     video: dict[str, Any]
     previous_reference: str | None
     next_reference: str
+
+
+@dataclass(frozen=True)
+class PreparedRealDemo:
+    demo: Demo
+    job: DemoJob
+    accepted: AcceptedArtifact
 
 
 class _PrivateArtifactStat:
@@ -346,15 +365,34 @@ class DemoService:
         return self.demo_list_item(demo)
 
     def create_real_demo(self, upload: Any) -> DemoListItem:
-        demo_id = str(uuid.uuid4())
-        job_id = str(uuid.uuid4())
         stream = getattr(upload, "file", None)
+        prepared = self.prepare_real_demo(
+            stream=stream,
+            filename=getattr(upload, "filename", None) or "demo.dem",
+            content_type=getattr(upload, "content_type", None),
+        )
+        self.commit_prepared_real_demo(prepared)
+        self.dispatch_prepared_real_demo(prepared)
+        return self.demo_list_item(prepared.demo)
+
+    def prepare_real_demo(
+        self,
+        *,
+        stream: BinaryIO | None,
+        filename: str,
+        content_type: str | None,
+        demo_id: str | None = None,
+        job_id: str | None = None,
+    ) -> PreparedRealDemo:
         if stream is None or not hasattr(stream, "read"):
             raise DemoArtifactBindError("Demo intake could not be completed")
         try:
             stream.seek(0)
         except (AttributeError, OSError):
             raise DemoArtifactBindError("Demo intake could not be completed") from None
+
+        resolved_demo_id = demo_id or str(uuid.uuid4())
+        resolved_job_id = job_id or str(uuid.uuid4())
 
         accepted = ArtifactIntakeService(
             self.artifact_store,
@@ -366,18 +404,18 @@ class DemoService:
             ),
         ).intake_demo(
             owner_id=self._owner_id(),
-            demo_id=demo_id,
-            filename=getattr(upload, "filename", None) or "demo.dem",
-            content_type=getattr(upload, "content_type", None),
+            demo_id=resolved_demo_id,
+            filename=filename,
+            content_type=content_type,
             stream=stream,
             release_stream_before_promotion=True,
         )
 
         demo = Demo(
-            id=demo_id,
+            id=resolved_demo_id,
             owner_id=self._owner_id(),
             legacy_user_id=self._owner_id(),
-            name=f"Uploaded Demo {demo_id[:8]}",
+            name=f"Uploaded Demo {resolved_demo_id[:8]}",
             original_filename=accepted.display_filename,
             source_storage_key=accepted.reference,
             map_name="unknown",
@@ -387,8 +425,8 @@ class DemoService:
             status="queued",
         )
         job = DemoJob(
-            id=job_id,
-            demo_id=demo_id,
+            id=resolved_job_id,
+            demo_id=resolved_demo_id,
             job_type="real_parse",
             status="queued",
             attempts=0,
@@ -402,30 +440,70 @@ class DemoService:
 
         self.db.add(demo)
         self.db.add(job)
+        return PreparedRealDemo(demo=demo, job=job, accepted=accepted)
+
+    def commit_prepared_real_demo(self, prepared: PreparedRealDemo) -> None:
         try:
             self.db.commit()
         except BaseException as exc:
             self.db.rollback()
-            if not self._source_reference_is_bound(demo_id, accepted.reference):
+            if not self._source_reference_is_bound(
+                prepared.demo.id,
+                prepared.accepted.reference,
+            ):
                 self._delete_artifact_safely(
-                    accepted.reference,
-                    expected_generation=accepted.generation,
+                    prepared.accepted.reference,
+                    expected_generation=prepared.accepted.generation,
                 )
             if isinstance(exc, (KeyboardInterrupt, SystemExit)):
                 raise
             raise DemoArtifactBindError("Demo intake could not be completed") from None
-        self.db.refresh(demo)
+        self.db.refresh(prepared.demo)
 
+    def discard_prepared_real_demo(self, prepared: PreparedRealDemo) -> None:
+        self.db.rollback()
+        if not self._source_reference_is_bound(
+            prepared.demo.id,
+            prepared.accepted.reference,
+        ):
+            self._delete_artifact_safely(
+                prepared.accepted.reference,
+                expected_generation=prepared.accepted.generation,
+            )
+
+    def dispatch_prepared_real_demo(
+        self,
+        prepared: PreparedRealDemo,
+        *,
+        redis_client: object | None = None,
+    ) -> None:
+        self.dispatch_parse_job(
+            job_id=prepared.job.id,
+            demo_id=prepared.demo.id,
+            redis_client=redis_client,
+        )
+
+    def dispatch_parse_job(
+        self,
+        *,
+        job_id: str,
+        demo_id: str,
+        redis_client: object | None = None,
+    ) -> None:
         try:
-            get_redis_client().lpush(
+            client = redis_client if redis_client is not None else get_redis_client()
+            client.lpush(
                 settings.redis_queue_name,
-                json.dumps({"job_id": job_id, "demo_id": demo_id}),
+                json.dumps(
+                    {
+                        "job_id": job_id,
+                        "demo_id": demo_id,
+                    }
+                ),
             )
         except Exception:
             logger.warning("Parser dispatch unavailable for job %s", job_id)
             raise DemoDispatchError("Parser dispatch could not be completed") from None
-
-        return self.demo_list_item(demo)
 
     def _source_reference_is_bound(self, demo_id: str, reference: str) -> bool:
         try:
@@ -541,31 +619,181 @@ class DemoService:
         demo.status = "queued"
         demo.error_message = None
         demo.completed_at = None
+        linked_match_id = self._linked_steam_match_id(demo, latest_job)
+        if linked_match_id is not None:
+            (
+                self.db.query(SteamMatch)
+                .filter(
+                    SteamMatch.id == linked_match_id,
+                    SteamMatch.owner_id == demo.owner_id,
+                    SteamMatch.demo_id == demo.id,
+                )
+                .update(
+                    {
+                        SteamMatch.status: "parsing",
+                        SteamMatch.parser_dispatched_at: None,
+                        SteamMatch.parser_dispatched_job_id: None,
+                        SteamMatch.last_import_error_code: None,
+                        SteamMatch.last_import_error_message: None,
+                        SteamMatch.updated_at: utc_now(),
+                    },
+                    synchronize_session=False,
+                )
+            )
         self.db.add(job)
         self.db.commit()
         self.db.refresh(demo)
 
         try:
-            get_redis_client().lpush(
-                settings.redis_queue_name,
-                json.dumps({"job_id": job_id, "demo_id": demo.id}),
+            self.dispatch_parse_job(
+                job_id=job_id,
+                demo_id=demo.id,
             )
-        except Exception:
-            logger.warning("Parser retry dispatch unavailable for job %s", job_id)
-            raise DemoDispatchError("Parser dispatch could not be completed") from None
+        except DemoDispatchError:
+            marked_unavailable = 0
+            if linked_match_id is not None:
+                failed_at = utc_now()
+                marked_unavailable = (
+                    self.db.query(SteamMatch)
+                    .filter(
+                        SteamMatch.id == linked_match_id,
+                        SteamMatch.owner_id == demo.owner_id,
+                        SteamMatch.demo_id == demo.id,
+                        SteamMatch.status != "ready",
+                        SteamMatch.parser_dispatched_job_id.is_(None),
+                        self.db.query(DemoJob.id)
+                        .filter(
+                            DemoJob.id == job_id,
+                            DemoJob.demo_id == demo.id,
+                            DemoJob.job_type == "real_parse",
+                            DemoJob.status == "queued",
+                        )
+                        .exists(),
+                    )
+                    .update(
+                        {
+                            SteamMatch.status: "unavailable",
+                            SteamMatch.last_import_error_code: (
+                                "parser_dispatch_unavailable"
+                            ),
+                            SteamMatch.last_import_error_message: (
+                                "Parser dispatch is temporarily unavailable."
+                            ),
+                            SteamMatch.updated_at: failed_at,
+                        },
+                        synchronize_session=False,
+                    )
+                )
+                self.db.commit()
+            if linked_match_id is not None and marked_unavailable != 1:
+                self.db.expire_all()
+                current_job = (
+                    self.db.query(DemoJob)
+                    .filter(
+                        DemoJob.id == job_id,
+                        DemoJob.demo_id == demo.id,
+                    )
+                    .one_or_none()
+                )
+                if current_job is not None and current_job.status != "queued":
+                    current_demo = (
+                        self.db.query(Demo)
+                        .filter(Demo.id == demo.id, Demo.owner_id == demo.owner_id)
+                        .one_or_none()
+                    )
+                    if current_demo is not None:
+                        return self.demo_list_item(current_demo)
+            raise
+        if linked_match_id is not None:
+            dispatched_at = utc_now()
+            (
+                self.db.query(SteamMatch)
+                .filter(
+                    SteamMatch.id == linked_match_id,
+                    SteamMatch.owner_id == demo.owner_id,
+                    SteamMatch.demo_id == demo.id,
+                    or_(
+                        SteamMatch.parser_dispatched_job_id.is_(None),
+                        SteamMatch.parser_dispatched_job_id == job_id,
+                    ),
+                    self.db.query(DemoJob.id)
+                    .filter(
+                        DemoJob.id == job_id,
+                        DemoJob.demo_id == demo.id,
+                        DemoJob.job_type == "real_parse",
+                        DemoJob.status != "failed",
+                    )
+                    .exists(),
+                )
+                .update(
+                    {
+                        SteamMatch.parser_dispatched_at: dispatched_at,
+                        SteamMatch.parser_dispatched_job_id: job_id,
+                        SteamMatch.updated_at: dispatched_at,
+                    },
+                    synchronize_session=False,
+                )
+            )
+            self.db.commit()
         return self.demo_list_item(demo)
 
-    def claim_parse_job(self, demo: Demo, job: DemoJob) -> None:
+    def claim_parse_job(self, demo: Demo, job: DemoJob) -> bool:
         self._ensure_parse_job(job)
-        job.status = "processing"
-        job.attempts += 1
-        job.started_at = utc_now()
-        job.finished_at = None
-        job.error_message = None
-        job.metadata_json = _metadata_json({**_job_metadata(job), "phase": "parsing"})
+        started_at = utc_now()
+        metadata_json = _metadata_json({**_job_metadata(job), "phase": "parsing"})
+        claimed = (
+            self.db.query(DemoJob)
+            .filter(
+                DemoJob.id == job.id,
+                DemoJob.demo_id == demo.id,
+                DemoJob.job_type.in_(PARSE_JOB_TYPES),
+                DemoJob.status == "queued",
+            )
+            .update(
+                {
+                    DemoJob.status: "processing",
+                    DemoJob.attempts: DemoJob.attempts + 1,
+                    DemoJob.started_at: started_at,
+                    DemoJob.finished_at: None,
+                    DemoJob.error_message: None,
+                    DemoJob.metadata_json: metadata_json,
+                },
+                synchronize_session=False,
+            )
+        )
+        if claimed != 1:
+            self.db.rollback()
+            return False
+        self.db.refresh(job)
         demo.status = "parsing"
         demo.error_message = None
+        if job.job_type == "real_parse":
+            (
+                self.db.query(SteamMatch)
+                .filter(
+                    SteamMatch.demo_id == demo.id,
+                    SteamMatch.owner_id == demo.owner_id,
+                )
+                .update(
+                    {
+                        SteamMatch.status: "parsing",
+                        SteamMatch.parser_dispatched_at: started_at,
+                        SteamMatch.parser_dispatched_job_id: job.id,
+                        SteamMatch.map_name: None,
+                        SteamMatch.duration_seconds: None,
+                        SteamMatch.ct_round_wins: None,
+                        SteamMatch.t_round_wins: None,
+                        SteamMatch.players_json: None,
+                        SteamMatch.last_import_error_code: None,
+                        SteamMatch.last_import_error_message: None,
+                        SteamMatch.import_completed_at: None,
+                        SteamMatch.updated_at: started_at,
+                    },
+                    synchronize_session=False,
+                )
+            )
         self.db.commit()
+        return True
 
     def mark_parse_analyzing(self, demo: Demo, job: DemoJob) -> None:
         self._ensure_parse_job(job)
@@ -601,9 +829,36 @@ class DemoService:
         demo.error_message = None
 
         job.status = "completed"
-        job.finished_at = utc_now()
+        completed_at = utc_now()
+        job.finished_at = completed_at
         job.error_message = None
         job.metadata_json = _metadata_json({**_job_metadata(job), "phase": "ready"})
+        if job.job_type == "real_parse":
+            summary = _steam_match_parser_summary(replay)
+            (
+                self.db.query(SteamMatch)
+                .filter(
+                    SteamMatch.demo_id == demo.id,
+                    SteamMatch.owner_id == demo.owner_id,
+                )
+                .update(
+                    {
+                        SteamMatch.status: "ready",
+                        SteamMatch.map_name: summary["map_name"],
+                        SteamMatch.duration_seconds: summary["duration_seconds"],
+                        SteamMatch.ct_round_wins: summary["ct_round_wins"],
+                        SteamMatch.t_round_wins: summary["t_round_wins"],
+                        SteamMatch.players_json: summary["players_json"],
+                        SteamMatch.import_run_id: None,
+                        SteamMatch.import_lease_expires_at: None,
+                        SteamMatch.import_completed_at: completed_at,
+                        SteamMatch.last_import_error_code: None,
+                        SteamMatch.last_import_error_message: None,
+                        SteamMatch.updated_at: completed_at,
+                    },
+                    synchronize_session=False,
+                )
+            )
         try:
             self.db.commit()
         except BaseException:
@@ -644,11 +899,50 @@ class DemoService:
         job.error_message = short_message
         job.finished_at = failed_at
         job.metadata_json = _metadata_json(metadata)
+        if job.job_type == "real_parse":
+            (
+                self.db.query(SteamMatch)
+                .filter(
+                    SteamMatch.demo_id == demo.id,
+                    SteamMatch.owner_id == demo.owner_id,
+                )
+                .update(
+                    {
+                        SteamMatch.status: "unavailable",
+                        SteamMatch.map_name: None,
+                        SteamMatch.duration_seconds: None,
+                        SteamMatch.ct_round_wins: None,
+                        SteamMatch.t_round_wins: None,
+                        SteamMatch.players_json: None,
+                        SteamMatch.import_run_id: None,
+                        SteamMatch.import_lease_expires_at: None,
+                        SteamMatch.import_completed_at: failed_at,
+                        SteamMatch.last_import_error_code: "parser_failed",
+                        SteamMatch.last_import_error_message: (
+                            STEAM_MATCH_PARSE_FAILED_MESSAGE
+                        ),
+                        SteamMatch.updated_at: failed_at,
+                    },
+                    synchronize_session=False,
+                )
+            )
         self.db.commit()
 
     def _ensure_parse_job(self, job: DemoJob) -> None:
         if job.job_type not in PARSE_JOB_TYPES:
             raise ValueError("Only parse jobs support parser status transitions")
+
+    def _linked_steam_match_id(self, demo: Demo, job: DemoJob) -> str | None:
+        if job.job_type != "real_parse":
+            return None
+        return (
+            self.db.query(SteamMatch.id)
+            .filter(
+                SteamMatch.demo_id == demo.id,
+                SteamMatch.owner_id == demo.owner_id,
+            )
+            .scalar()
+        )
 
     def _parse_retryable(self, demo: Demo, job: DemoJob | None) -> bool:
         if demo.status != "failed":
@@ -1787,6 +2081,150 @@ def _compact_failure_message(message: str | None, *, max_length: int = 240) -> s
     if len(compact) <= max_length:
         return compact
     return f"{compact[: max_length - 3].rstrip()}..."
+
+
+def _steam_match_parser_summary(replay: dict[str, Any]) -> dict[str, Any]:
+    ct_round_wins, t_round_wins = _steam_match_round_wins(
+        replay.get("rounds"),
+        replay.get("events"),
+    )
+    return {
+        "map_name": _steam_match_map_name(replay.get("mapName")),
+        "duration_seconds": _steam_match_duration_seconds(replay.get("video")),
+        "ct_round_wins": ct_round_wins,
+        "t_round_wins": t_round_wins,
+        "players_json": _steam_match_players_json(replay.get("players")),
+    }
+
+
+def _steam_match_map_name(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip()
+    if (
+        not normalized
+        or normalized.lower() == "unknown"
+        or len(normalized) > 64
+        or not normalized.isprintable()
+    ):
+        return None
+    return normalized
+
+
+def _steam_match_duration_seconds(video: Any) -> int | None:
+    if not isinstance(video, dict):
+        return None
+    value = video.get("durationSeconds")
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    duration = float(value)
+    if not math.isfinite(duration) or duration < 0 or duration > 24 * 60 * 60:
+        return None
+    return int(round(duration))
+
+
+def _steam_match_round_wins(
+    rounds: Any,
+    events: Any,
+) -> tuple[int | None, int | None]:
+    if (
+        not isinstance(rounds, list)
+        or not rounds
+        or len(rounds) > 100
+        or not isinstance(events, list)
+    ):
+        return None, None
+    round_numbers: set[int] = set()
+    for round_info in rounds:
+        if not isinstance(round_info, dict):
+            return None, None
+        round_number = round_info.get("roundNumber")
+        if (
+            isinstance(round_number, bool)
+            or not isinstance(round_number, int)
+            or round_number <= 0
+            or round_number in round_numbers
+        ):
+            return None, None
+        round_numbers.add(round_number)
+
+    winner_by_round: dict[int, str] = {}
+    for event in events:
+        if not isinstance(event, dict) or event.get("type") != "round_end":
+            continue
+        round_number = event.get("roundNumber")
+        metadata = event.get("metadata")
+        if (
+            isinstance(round_number, bool)
+            or not isinstance(round_number, int)
+            or not isinstance(metadata, dict)
+        ):
+            continue
+        side = str(metadata.get("winnerSide") or "").strip().upper()
+        if side not in {"CT", "T"} or round_number in winner_by_round:
+            return None, None
+        winner_by_round[round_number] = side
+    if set(winner_by_round) != round_numbers:
+        return None, None
+    sides = list(winner_by_round.values())
+    return sides.count("CT"), sides.count("T")
+
+
+def _steam_match_players_json(players: Any) -> str | None:
+    if not isinstance(players, list):
+        return None
+    compact_players: list[dict[str, str]] = []
+    seen_ids: set[str] = set()
+    for player in players:
+        if not isinstance(player, dict):
+            continue
+        player_id = _steam_match_player_id(player.get("id"))
+        player_name = _steam_match_player_name(player.get("name"))
+        side = str(player.get("side") or "").strip().upper()
+        if (
+            player_id is None
+            or player_name is None
+            or side not in {"CT", "T"}
+            or player_id in seen_ids
+        ):
+            continue
+        seen_ids.add(player_id)
+        compact_players.append(
+            {
+                "id": player_id,
+                "name": player_name,
+                "side": side,
+            }
+        )
+        if len(compact_players) >= STEAM_MATCH_PLAYER_LIMIT:
+            break
+    return json.dumps(compact_players, ensure_ascii=False, separators=(",", ":"))
+
+
+def _steam_match_player_id(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    normalized = " ".join(value.split())
+    if (
+        not normalized
+        or normalized.lower() == "unknown"
+        or len(normalized) > STEAM_MATCH_PLAYER_ID_LIMIT
+        or not normalized.isprintable()
+    ):
+        return None
+    return normalized
+
+
+def _steam_match_player_name(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    normalized = "".join(
+        character for character in value if character.isprintable()
+    ).strip()
+    normalized = " ".join(normalized.split())
+    if not normalized:
+        return None
+    return normalized[:STEAM_MATCH_PLAYER_NAME_LIMIT]
 
 
 def _metadata_json(metadata: dict[str, Any]) -> str:

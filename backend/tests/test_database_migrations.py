@@ -39,7 +39,7 @@ class DatabaseMigrationTest(unittest.TestCase):
                     " ORDER BY version"
                 )
             ).mappings().all()
-        self.assertEqual(len(rows), 2)
+        self.assertEqual(len(rows), 3)
         self.assertEqual(rows[0]["version"], MIGRATIONS[0].version)
         self.assertEqual(rows[0]["checksum"], MIGRATIONS[0].checksum)
         self.assertEqual(
@@ -48,6 +48,42 @@ class DatabaseMigrationTest(unittest.TestCase):
         )
         self.assertEqual(rows[1]["version"], "2026071902")
         self.assertEqual(rows[1]["checksum"], MIGRATIONS[1].checksum)
+        self.assertEqual(rows[2]["version"], "2026071903")
+        self.assertEqual(rows[2]["checksum"], MIGRATIONS[2].checksum)
+        self.assertEqual(
+            MIGRATIONS[2].checksum,
+            "cdf48d440c6b366a8edf94250112c26a171c18bef1b3517a785ad161a7d54dbf",
+        )
+
+        steam_match_columns = {
+            column["name"] for column in inspect(self.engine).get_columns("steam_matches")
+        }
+        self.assertTrue(
+            {
+                "demo_id",
+                "import_run_id",
+                "import_lease_expires_at",
+                "import_attempts",
+                "provider_id",
+                "last_import_error_code",
+                "last_import_error_message",
+                "import_started_at",
+                "import_completed_at",
+                "parser_dispatched_at",
+                "parser_dispatched_job_id",
+                "map_name",
+                "duration_seconds",
+                "ct_round_wins",
+                "t_round_wins",
+                "players_json",
+            }.issubset(steam_match_columns)
+        )
+        unique_indexes = {
+            index["name"]
+            for index in inspect(self.engine).get_indexes("steam_matches")
+            if index.get("unique")
+        }
+        self.assertIn("uq_steam_matches_demo_id", unique_indexes)
 
     def test_steam_sync_schema_enforces_owner_and_match_idempotency(self) -> None:
         with self.engine.connect() as connection:
@@ -161,6 +197,41 @@ class DatabaseMigrationTest(unittest.TestCase):
                 updated_at=now,
             )
             db.add(cross_owner_match)
+            with self.assertRaises(IntegrityError):
+                db.commit()
+            db.rollback()
+
+            db.add(
+                SteamMatch(
+                    id="match-demo-a",
+                    connection_id=connection.id,
+                    owner_id=owner_id,
+                    share_code_hash="d" * 64,
+                    share_code_ciphertext=b"ciphertext-and-tag",
+                    share_code_nonce=b"9" * 12,
+                    encryption_key_version="test-v1",
+                    status="parsing",
+                    demo_id="one-demo-id",
+                    discovered_at=now,
+                    updated_at=now,
+                )
+            )
+            db.commit()
+            db.add(
+                SteamMatch(
+                    id="match-demo-b",
+                    connection_id=connection.id,
+                    owner_id=owner_id,
+                    share_code_hash="e" * 64,
+                    share_code_ciphertext=b"ciphertext-and-tag",
+                    share_code_nonce=b"0" * 12,
+                    encryption_key_version="test-v1",
+                    status="parsing",
+                    demo_id="one-demo-id",
+                    discovered_at=now,
+                    updated_at=now,
+                )
+            )
             with self.assertRaises(IntegrityError):
                 db.commit()
 

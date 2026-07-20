@@ -54,6 +54,9 @@ class SteamConnectionView(BaseModel):
     next_retry_at: datetime | None = None
     last_error_code: str | None = None
     last_error_message: str | None = None
+    demo_import_available: bool
+    demo_source_provider: str
+    manual_upload_supported: bool = True
 
 
 class SteamMatchView(BaseModel):
@@ -63,6 +66,17 @@ class SteamMatchView(BaseModel):
     discovered_at: datetime
     updated_at: datetime
     demo_id: str | None = None
+    provider_id: str | None = None
+    map_name: str | None = None
+    duration_seconds: int | None = Field(default=None, ge=0, le=86_400)
+    ct_round_wins: int | None = Field(default=None, ge=0, le=100)
+    t_round_wins: int | None = Field(default=None, ge=0, le=100)
+    players: list[str] | None = Field(default=None, max_length=20)
+    import_error_code: str | None = None
+    import_error_message: str | None = None
+    import_retryable: bool = False
+    parser_dispatch_pending: bool = False
+    manual_upload_supported: bool = True
 
 
 class SteamSyncResult(BaseModel):

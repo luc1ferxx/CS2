@@ -38,6 +38,7 @@ const {
   buildSteamConnectionDisplay,
   buildSteamMatchDisplay,
   steamConnectionStatusLabel,
+  steamMatchImportAction,
   steamMatchStatusLabel,
   steamRequestErrorMessage,
   steamSyncResultMessage
@@ -133,11 +134,161 @@ assert.equal(
     source: "steam_match_history",
     discovered_at: "2026-07-19T12:00:00Z",
     updated_at: "2026-07-19T12:30:00Z",
-    demo_id: "demo-2"
+    demo_id: "demo-2",
+    provider_id: "licensed-partner",
+    map_name: "de_mirage",
+    duration_seconds: 1875,
+    ct_round_wins: 13,
+    t_round_wins: 10,
+    players: ["Player One", "Player Two"],
+    import_error_code: null,
+    import_error_message: null,
+    import_retryable: false,
+    parser_dispatch_pending: false,
+    manual_upload_supported: true
   });
 
   assert.equal(display.statusLabel, "Ready");
   assert.equal(display.demoHref, "/demos/demo-2");
+  assert.equal(display.mapName, "de_mirage");
+  assert.equal(display.durationLabel, "31m 15s");
+  assert.equal(display.sideRoundsLabel, "CT 13 · T 10");
+  assert.equal(display.playersLabel, "Player One, Player Two");
+  assert.equal(display.errorMessage, null);
+}
+
+{
+  const display = buildSteamMatchDisplay({
+    id: "match-players",
+    status: "ready",
+    source: "steam_match_history",
+    discovered_at: "2026-07-19T12:00:00Z",
+    updated_at: "2026-07-19T12:30:00Z",
+    demo_id: "demo-players",
+    provider_id: "licensed-partner",
+    map_name: "de_nuke",
+    duration_seconds: null,
+    ct_round_wins: null,
+    t_round_wins: null,
+    players: ["One", "Two", "Three", "Four", "Five"],
+    import_error_code: null,
+    import_error_message: null,
+    import_retryable: false,
+    parser_dispatch_pending: false,
+    manual_upload_supported: true
+  });
+
+  assert.equal(display.playersLabel, "One, Two, Three +2");
+}
+
+{
+  const display = buildSteamMatchDisplay({
+    id: "match-3",
+    status: "unavailable",
+    source: "steam_match_history",
+    discovered_at: "2026-07-19T12:00:00Z",
+    updated_at: "2026-07-19T12:30:00Z",
+    demo_id: null,
+    provider_id: null,
+    map_name: null,
+    duration_seconds: null,
+    ct_round_wins: null,
+    t_round_wins: null,
+    players: null,
+    import_error_code: "demo_source_unavailable",
+    import_error_message: "No licensed Demo source is configured.",
+    import_retryable: false,
+    parser_dispatch_pending: false,
+    manual_upload_supported: true
+  });
+
+  assert.equal(display.mapName, null);
+  assert.equal(display.sideRoundsLabel, null);
+  assert.equal(display.errorMessage, "No licensed Demo source is configured.");
+  assert.equal(display.manualUploadSupported, true);
+}
+
+assert.equal(
+  JSON.stringify(steamMatchImportAction("discovered", null, true)),
+  JSON.stringify({ enabled: true, label: "Import Demo" })
+);
+assert.equal(
+  JSON.stringify(steamMatchImportAction("unavailable", null, true)),
+  JSON.stringify({ enabled: true, label: "Retry import" })
+);
+assert.equal(
+  JSON.stringify(steamMatchImportAction("downloading", null, true)),
+  JSON.stringify({ enabled: false, label: "Downloading" })
+);
+assert.equal(
+  JSON.stringify(steamMatchImportAction("downloading", null, true, null, false, true)),
+  JSON.stringify({ enabled: true, label: "Retry import" })
+);
+assert.equal(
+  JSON.stringify(steamMatchImportAction("demo_pending", null, true, null, false, true)),
+  JSON.stringify({ enabled: true, label: "Retry import" })
+);
+assert.equal(
+  JSON.stringify(steamMatchImportAction("downloading", null, false, null, false, true)),
+  JSON.stringify({ enabled: false, label: "Manual upload" })
+);
+assert.equal(
+  JSON.stringify(steamMatchImportAction("parsing", "demo-2", true)),
+  JSON.stringify({ enabled: false, label: "Parsing" })
+);
+assert.equal(
+  JSON.stringify(steamMatchImportAction("parsing", "demo-2", true, null, true)),
+  JSON.stringify({ enabled: true, label: "Retry parser" })
+);
+assert.equal(
+  JSON.stringify(
+    steamMatchImportAction("unavailable", "demo-2", false, "parser_dispatch_unavailable")
+  ),
+  JSON.stringify({ enabled: true, label: "Retry parser" })
+);
+assert.equal(
+  JSON.stringify(steamMatchImportAction("unavailable", "demo-2", true, "parser_failed")),
+  JSON.stringify({ enabled: false, label: "Unavailable" })
+);
+assert.equal(
+  JSON.stringify(steamMatchImportAction("ready", "demo-2", true)),
+  JSON.stringify({ enabled: false, label: "Ready" })
+);
+assert.equal(
+  JSON.stringify(steamMatchImportAction("discovered", null, false)),
+  JSON.stringify({ enabled: false, label: "Manual upload" })
+);
+
+{
+  const display = buildSteamConnectionDisplay(
+    connection({
+      demo_import_available: false,
+      demo_source_provider: "disabled",
+      manual_upload_supported: true
+    })
+  );
+
+  assert.equal(display.demoImportAvailable, false);
+  assert.equal(display.demoSourceProvider, "disabled");
+  assert.equal(display.manualUploadSupported, true);
+  assert.equal(
+    display.demoImportMessage,
+    "No licensed automatic Demo provider is configured. Use manual .dem upload."
+  );
+}
+
+{
+  const display = buildSteamConnectionDisplay(
+    connection({
+      demo_import_available: true,
+      demo_source_provider: "licensed-partner",
+      manual_upload_supported: true
+    })
+  );
+
+  assert.equal(display.demoImportAvailable, true);
+  assert.equal(display.demoSourceProvider, "licensed-partner");
+  assert.equal(display.demoImportMessage, null);
 }
 
 assert.equal(
@@ -175,6 +326,18 @@ assert.equal(
   steamRequestErrorMessage(503, "sync"),
   "Steam match history is temporarily rate-limited or unavailable. Retry later."
 );
+assert.equal(
+  steamRequestErrorMessage(409, "import", "demo_source_unavailable"),
+  "No licensed automatic Demo provider is configured. Use manual .dem upload."
+);
+assert.equal(
+  steamRequestErrorMessage(409, "import", "demo_import_in_progress"),
+  "This Demo import is already running. Refresh the match status."
+);
+assert.equal(
+  steamRequestErrorMessage(502, "import", "demo_download_too_large"),
+  "The Demo provider response failed secure download checks. Use manual .dem upload or retry later."
+);
 
 console.log("steam match helpers passed");
 
@@ -189,6 +352,9 @@ function connection(overrides = {}) {
     next_retry_at: null,
     last_error_code: null,
     last_error_message: null,
+    demo_import_available: false,
+    demo_source_provider: "disabled",
+    manual_upload_supported: true,
     ...overrides
   };
 }

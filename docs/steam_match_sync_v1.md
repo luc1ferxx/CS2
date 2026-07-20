@@ -24,7 +24,8 @@ Game Coordinator, or change the parser/replay/coaching/render contracts.
 Valve's endpoint returns only the next sharing code. It does not return map,
 score, match time, players, or a supported Demo download URL. The Dashboard must
 therefore keep those values absent until a real `.dem` has passed the existing
-parser in a later phase.
+parser. The separately reviewed import boundary and its disabled-by-default
+provider contract are documented in `docs/steam_demo_import_v1.md`.
 
 Official references:
 
@@ -54,8 +55,9 @@ The lifecycle enum is deliberately wider than this phase's producer:
 - `ready`: a real `.dem` has parsed successfully and may link to Demo Detail.
 - `unavailable`: a reviewed provider could not supply a usable Demo.
 
-Phase 2 creates only `discovered`. It does not pretend that sharing-code
-discovery is Demo availability.
+The history-sync service creates only `discovered`. A later import request may
+advance the row through the reserved states, but the shipped disabled provider
+does not pretend that sharing-code discovery is Demo availability.
 
 ## Credential encryption
 
@@ -125,10 +127,9 @@ Production unsafe requests continue requiring the authenticated opaque session
 and exact trusted `Origin`. All `/steam/*` responses use `private, no-store` and
 vary by Cookie/Origin.
 
-Disconnecting does not delete independently owned Demo artifacts. In Phase 2 no
-Steam match can yet be imported, but this policy is fixed for Phase 3: deleting a
-connection removes Steam authorization/discovery data and stops future sync;
-an already accepted and parsed owner-scoped `.dem` remains in the Demo Library
+Disconnecting does not delete independently owned Demo artifacts. Deleting a
+connection removes Steam authorization/discovery/import rows and stops future
+sync/import; an already accepted owner-scoped `.dem` remains in the Demo Library
 and follows the existing archive/storage lifecycle.
 
 ## Runtime configuration
