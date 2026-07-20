@@ -8,6 +8,7 @@ This repository is a mock MVP for a website-based CS2 demo AI coach.
 - `backend/`: FastAPI service and worker code. Routes are in `backend/app/api/`; SQLAlchemy models in `backend/app/models/`; Pydantic schemas in `backend/app/schemas/`; business logic and artifact storage helpers are in `backend/app/services/`; Redis worker entrypoint is in `backend/app/workers/worker.py`.
 - `render-worker/`: standalone Render Worker V1 skeleton. `runner.py` drives fake-video and manual-operator adapter flows without launching CS2, Steam, OBS, or ffmpeg; `render-worker/README.md` documents runner env, token, API, and adapter details.
 - `docker-compose.yml`: local stack for `frontend`, `api`, `worker`, `postgres`, and `redis`.
+- `.env.example`, `backend/.env.example`, `frontend/.env.example`, `render-worker/.env.example`, and `render-worker/config.example.env`: checked-in runtime config templates for Compose, API/worker, frontend public API origin, render-worker runner, and optional smoke/sample defaults; do not add real secrets.
 - `README.md`: current product scope, storage/parser/render boundaries, API list, observability notes, and verification guidance.
 - `docs/cloud_preview_deploy_v1.md`: Compose preview shape, public URL contract, smoke commands, render-worker preview notes, and rollback/cleanup commands.
 - `docs/internal_preview_packaging_v1.md`: repeatable internal preview runbook, strict sample smoke command, browser checklist, known limitations, and handoff evidence checklist.
@@ -60,6 +61,7 @@ This repository is a mock MVP for a website-based CS2 demo AI coach.
 - `cd frontend && node lib/coaching-review.test.mjs`: run coaching review helper regression tests.
 - `cd frontend && node lib/replay-quality-fixtures.test.mjs`: run compact replay quality fixture regressions.
 - `cd frontend && node lib/map-config.test.mjs`: run tactical map config helper tests.
+- `git status --short` and `git pull origin main`: use as the release-candidate preflight from a clean `main` checkout when you are not intentionally validating uncommitted local changes.
 - `API_BASE_URL=http://localhost:8000 FRONTEND_URL=http://localhost:3000 python3 scripts/cloud_preview_smoke.py`: run API/frontend mock replay, render job, media-route, and diagnostics smoke; point these env vars at public preview origins for hosted smoke, set `SAMPLE_DEMO_NAME` to rename an uploaded smoke sample, and use `SAMPLE_DEMO_PATH=/absolute/path/to/sample.dem python3 scripts/cloud_preview_smoke.py --require-sample`, `REQUIRE_SAMPLE_DEMO=1`, or `SAMPLE_DEMO_REQUIRED=1` for strict real `.dem` parser validation.
 - `./scripts/rc_check.sh`: run the non-browser release-candidate gate using `API_BASE_URL` and `FRONTEND_URL` (defaulting to localhost): verify, Docker build/up, health, diagnostics, `/dashboard` reachability, cloud preview smoke, and optional sample smoke; set those URL env vars for public previews, `SAMPLE_DEMO_NAME` to rename the sample, and `REQUIRE_SAMPLE_DEMO=1` or `SAMPLE_DEMO_REQUIRED=1` when missing sample input must fail the gate.
 - `python3 render-worker/runner.py dry-run [{job_id}]`: inspect the next or specified render job manifest and adapter plan without posting callbacks; set `API_BASE_URL` and `RENDER_WORKER_TOKEN` when targeting a non-local preview API.
@@ -118,7 +120,7 @@ Artifact storage additions must go through `backend/app/services/storage.py`. Th
 
 ## Commit & Pull Request Guidelines
 
-This checkout does not include Git history, so use concise imperative commits such as `Add mock render job status API`. Pull requests should include: purpose, changed backend/frontend surfaces, verification commands run, screenshots for UI changes, and any known limitations.
+Use concise imperative commits such as `Add mock render job status API`. For RC or preview handoff work, record the current branch/commit SHA and `git status --short` output. Pull requests should include: purpose, changed backend/frontend surfaces, verification commands run, screenshots for UI changes, and any known limitations.
 
 ## Security & Configuration Tips
 
