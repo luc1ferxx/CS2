@@ -305,9 +305,9 @@ function RenderStatusOverlay({
   if (mediaUnavailable) {
     return (
       <div className="render-status-overlay failed">
-        <span>{video.source}</span>
-        <strong>media unavailable</strong>
-        <p>The media URL could not be loaded. Check the API media route and keep using the synced mock shell.</p>
+        <span>Video unavailable</span>
+        <strong>Can&apos;t load this video</strong>
+        <p>The replay video couldn&apos;t be reached. You&apos;re watching the 2D tactical replay below — upload a video or regenerate the render to try again.</p>
       </div>
     );
   }
@@ -316,22 +316,45 @@ function RenderStatusOverlay({
     return null;
   }
 
-  const messageByStatus: Record<string, string> = {
-    pending: "No render job has been queued yet. The interactive mock shell remains synced.",
-    queued: "Render job queued. A GPU worker would pick up the selected tick range later.",
-    processing: "Render job processing. No CS2 client or recorder is running in this MVP.",
-    rendering: "Render job in progress. No CS2 client or recorder is running in this MVP.",
-    ready: "Render metadata is ready, but no video URL exists yet, so the mock shell stays active.",
-    failed: video.errorMessage
-      ? friendlyErrorMessage(video.errorMessage)
-      : "Render job failed; the synced mock shell remains usable."
+  const overlayCopy: Record<string, { heading: string; body: string }> = {
+    pending: {
+      heading: "No replay video yet",
+      body: "This demo hasn't been rendered to video. Use Generate Tick Clip above to render a moment, or upload your own video below. The 2D tactical replay is ready to watch now."
+    },
+    queued: {
+      heading: "Render queued",
+      body: "A replay video is waiting to be generated. This view updates automatically when it's ready. Meanwhile, follow the action in the 2D tactical replay below."
+    },
+    processing: {
+      heading: "Rendering video",
+      body: "Your replay video is being generated. This view switches to it automatically when it finishes. Keep reviewing in the 2D tactical replay below."
+    },
+    rendering: {
+      heading: "Rendering video",
+      body: "Your replay video is being generated. This view switches to it automatically when it finishes. Keep reviewing in the 2D tactical replay below."
+    },
+    ready: {
+      heading: "Video almost ready",
+      body: "The render finished but the video isn't attached yet. Refresh render state below, or keep watching the 2D tactical replay."
+    },
+    failed: {
+      heading: "Render didn't finish",
+      body: video.errorMessage
+        ? friendlyErrorMessage(video.errorMessage)
+        : "The video couldn't be generated. Try Generate Tick Clip again or upload your own video below. The 2D tactical replay still works."
+    }
+  };
+
+  const copy = overlayCopy[video.status] ?? {
+    heading: "No replay video yet",
+    body: "Watch the 2D tactical replay below, or generate a video from the controls above."
   };
 
   return (
     <div className={`render-status-overlay ${video.status}`}>
-      <span>{video.source}</span>
-      <strong>{video.status}</strong>
-      <p>{messageByStatus[video.status]}</p>
+      <span>Replay video</span>
+      <strong>{copy.heading}</strong>
+      <p>{copy.body}</p>
     </div>
   );
 }

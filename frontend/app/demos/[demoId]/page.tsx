@@ -447,28 +447,45 @@ function DemoDetailContent() {
           </>
         ) : (
           <>
-            <ReviewCommandBar
-              mapName={status?.map_name ?? replay.mapName}
-              selectedRound={selectedRound}
-              currentTick={currentTick}
-              currentPovName={selectedPlayer?.name ?? "No player selected"}
-              playing={playing}
-              speed={speed}
-              previousFinding={previousFinding}
-              nextFinding={nextFinding}
-              onTogglePlay={() => setPlaying((value) => !value)}
-              onSpeedChange={setSpeed}
-              onPreviousFinding={() => {
-                if (previousFinding) {
-                  seek(previousFinding.tick_start);
-                }
-              }}
-              onNextFinding={() => {
-                if (nextFinding) {
-                  seek(nextFinding.tick_start);
-                }
-              }}
-            />
+            <section id="player" className="player-stage" aria-label="Replay player">
+              <FirstPersonReplay
+                ref={firstPersonReplayRef}
+                replay={replay}
+                currentTick={currentTick}
+                playing={playing}
+                speed={speed}
+                renderRequesting={renderRequesting}
+                renderClipRequesting={tickClipRequesting}
+                latestRenderClipJob={latestRenderClipJob}
+                onRequestMockRender={requestMockRender}
+                onRequestRenderClip={requestRenderClipAtCurrentTick}
+                onVideoTickChange={updateCoordinateFromTick}
+                onVideoDurationChange={setDetectedVideoDuration}
+                onVideoTimeChange={setCurrentVideoTime}
+              />
+              <ReviewCommandBar
+                mapName={status?.map_name ?? replay.mapName}
+                selectedRound={selectedRound}
+                currentTick={currentTick}
+                currentPovName={selectedPlayer?.name ?? "No player selected"}
+                playing={playing}
+                speed={speed}
+                previousFinding={previousFinding}
+                nextFinding={nextFinding}
+                onTogglePlay={() => setPlaying((value) => !value)}
+                onSpeedChange={setSpeed}
+                onPreviousFinding={() => {
+                  if (previousFinding) {
+                    seek(previousFinding.tick_start);
+                  }
+                }}
+                onNextFinding={() => {
+                  if (nextFinding) {
+                    seek(nextFinding.tick_start);
+                  }
+                }}
+              />
+            </section>
             <RoundReviewPanel
               replay={replay}
               coachingEvents={events}
@@ -508,22 +525,7 @@ function DemoDetailContent() {
                 onGenerateClip={requestRenderClipForEvent}
               />
             </div>
-            <section className="review-support-bay" aria-label="Media, render, and calibration support">
-              <FirstPersonReplay
-                ref={firstPersonReplayRef}
-                replay={replay}
-                currentTick={currentTick}
-                playing={playing}
-                speed={speed}
-                renderRequesting={renderRequesting}
-                renderClipRequesting={tickClipRequesting}
-                latestRenderClipJob={latestRenderClipJob}
-                onRequestMockRender={requestMockRender}
-                onRequestRenderClip={requestRenderClipAtCurrentTick}
-                onVideoTickChange={updateCoordinateFromTick}
-                onVideoDurationChange={setDetectedVideoDuration}
-                onVideoTimeChange={setCurrentVideoTime}
-              />
+            <section className="review-support-bay" aria-label="Render and calibration support">
               <RenderOperatorPanel
                 video={replay.video}
                 latestJob={latestRenderClipJob}

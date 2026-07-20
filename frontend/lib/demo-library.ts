@@ -291,6 +291,42 @@ export function renderStatusLabel(demo: DemoSummary): string {
   return "not requested";
 }
 
+export type PlaybackReadiness = "ready" | "rendering" | "none" | "unavailable";
+
+/** Whether a demo can be watched, and in what form.
+ *  - ready: a replay video is available to play
+ *  - rendering: a video is being generated (2D replay watchable meanwhile)
+ *  - none: no video yet, but the parsed 2D tactical replay is watchable
+ *  - unavailable: demo hasn't finished parsing, nothing to watch yet */
+export function playbackReadiness(demo: DemoSummary): PlaybackReadiness {
+  const videoReady =
+    demo.latest_render_status === "completed" || demo.video_status === "ready";
+  if (videoReady) {
+    return "ready";
+  }
+  if (
+    isRenderActiveStatus(demo.latest_render_status) ||
+    isRenderActiveStatus(demo.video_status)
+  ) {
+    return "rendering";
+  }
+  if (demo.status === "completed") {
+    return "none";
+  }
+  return "unavailable";
+}
+
+const PLAYBACK_LABELS: Record<PlaybackReadiness, string> = {
+  ready: "Play",
+  rendering: "Rendering",
+  none: "Watch 2D",
+  unavailable: "Not ready"
+};
+
+export function playbackActionLabel(readiness: PlaybackReadiness): string {
+  return PLAYBACK_LABELS[readiness];
+}
+
 export function detailSummaryItems(input: DetailSummaryInput): DetailSummaryItem[] {
   const { status, replay, latestRenderJob } = input;
   const video = replay?.video ?? null;

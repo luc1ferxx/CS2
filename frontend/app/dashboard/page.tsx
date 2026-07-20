@@ -7,11 +7,13 @@ import {
   ArrowDownUp,
   Check,
   CircleCheck,
+  CircleSlash,
   Clock3,
   ExternalLink,
   FileUp,
   Loader2,
   Pencil,
+  Play,
   RefreshCcw,
   Search,
   UploadCloud,
@@ -34,6 +36,8 @@ import {
   ingestionPhaseLabel,
   libraryEmptyState,
   parseFailureReason,
+  playbackActionLabel,
+  playbackReadiness,
   renderStatusLabel,
   shouldPollLibrary,
   type DemoLibraryFilters,
@@ -475,16 +479,16 @@ function DashboardContent() {
                       <p className="library-error-text">{parseFailureReason(demo)}</p>
                     ) : null}
                   </div>
-                  <span className={`mini-pill library-render-pill ${demo.latest_render_status ?? demo.video_status ?? "pending"}`}>
-                    {renderStatusLabel(demo)}
+                  <span
+                    className={`mini-pill library-render-pill readiness-${playbackReadiness(demo)}`}
+                    title={renderStatusLabel(demo)}
+                  >
+                    {playbackActionLabel(playbackReadiness(demo))}
                   </span>
                 </div>
                 <div className="archive-record-actions">
                   <div className="library-actions">
-                    <Link className="secondary-button compact-button" href={`/demos/${demo.id}`}>
-                      <ExternalLink size={14} />
-                      Open
-                    </Link>
+                    <PlayEntry demo={demo} />
                     <button
                       className="secondary-button compact-button"
                       type="button"
@@ -522,6 +526,49 @@ function DashboardContent() {
         </section>
       </section>
     </main>
+  );
+}
+
+function PlayEntry({ demo }: { demo: DemoSummary }) {
+  const readiness = playbackReadiness(demo);
+  // Play always navigates to the detail page and jumps to the player stage;
+  // the label and icon tell the user what they'll get when they arrive.
+  const href = `/demos/${demo.id}#player`;
+  const label = playbackActionLabel(readiness);
+
+  if (readiness === "ready") {
+    return (
+      <Link className="primary-button compact-button library-play-button" href={href}>
+        <Play size={14} />
+        {label}
+      </Link>
+    );
+  }
+
+  if (readiness === "rendering") {
+    return (
+      <Link className="secondary-button compact-button library-play-button" href={href}>
+        <Loader2 size={14} className="library-play-spinner" />
+        {label}
+      </Link>
+    );
+  }
+
+  if (readiness === "none") {
+    return (
+      <Link className="secondary-button compact-button library-play-button" href={href}>
+        <Play size={14} />
+        {label}
+      </Link>
+    );
+  }
+
+  // unavailable: parsing not finished — nothing to watch yet.
+  return (
+    <span className="secondary-button compact-button library-play-button is-disabled" aria-disabled="true">
+      <CircleSlash size={14} />
+      {label}
+    </span>
   );
 }
 
