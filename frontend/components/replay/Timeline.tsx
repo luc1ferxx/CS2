@@ -13,6 +13,8 @@ interface TimelineProps {
   rounds: ReplayRound[];
   events: CoachingEvent[];
   parserEvents?: ReplayEvent[];
+  selectedPlayerName?: string | null;
+  tickRate?: number;
   onSeek: (tick: number) => void;
 }
 
@@ -22,6 +24,8 @@ export function Timeline({
   rounds,
   events,
   parserEvents = [],
+  selectedPlayerName,
+  tickRate = 64,
   onSeek
 }: TimelineProps) {
   const round = rounds.find((item) => item.roundNumber === selectedRound) ?? rounds[0];
@@ -39,13 +43,19 @@ export function Timeline({
     ? Math.max(0, Math.min(100, ((currentTick - minTick) / Math.max(1, maxTick - minTick)) * 100))
     : 0;
   const timelineStyle = { "--timeline-current-tick": `${currentTickPercent}%` } as CSSProperties;
+  const safeTickRate = Number.isFinite(tickRate) && tickRate > 0 ? tickRate : 64;
+  const elapsed = formatTimelineTime((Math.min(maxTick, Math.max(minTick, currentTick)) - minTick) / safeTickRate);
+  const duration = formatTimelineTime((maxTick - minTick) / safeTickRate);
 
   return (
     <section className="timeline-panel evidence-timeline" aria-label="Replay timeline">
       <div className="timeline-heading">
         <div>
-          <span>Evidence timeline</span>
-          <strong>{parserEventMarkers.length} parser events · {markers.length} findings</strong>
+          <strong title={`Tick ${Math.round(currentTick)}`}>第 {selectedRound} 回合 · {elapsed} <span>/ {duration}</span></strong>
+          <span>{parserEventMarkers.length} 个事件 · {markers.length} 条建议</span>
+          {selectedPlayerName !== undefined ? (
+            <small className="visually-hidden">{selectedPlayerName ? `${selectedPlayerName} 的事件和建议，保留炸弹与回合事件` : "选择玩家后显示个人事件；当前显示比赛事件"}</small>
+          ) : null}
         </div>
       </div>
 
@@ -53,21 +63,21 @@ export function Timeline({
         <div className="timeline-lane-stack" style={timelineStyle}>
           <div className="timeline-lane-labels" aria-hidden="true">
             <div className="timeline-lane-label">
-              <span>Round</span>
-              <small>R{selectedRound}</small>
+              <span>回合</span>
+              <small>{selectedRound}</small>
             </div>
             <div className="timeline-lane-label">
-              <span>Parser</span>
+              <span>事件</span>
               <small>{parserEventMarkers.length}</small>
             </div>
             <div className="timeline-lane-label">
-              <span>Coaching</span>
+              <span>建议</span>
               <small>{markers.length}</small>
             </div>
           </div>
           <div className="timeline-lane-tracks">
             <div className="timeline-current-spine" aria-hidden="true">
-              <span>Tick {Math.round(currentTick)}</span>
+              <span>{elapsed}</span>
             </div>
             <div className="timeline-lane-track round-lane">
               <button
@@ -75,9 +85,9 @@ export function Timeline({
                 type="button"
                 onClick={() => onSeek(minTick)}
                 aria-label={`Jump to round ${selectedRound} start at tick ${minTick}`}
-                title={`Round start at tick ${minTick}`}
+                title={`回合开始 · Tick ${minTick}`}
               >
-                Start
+                开始
               </button>
               <span className="round-duration-track" aria-hidden="true" />
               <button
@@ -85,9 +95,9 @@ export function Timeline({
                 type="button"
                 onClick={() => onSeek(maxTick)}
                 aria-label={`Jump to round ${selectedRound} end at tick ${maxTick}`}
-                title={`Round end at tick ${maxTick}`}
+                title={`回合结束 · Tick ${maxTick}`}
               >
-                End
+                结束
               </button>
             </div>
             <div className="timeline-lane-track parser-lane parser-event-markers" aria-label="Parser event markers">
@@ -99,9 +109,9 @@ export function Timeline({
                   type="button"
                   onClick={() => onSeek(marker.seekTick)}
                   aria-label={`Jump to ${marker.presentation.label} parser event at tick ${marker.seekTick}`}
-                  title={`${marker.event.label} at tick ${marker.seekTick}`}
+                  title={`${parserEventLabel(marker.event.type)} · ${formatTimelineTime((marker.seekTick - minTick) / safeTickRate)} · Tick ${marker.seekTick}`}
                 >
-                  {marker.presentation.shortLabel}
+                  {parserEventLabel(marker.event.type).slice(0, 1)}
                 </button>
               ))}
             </div>
@@ -114,7 +124,7 @@ export function Timeline({
                   type="button"
                   onClick={() => onSeek(marker.event.tick_start)}
                   aria-label={`Jump to ${marker.event.severity} coaching event at tick ${marker.event.tick_start}`}
-                  title={`${marker.event.title} at tick ${marker.event.tick_start}`}
+                  title={`${marker.event.title} · ${formatTimelineTime((marker.event.tick_start - minTick) / safeTickRate)} · Tick ${marker.event.tick_start}`}
                 >
                   <span className="visually-hidden">{marker.event.title}</span>
                 </button>
@@ -123,7 +133,7 @@ export function Timeline({
           </div>
         </div>
       ) : (
-        <div className="timeline-empty-state">No round timeline is available for this replay.</div>
+        <div className="timeline-empty-state">这场比赛暂时没有可用的回合时间轴。</div>
       )}
 
       {hasRounds ? (
@@ -137,9 +147,23 @@ export function Timeline({
             value={Math.min(maxTick, Math.max(minTick, currentTick))}
             onChange={(event) => onSeek(Number(event.target.value))}
             aria-label="Seek replay"
+            aria-valuetext={`第 ${selectedRound} 回合 ${elapsed}，共 ${duration}`}
           />
         </div>
       ) : null}
     </section>
   );
+}
+
+function formatTimelineTime(seconds: number): string {
+  const total = Math.max(0, Math.floor(seconds));
+  return `${Math.floor(total / 60)}:${(total % 60).toString().padStart(2, "0")}`;
+}
+
+function parserEventLabel(type: ReplayEvent["type"]): string {
+  return {
+    kill: "击杀", death: "阵亡", damage: "伤害", bomb_pickup: "拾取炸弹", bomb_dropped: "丢下炸弹",
+    bomb_planted: "安装炸弹", bomb_defused: "拆除炸弹", bomb_exploded: "炸弹爆炸",
+    smoke: "烟雾弹", flash: "闪光弹", molotov: "燃烧弹", he: "手雷", round_start: "回合开始", round_end: "回合结束"
+  }[type] ?? "事件";
 }

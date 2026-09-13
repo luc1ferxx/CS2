@@ -9,10 +9,13 @@ export function SessionControls() {
   const { signOut, state } = useAuth();
   const [signingOut, setSigningOut] = useState(false);
   const account = state.account;
+  const displayName = account?.provider === "development" && account.displayName === "Local development"
+    ? "本地复盘"
+    : account?.displayName ?? "当前账户";
 
   return (
     <div className="session-controls">
-      <span className="account-chip" title={account?.displayName ?? "Current account"}>
+      <span className="account-chip" title={displayName}>
         {account?.avatarUrl ? (
           <span
             aria-hidden="true"
@@ -25,13 +28,13 @@ export function SessionControls() {
           </span>
         )}
         <span className="account-copy">
-          <strong>{account?.displayName ?? "Current account"}</strong>
+          <strong>{displayName}</strong>
           <small>{accountProviderLabel(account?.provider)}</small>
         </span>
       </span>
       {account?.provider !== "development" ? (
         <button
-          aria-label="Sign out"
+          aria-label="退出登录"
           className="secondary-button compact-button account-sign-out"
           type="button"
           disabled={signingOut}
@@ -42,7 +45,7 @@ export function SessionControls() {
           }}
         >
           <LogOut size={14} />
-          {signingOut ? "Signing out" : "Sign out"}
+          {signingOut ? "正在退出" : "退出登录"}
         </button>
       ) : null}
     </div>
@@ -56,5 +59,5 @@ function accountProviderLabel(provider: "steam" | "oidc" | "development" | undef
   if (provider === "oidc") {
     return "OIDC";
   }
-  return "Local account";
+  return "本地账户";
 }

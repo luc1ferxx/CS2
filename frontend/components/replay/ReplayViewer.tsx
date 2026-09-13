@@ -1,8 +1,10 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 
-import { getTacticalMapPresentation, sanitizeRadarPoint } from "@/lib/map-config";
+import { getTacticalMapLevel, getTacticalMapPresentation, resolveTacticalMapLevel, sanitizeRadarPoint } from "@/lib/map-config";
+import type { TacticalMapLevelMode, TacticalMapPresentation } from "@/lib/map-config";
+import { getFrameForTick } from "@/lib/replay-frames";
 import { parserEventPresentationForType, recentMapParserEvents } from "@/lib/replay-events";
 import type { ReplayData, ReplayEvent, ReplayFrame, ReplayFramePlayer } from "@/types/replay";
 
@@ -21,9 +23,10 @@ export function ReplayViewer({
   onSelectPlayer,
   variant = "full"
 }: ReplayViewerProps) {
+  const [levelMode, setLevelMode] = useState<TacticalMapLevelMode>("auto");
   const frame = useMemo(
-    () => getInterpolatedFrameForTick(replay.frames, currentTick),
-    [currentTick, replay.frames]
+    () => getFrameForTick(replay.frames, currentTick, replay.tickRate),
+    [currentTick, replay.frames, replay.tickRate]
   );
   const framePlayers = useMemo(
     () =>
@@ -40,7 +43,14 @@ export function ReplayViewer({
     () => getTacticalMapPresentation(replay),
     [replay]
   );
-  const hasRadarImage = Boolean(mapPresentation.radarImagePath);
+  const selectedPlayer = framePlayers.find((player) => player.id === selectedPlayerId);
+  const floor = resolveTacticalMapLevel(mapPresentation, levelMode, selectedPlayer?.z);
+  const hasFloors = Boolean(mapPresentation.secondaryRadarImagePath);
+  const visiblePlayers = hasFloors
+    ? framePlayers.filter((player) => getTacticalMapLevel(mapPresentation, player.z) === floor.level)
+    : framePlayers;
+  const unknownHeights = hasFloors ? framePlayers.filter((player) => getTacticalMapLevel(mapPresentation, player.z) === null).length : 0;
+  const hasRadarImage = Boolean(floor.radarImagePath);
   const layoutClass =
     variant === "featured"
       ? "featured-tactical-panel"
@@ -52,8 +62,11 @@ export function ReplayViewer({
       ? "Tactical map companion"
       : "2D replay viewer";
   const nearbyParserEvents = useMemo(
-    () => recentMapParserEvents(replay.events ?? [], currentRoundNumber, currentTick, replay.tickRate),
-    [currentRoundNumber, currentTick, replay.events, replay.tickRate]
+    () => recentMapParserEvents(
+      hasFloors ? (replay.events ?? []).filter((event) => getTacticalMapLevel(mapPresentation, event.z) === floor.level) : replay.events ?? [],
+      currentRoundNumber, currentTick, replay.tickRate
+    ),
+    [currentRoundNumber, currentTick, replay.events, replay.tickRate, hasFloors, mapPresentation, floor.level]
   );
 
   return (
@@ -63,45 +76,66 @@ export function ReplayViewer({
     >
       <div className="viewer-header">
         <div className="viewer-header-main">
-          <span className="viewer-eyebrow">Tactical map</span>
+          <span className="viewer-eyebrow">战术回放</span>
           <strong className="viewer-map-name">{mapPresentation.displayName}</strong>
           <span className={`map-calibration-pill ${mapPresentation.confidence}`}>
-            {mapPresentation.confidence}
+            {mapPresentation.confidence === "calibrated" ? "地图已校准" : "参考坐标"}
           </span>
         </div>
         <span className="viewer-outcome">
-          {round ? `${round.winnerSide} won round ${round.roundNumber}` : "Mock replay"}
+          {round ? `第 ${round.roundNumber} 回合 · ${round.winnerSide} 获胜` : "暂无回合数据"}
         </span>
+      </div>
+
+      <div className="viewer-header" style={{ flexWrap: "wrap", gap: 8 }}>
+        {hasFloors ? (
+          <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            楼层
+            <select className="speed-select" aria-label="Tactical map floor" value={levelMode}
+              onChange={(event) => setLevelMode(event.target.value as TacticalMapLevelMode)}>
+              <option value="auto">跟随玩家</option>
+              <option value="upper">上层</option>
+              <option value="lower">下层</option>
+            </select>
+            <span data-testid="map-floor-label">{floor.level === "lower" ? "下层" : "上层"}
+              {floor.followingPlayer ? ` · ${selectedPlayer?.name}` : ""}</span>
+          </label>
+        ) : null}
+        <span data-testid="bomb-status">炸弹：{bombStatusLabel(frame?.bombState.status)}</span>
+        {hasFloors ? <small>本层 {visiblePlayers.length} 人 · 另一层 {framePlayers.length - visiblePlayers.length - unknownHeights} 人</small> : null}
+        {hasFloors && levelMode === "auto" && !floor.followingPlayer ? <small>选择有高度数据的玩家后可自动切换楼层。</small> : null}
+        {unknownHeights > 0 ? <small>{unknownHeights} 人的高度数据缺失，请查看名单。</small> : null}
       </div>
 
       <div className={`map-frame ${hasRadarImage ? "radar-map-frame" : "fallback-map-frame"}`}>
         <svg
           viewBox="0 0 100 100"
           role="img"
-          aria-label={`${mapPresentation.displayName} tactical minimap ${mapPresentation.confidence}`}
+          aria-label={`${mapPresentation.displayName} tactical minimap ${mapPresentation.confidence}${hasFloors ? ` ${floor.level}` : ""}`}
         >
           <defs>
             <pattern id="grid" width="5" height="5" patternUnits="userSpaceOnUse">
               <path d="M 5 0 L 0 0 0 5" fill="none" stroke="#1c2a32" strokeWidth="0.25" />
             </pattern>
           </defs>
-          {mapPresentation.radarImagePath ? (
-            <RadarImageBackground radarUrl={mapPresentation.radarImagePath} />
+          {floor.radarImagePath ? (
+            <RadarImageBackground radarUrl={floor.radarImagePath} />
           ) : (
-            <GenericMapBackground label={`${mapPresentation.displayName} uncalibrated`} />
+            <GenericMapBackground label={`${mapPresentation.displayName} · 坐标未校准`} />
           )}
 
-          {framePlayers.map((player, index) => (
+          {visiblePlayers.map((player) => (
             <PlayerDot
               key={player.id}
               player={player}
-              index={index + 1}
+              index={(player.side === "T" ? tPlayers : ctPlayers).findIndex((item) => item.id === player.id) + 1}
               selected={selectedPlayerId === player.id}
               onSelectPlayer={onSelectPlayer}
             />
           ))}
 
-          <BombMarker bombState={frame?.bombState} />
+          {!hasFloors || getTacticalMapLevel(mapPresentation, frame?.bombState.z) === floor.level
+            ? <BombMarker bombState={frame?.bombState} /> : null}
 
           {nearbyParserEvents.map((event) => (
             <ParserEventMapMarker key={event.id} event={event} />
@@ -109,13 +143,13 @@ export function ReplayViewer({
         </svg>
 
         <div className="player-list">
-          <Roster title="T Side" players={tPlayers} />
-          <Roster title="CT Side" players={ctPlayers} />
+          <Roster title="T · 进攻方" players={tPlayers} map={mapPresentation} selectedPlayerId={selectedPlayerId} onSelectPlayer={onSelectPlayer} />
+          <Roster title="CT · 防守方" players={ctPlayers} map={mapPresentation} selectedPlayerId={selectedPlayerId} onSelectPlayer={onSelectPlayer} />
         </div>
         {!frame ? (
           <div className="map-empty-state">
-            <strong>No frame data</strong>
-            <span>Tactical positions are unavailable for this replay contract.</span>
+            <strong>暂无位置数据</strong>
+            <span>这场比赛暂时无法显示玩家位置。</span>
           </div>
         ) : null}
       </div>
@@ -145,7 +179,7 @@ function ParserEventMapMarker({ event }: { event: ReplayEvent }) {
 }
 
 function BombMarker({ bombState }: { bombState: ReplayFrame["bombState"] | undefined }) {
-  if (bombState?.status !== "planted") {
+  if (bombState?.status !== "planted" && bombState?.status !== "dropped") {
     return null;
   }
   const point = sanitizeRadarPoint(bombState);
@@ -156,7 +190,8 @@ function BombMarker({ bombState }: { bombState: ReplayFrame["bombState"] | undef
   return (
     <g transform={`translate(${point.x} ${point.y})`}>
       <rect x="-2" y="-2" width="4" height="4" rx="0.6" fill="#f4b740" />
-      <circle r="4" fill="none" stroke="#f4b740" strokeDasharray="1 1" />
+      {bombState.status === "planted" ? <circle r="4" fill="none" stroke="#f4b740" strokeDasharray="1 1" /> : null}
+      <title>炸弹：{bombStatusLabel(bombState.status)}</title>
     </g>
   );
 }
@@ -233,6 +268,16 @@ function PlayerDot({
       transform={`translate(${player.x} ${player.y})`}
       opacity={opacity}
       onClick={() => onSelectPlayer(player.id)}
+      role="button"
+      tabIndex={0}
+      aria-label={`Review ${player.name}`}
+      aria-pressed={selected}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onSelectPlayer(player.id);
+        }
+      }}
       style={{ cursor: "pointer" }}
     >
       {selected ? <circle r="4.9" fill="none" stroke="#eef4f6" strokeWidth="0.8" /> : null}
@@ -256,10 +301,16 @@ function PlayerDot({
 
 function Roster({
   title,
-  players
+  players,
+  map,
+  selectedPlayerId,
+  onSelectPlayer
 }: {
   title: string;
   players: ReplayFramePlayer[];
+  map: TacticalMapPresentation;
+  selectedPlayerId: string | null;
+  onSelectPlayer: (playerId: string) => void;
 }) {
   return (
     <div className="side-roster">
@@ -275,7 +326,9 @@ function Roster({
           >
             {index + 1}
           </span>
-          <span>{player.name}</span>
+          <button type="button" aria-pressed={selectedPlayerId === player.id} onClick={() => onSelectPlayer(player.id)} style={{ textAlign: "left", color: "inherit", background: "none", border: 0, cursor: "pointer" }}>
+            {player.name}{map.secondaryRadarImagePath ? ` · ${floorLabel(getTacticalMapLevel(map, player.z))}` : ""}
+          </button>
           <span>{player.alive ? player.hp : 0}</span>
         </div>
       ))}
@@ -283,67 +336,10 @@ function Roster({
   );
 }
 
-function getInterpolatedFrameForTick(frames: ReplayFrame[], tick: number): ReplayFrame | null {
-  if (frames.length === 0) {
-    return null;
-  }
-  const firstFrame = frames[0];
-  if (tick <= firstFrame.tick) {
-    return firstFrame;
-  }
-
-  for (let index = 1; index < frames.length; index += 1) {
-    const nextFrame = frames[index];
-    if (nextFrame.tick < tick) {
-      continue;
-    }
-
-    const previousFrame = frames[index - 1];
-    if (nextFrame.tick === previousFrame.tick) {
-      return previousFrame;
-    }
-
-    const progress = Math.min(
-      1,
-      Math.max(0, (tick - previousFrame.tick) / (nextFrame.tick - previousFrame.tick))
-    );
-
-    return {
-      ...previousFrame,
-      tick,
-      timeSeconds: interpolate(previousFrame.timeSeconds, nextFrame.timeSeconds, progress),
-      roundNumber: progress < 0.5 ? previousFrame.roundNumber : nextFrame.roundNumber,
-      players: interpolatePlayers(previousFrame.players, nextFrame.players, progress),
-      bombState: progress < 0.5 ? previousFrame.bombState : nextFrame.bombState
-    };
-  }
-
-  return frames[frames.length - 1];
+function floorLabel(level: string | null): string {
+  return level === "upper" ? "上层" : level === "lower" ? "下层" : "高度未知";
 }
 
-function interpolatePlayers(
-  previousPlayers: ReplayFramePlayer[],
-  nextPlayers: ReplayFramePlayer[],
-  progress: number
-): ReplayFramePlayer[] {
-  const nextById = new Map(nextPlayers.map((player) => [player.id, player]));
-  return previousPlayers.map((player) => {
-    const nextPlayer = nextById.get(player.id);
-    if (!nextPlayer) {
-      return player;
-    }
-
-    return {
-      ...player,
-      x: interpolate(player.x, nextPlayer.x, progress),
-      y: interpolate(player.y, nextPlayer.y, progress),
-      alive: progress < 0.85 ? player.alive : nextPlayer.alive,
-      hp: Math.round(interpolate(player.hp, nextPlayer.hp, progress)),
-      hasBomb: progress < 0.5 ? player.hasBomb : nextPlayer.hasBomb
-    };
-  });
-}
-
-function interpolate(start: number, end: number, progress: number): number {
-  return start + (end - start) * progress;
+function bombStatusLabel(status: string | undefined): string {
+  return ({ carried: "携带中", planted: "已安装", dropped: "已掉落", defused: "已拆除", exploded: "已爆炸", unknown: "未知" } as Record<string, string>)[status ?? "unknown"] ?? "未知";
 }

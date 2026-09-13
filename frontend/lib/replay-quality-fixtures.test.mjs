@@ -31,6 +31,7 @@ function loadTypeScriptModule(relativePath) {
     exports: module.exports,
     module,
     require(specifier) {
+      if (specifier === "@/lib/bomb-site") return loadTypeScriptModule("./bomb-site.ts");
       if (specifier.startsWith("@/types/")) {
         return {};
       }

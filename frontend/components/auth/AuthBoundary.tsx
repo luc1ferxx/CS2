@@ -12,7 +12,7 @@ export function AuthBoundary({ children }: { children: ReactNode }) {
     return children;
   }
 
-  const copy = authBoundaryCopy(state.status, provider, state.message);
+  const copy = authBoundaryCopy(state.status, provider);
 
   return (
     <main className="auth-shell">
@@ -23,11 +23,17 @@ export function AuthBoundary({ children }: { children: ReactNode }) {
         <div>
           <h1>{copy.title}</h1>
           <p>{copy.message}</p>
+          {state.status === "error" && state.message ? (
+            <details>
+              <summary>查看错误详情</summary>
+              <p>{state.message}</p>
+            </details>
+          ) : null}
         </div>
         {state.status === "anonymous" || state.status === "expired" ? (
           <button className="primary-button" type="button" onClick={() => signIn()}>
             <LogIn size={16} />
-            {provider === "steam" ? "Sign in with Steam" : "Sign in"}
+            {provider === "steam" ? "通过 Steam 登录" : "登录"}
           </button>
         ) : null}
         {state.status === "error" ? (
@@ -37,7 +43,7 @@ export function AuthBoundary({ children }: { children: ReactNode }) {
             onClick={() => void refreshSession()}
           >
             <RefreshCw size={16} />
-            Retry session check
+            重新连接
           </button>
         ) : null}
       </section>
@@ -47,32 +53,31 @@ export function AuthBoundary({ children }: { children: ReactNode }) {
 
 function authBoundaryCopy(
   status: string,
-  provider: "steam" | "oidc",
-  message?: string
+  provider: "steam" | "oidc"
 ) {
   if (status === "checking") {
     return {
-      title: "Checking your session",
-      message: "Confirming access to your private demo library."
+      title: "正在打开比赛库",
+      message: "正在连接，请稍候。"
     };
   }
   if (status === "expired") {
     return {
-      title: "Session expired",
-      message: "Sign in again to continue reviewing your private demos."
+      title: "登录已过期",
+      message: "请重新登录，继续复盘你的比赛。"
     };
   }
   if (status === "error") {
     return {
-      title: "Session check unavailable",
-      message: message || "The authentication service could not be reached."
+      title: "暂时无法连接",
+      message: "请确认应用已启动，然后重新连接。"
     };
   }
   return {
-    title: provider === "steam" ? "Sign in with Steam" : "Sign in",
+    title: provider === "steam" ? "通过 Steam 登录" : "登录",
     message:
       provider === "steam"
-        ? "Steam confirms your SteamID64; your private review data stays owner-scoped."
-        : "Continue with the configured identity provider to open your private demo library."
+        ? "连接 Steam 账户，查看属于你的比赛和复盘记录。"
+        : "登录账户，打开你的比赛库。"
   };
 }

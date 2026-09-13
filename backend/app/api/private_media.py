@@ -30,6 +30,31 @@ def get_private_demo_video(
     db: Session = Depends(get_db),
     owner_id: str = Depends(get_current_owner_id),
 ) -> Response:
+    return _private_video_response(demo_id, request, db, owner_id)
+
+
+@router.api_route(
+    "/demos/{demo_id}/render/jobs/{job_id}/media/video",
+    methods=["GET", "HEAD"],
+)
+def get_private_render_video(
+    demo_id: str,
+    job_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    owner_id: str = Depends(get_current_owner_id),
+) -> Response:
+    return _private_video_response(demo_id, request, db, owner_id, job_id=job_id)
+
+
+def _private_video_response(
+    demo_id: str,
+    request: Request,
+    db: Session,
+    owner_id: str,
+    *,
+    job_id: str | None = None,
+) -> Response:
     if (
         settings.auth_mode == "production"
         and request.headers.get("sec-fetch-site") in {"same-site", "cross-site"}
@@ -42,7 +67,10 @@ def get_private_demo_video(
         raise _media_not_found()
 
     try:
-        opened = service.open_private_video(demo)
+        opened = (
+            service.open_private_render_video(demo, job_id)
+            if job_id is not None else service.open_private_video(demo)
+        )
     except (OSError, ValueError):
         raise _media_not_found() from None
 

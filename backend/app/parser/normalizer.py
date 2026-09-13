@@ -67,7 +67,8 @@ def _event_position_normalizer(map_name: str, bounds: dict[str, float]):
         y_value = source.get("y", source.get("Y"))
         if not _finite(x_value) or not _finite(y_value):
             return None
-        return _normalize_position(float(x_value), float(y_value), bounds, map_name)
+        return {**_normalize_position(float(x_value), float(y_value), bounds, map_name),
+                **_world_z(source)}
 
     return normalize
 
@@ -171,7 +172,7 @@ def _normalize_frames(
                 "timeSeconds": _float_or_default(frame.get("timeSeconds"), 0.0),
                 "roundNumber": _int_or_default(frame.get("roundNumber"), _round_for_tick(tick, rounds)),
                 "players": players,
-                "bombState": _normalize_bomb_state(frame.get("bombState")),
+                "bombState": _normalize_bomb_state(frame.get("bombState"), bounds, map_name),
             }
         )
     return [frame for frame in normalized if frame["players"]]
@@ -195,6 +196,7 @@ def _normalize_frame_player(
         "name": str(player.get("name") or player_id),
         "side": side,
         **_normalize_position(float(player["x"]), float(player["y"]), bounds, map_name),
+        **_world_z(player),
         "alive": alive,
         "hp": max(0, min(100, hp)),
         "hasBomb": bool(player.get("hasBomb", False)),
@@ -251,13 +253,24 @@ def _round_for_tick(tick: int, rounds: list[dict[str, Any]]) -> int:
     return int(rounds[0]["roundNumber"]) if rounds else 1
 
 
-def _normalize_bomb_state(raw: Any) -> dict[str, Any]:
+def _world_z(raw: dict[str, Any]) -> dict[str, float]:
+    value = raw.get("z", raw.get("Z"))
+    return {"z": float(value)} if _finite(value) else {}
+
+
+def _normalize_bomb_state(raw: Any, bounds: dict[str, float], map_name: str) -> dict[str, Any]:
     if not isinstance(raw, dict):
-        return {"status": "carried"}
+        return {"status": "unknown"}
     status = raw.get("status")
-    if status not in {"carried", "planted", "dropped"}:
-        return {"status": "carried"}
-    return raw
+    if not isinstance(status, str) or status not in {"unknown", "carried", "planted", "dropped", "defused", "exploded"}:
+        return {"status": "unknown"}
+    normalized: dict[str, Any] = {"status": status}
+    if status == "carried" and isinstance(raw.get("carrierPlayerId"), (str, int)):
+        normalized["carrierPlayerId"] = str(raw["carrierPlayerId"])
+    if _has_position(raw):
+        normalized.update(_normalize_position(float(raw["x"]), float(raw["y"]), bounds, map_name))
+    normalized.update(_world_z(raw))
+    return normalized
 
 
 def _normalize_side(value: Any) -> str | None:

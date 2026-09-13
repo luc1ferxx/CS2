@@ -45,9 +45,62 @@ const {
   isRenderActiveStatus,
   libraryEmptyState,
   parseFailureReason,
+  playbackReadiness,
   renderStatusLabel,
   shouldPollLibrary
 } = loadTypeScriptModule("./demo-library.ts");
+
+{
+  // Parsed real .dem files initially share this mock video placeholder.
+  for (const latest_render_status of [null, "completed", "failed"]) {
+    assert.equal(playbackReadiness(demo({
+      status: "completed",
+      video_source: "mock",
+      video_status: "ready",
+      video_url: null,
+      latest_render_status
+    })), "none", `mock placeholder with ${latest_render_status} job is tactical-only`);
+  }
+  for (const latest_render_status of ["queued", "processing", "rendering"]) {
+    assert.equal(playbackReadiness(demo({
+      video_source: "mock",
+      video_status: "ready",
+      latest_render_status
+    })), "rendering", "an active job remains visible over a mock placeholder");
+  }
+  for (const video_source of ["rendered", "manual_upload"]) {
+    for (const latest_render_status of [null, "completed", "queued", "failed"]) {
+      assert.equal(playbackReadiness(demo({
+        video_source,
+        video_status: "ready",
+        latest_render_status
+      })), "ready", "saved real video stays available during another job");
+    }
+  }
+  assert.equal(playbackReadiness(demo({
+    video_source: null,
+    video_status: "ready"
+  })), "ready", "legacy video status without a source remains compatible");
+  assert.equal(playbackReadiness(demo({
+    video_source: null,
+    video_status: null,
+    latest_render_status: "completed"
+  })), "ready", "legacy completed jobs without video metadata remain compatible");
+  assert.equal(playbackReadiness(demo({
+    video_source: "rendered",
+    video_status: "failed",
+    latest_render_status: "completed"
+  })), "none", "a completed job does not override an explicit video failure");
+  assert.equal(playbackReadiness(demo({
+    video_source: "rendered",
+    video_status: "rendering"
+  })), "rendering");
+  assert.equal(playbackReadiness(demo({
+    status: "parsing",
+    video_source: "mock",
+    video_status: "ready"
+  })), "unavailable", "a mock video placeholder does not make parsing complete");
+}
 
 const defaultFilters = {
   search: "",
@@ -317,7 +370,9 @@ const demos = [
 
 {
   assert.equal(shouldPollLibrary({ loading: false, creating: false, activeJobs: 0 }), false);
-  assert.equal(shouldPollLibrary({ loading: true, creating: false, activeJobs: 0 }), true);
+  // A slow initial response must finish before polling can supersede its request ID.
+  assert.equal(shouldPollLibrary({ loading: true, creating: false, activeJobs: 0 }), false);
+  assert.equal(shouldPollLibrary({ loading: true, creating: true, activeJobs: 2 }), false);
   assert.equal(shouldPollLibrary({ loading: false, creating: true, activeJobs: 0 }), true);
   assert.equal(shouldPollLibrary({ loading: false, creating: false, activeJobs: 2 }), true);
 }

@@ -2,16 +2,16 @@
 
 import Link from "next/link";
 import {
-  Activity,
   Archive,
   ArrowDownUp,
   Check,
   CircleCheck,
-  CircleSlash,
+  ChevronDown,
   Clock3,
   ExternalLink,
   FileUp,
   Loader2,
+  MoreHorizontal,
   Pencil,
   Play,
   RefreshCcw,
@@ -30,15 +30,9 @@ import {
   canRetryParse,
   demoLibraryFilterOptions,
   countActiveLibraryDemos,
-  demoStatusLabel,
   filterAndSortDemos,
-  friendlyErrorMessage,
-  ingestionPhaseLabel,
   libraryEmptyState,
-  parseFailureReason,
-  playbackActionLabel,
   playbackReadiness,
-  renderStatusLabel,
   shouldPollLibrary,
   type DemoLibraryFilters,
   type LibraryEmptyState
@@ -77,6 +71,7 @@ function DashboardContent() {
   const [renameValue, setRenameValue] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<LibraryNotice | null>(null);
+  const [importOptionsLoaded, setImportOptionsLoaded] = useState(false);
   const loadRequestIdRef = useRef(0);
 
   const invalidateLibraryLoads = useCallback(() => {
@@ -97,7 +92,7 @@ function DashboardContent() {
       if (requestId !== loadRequestIdRef.current) {
         return;
       }
-      setError(friendlyErrorMessage(err instanceof Error ? err.message : "Failed to load demos"));
+      setError(libraryRequestError(err, "加载比赛失败，请刷新重试。"));
     } finally {
       if (requestId === loadRequestIdRef.current) {
         setLoading(false);
@@ -129,10 +124,18 @@ function DashboardContent() {
       return;
     }
 
-    const intervalId = window.setInterval(() => {
-      void loadDemos();
-    }, 1800);
-    return () => window.clearInterval(intervalId);
+    let cancelled = false;
+    let timeoutId = window.setTimeout(poll, 1800);
+    async function poll() {
+      await loadDemos();
+      if (!cancelled) {
+        timeoutId = window.setTimeout(poll, 1800);
+      }
+    }
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeoutId);
+    };
   }, [activeJobs, creating, loadDemos, loading]);
 
   async function handleMockUpload() {
@@ -140,13 +143,13 @@ function DashboardContent() {
     try {
       const demo = await createMockUpload();
       setNotice({
-        message: `Mock demo queued: ${demo.name}. This synthetic replay is for fast UI smoke checks.`,
+        message: `示例比赛已创建：${demo.name}。这是模拟数据，可用来体验复盘。`,
         demoId: demo.id
       });
       setError(null);
       await loadDemos();
     } catch (err) {
-      setError(friendlyErrorMessage(err instanceof Error ? err.message : "Failed to create mock upload"));
+      setError(libraryRequestError(err, "创建示例失败，请重试。"));
     } finally {
       setCreating(false);
     }
@@ -157,13 +160,13 @@ function DashboardContent() {
     try {
       const demo = await createDemoUpload(file);
       setNotice({
-        message: `Real .dem upload queued for parser review: ${demo.original_filename}. Open the demo to watch parse status.`,
+        message: `${demo.original_filename} 已上传，正在准备复盘。`,
         demoId: demo.id
       });
       setError(null);
       await loadDemos();
     } catch (err) {
-      setError(friendlyErrorMessage(err instanceof Error ? err.message : "Failed to upload demo"));
+      setError(libraryRequestError(err, "上传比赛失败，请检查文件后重试。"));
     } finally {
       setCreating(false);
     }
@@ -183,39 +186,39 @@ function DashboardContent() {
       const updated = await updateDemo(demo.id, { name: renameValue });
       invalidateLibraryLoads();
       setDemos((current) => current.map((item) => (item.id === updated.id ? updated : item)));
-      setNotice({ message: `Renamed demo to ${updated.name}`, demoId: updated.id });
+      setNotice({ message: `已重命名为「${updated.name}」`, demoId: updated.id });
       setRenamingDemoId(null);
       setRenameValue("");
       setError(null);
     } catch (err) {
-      setError(friendlyErrorMessage(err instanceof Error ? err.message : "Failed to rename demo"));
+      setError(libraryRequestError(err, "重命名失败，请重试。"));
     } finally {
       setBusyDemoId(null);
     }
   }
 
   async function handleArchive(demo: DemoSummary) {
-    const confirmed = window.confirm(
-      `Archive "${demo.name}"? It will be hidden from the default demo library.`
-    );
-    if (!confirmed) {
-      return;
-    }
-
     setBusyDemoId(demo.id);
     invalidateLibraryLoads();
     try {
-      const archived = await archiveDemo(demo.id);
+      const archived = demo.archived
+        ? await updateDemo(demo.id, { archived: false })
+        : await archiveDemo(demo.id);
       invalidateLibraryLoads();
       setDemos((current) =>
         filters.includeArchived
           ? current.map((item) => (item.id === archived.id ? archived : item))
           : current.filter((item) => item.id !== archived.id)
       );
-      setNotice({ message: `Archived ${archived.name}`, demoId: archived.id });
+      setNotice({
+        message: archived.archived
+          ? `已归档「${archived.name}」，可在筛选中显示并恢复。`
+          : `已恢复「${archived.name}」`,
+        demoId: archived.id
+      });
       setError(null);
     } catch (err) {
-      setError(friendlyErrorMessage(err instanceof Error ? err.message : "Failed to archive demo"));
+      setError(libraryRequestError(err, "更新归档状态失败，请重试。"));
     } finally {
       setBusyDemoId(null);
     }
@@ -228,31 +231,23 @@ function DashboardContent() {
       const updated = await retryDemoParse(demo.id);
       invalidateLibraryLoads();
       setDemos((current) => current.map((item) => (item.id === updated.id ? updated : item)));
-      setNotice({ message: `Retry queued: ${updated.name}`, demoId: updated.id });
+      setNotice({ message: `正在重新处理「${updated.name}」`, demoId: updated.id });
       setError(null);
     } catch (err) {
-      setError(friendlyErrorMessage(err instanceof Error ? err.message : "Failed to retry parse"));
+      setError(libraryRequestError(err, "重新处理失败，请重试。"));
     } finally {
       setBusyDemoId(null);
     }
   }
 
   return (
-    <main className="app-shell">
+    <main className="app-shell library-app">
       <header className="topbar">
         <div className="brand">
           <div className="brand-mark">C</div>
-          <span>CS2 Demo Coach</span>
+          <span>CS2 Coach</span>
         </div>
         <div className="topbar-actions">
-          <span className="status-pill">
-            <span className="status-dot" />
-            Private API
-          </span>
-          <span className="status-pill">
-            <Activity size={15} />
-            {activeJobs} active jobs
-          </span>
           <SessionControls />
         </div>
       </header>
@@ -260,10 +255,9 @@ function DashboardContent() {
       <section className="page">
         <div className="page-header library-page-header archive-command-bar">
           <div className="library-header-copy">
-            <span className="workspace-kicker">Tactical review workbench</span>
-            <h1 className="page-title">Demo Library</h1>
+            <h1 className="page-title">我的比赛</h1>
             <p className="page-subtitle">
-              Match archives, parser readiness, and deterministic review signals in one working queue.
+              选择比赛，找到值得复盘的一刻。
             </p>
           </div>
           <DemoUploader disabled={creating} onMockUpload={handleMockUpload} onDemoUpload={handleDemoUpload} />
@@ -276,132 +270,141 @@ function DashboardContent() {
             {notice.demoId ? (
               <Link className="secondary-button compact-button" href={`/demos/${notice.demoId}`}>
                 <ExternalLink size={14} />
-                Open demo
+                查看比赛
               </Link>
             ) : null}
           </div>
         ) : null}
 
-        <RecentSteamMatches />
-
-        <section className="library-toolbar archive-control-spine" aria-label="Demo library controls">
+        <section className="library-toolbar library-controls" aria-label="搜索与筛选比赛">
           <label className="library-search">
             <Search size={16} />
             <input
               type="search"
               value={filters.search}
               onChange={(event) => setFilters((current) => ({ ...current, search: event.target.value }))}
-              placeholder="Search name, file, or map"
-              aria-label="Search demos"
+              placeholder="搜索比赛、文件或地图"
+              aria-label="搜索比赛"
             />
           </label>
 
           <label className="library-filter">
-            <span>Status</span>
-            <select
-              value={filters.status}
-              onChange={(event) =>
-                setFilters((current) => ({
-                  ...current,
-                  status: event.target.value as DemoLibraryFilters["status"]
-                }))
-              }
-              aria-label="Filter by status"
-            >
-              <option value="all">All statuses</option>
-              {filterOptions.statuses.map((status) => (
-                <option key={status} value={status}>
-                  {demoStatusLabel(status)}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <label className="library-filter">
-            <span>Map</span>
+            <span>地图</span>
             <select
               value={filters.map}
               onChange={(event) => setFilters((current) => ({ ...current, map: event.target.value }))}
-              aria-label="Filter by map"
+              aria-label="筛选地图"
             >
-              <option value="all">All maps</option>
+              <option value="all">全部地图</option>
               {filterOptions.maps.map((map) => (
                 <option key={map} value={map}>
-                  {map}
+                  {mapLabel(map)}
                 </option>
               ))}
             </select>
           </label>
 
-          <label className="library-filter">
-            <span>Sort</span>
-            <select
-              value={filters.sort}
-              onChange={(event) =>
-                setFilters((current) => ({
-                  ...current,
-                  sort: event.target.value as DemoLibraryFilters["sort"],
-                  order: event.target.value === "recent" ? "desc" : current.order
-                }))
-              }
-              aria-label="Sort demos"
-            >
-              <option value="recent">Recently uploaded</option>
-              <option value="name">Name</option>
-              <option value="map">Map</option>
-              <option value="status">Status</option>
-            </select>
-          </label>
-
-          <button
-            className="secondary-button compact-button"
-            type="button"
-            onClick={() =>
-              setFilters((current) => ({
-                ...current,
-                order: current.order === "asc" ? "desc" : "asc"
-              }))
-            }
-          >
-            <ArrowDownUp size={14} />
-            {filters.order === "asc" ? "Ascending" : "Descending"}
-          </button>
-
+          <details className="library-more-filters">
+            <summary className="secondary-button compact-button">
+              <ArrowDownUp size={14} />
+              筛选与排序
+              {filters.status !== "all" || filters.includeArchived || filters.sort !== "recent" || filters.order !== "desc"
+                ? <span className="library-filter-active">已应用</span>
+                : null}
+              <ChevronDown size={14} />
+            </summary>
+            <div className="library-filter-options">
+              <label className="library-filter">
+                <span>状态</span>
+                <select
+                  value={filters.status}
+                  onChange={(event) => setFilters((current) => ({
+                    ...current,
+                    status: event.target.value as DemoLibraryFilters["status"]
+                  }))}
+                  aria-label="筛选状态"
+                >
+                  <option value="all">全部状态</option>
+                  {filterOptions.statuses.map((status) => (
+                    <option key={status} value={status}>{statusLabel(status)}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="library-filter">
+                <span>排序</span>
+                <select
+                  value={filters.sort}
+                  onChange={(event) =>
+                    setFilters((current) => ({
+                      ...current,
+                      sort: event.target.value as DemoLibraryFilters["sort"],
+                      order: event.target.value === "recent" ? "desc" : current.order
+                    }))
+                  }
+                  aria-label="比赛排序"
+                >
+                  <option value="recent">上传时间</option>
+                  <option value="name">比赛名称</option>
+                  <option value="map">地图</option>
+                  <option value="status">处理状态</option>
+                </select>
+              </label>
+              <button
+                className="secondary-button compact-button"
+                type="button"
+                onClick={() =>
+                  setFilters((current) => ({
+                    ...current,
+                    order: current.order === "asc" ? "desc" : "asc"
+                  }))
+                }
+              >
+                <ArrowDownUp size={14} />
+                {filters.order === "asc" ? "升序" : "降序"}
+              </button>
+              <label className="include-archived-toggle">
+                <input
+                  type="checkbox"
+                  checked={filters.includeArchived}
+                  onChange={(event) =>
+                    setFilters((current) => ({ ...current, includeArchived: event.target.checked }))
+                  }
+                />
+                显示已归档
+              </label>
+              <button
+                className="secondary-button compact-button"
+                type="button"
+                onClick={() => setFilters(DEFAULT_FILTERS)}
+              >
+                重置筛选
+              </button>
+            </div>
+          </details>
           <button
             className="secondary-button compact-button"
             type="button"
             onClick={() => void loadDemos()}
+            aria-label="刷新比赛列表"
           >
             <RefreshCcw size={14} />
-            Refresh
+            刷新
           </button>
-
-          <label className="include-archived-toggle">
-            <input
-              type="checkbox"
-              checked={filters.includeArchived}
-              onChange={(event) =>
-                setFilters((current) => ({ ...current, includeArchived: event.target.checked }))
-              }
-            />
-            Show archived
-          </label>
         </section>
 
-        <section className="archive-ledger-meta" aria-label="Demo library summary">
-          <LibraryStat label="Visible" value={visibleDemos.length} />
-          <LibraryStat label="Total loaded" value={demos.length} />
-          <LibraryStat label="Active jobs" value={activeJobs} />
-          <LibraryStat label="Failed" value={failedDemos} />
-        </section>
+        <div className="library-count-summary" role="status">
+          <span>{loading ? "正在加载比赛…" : `${visibleDemos.length} 场比赛`}</span>
+          {activeJobs > 0 ? <span>{activeJobs} 场正在处理，完成后自动更新</span> : null}
+          {failedDemos > 0 ? <span className="library-attention-count">{failedDemos} 场需要处理</span> : null}
+        </div>
 
-        <section className="archive-ledger" aria-label="Demo library archive">
+        <section className="archive-ledger" aria-label="比赛列表">
           <div className="archive-ledger-head" aria-hidden="true">
-            <span>Match archive</span>
-            <span>Map</span>
-            <span>Review signal</span>
-            <span>Readiness / render</span>
-            <span>Actions</span>
+            <span>比赛</span>
+            <span>地图</span>
+            <span>复盘线索</span>
+            <span>状态</span>
+            <span>操作</span>
           </div>
           {emptyState ? (
             <LibraryEmptyStateRow
@@ -427,21 +430,23 @@ function DashboardContent() {
                       <input
                         value={renameValue}
                         onChange={(event) => setRenameValue(event.target.value)}
-                        aria-label={`Rename ${demo.name}`}
+                        aria-label={`重命名 ${demo.name}`}
+                        maxLength={255}
+                        required
                         autoFocus
                       />
                       <button
                         className="icon-button"
                         type="submit"
-                        disabled={busyDemoId === demo.id}
-                        aria-label={`Save name for ${demo.name}`}
+                        disabled={busyDemoId === demo.id || !renameValue.trim()}
+                        aria-label={`保存 ${demo.name} 的名称`}
                       >
                         <Check size={15} />
                       </button>
                       <button
                         className="icon-button"
                         type="button"
-                        aria-label={`Cancel renaming ${demo.name}`}
+                        aria-label={`取消重命名 ${demo.name}`}
                         onClick={() => {
                           setRenamingDemoId(null);
                           setRenameValue("");
@@ -452,52 +457,44 @@ function DashboardContent() {
                     </form>
                   ) : (
                     <div className="demo-name">
-                      <span>{demo.name}</span>
-                      <span>{demo.original_filename}</span>
-                      {demo.archived ? <span className="archived-label">Archived</span> : null}
+                      <span><Link href={`/demos/${demo.id}`} title={demo.name}>{demo.name}</Link></span>
+                      {demo.name !== demo.original_filename ? <span>{demo.original_filename}</span> : null}
+                      {demo.archived ? <span className="archived-label">已归档</span> : null}
                     </div>
                   )}
                   <div className="archive-record-date">
-                    <span>Updated {formatDate(demo.updated_at)}</span>
-                    <span>Uploaded {formatDate(demo.created_at)}</span>
+                    <span title={`最近更新：${formatDate(demo.updated_at)}`}>{formatDate(demo.created_at)} 上传</span>
                   </div>
                 </div>
                 <div className="archive-record-map">
-                  <span className="map-anchor">{demo.map_name}</span>
+                  <span className="map-anchor">{mapLabel(demo.map_name)}</span>
                 </div>
                 <div className="archive-record-signals">
                   <div className="library-review-counts">
-                    <span><strong>{demo.round_count || "-"}</strong> rounds</span>
-                    <span><strong>{demo.coaching_event_count || "-"}</strong> coaching</span>
+                    <span><strong>{demo.round_count}</strong> 回合</span>
+                    <span><strong>{demo.coaching_event_count}</strong> 条线索</span>
                   </div>
                 </div>
                 <div className="archive-record-state">
                   <div className="library-readiness">
                     <StatusBadge status={demo.status} />
                     <IngestionMeta demo={demo} />
-                    {parseFailureReason(demo) ? (
-                      <p className="library-error-text">{parseFailureReason(demo)}</p>
+                    {demo.ingestion?.failure || demo.error_message ? (
+                      <details className="library-failure-details">
+                        <summary>查看原因</summary>
+                        <p className="library-error-text">{demo.ingestion?.failure?.message || demo.error_message}</p>
+                      </details>
                     ) : null}
                   </div>
-                  <span
+                  {playbackReadiness(demo) !== "unavailable" ? <span
                     className={`mini-pill library-render-pill readiness-${playbackReadiness(demo)}`}
-                    title={renderStatusLabel(demo)}
                   >
-                    {playbackActionLabel(playbackReadiness(demo))}
-                  </span>
+                    {videoAvailabilityLabel(demo)}
+                  </span> : null}
                 </div>
                 <div className="archive-record-actions">
                   <div className="library-actions">
                     <PlayEntry demo={demo} />
-                    <button
-                      className="secondary-button compact-button"
-                      type="button"
-                      onClick={() => startRename(demo)}
-                      disabled={busyDemoId === demo.id}
-                    >
-                      <Pencil size={14} />
-                      Rename
-                    </button>
                     {canRetryParse(demo) ? (
                       <button
                         className="secondary-button compact-button"
@@ -506,24 +503,60 @@ function DashboardContent() {
                         disabled={busyDemoId === demo.id}
                       >
                         <RefreshCcw size={14} />
-                        Retry
+                        重新处理
                       </button>
                     ) : null}
-                    <button
-                      className="secondary-button compact-button"
-                      type="button"
-                      onClick={() => void handleArchive(demo)}
-                      disabled={busyDemoId === demo.id || demo.archived}
-                    >
-                      <Archive size={14} />
-                      Archive
-                    </button>
+                    <details className="library-record-menu" onKeyDown={(event) => {
+                      if (event.key === "Escape") {
+                        event.currentTarget.open = false;
+                        event.currentTarget.querySelector("summary")?.focus();
+                      }
+                    }}>
+                      <summary className="icon-button" aria-label={`${demo.name} 的更多操作`}>
+                        <MoreHorizontal size={18} />
+                      </summary>
+                      <div className="library-record-menu-items">
+                        <button
+                          className="secondary-button compact-button"
+                          type="button"
+                          onClick={(event) => {
+                            closeRecordMenu(event.currentTarget);
+                            startRename(demo);
+                          }}
+                          disabled={busyDemoId === demo.id}
+                        >
+                          <Pencil size={14} />
+                          重命名
+                        </button>
+                        <button
+                          className="secondary-button compact-button"
+                          type="button"
+                          onClick={(event) => {
+                            closeRecordMenu(event.currentTarget);
+                            void handleArchive(demo);
+                          }}
+                          disabled={busyDemoId === demo.id}
+                        >
+                          <Archive size={14} />
+                          {demo.archived ? "恢复到比赛库" : "归档比赛"}
+                        </button>
+                      </div>
+                    </details>
                   </div>
                 </div>
               </article>
             ))
           )}
         </section>
+        <details
+          className="library-import-options"
+          onToggle={(event) => {
+            if (event.currentTarget.open) setImportOptionsLoaded(true);
+          }}
+        >
+          <summary><span>导入选项</span><span>从 Steam 导入比赛</span><ChevronDown size={16} /></summary>
+          {importOptionsLoaded ? <RecentSteamMatches /> : null}
+        </details>
       </section>
     </main>
   );
@@ -531,53 +564,29 @@ function DashboardContent() {
 
 function PlayEntry({ demo }: { demo: DemoSummary }) {
   const readiness = playbackReadiness(demo);
-  // Play always navigates to the detail page and jumps to the player stage;
-  // the label and icon tell the user what they'll get when they arrive.
   const href = `/demos/${demo.id}#player`;
-  const label = playbackActionLabel(readiness);
-
-  if (readiness === "ready") {
+  if (readiness !== "unavailable") {
     return (
-      <Link className="primary-button compact-button library-play-button" href={href}>
+      <Link
+        className="primary-button compact-button library-play-button"
+        href={href}
+        aria-label={`进入复盘：${demo.name}`}
+      >
         <Play size={14} />
-        {label}
+        进入复盘
       </Link>
     );
   }
 
-  if (readiness === "rendering") {
-    return (
-      <Link className="secondary-button compact-button library-play-button" href={href}>
-        <Loader2 size={14} className="library-play-spinner" />
-        {label}
-      </Link>
-    );
-  }
-
-  if (readiness === "none") {
-    return (
-      <Link className="secondary-button compact-button library-play-button" href={href}>
-        <Play size={14} />
-        {label}
-      </Link>
-    );
-  }
-
-  // unavailable: parsing not finished — nothing to watch yet.
   return (
-    <span className="secondary-button compact-button library-play-button is-disabled" aria-disabled="true">
-      <CircleSlash size={14} />
-      {label}
-    </span>
-  );
-}
-
-function LibraryStat({ label, value }: { label: string; value: number }) {
-  return (
-    <div className="archive-ledger-stat">
-      <span>{label}</span>
-      <strong>{value}</strong>
-    </div>
+    <Link
+      className="secondary-button compact-button library-play-button"
+      href={`/demos/${demo.id}`}
+      aria-label={`查看处理状态：${demo.name}`}
+    >
+      <Clock3 size={14} />
+      查看状态
+    </Link>
   );
 }
 
@@ -598,51 +607,52 @@ function LibraryEmptyStateRow({
   onRefresh: () => void;
   onShowArchived: () => void;
 }) {
+  const copy = EMPTY_STATE_COPY[state.kind];
   return (
-    <div className={`library-empty-state ${state.kind}`}>
+    <div className={`library-empty-state ${state.kind}`} aria-busy={state.kind === "loading"}>
       <div>
-        <strong>{state.title}</strong>
-        <p>{state.message}</p>
+        <strong>{copy.title}</strong>
+        <p>{copy.message}</p>
       </div>
       <div className="library-empty-actions">
-        {state.showMockAction ? (
-          <button
-            className="primary-button compact-button"
-            type="button"
-            onClick={onMockUpload}
-            disabled={creating}
-          >
-            <UploadCloud size={14} />
-            Create mock demo
-          </button>
-        ) : null}
         {state.showUploadAction ? (
           <button
-            className="secondary-button compact-button"
+            className="primary-button compact-button"
             type="button"
             disabled={creating}
             onClick={onUpload}
           >
             <FileUp size={14} />
-            Upload .dem
+            上传比赛 .dem
+          </button>
+        ) : null}
+        {state.showMockAction ? (
+          <button
+            className="secondary-button compact-button"
+            type="button"
+            onClick={onMockUpload}
+            disabled={creating}
+          >
+            <UploadCloud size={14} />
+            示例比赛（模拟数据）
           </button>
         ) : null}
         {state.showClearFiltersAction ? (
           <button className="secondary-button compact-button" type="button" onClick={onClearFilters}>
             <X size={14} />
-            Clear filters
+            清除筛选
           </button>
         ) : null}
         {state.showArchivedAction ? (
           <button className="secondary-button compact-button" type="button" onClick={onShowArchived}>
             <Archive size={14} />
-            Show archived
+            显示已归档
           </button>
         ) : null}
         {state.showRefreshAction ? (
           <button className="secondary-button compact-button" type="button" onClick={onRefresh}>
             <RefreshCcw size={14} />
-            Refresh library
+            刷新比赛列表
           </button>
         ) : null}
       </div>
@@ -657,36 +667,87 @@ function StatusBadge({ status }: { status: DemoProcessingStatus }) {
   return (
     <span className={`status-badge ${status}`}>
       <Icon size={14} className={active ? "spin-icon" : ""} />
-      {demoStatusLabel(status)}
+      {statusLabel(status)}
     </span>
   );
 }
 
 function IngestionMeta({ demo }: { demo: DemoSummary }) {
   const ingestion = demo.ingestion;
-  if (!ingestion) {
+  if (!ingestion || (!ingestion.stale && ingestion.attemptCount <= 1)) {
     return null;
   }
 
-  const labels = [ingestionPhaseLabel(demo)];
-  if (ingestion.active) {
-    labels.push("active");
-  }
+  const labels: string[] = [];
   if (ingestion.stale) {
-    labels.push("stale");
+    labels.push("处理时间较长");
   }
-  if (ingestion.attemptCount > 0) {
-    labels.push(`attempt ${ingestion.attemptCount}`);
+  if (ingestion.attemptCount > 1) {
+    labels.push(`第 ${ingestion.attemptCount} 次处理`);
   }
 
-  return <p className="library-ingestion-meta">{labels.join(" / ")}</p>;
+  return <p className="library-ingestion-meta">{labels.join(" · ")}</p>;
 }
 
 function formatDate(value: string) {
-  return new Date(value).toLocaleString(undefined, {
-    month: "short",
+  return new Date(value).toLocaleString("zh-CN", {
+    month: "numeric",
     day: "numeric",
     hour: "numeric",
     minute: "2-digit"
   });
+}
+
+const EMPTY_STATE_COPY: Record<LibraryEmptyState["kind"], { title: string; message: string }> = {
+  loading: { title: "正在加载比赛", message: "比赛准备好后，会显示在这里。" },
+  error: { title: "暂时无法加载比赛", message: "请刷新重试。已上传的比赛会保留。" },
+  empty: { title: "开始你的第一场复盘", message: "上传 .dem 比赛文件，即可查看战术回放和复盘建议。也可以先用模拟比赛体验。" },
+  archived: { title: "比赛已归档", message: "显示已归档比赛，即可继续复盘或恢复到比赛库。" },
+  search: { title: "没有找到这场比赛", message: "试试其他比赛名称或地图，也可以清除筛选查看全部比赛。" },
+  filtered: { title: "没有符合条件的比赛", message: "调整地图、状态或归档筛选，查看其他比赛。" }
+};
+
+function statusLabel(status: DemoProcessingStatus): string {
+  return {
+    queued: "等待处理",
+    parsing: "读取比赛中",
+    analyzing: "整理建议中",
+    completed: "可以复盘",
+    failed: "处理失败"
+  }[status];
+}
+
+function videoAvailabilityLabel(demo: DemoSummary): string {
+  const readiness = playbackReadiness(demo);
+  if (readiness === "ready") return "有第一人称片段";
+  if (readiness === "rendering") return "视频生成中";
+  return "战术回放可用";
+}
+
+function mapLabel(map: string): string {
+  if (!map || map === "unknown") return "地图待识别";
+  const name = map.replace(/^de_/, "");
+  return name.charAt(0).toUpperCase() + name.slice(1);
+}
+
+function closeRecordMenu(button: HTMLButtonElement) {
+  const details = button.closest("details");
+  if (details) {
+    details.open = false;
+    details.querySelector("summary")?.focus();
+  }
+}
+
+function libraryRequestError(error: unknown, fallback: string): string {
+  const message = error instanceof Error ? error.message : "";
+  if (/failed to fetch|networkerror|load failed|err_connection|econnrefused/i.test(message)) {
+    return "暂时无法连接服务，请确认应用已启动，然后刷新重试。";
+  }
+  if (/413|too large|maximum upload/i.test(message)) {
+    return "文件超过上传大小限制，请选择较小的 .dem 文件。";
+  }
+  if (/\.dem|invalid file|unsupported file/i.test(message)) {
+    return "请选择有效的 .dem 比赛文件后重试。";
+  }
+  return fallback;
 }

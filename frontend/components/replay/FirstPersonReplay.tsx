@@ -7,15 +7,14 @@ import {
   useEffect,
   useImperativeHandle,
   useMemo,
-  useRef,
-  useState
+  useRef
 } from "react";
 
 import { useAuth } from "@/components/auth/AuthProvider";
 import type { RenderJobStatus } from "@/lib/api";
 import { friendlyErrorMessage, isRenderActiveStatus } from "@/lib/demo-library";
 import { resolvePrivateMediaSource } from "@/lib/media-url";
-import { tickToVideoTime, videoTimeRange, videoTimeToTick } from "@/lib/replay-time";
+import { tickToVideoTime, videoMediaIdentity, videoTimeRange, videoTimeToTick, type VideoPlaybackState } from "@/lib/replay-time";
 import type { ReplayData, ReplayFrame } from "@/types/replay";
 
 interface FirstPersonReplayProps {
@@ -23,12 +22,20 @@ interface FirstPersonReplayProps {
   currentTick: number;
   playing: boolean;
   speed: number;
+  playbackState: VideoPlaybackState;
+  mediaUnavailable: boolean;
   renderRequesting: boolean;
   renderClipRequesting: boolean;
   latestRenderClipJob: RenderJobStatus | null;
+  currentTickClipJob?: RenderJobStatus | null;
+  renderClipPlayerSelected?: boolean;
+  compact?: boolean;
+  showDevActions?: boolean;
   onRequestMockRender: () => void;
   onRequestRenderClip: () => void;
   onVideoTickChange: (tick: number) => void;
+  onVideoUnavailable: (identity: string) => void;
+  onViewVideoClip: () => void;
   onVideoDurationChange?: (durationSeconds: number) => void;
   onVideoTimeChange?: (seconds: number) => void;
 }
@@ -42,12 +49,20 @@ export const FirstPersonReplay = forwardRef<FirstPersonReplayHandle, FirstPerson
   currentTick,
   playing,
   speed,
+  playbackState,
+  mediaUnavailable,
   renderRequesting,
   renderClipRequesting,
   latestRenderClipJob,
+  currentTickClipJob,
+  renderClipPlayerSelected = true,
+  compact = false,
+  showDevActions = false,
   onRequestMockRender,
   onRequestRenderClip,
   onVideoTickChange,
+  onVideoUnavailable,
+  onViewVideoClip,
   onVideoDurationChange,
   onVideoTimeChange
 }: FirstPersonReplayProps, ref) {
@@ -55,33 +70,38 @@ export const FirstPersonReplay = forwardRef<FirstPersonReplayHandle, FirstPerson
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const lastSyncedTickRef = useRef<number | null>(null);
   const pendingSeekTickRef = useRef<number | null>(null);
-  const pendingSeekTimeRef = useRef<number | null>(null);
-  const [mediaUnavailable, setMediaUnavailable] = useState(false);
+  const feedbackAllowedRef = useRef(false);
   const frame = useMemo(() => getFrameForTick(replay.frames, currentTick), [currentTick, replay.frames]);
   const mediaSource = resolvePrivateMediaSource(replay.video.url);
   const videoSource = mediaSource?.src ?? null;
-  const activeVideoSource = mediaUnavailable ? null : videoSource;
+  const activeVideoSource = playbackState === "active" && !mediaUnavailable ? videoSource : null;
+  const mediaIdentity = videoMediaIdentity(replay.video);
+  const recordedPlayer = replay.players.find((player) => player.id === replay.video.povSteamId);
+  const povLabel = replay.video.povSteamId ? `${recordedPlayer?.name ?? replay.video.povSteamId} 的视角` : "玩家视角未确认";
   const invalidMediaReference = Boolean(replay.video.url && !mediaSource);
   const timeRange = videoTimeRange(replay.video);
   const videoTime = tickToVideoTime(currentTick, replay.video);
   const clipJobBusy =
     renderClipRequesting ||
-    isRenderActiveStatus(latestRenderClipJob?.status);
+    isRenderActiveStatus(currentTickClipJob?.status);
+  const tickClipReady = currentTickClipJob?.status === "completed" && currentTickClipJob.video?.status === "ready" && Boolean(currentTickClipJob.video.url);
   const progress = Math.min(
     1,
     Math.max(0, (videoTime - timeRange.start) / Math.max(1, timeRange.end - timeRange.start))
   );
 
   const seekVideoToTick = useCallback((tick: number) => {
-    if (!activeVideoSource) {
+    if (!activeVideoSource || tick < replay.video.tickStart || tick >= replay.video.tickEnd) {
+      feedbackAllowedRef.current = false;
+      videoRef.current?.pause();
       return;
     }
 
     const nextVideoTime = tickToVideoTime(tick, replay.video);
     const nextVideoTick = videoTimeToTick(nextVideoTime, replay.video);
     pendingSeekTickRef.current = nextVideoTick;
-    pendingSeekTimeRef.current = nextVideoTime;
     lastSyncedTickRef.current = nextVideoTick;
+    feedbackAllowedRef.current = true;
 
     const element = videoRef.current;
     if (!element) {
@@ -90,24 +110,33 @@ export const FirstPersonReplay = forwardRef<FirstPersonReplayHandle, FirstPerson
 
     try {
       element.currentTime = nextVideoTime;
-      pendingSeekTimeRef.current = null;
       const appliedTick = videoTimeToTick(element.currentTime, replay.video);
       if (Math.abs(appliedTick - nextVideoTick) <= 1) {
-        pendingSeekTickRef.current = null;
-      } else if (playing) {
         pendingSeekTickRef.current = null;
       }
       onVideoTimeChange?.(element.currentTime);
     } catch {
       // Metadata load will apply the pending seek before video feedback is accepted.
     }
-  }, [activeVideoSource, onVideoTimeChange, playing, replay.video]);
+  }, [activeVideoSource, onVideoTimeChange, replay.video]);
 
   useImperativeHandle(ref, () => ({ seekToTick: seekVideoToTick }), [seekVideoToTick]);
 
+  const finishVideoClip = useCallback(() => {
+    if (!feedbackAllowedRef.current || !activeVideoSource) return;
+    feedbackAllowedRef.current = false;
+    videoRef.current?.pause();
+    onVideoTickChange(replay.video.tickEnd);
+  }, [activeVideoSource, onVideoTickChange, replay.video.tickEnd]);
+
   const publishVideoTime = useCallback((nextVideoTime: number) => {
+    if (!activeVideoSource || !feedbackAllowedRef.current) return;
     onVideoTimeChange?.(nextVideoTime);
-    const nextTick = videoTimeToTick(nextVideoTime, replay.video);
+    if (nextVideoTime >= videoTimeRange(replay.video).end) {
+      finishVideoClip();
+      return;
+    }
+    const nextTick = Math.min(replay.video.tickEnd - 1, videoTimeToTick(nextVideoTime, replay.video));
     const pendingSeekTick = pendingSeekTickRef.current;
 
     if (pendingSeekTick !== null) {
@@ -122,18 +151,17 @@ export const FirstPersonReplay = forwardRef<FirstPersonReplayHandle, FirstPerson
       lastSyncedTickRef.current = nextTick;
       onVideoTickChange(nextTick);
     }
-  }, [onVideoTickChange, onVideoTimeChange, replay.video]);
+  }, [activeVideoSource, finishVideoClip, onVideoTickChange, onVideoTimeChange, replay.video]);
 
   useEffect(() => {
     onVideoTimeChange?.(videoTime);
   }, [onVideoTimeChange, videoTime]);
 
   useEffect(() => {
-    setMediaUnavailable(false);
     lastSyncedTickRef.current = null;
     pendingSeekTickRef.current = null;
-    pendingSeekTimeRef.current = null;
-  }, [videoSource]);
+    feedbackAllowedRef.current = false;
+  }, [activeVideoSource, mediaIdentity]);
 
   useEffect(() => {
     const element = videoRef.current;
@@ -141,16 +169,19 @@ export const FirstPersonReplay = forwardRef<FirstPersonReplayHandle, FirstPerson
       return;
     }
 
+    if (lastSyncedTickRef.current === null) {
+      seekVideoToTick(currentTick);
+    }
     element.playbackRate = speed;
-    if (playing) {
-      if (element.readyState >= HTMLMediaElement.HAVE_METADATA) {
-        pendingSeekTickRef.current = null;
-      }
-      void element.play();
-    } else {
+    if (playing && element.paused) {
+      void element.play().catch((error: unknown) => {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+        onVideoUnavailable(mediaIdentity);
+      });
+    } else if (!playing) {
       element.pause();
     }
-  }, [activeVideoSource, playing, speed]);
+  }, [activeVideoSource, currentTick, mediaIdentity, onVideoUnavailable, playing, seekVideoToTick, speed]);
 
   useEffect(() => {
     const element = videoRef.current;
@@ -180,53 +211,65 @@ export const FirstPersonReplay = forwardRef<FirstPersonReplayHandle, FirstPerson
   }, [activeVideoSource, playing, publishVideoTime]);
 
   return (
-    <section className="panel first-person-panel" aria-label="First-person replay player">
-      <div className="first-person-header">
+    <section className={`panel first-person-panel ${compact ? "compact" : ""}`} aria-label="First-person replay player">
+      {!compact ? <div className="first-person-header">
         <div>
-          <h2>First-person Replay</h2>
-          <span>
-            {activeVideoSource ? videoLabel(replay.video.source) : "Mock playback shell — not real CS2 video"} /{" "}
-            {formatTime(videoTime)} / Tick {Math.round(currentTick)}
+          <h2>第一人称回放</h2>
+          <span title={`Tick ${Math.round(currentTick)}`}>
+            {activeVideoSource ? `${videoLabel(replay.video.source)} · ${povLabel}` : "战术回放可用"} · {formatTime(videoTime)}
           </span>
         </div>
         <div className="render-actions">
+          {videoSource && replay.video.status === "ready" ? (
+            <button
+              className="secondary-button compact-button"
+              type="button"
+              onClick={onViewVideoClip}
+              disabled={Boolean(replay.video.povSteamId && !recordedPlayer)}
+              title={`观看 ${povLabel} · Tick ${replay.video.tickStart}–${replay.video.tickEnd}`}
+            >
+              <Video size={14} />
+              观看{recordedPlayer?.name ? ` ${recordedPlayer.name} ` : ""}视频
+            </button>
+          ) : null}
           <span className={`mini-pill video-status-pill ${replay.video.status}`}>
             <Video size={13} />
-            {replay.video.status}
+            {isMockVideoPlaceholder(replay.video) ? "战术回放" : statusLabel(replay.video.status)}
           </span>
-          {latestRenderClipJob ? (
+          {latestRenderClipJob && isRenderActiveStatus(latestRenderClipJob.status) ? (
             <span
               className={`mini-pill clip-job-pill ${latestRenderClipJob.status}`}
-              title={latestRenderClipJob.error_message ?? `Clip job ${latestRenderClipJob.status}`}
+              title="正在生成新的片段，已有视频仍可观看"
             >
-              Clip {latestRenderClipJob.status}
+              {statusLabel(latestRenderClipJob.status)}
             </span>
           ) : null}
           <button
             className="secondary-button compact-button"
             type="button"
             onClick={onRequestRenderClip}
-            disabled={clipJobBusy}
-            title="Create a first-person clip job around the selected tick"
+            disabled={clipJobBusy || !renderClipPlayerSelected}
+            title={tickClipReady ? "观看当前时刻已保存的视频" : "生成当前时刻的第一人称片段，完成后可重复观看"}
           >
             <Scissors size={14} />
-            {renderClipRequesting ? "Queuing" : "Generate Tick Clip"}
+            {renderClipRequesting ? "正在提交…" : tickClipReady ? "观看这一刻" : isRenderActiveStatus(currentTickClipJob?.status) ? statusLabel(currentTickClipJob?.status ?? "queued") : "生成这一刻的视频"}
           </button>
-          <button
+          {showDevActions ? <button
             className="secondary-button compact-button"
             type="button"
             onClick={onRequestMockRender}
             disabled={renderRequesting || isRenderActiveStatus(replay.video.status)}
-            title="Create a mock render job without running CS2"
+            title="创建用于测试的模拟任务"
           >
-            Mock Render Job
-          </button>
+            模拟视频任务
+          </button> : null}
         </div>
-      </div>
+      </div> : null}
 
       <div className="first-person-viewport">
         {activeVideoSource ? (
           <video
+            key={mediaIdentity}
             ref={videoRef}
             className="first-person-video"
             src={activeVideoSource}
@@ -235,35 +278,21 @@ export const FirstPersonReplay = forwardRef<FirstPersonReplayHandle, FirstPerson
             playsInline
             preload="metadata"
             onError={() => {
-              void refreshSession().then((authenticated) => {
-                if (authenticated) {
-                  setMediaUnavailable(true);
-                }
-              });
+              feedbackAllowedRef.current = false;
+              onVideoUnavailable(mediaIdentity);
+              void refreshSession();
             }}
             onLoadedMetadata={(event) => {
-              setMediaUnavailable(false);
               const duration = event.currentTarget.duration;
               if (Number.isFinite(duration) && duration > 0) {
                 onVideoDurationChange?.(duration);
               }
-              const pendingSeekTime = pendingSeekTimeRef.current;
-              if (pendingSeekTime !== null) {
-                event.currentTarget.currentTime = pendingSeekTime;
-                pendingSeekTimeRef.current = null;
-                const pendingSeekTick = pendingSeekTickRef.current;
-                if (pendingSeekTick !== null) {
-                  const appliedTick = videoTimeToTick(event.currentTarget.currentTime, replay.video);
-                  if (Math.abs(appliedTick - pendingSeekTick) <= 1) {
-                    pendingSeekTickRef.current = null;
-                  }
-                }
-                onVideoTimeChange?.(event.currentTarget.currentTime);
-              }
+              seekVideoToTick(currentTick);
             }}
             onTimeUpdate={(event) => {
               publishVideoTime(event.currentTarget.currentTime);
             }}
+            onEnded={finishVideoClip}
           />
         ) : (
           frame ? (
@@ -274,18 +303,24 @@ export const FirstPersonReplay = forwardRef<FirstPersonReplayHandle, FirstPerson
         )}
 
         <div className="first-person-hud">
+          {activeVideoSource && !replay.video.povSteamId ? (
+            <span className="hud-chip">视角未确认</span>
+          ) : null}
           {frame ? (
             <span className="hud-chip">
               <RadioTower size={13} />
-              R{frame.roundNumber}
+              第 {frame.roundNumber} 回合
             </span>
           ) : null}
           <span className="hud-chip">{speed}x</span>
-          <span className="hud-chip">{playing ? "Playing" : "Paused"}</span>
+          <span className="hud-chip">{playing ? "播放中" : "已暂停"}</span>
         </div>
         <RenderStatusOverlay
           video={replay.video}
           mediaUnavailable={mediaUnavailable || invalidMediaReference}
+          hasFrames={frame !== null}
+          playbackState={playbackState}
+          povLabel={povLabel}
         />
         <div className="video-progress" aria-hidden="true">
           <span style={{ width: `${progress * 100}%` }} />
@@ -296,74 +331,106 @@ export const FirstPersonReplay = forwardRef<FirstPersonReplayHandle, FirstPerson
 });
 
 function RenderStatusOverlay({
+  hasFrames,
   mediaUnavailable,
-  video
+  video,
+  playbackState,
+  povLabel
 }: {
+  hasFrames: boolean;
   mediaUnavailable: boolean;
   video: ReplayData["video"];
+  playbackState: VideoPlaybackState;
+  povLabel: string;
 }) {
   if (mediaUnavailable) {
     return (
       <div className="render-status-overlay failed">
-        <span>Video unavailable</span>
-        <strong>Can&apos;t load this video</strong>
-        <p>The replay video couldn&apos;t be reached. You&apos;re watching the 2D tactical replay below — upload a video or regenerate the render to try again.</p>
+        <span>视频暂不可用</span>
+        <strong>未能加载这段视频</strong>
+        <p>可以继续使用战术回放，或重新生成当前片段。</p>
       </div>
     );
   }
 
   if (video.status === "ready" && video.url) {
-    return null;
+    if (playbackState === "active") return null;
+    return (
+      <div className="render-status-overlay pending">
+        <span>第一人称片段 · {povLabel}</span>
+        <strong>{playbackState === "different-player" ? "这段视频来自其他玩家的视角" : "当前时刻不在视频范围内"}</strong>
+        <p>
+          这段视频长 {formatTime((video.tickEnd - video.tickStart) / video.tickRate)}。继续使用战术回放，或从已保存片段中观看。
+        </p>
+      </div>
+    );
+  }
+
+  if (isMockVideoPlaceholder(video)) {
+    return (
+      <div className="render-status-overlay pending">
+        <span>第一人称视频</span>
+        <strong>{hasFrames ? "战术回放已就绪" : "暂无回放视频"}</strong>
+        <p>
+          尚未生成第一人称视频。
+          {hasFrames ? "可先用战术地图、回合和时间轴开始复盘。" : "该比赛暂未提供可用的位置数据。"}
+        </p>
+      </div>
+    );
   }
 
   const overlayCopy: Record<string, { heading: string; body: string }> = {
     pending: {
-      heading: "No replay video yet",
-      body: "This demo hasn't been rendered to video. Use Generate Tick Clip above to render a moment, or upload your own video below. The 2D tactical replay is ready to watch now."
+      heading: "尚未生成视频",
+      body: "选择值得复盘的一刻，点击生成视频。战术回放现在即可使用。"
     },
     queued: {
-      heading: "Render queued",
-      body: "A replay video is waiting to be generated. This view updates automatically when it's ready. Meanwhile, follow the action in the 2D tactical replay below."
+      heading: "视频等待生成",
+      body: "完成后会更新到已保存片段。你可以继续使用战术回放。"
     },
     processing: {
-      heading: "Rendering video",
-      body: "Your replay video is being generated. This view switches to it automatically when it finishes. Keep reviewing in the 2D tactical replay below."
+      heading: "正在生成视频",
+      body: "完成后会更新到已保存片段。你可以继续复盘其他时刻。"
     },
     rendering: {
-      heading: "Rendering video",
-      body: "Your replay video is being generated. This view switches to it automatically when it finishes. Keep reviewing in the 2D tactical replay below."
+      heading: "正在生成视频",
+      body: "完成后会更新到已保存片段。你可以继续复盘其他时刻。"
     },
     ready: {
-      heading: "Video almost ready",
-      body: "The render finished but the video isn't attached yet. Refresh render state below, or keep watching the 2D tactical replay."
+      heading: "视频文件尚未就绪",
+      body: "任务已结束，但视频文件暂不可用。可刷新片段状态，或继续使用战术回放。"
     },
     failed: {
-      heading: "Render didn't finish",
+      heading: "视频生成未完成",
       body: video.errorMessage
         ? friendlyErrorMessage(video.errorMessage)
-        : "The video couldn't be generated. Try Generate Tick Clip again or upload your own video below. The 2D tactical replay still works."
+        : "请重试生成视频。战术回放仍可正常使用。"
     }
   };
 
   const copy = overlayCopy[video.status] ?? {
-    heading: "No replay video yet",
-    body: "Watch the 2D tactical replay below, or generate a video from the controls above."
+    heading: "暂无回放视频",
+    body: "可以使用战术回放，或生成当前时刻的视频。"
   };
 
   return (
     <div className={`render-status-overlay ${video.status}`}>
-      <span>Replay video</span>
+      <span>回放视频</span>
       <strong>{copy.heading}</strong>
       <p>{copy.body}</p>
     </div>
   );
 }
 
+function isMockVideoPlaceholder(video: ReplayData["video"]): boolean {
+  return video.source === "mock" && video.status === "ready" && !video.url;
+}
+
 function EmptyFirstPersonFrame() {
   return (
     <div className="mock-fps-frame empty-replay-frame">
-      <strong>No frame data</strong>
-      <p>Parser frame data is unavailable, so the mock first-person shell cannot draw player state.</p>
+      <strong>暂无位置数据</strong>
+      <p>这场比赛暂未提供可用的玩家位置。</p>
     </div>
   );
 }
@@ -385,7 +452,7 @@ function MockFirstPersonFrame({
       <div className="mock-fps-corridor">
         <div className="mock-wall mock-wall-left" />
         <div className="mock-wall mock-wall-right" />
-        <div className="mock-site-callout">A site contact</div>
+        <div className="mock-site-callout">模拟场景</div>
       </div>
       <div
         className="mock-enemy-silhouette"
@@ -398,10 +465,9 @@ function MockFirstPersonFrame({
       <div className="mock-crosshair" style={{ transform: `translateY(${recoilOffset * -0.4}px)` }}>
         <Crosshair size={44} strokeWidth={1.6} />
       </div>
-      <div className="mock-render-label">Mock render shell · not gameplay capture</div>
+      <div className="mock-render-label">模拟占位画面 · 非真实游戏录像</div>
       <div className="mock-fps-stats">
-        <span>Alive CT: {aliveEnemies}</span>
-        <span>Bomb: {frame.bombState.status}</span>
+        <span>CT 存活：{aliveEnemies}</span>
       </div>
     </div>
   );
@@ -422,7 +488,11 @@ function getFrameForTick(frames: ReplayFrame[], tick: number): ReplayFrame | nul
 }
 
 function videoLabel(source: ReplayData["video"]["source"]): string {
-  return source === "manual_upload" ? "Manual video" : "Rendered video";
+  return source === "manual_upload" ? "导入的视频" : "已保存视频";
+}
+
+function statusLabel(status: string): string {
+  return ({ pending: "等待生成", queued: "等待生成", processing: "生成中", rendering: "生成中", ready: "可以观看", completed: "已完成", failed: "生成失败" } as Record<string, string>)[status] ?? "状态待更新";
 }
 
 function formatTime(seconds: number): string {

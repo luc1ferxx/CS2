@@ -78,6 +78,7 @@ export interface RenderJobStatus {
   status: string;
   source: string;
   video_status?: ReplayVideo["status"] | string | null;
+  video?: ReplayVideo | null;
   tick_start?: number | null;
   tick_end?: number | null;
   tick_rate?: number | null;

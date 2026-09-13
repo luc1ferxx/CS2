@@ -38,6 +38,8 @@ const {
   SUPPORTED_TACTICAL_MAP_NAMES,
   getTacticalMapConfig,
   getTacticalMapPresentation,
+  getTacticalMapLevel,
+  resolveTacticalMapLevel,
   sanitizeRadarPercent,
   sanitizeRadarPoint,
   worldToRadarPercent
@@ -123,4 +125,18 @@ for (const mapName of SUPPORTED_TACTICAL_MAP_NAMES) {
 
 function normalize(value) {
   return JSON.parse(JSON.stringify(value));
+}
+
+{
+  const nuke = getTacticalMapPresentation({ mapName: "de_nuke" });
+  assert.equal(getTacticalMapLevel(nuke, -496), "lower");
+  assert.equal(getTacticalMapLevel(nuke, -495), "lower");
+  assert.equal(getTacticalMapLevel(nuke, -494), "upper");
+  for (const z of [undefined, null, NaN, Infinity]) assert.equal(getTacticalMapLevel(nuke, z), null);
+  assert.equal(getTacticalMapLevel(getTacticalMapConfig("de_dust2"), -600), null);
+  assert.equal(resolveTacticalMapLevel(nuke, "auto", -600).radarImagePath, "/maps/de_nuke_lower_radar.png");
+  assert.equal(resolveTacticalMapLevel(nuke, "upper", -600).level, "upper");
+  assert.equal(resolveTacticalMapLevel(nuke, "auto", undefined).followingPlayer, false);
+  assert.deepEqual(normalize(worldToRadarPercent("de_nuke", -3453, 2887)), { x: 0, y: 0, confidence: "calibrated" });
+  assert.deepEqual(normalize(worldToRadarPercent("de_nuke", 3715, -4281)), { x: 100, y: 100, confidence: "calibrated" });
 }

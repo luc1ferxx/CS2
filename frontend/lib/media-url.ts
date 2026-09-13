@@ -17,7 +17,7 @@ export function resolveMediaUrl(url: string | null): string | null {
     return null;
   }
   const path = url.startsWith("/") ? url : `/${url}`;
-  if (!/^\/demos\/[A-Za-z0-9_-]+\/media\/video$/.test(path)) {
+  if (!/^\/demos\/[A-Za-z0-9_-]+\/(?:render\/jobs\/[A-Za-z0-9_-]+\/)?media\/video$/.test(path)) {
     return null;
   }
   return `${API_BASE_URL}${path}`;

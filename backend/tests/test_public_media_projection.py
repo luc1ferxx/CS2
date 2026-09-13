@@ -8,8 +8,10 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from app.core.config import settings
+from app.api.replay import get_replay
 from app.core.database import Base
 from app.models import Demo
+from app.parser.map_config import map_metadata_for
 from app.services.demo_service import DemoService
 from app.services.storage import ArtifactReference
 
@@ -106,6 +108,36 @@ class PublicMediaProjectionTest(unittest.TestCase):
         self.assertNotIn("artifact://", str(projected))
         self.assertNotIn("objects.invalid", str(projected))
         self.assertNotIn("local://", str(projected))
+        self.assertNotIn("/data/", str(projected))
+
+    def test_replay_api_preserves_height_bomb_state_and_nuke_floor_metadata(self) -> None:
+        demo = add_demo(self.db, "demo-nuke-height")
+        with tempfile.TemporaryDirectory() as directory, storage_dirs(Path(directory)):
+            service = DemoService.for_internal(self.db)
+            replay = replay_contract(demo.id, storage_key="", url="")
+            replay["mapName"] = "de_nuke"
+            replay["mapMetadata"] = {**map_metadata_for("de_nuke"), "sourcePath": "/data/private-map.json"}
+            replay["frames"] = [{
+                "tick": 32, "roundNumber": 1,
+                "players": [{"id": "player-1", "name": "xelex", "side": "T", "x": 30, "y": 40,
+                             "z": -700, "alive": True, "hp": 80, "hasBomb": False,
+                             "sourcePath": "/data/private-player.json"}],
+                "bombState": {"status": "defused", "x": 30, "y": 40, "z": -700,
+                              "sourcePath": "/data/private-bomb.json"},
+            }]
+            replay["events"] = [{"id": "plant", "type": "bomb_planted", "tick": 30,
+                                 "x": 30, "y": 40, "z": -700, "playerId": "player-1",
+                                 "sourcePath": "/data/private-event.json"}]
+            bind_replay(self.db, service, demo, replay)
+
+            projected = get_replay(demo.id, db=self.db, owner_id=demo.owner_id)
+
+        self.assertEqual(projected["frames"][0]["players"][0]["z"], -700)
+        self.assertEqual(projected["frames"][0]["bombState"], {"status": "defused", "x": 30, "y": 40, "z": -700})
+        self.assertEqual(projected["events"][0]["z"], -700)
+        self.assertEqual(projected["mapMetadata"]["lowerLevelMaxZ"], -495)
+        self.assertEqual(projected["mapMetadata"]["calibrationSource"], map_metadata_for("de_nuke")["calibrationSource"])
+        self.assertNotIn("sourcePath", str(projected))
         self.assertNotIn("/data/", str(projected))
 
     def test_replay_storage_reference_must_belong_to_the_demo(self) -> None:

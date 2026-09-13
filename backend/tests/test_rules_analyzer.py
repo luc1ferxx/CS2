@@ -1,7 +1,7 @@
 import unittest
 
 from app.analysis.analyzer import analyze_replay
-from app.analysis.rules import RuleConfig
+from app.analysis.rules import RuleConfig, find_isolated_entries, find_poor_spacing, find_untraded_deaths
 
 
 class RulesAnalyzerTest(unittest.TestCase):
@@ -247,8 +247,8 @@ class RulesAnalyzerTest(unittest.TestCase):
         events = analyze_replay(replay)
 
         self.assertGreaterEqual(len(events), 2)
-        self.assertEqual(events[0]["severity"], "high")
-        self.assertEqual(events[0]["structured_context_json"]["ruleId"], "isolated_entry")
+        self.assertEqual(events[0]["severity"], "medium")
+        self.assertEqual([event["tick_start"] for event in events], sorted(event["tick_start"] for event in events))
 
     def test_post_plant_spread_generates_event(self) -> None:
         replay = replay_fixture(
@@ -266,7 +266,7 @@ class RulesAnalyzerTest(unittest.TestCase):
         )
 
         post_plant = [event for event in events if event["structured_context_json"]["ruleId"] == "post_plant_spread_issue"]
-        self.assertEqual(len(post_plant), 1)
+        self.assertEqual({event["player_id"] for event in post_plant}, {"t-entry", "t-trade", "t-support"})
         self.assertIn(post_plant[0]["category"], {"objective", "positioning"})
         self.assertEqual(post_plant[0]["structured_context_json"]["nearbyCount"], 3)
         self.assertEqual(post_plant[0]["structured_context_json"]["evidenceTicks"], [200, 360, 520])
@@ -308,7 +308,7 @@ class RulesAnalyzerTest(unittest.TestCase):
         )
 
         retake = [event for event in events if event["structured_context_json"]["ruleId"] == "retake_desync"]
-        self.assertEqual(len(retake), 1)
+        self.assertEqual({event["player_id"] for event in retake}, {"ct-1", "ct-2"})
         self.assertEqual(retake[0]["category"], "timing")
         self.assertEqual(retake[0]["structured_context_json"]["windowSeconds"], 5.625)
         self.assertEqual(retake[0]["structured_context_json"]["involvedPlayerIds"], ["ct-1", "ct-2"])
@@ -381,6 +381,7 @@ class RulesAnalyzerTest(unittest.TestCase):
     def test_late_post_plant_utility_includes_related_event_metadata(self) -> None:
         replay = replay_fixture(
             kills=[],
+            rounds=[{"roundNumber": 1, "startTick": 0, "freezeEndTick": 0, "endTick": 1400}],
             frames=[
                 frame(500, [player("t-entry", "T Entry", "T", 20, 20)]),
                 frame(1200, [player("t-support", "T Support", "T", 45, 45)]),
@@ -453,6 +454,7 @@ class RulesAnalyzerTest(unittest.TestCase):
     def test_post_plant_spacing_with_bomb_event_uses_bomb_tick_and_event_id(self) -> None:
         replay = replay_fixture(
             kills=[],
+            rounds=[{"roundNumber": 1, "startTick": 0, "freezeEndTick": 0, "endTick": 1000}],
             frames=[
                 planted_frame(500, cluster_t_players(50, 50), bomb=(52, 52)),
                 planted_frame(700, cluster_t_players(50.5, 50.5), bomb=(52, 52)),
@@ -472,7 +474,7 @@ class RulesAnalyzerTest(unittest.TestCase):
             event for event in events
             if event["structured_context_json"]["ruleId"] == "post_plant_spacing_with_bomb_event"
         ]
-        self.assertEqual(len(spacing), 1)
+        self.assertEqual({event["player_id"] for event in spacing}, {"t-entry", "t-trade", "t-support"})
         context = spacing[0]["structured_context_json"]
         self.assertEqual(context["relatedEventIds"], ["plant-a"])
         self.assertEqual(context["bombTick"], 500)
@@ -608,6 +610,137 @@ def player(
         "hp": 100,
         "hasBomb": False,
     }
+
+
+class CoachingEvidenceTest(unittest.TestCase):
+    def death_replay(self, tick=100):
+        return replay_fixture(
+            kills=[kill(tick, "ct-1", "CT One", "t-entry", "T Entry")],
+            frames=[frame(tick, [
+                player("t-entry", "T Entry", "T", 20, 20),
+                player("t-trade", "T Trade", "T", 60, 60),
+                player("ct-1", "CT One", "CT", 21, 21),
+            ])],
+        )
+
+    def test_killing_another_nearby_enemy_is_not_a_trade_on_the_killer(self):
+        replay = self.death_replay()
+        replay["players"].append({"id": "ct-2", "name": "CT Two", "side": "CT"})
+        replay["frames"].append(frame(150, [
+            player("t-trade", "T Trade", "T", 21, 21),
+            player("ct-2", "CT Two", "CT", 21, 21),
+        ]))
+        replay["kills"].append(kill(150, "t-trade", "T Trade", "ct-2", "CT Two"))
+        events = find_untraded_deaths(replay)
+        self.assertIn("t-entry", [event["player_id"] for event in events])
+
+    def test_non_live_deaths_are_excluded_even_with_a_round_label(self):
+        for tick in (50, 650):
+            with self.subTest(tick=tick):
+                replay = self.death_replay(tick)
+                replay["rounds"][0]["freezeEndTick"] = 75
+                self.assertEqual(find_untraded_deaths(replay), [])
+                self.assertEqual(find_isolated_entries(replay), [])
+
+    def test_round_end_does_not_become_a_missed_trade_window(self):
+        self.assertEqual(find_untraded_deaths(self.death_replay(600)), [])
+
+    def test_world_suicide_and_friendly_fire_do_not_become_trade_advice(self):
+        for attacker in (None, "t-entry", "t-trade"):
+            with self.subTest(attacker=attacker):
+                replay = self.death_replay()
+                replay["kills"][0]["attackerId"] = attacker
+                replay["kills"][0]["attackerName"] = None
+                self.assertEqual(find_untraded_deaths(replay), [])
+                self.assertEqual(find_isolated_entries(replay), [])
+
+    def test_kill_side_metadata_handles_halftime(self):
+        replay = self.death_replay()
+        replay["kills"][0].update(attackerSide="T", victimSide="CT")
+        replay["kills"].append({
+            **kill(140, "t-trade", "T Trade", "ct-1", "CT One"),
+            "attackerSide": "CT", "victimSide": "T",
+        })
+        self.assertNotIn("t-entry", [event["player_id"] for event in find_untraded_deaths(replay)])
+
+    def test_spatial_evidence_never_uses_a_future_or_stale_sample(self):
+        for frame_tick in (101, 0):
+            with self.subTest(frame_tick=frame_tick):
+                replay = self.death_replay()
+                replay["frames"][0]["tick"] = frame_tick
+                self.assertEqual(find_isolated_entries(replay), [])
+
+    def test_multiple_players_in_one_round_receive_their_own_death_review(self):
+        replay = self.death_replay()
+        replay["kills"].append(kill(200, "ct-1", "CT One", "t-trade", "T Trade"))
+        self.assertEqual({event["player_id"] for event in find_untraded_deaths(replay)}, {"t-entry", "t-trade"})
+
+    def test_personal_limits_cover_later_rounds_and_every_player(self):
+        replay = self.death_replay()
+        replay["kills"].clear()
+        replay["frames"].clear()
+        replay["rounds"].clear()
+        for round_number in range(1, 31):
+            start = round_number * 2000
+            replay["rounds"].append({"roundNumber": round_number, "startTick": start, "freezeEndTick": start, "endTick": start + 1500})
+            for offset, victim in ((100, "t-entry"), (200, "t-trade")):
+                replay["kills"].append({
+                    **kill(start + offset, "ct-1", "CT One", victim, victim, round_number),
+                    "attackerSide": "CT", "victimSide": "T",
+                })
+            replay["frames"].append(frame(start + 100, [
+                player("t-entry", "T Entry", "T", 20, 20),
+                player("t-trade", "T Trade", "T", 25, 25),
+                player("ct-1", "CT One", "CT", 21, 21),
+            ], round_number))
+        events = analyze_replay(replay, RuleConfig(max_events_total=60, max_events_per_player=30))
+        self.assertEqual(len(events), 60)
+        for player_id in ("t-entry", "t-trade"):
+            self.assertEqual({event["round_number"] for event in events if event["player_id"] == player_id}, set(range(1, 31)))
+
+    def test_events_are_deterministic_and_explicit_review_candidates(self):
+        replay = self.death_replay()
+        events = analyze_replay(replay)
+        self.assertEqual(events, analyze_replay(replay))
+        for event in events:
+            context = event["structured_context_json"]
+            self.assertEqual(context["targetPlayerId"], event["player_id"])
+            self.assertEqual(context["assessment"], "review_candidate")
+            self.assertTrue(context["action"])
+            self.assertTrue(context["limitation"])
+
+    def test_nuke_mixed_or_unknown_floors_do_not_generate_spacing_claims(self):
+        for heights in ((-600, -300, -300), (None, None, None)):
+            with self.subTest(heights=heights):
+                replay = self.death_replay()
+                replay["mapName"] = "de_nuke"
+                replay["mapMetadata"] = {"lowerLevelMaxZ": -495}
+                replay["frames"][0]["tick"] = 600
+                replay["frames"][0]["players"] = [
+                    {**player(f"t-{index}", f"T {index}", "T", 20 + index, 20), "z": z}
+                    for index, z in enumerate(heights)
+                ]
+                self.assertEqual(find_poor_spacing(replay), [])
+
+    def test_ct_utility_does_not_count_as_terrorist_utility(self):
+        replay = self.death_replay()
+        replay["kills"].clear()
+        replay["rounds"][0]["endTick"] = 1400
+        replay["events"] = [
+            replay_event("ct-smoke", "smoke", 120, player_id="ct-1", side="CT"),
+            replay_event("plant", "bomb_planted", 1200, player_id="t-entry", side="T"),
+        ]
+        self.assertFalse(any(event["category"] == "utility" for event in analyze_replay(replay)))
+
+    def test_parser_kill_reference_points_at_the_victim_event(self):
+        replay = self.death_replay()
+        replay["events"] = [{
+            "id": "kill-100", "type": "kill", "tick": 100, "roundNumber": 1,
+            "playerIds": ["ct-1", "t-entry"], "metadata": {"victimId": "t-entry"},
+        }]
+        event = find_untraded_deaths(replay)[0]
+        self.assertEqual(event["structured_context_json"]["relatedEventIds"], ["kill-100"])
+        self.assertEqual(event["player_id"], "t-entry")
 
 
 if __name__ == "__main__":

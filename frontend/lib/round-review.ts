@@ -1,5 +1,6 @@
 import type { CoachingEvent } from "@/types/coaching";
 import type { PlayerSide, ReplayEvent, ReplayRound } from "@/types/replay";
+import { normalizeBombSite } from "@/lib/bomb-site";
 
 export type RoundJumpTargetId = "round_start" | "live_start" | "first_kill" | "bomb_plant";
 
@@ -52,6 +53,8 @@ export interface RoundJumpTarget {
 
 const UTILITY_EVENT_TYPES = new Set<ReplayEvent["type"]>(["flash", "he", "molotov", "smoke"]);
 const BOMB_EVENT_TYPES = new Set<ReplayEvent["type"]>([
+  "bomb_pickup",
+  "bomb_dropped",
   "bomb_defused",
   "bomb_exploded",
   "bomb_planted"
@@ -151,7 +154,9 @@ function summarizeRound(
   currentRoundNumber: number | null,
   tickRate: number
 ): RoundReviewSummary {
-  const roundEvents = parserEvents.filter((event) => event.roundNumber === round.roundNumber);
+  const roundEvents = parserEvents.filter((event) =>
+    event.roundNumber === round.roundNumber && event.tick >= round.startTick && event.tick <= round.endTick
+  );
   const killEvents = roundEvents.filter((event) => event.type === "kill");
   const bombEvents = roundEvents.filter((event) => BOMB_EVENT_TYPES.has(event.type));
   const utilityEvents = roundEvents.filter((event) => UTILITY_EVENT_TYPES.has(event.type));
@@ -190,12 +195,12 @@ function eventReference(event: ReplayEvent | null): RoundEventReference {
   if (!event) {
     return { tick: null };
   }
-  const site = typeof event.metadata?.site === "string" ? event.metadata.site : undefined;
+  const site = normalizeBombSite(event.metadata?.site);
   return {
     tick: event.tick,
     playerId: event.playerId,
     playerName: event.playerName,
-    label: event.label,
+    label: event.type === "bomb_planted" ? (site ? `Bomb planted ${site}` : "Bomb planted") : event.label,
     site
   };
 }

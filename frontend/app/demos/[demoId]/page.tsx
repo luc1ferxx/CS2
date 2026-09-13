@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { ArrowLeft, ChevronLeft, ChevronRight, Pause, Play } from "lucide-react";
+import { ArrowLeft, ChevronLeft, ChevronRight, Film, Map as MapIcon, Pause, Play, Scissors } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 
@@ -13,7 +13,9 @@ import {
   type FirstPersonReplayHandle
 } from "@/components/replay/FirstPersonReplay";
 import { RenderOperatorPanel } from "@/components/replay/RenderOperatorPanel";
+import { ClipLibrary } from "@/components/replay/ClipLibrary";
 import { ReplayViewer } from "@/components/replay/ReplayViewer";
+import { PersonalReviewPanel } from "@/components/replay/PersonalReviewPanel";
 import { RoundReviewPanel } from "@/components/replay/RoundReviewPanel";
 import { Timeline } from "@/components/replay/Timeline";
 import { VideoSetupPanel } from "@/components/replay/VideoSetupPanel";
@@ -39,6 +41,19 @@ import {
   type DetailSummaryItem
 } from "@/lib/demo-library";
 import { buildReplayDiagnostics, type ReplayDetailDiagnostics } from "@/lib/replay-diagnostics";
+import { resolvePrivateMediaSource } from "@/lib/media-url";
+import { advanceReplayTick, videoMediaIdentity, videoPlaybackState } from "@/lib/replay-time";
+import { roundClock, savedClipAtTick, usesVideoClock } from "@/lib/review-workspace";
+import { buildEventClipRequest, buildTickClipRequest, clipIsActive, clipsForPlayer, matchingClipJob, playableClipVideo, retainSelectedClip, reviewVideo, type SelectedClip } from "@/lib/render-clips";
+import {
+  DEFAULT_PLAYER_IDENTITY,
+  coachingForPlayer,
+  matchPreferredPlayer,
+  parserEventsForPlayer,
+  personalReviewSummary,
+  readPreferredPlayer,
+  savePreferredPlayer
+} from "@/lib/personal-review";
 import type { CoachingEvent } from "@/types/coaching";
 import type { DemoStatus } from "@/types/demo";
 import type { ReplayData } from "@/types/replay";
@@ -56,22 +71,48 @@ function DemoDetailContent() {
   const demoId = params.demoId;
 
   const [status, setStatus] = useState<DemoStatus | null>(null);
-  const [replay, setReplay] = useState<ReplayData | null>(null);
+  const [loadedReplay, setReplay] = useState<ReplayData | null>(null);
+  const [selectedClip, setSelectedClip] = useState<SelectedClip | null>(null);
   const [events, setEvents] = useState<CoachingEvent[]>([]);
   const [currentTick, setCurrentTick] = useState(0);
   const [selectedRound, setSelectedRound] = useState(1);
   const [speed, setSpeed] = useState(1);
   const [playing, setPlaying] = useState(false);
-  const [selectedPlayerId, setSelectedPlayerId] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState<"auto" | "map">("auto");
+  const [preferredIdentity, setPreferredIdentity] = useState(DEFAULT_PLAYER_IDENTITY);
+  const [preferenceSaved, setPreferenceSaved] = useState(true);
+  const [playerOverride, setPlayerOverride] = useState<{ demoId: string; playerId: string | null } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [renderRequesting, setRenderRequesting] = useState(false);
   const [clipRequestingEventId, setClipRequestingEventId] = useState<string | null>(null);
   const [tickClipRequesting, setTickClipRequesting] = useState(false);
   const [renderJobs, setRenderJobs] = useState<RenderJobStatus[]>([]);
+  // A background render may update the demo's default video without changing the clip being reviewed.
+  const replay = useMemo(() => loadedReplay
+    ? { ...loadedReplay, video: reviewVideo(loadedReplay.video, renderJobs, selectedClip, demoId) }
+    : null, [demoId, loadedReplay, renderJobs, selectedClip]);
   const [renderJobsRefreshing, setRenderJobsRefreshing] = useState(false);
   const [currentVideoTime, setCurrentVideoTime] = useState(0);
   const [detectedVideoDuration, setDetectedVideoDuration] = useState<number | null>(null);
+  const [unavailableVideoIdentity, setUnavailableVideoIdentity] = useState<string | null>(null);
   const firstPersonReplayRef = useRef<FirstPersonReplayHandle | null>(null);
+  const stageRef = useRef<HTMLElement | null>(null);
+
+  const revealStage = useCallback(() => {
+    window.requestAnimationFrame(() => {
+      const stage = stageRef.current;
+      if (!stage) return;
+      stage.focus({ preventScroll: true });
+      const bounds = stage.getBoundingClientRect();
+      if (bounds.top < 56 || bounds.bottom > window.innerHeight) {
+        stage.scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" });
+      }
+    });
+  }, []);
+
+  useEffect(() => {
+    setPreferredIdentity(readPreferredPlayer(() => window.localStorage));
+  }, []);
 
   const loadStatus = useCallback(async () => {
     try {
@@ -85,17 +126,6 @@ function DemoDetailContent() {
     }
   }, [demoId]);
 
-  const loadRenderJobs = useCallback(async () => {
-    try {
-      const nextJobs = await getRenderJobs(demoId);
-      setRenderJobs(nextJobs);
-      return nextJobs;
-    } catch (err) {
-      setError(friendlyErrorMessage(err instanceof Error ? err.message : "Failed to load render jobs"));
-      return [];
-    }
-  }, [demoId]);
-
   const loadReplay = useCallback(async () => {
     try {
       const [nextReplay, nextEvents, nextRenderJobs] = await Promise.all([
@@ -104,17 +134,19 @@ function DemoDetailContent() {
         getRenderJobs(demoId)
       ]);
       setReplay(nextReplay);
+      const initialSelection = retainSelectedClip(null, nextRenderJobs, nextReplay.video, demoId);
+      const initialVideo = reviewVideo(nextReplay.video, nextRenderJobs, initialSelection, demoId);
+      setSelectedClip(initialSelection);
       setEvents(nextEvents);
       setRenderJobs(nextRenderJobs);
-      const initialTick = nextReplay.video.url
-        ? nextReplay.video.tickStart
+      const initialTick = initialVideo.url
+        ? initialVideo.tickStart
         : nextReplay.rounds[0]?.startTick ?? 0;
       const initialRound = findRoundForTick(nextReplay.rounds, initialTick) ?? nextReplay.rounds[0];
       setSelectedRound(initialRound?.roundNumber ?? 1);
       setCurrentTick(initialTick);
-      setCurrentVideoTime(nextReplay.video.timeOriginSeconds ?? 0);
+      setCurrentVideoTime(initialVideo.timeOriginSeconds ?? 0);
       setDetectedVideoDuration(null);
-      setSelectedPlayerId(nextReplay.players[0]?.id ?? null);
       setError(null);
     } catch (err) {
       setError(friendlyErrorMessage(err instanceof Error ? err.message : "Failed to load replay"));
@@ -156,13 +188,43 @@ function DemoDetailContent() {
     () => replay?.rounds.find((round) => round.roundNumber === selectedRound),
     [replay?.rounds, selectedRound]
   );
+  const preferredPlayerMatch = useMemo(
+    () => matchPreferredPlayer(replay?.players ?? [], preferredIdentity),
+    [preferredIdentity, replay?.players]
+  );
+  const selectedPlayerId = playerOverride?.demoId === demoId
+    ? playerOverride.playerId
+    : preferredPlayerMatch.player?.id ?? null;
+  const selectPlayer = useCallback((playerId: string | null) => {
+    setPlayerOverride({ demoId, playerId });
+  }, [demoId]);
   const selectedPlayer = useMemo(
     () => replay?.players.find((player) => player.id === selectedPlayerId) ?? null,
     [replay?.players, selectedPlayerId]
   );
+  const videoUnavailable = Boolean(replay && (
+    unavailableVideoIdentity === videoMediaIdentity(replay.video) ||
+    (replay.video.url && !resolvePrivateMediaSource(replay.video.url))
+  ));
+  const videoPlayback = replay
+    ? videoPlaybackState(replay.video, currentTick, selectedPlayerId, videoUnavailable)
+    : "unavailable";
+  const videoDrivesClock = usesVideoClock(viewMode, videoPlayback);
+  const personalEvents = useMemo(
+    () => coachingForPlayer(events, selectedPlayer?.id ?? null),
+    [events, selectedPlayer?.id]
+  );
+  const personalSummary = useMemo(
+    () => personalReviewSummary(events, selectedPlayer?.id ?? null),
+    [events, selectedPlayer?.id]
+  );
+  const scopedReplay = useMemo(
+    () => replay ? { ...replay, events: parserEventsForPlayer(replay.events ?? [], selectedPlayer?.id ?? null) } : null,
+    [replay, selectedPlayer?.id]
+  );
   const orderedFindings = useMemo(
-    () => [...events].sort((left, right) => left.tick_start - right.tick_start),
-    [events]
+    () => [...personalEvents].sort((left, right) => left.tick_start - right.tick_start),
+    [personalEvents]
   );
   const previousFinding = useMemo(() => {
     for (let index = orderedFindings.length - 1; index >= 0; index -= 1) {
@@ -178,14 +240,19 @@ function DemoDetailContent() {
   );
   const renderJobByEventId = useMemo(() => {
     const jobsByEventId = new Map<string, RenderJobStatus>();
-    for (const job of renderJobs) {
-      const eventId = job.metadata.eventId;
-      if (typeof eventId === "string" && !jobsByEventId.has(eventId)) {
-        jobsByEventId.set(eventId, job);
-      }
+    if (!replay) return jobsByEventId;
+    for (const event of personalEvents) {
+      const job = savedClipAtTick(renderJobs, event.tick_start, event.player_id, replay.video.renderJobId)
+        ?? matchingClipJob(renderJobs, buildEventClipRequest(replay, event));
+      if (job) jobsByEventId.set(event.id, job);
     }
     return jobsByEventId;
-  }, [renderJobs]);
+  }, [personalEvents, renderJobs, replay]);
+  const personalClips = useMemo(() => clipsForPlayer(renderJobs, selectedPlayerId), [renderJobs, selectedPlayerId]);
+  const currentTickClipJob = useMemo(() => replay
+    ? savedClipAtTick(renderJobs, currentTick, selectedPlayerId, replay.video.renderJobId)
+      ?? matchingClipJob(renderJobs, buildTickClipRequest(replay, currentTick, selectedRound, selectedPlayerId))
+    : null, [currentTick, renderJobs, replay, selectedPlayerId, selectedRound]);
   const latestRenderClipJob = renderJobs[0] ?? null;
   const hasActiveRenderClipJob = renderJobs.some((job) => isRenderActiveStatus(job.status));
   const summaryItems = useMemo(
@@ -197,77 +264,56 @@ function DemoDetailContent() {
     [events, renderJobs, replay]
   );
 
-  const videoStatus = replay?.video.status;
+  const videoStatus = loadedReplay?.video.status;
   const parseFailureMessage = status ? parseFailureReason(status) : null;
 
-  const loadVideoStatus = useCallback(async () => {
-    if (!replay) {
-      return null;
-    }
+  const loadRenderState = useCallback(async () => {
     try {
-      const video = await getDemoVideo(demoId);
-      setReplay((currentReplay) =>
-        currentReplay ? { ...currentReplay, video } : currentReplay
-      );
-      return video;
-    } catch (err) {
-      setError(friendlyErrorMessage(err instanceof Error ? err.message : "Failed to load video status"));
-      return null;
-    }
-  }, [demoId, replay]);
-
-  const refreshRenderOperatorState = useCallback(async () => {
-    setRenderJobsRefreshing(true);
-    try {
-      const [nextJobs, video] = await Promise.all([
-        getRenderJobs(demoId),
-        getDemoVideo(demoId)
-      ]);
+      const [nextJobs, video] = await Promise.all([getRenderJobs(demoId), getDemoVideo(demoId)]);
       setRenderJobs(nextJobs);
       setReplay((currentReplay) =>
         currentReplay ? { ...currentReplay, video } : currentReplay
       );
-      setError(null);
+      setSelectedClip((current) => retainSelectedClip(current, nextJobs, video, demoId));
+      return video;
     } catch (err) {
-      setError(friendlyErrorMessage(err instanceof Error ? err.message : "Failed to refresh render state"));
-    } finally {
-      setRenderJobsRefreshing(false);
+      setError(friendlyErrorMessage(err instanceof Error ? err.message : "Failed to load render state"));
+      return null;
     }
   }, [demoId]);
 
+  const refreshRenderOperatorState = useCallback(async () => {
+    setRenderJobsRefreshing(true);
+    try {
+      if (await loadRenderState()) setError(null);
+    } finally {
+      setRenderJobsRefreshing(false);
+    }
+  }, [loadRenderState]);
+
   useEffect(() => {
-    if (!isRenderActiveStatus(videoStatus)) {
+    if (!isRenderActiveStatus(videoStatus) && !hasActiveRenderClipJob) {
       return;
     }
 
     const intervalId = window.setInterval(() => {
-      void loadVideoStatus();
+      void loadRenderState();
     }, 1200);
 
     return () => window.clearInterval(intervalId);
-  }, [loadVideoStatus, videoStatus]);
+  }, [hasActiveRenderClipJob, loadRenderState, videoStatus]);
 
   useEffect(() => {
-    if (!hasActiveRenderClipJob) {
-      return;
-    }
-
-    const intervalId = window.setInterval(() => {
-      void loadRenderJobs();
-      void loadVideoStatus();
-    }, 1200);
-
-    return () => window.clearInterval(intervalId);
-  }, [hasActiveRenderClipJob, loadRenderJobs, loadVideoStatus]);
-
-  useEffect(() => {
-    if (!playing || !replay || !selectedRoundData || replay.video.url) {
+    if (!playing || !replay || !selectedRoundData || videoDrivesClock) {
       return;
     }
 
     const intervalId = window.setInterval(() => {
       setCurrentTick((tick) => {
-        const nextTick = tick + replay.tickRate * speed * 0.1;
+        const nextTick = advanceReplayTick(
+          tick, replay.tickRate * speed * 0.1, selectedRoundData.endTick,
+          replay.video, selectedPlayerId, videoUnavailable || viewMode === "map"
+        );
         if (nextTick >= selectedRoundData.endTick) {
           setPlaying(false);
           return selectedRoundData.endTick;
@@ -277,7 +323,7 @@ function DemoDetailContent() {
     }, 100);
 
     return () => window.clearInterval(intervalId);
-  }, [playing, replay, selectedRoundData, speed]);
+  }, [playing, replay, selectedPlayerId, selectedRoundData, speed, videoDrivesClock, videoUnavailable, viewMode]);
 
   const updateCoordinateFromTick = useCallback((tick: number) => {
     setCurrentTick(tick);
@@ -293,6 +339,49 @@ function DemoDetailContent() {
     firstPersonReplayRef.current?.seekToTick(tick);
     updateCoordinateFromTick(tick);
   }, [updateCoordinateFromTick]);
+
+  const seekToFinding = useCallback((tick: number) => {
+    const saved = savedClipAtTick(renderJobs, tick, selectedPlayerId, replay?.video.renderJobId);
+    const video = playableClipVideo(saved);
+    if (video) setSelectedClip({ demoId, video });
+    setViewMode("auto");
+    setPlaying(false);
+    seek(tick);
+    revealStage();
+  }, [demoId, renderJobs, replay?.video.renderJobId, revealStage, seek, selectedPlayerId]);
+
+  const viewVideoClip = useCallback(() => {
+    if (!replay) return;
+    if (replay.video.povSteamId) {
+      const player = replay.players.find((item) => item.id === replay.video.povSteamId);
+      if (!player) return;
+      selectPlayer(player.id);
+    }
+    setUnavailableVideoIdentity(null);
+    setViewMode("auto");
+    seek(replay.video.tickStart);
+    setPlaying(true);
+    revealStage();
+  }, [replay, revealStage, seek, selectPlayer]);
+
+  const playSavedClip = useCallback((job: RenderJobStatus, tick?: number) => {
+    const video = playableClipVideo(job);
+    if (!video || !replay?.players.some((player) => player.id === video.povSteamId)) return;
+    setSelectedClip({ demoId, video });
+    setViewMode("auto");
+    selectPlayer(video.povSteamId ?? null);
+    setUnavailableVideoIdentity(null);
+    setDetectedVideoDuration(null);
+    const nextTick = tick !== undefined && tick >= video.tickStart && tick < video.tickEnd ? tick : video.tickStart;
+    // Reused media needs an explicit seek before its clock resumes. A different clip seeks on mount.
+    if (videoMediaIdentity(video) === videoMediaIdentity(replay.video)) {
+      seek(nextTick);
+    } else {
+      updateCoordinateFromTick(nextTick);
+    }
+    setPlaying(true);
+    revealStage();
+  }, [demoId, replay?.players, replay?.video, revealStage, seek, selectPlayer, updateCoordinateFromTick]);
 
   const changeRound = useCallback((roundNumber: number) => {
     const nextRound = replay?.rounds.find((round) => round.roundNumber === roundNumber);
@@ -311,6 +400,7 @@ function DemoDetailContent() {
     setRenderRequesting(true);
     try {
       const response = await createMockRenderJob(demoId);
+      setSelectedClip(null);
       setReplay((currentReplay) =>
         currentReplay ? { ...currentReplay, video: response.video } : currentReplay
       );
@@ -329,17 +419,8 @@ function DemoDetailContent() {
 
     setClipRequestingEventId(event.id);
     try {
-      const response = await createRenderClipJob(demoId, buildEventClipRequest(replay, event));
-      const { video, ...jobStatus } = response;
-      setReplay((currentReplay) =>
-        currentReplay ? { ...currentReplay, video } : currentReplay
-      );
-      setRenderJobs((currentJobs) => [
-        jobStatus,
-        ...currentJobs.filter((job) => job.job_id !== jobStatus.job_id)
-      ]);
+      await requestOrViewClip(buildEventClipRequest(replay, event), event.tick_start);
       setError(null);
-      void refreshRenderOperatorState();
     } catch (err) {
       setError(friendlyErrorMessage(err instanceof Error ? err.message : "Failed to create render clip job"));
     } finally {
@@ -352,20 +433,14 @@ function DemoDetailContent() {
       return;
     }
 
+    if (currentTickClipJob && playableClipVideo(currentTickClipJob)) {
+      playSavedClip(currentTickClipJob, currentTick);
+      return;
+    }
+
     setTickClipRequesting(true);
     try {
-      const response = await createRenderClipJob(
-        demoId,
-        buildTickClipRequest(replay, currentTick, selectedRound, selectedPlayerId)
-      );
-      const { video, ...jobStatus } = response;
-      setReplay((currentReplay) =>
-        currentReplay ? { ...currentReplay, video } : currentReplay
-      );
-      setRenderJobs((currentJobs) => [
-        jobStatus,
-        ...currentJobs.filter((job) => job.job_id !== jobStatus.job_id)
-      ]);
+      await requestOrViewClip(buildTickClipRequest(replay, currentTick, selectedRound, selectedPlayerId), currentTick);
       setError(null);
     } catch (err) {
       setError(friendlyErrorMessage(err instanceof Error ? err.message : "Failed to create render clip job"));
@@ -374,9 +449,31 @@ function DemoDetailContent() {
     }
   }
 
+  async function requestOrViewClip(request: RenderClipRequest, tick: number) {
+    const existing = savedClipAtTick(renderJobs, tick, request.povSteamId ?? request.playerId ?? null, replay?.video.renderJobId)
+      ?? matchingClipJob(renderJobs, request);
+    if (existing && playableClipVideo(existing)) {
+      playSavedClip(existing, tick);
+      return;
+    }
+    if (clipIsActive(existing)) return;
+    if (replay?.video.status === "ready" && replay.video.url) {
+      const currentVideo = replay.video;
+      setSelectedClip((current) => retainSelectedClip(current, renderJobs, currentVideo, demoId));
+    }
+    const response = await createRenderClipJob(demoId, request);
+    setRenderJobs((currentJobs) => [response, ...currentJobs.filter((job) => job.job_id !== response.job_id)]);
+    if (playableClipVideo(response)) {
+      playSavedClip(response, tick);
+    } else {
+      setReplay((currentReplay) => currentReplay ? { ...currentReplay, video: response.video } : currentReplay);
+    }
+  }
+
   async function uploadManualVideo(file: File) {
     try {
       const video = await uploadDemoVideo(demoId, file);
+      setSelectedClip(null);
       setDetectedVideoDuration(null);
       setCurrentVideoTime(video.timeOriginSeconds ?? 0);
       setReplay((currentReplay) =>
@@ -391,6 +488,7 @@ function DemoDetailContent() {
   async function saveManualVideoCalibration(calibration: VideoCalibrationUpdate) {
     try {
       const video = await saveVideoCalibration(demoId, calibration);
+      setSelectedClip(null);
       setReplay((currentReplay) =>
         currentReplay ? { ...currentReplay, video } : currentReplay
       );
@@ -401,7 +499,7 @@ function DemoDetailContent() {
   }
 
   return (
-    <main className="app-shell review-detail-shell">
+    <main className="app-shell review-detail-shell review-app">
       <header className="topbar">
         <div className="brand">
           <div className="brand-mark">C</div>
@@ -410,7 +508,7 @@ function DemoDetailContent() {
         <div className="topbar-actions">
           <Link className="secondary-button" href="/dashboard">
             <ArrowLeft size={16} />
-            Dashboard
+            我的比赛
           </Link>
           <SessionControls />
         </div>
@@ -420,18 +518,16 @@ function DemoDetailContent() {
         <div className="detail-top">
           <div className="detail-title">
             <span className="workspace-kicker">
-              Tactical review / {status?.map_name ?? "map pending"}
+              比赛复盘 / {status?.map_name?.replace(/^de_/, "") ?? "准备中"}
             </span>
-            <h1>{status?.name ?? (status ? `Demo ${status.id.slice(0, 8)}` : "Loading demo")}</h1>
+            <h1>{status?.name ?? (status ? `比赛 ${status.id.slice(0, 8)}` : "正在打开比赛")}</h1>
             <div className="detail-meta">
-              {status?.original_filename ? <span>{status.original_filename}</span> : null}
-              <span>{status?.map_name ?? "map pending"}</span>
-              <span>{status?.round_count ?? 0} rounds</span>
-              <span>{status?.coaching_event_count ?? 0} coaching events</span>
-              {status?.archived ? <span>archived</span> : null}
+              <span>{status?.round_count ?? 0} 回合</span>
+              <span>{personalEvents.length} 条个人复盘线索</span>
+              {status?.archived ? <span>已归档</span> : null}
             </div>
           </div>
-          {status ? <span className={`status-badge ${status.status}`}>{status.status}</span> : null}
+          {status ? <span className={`status-badge ${status.status}`}>{status.status === "completed" ? "可以开始复盘" : status.status === "failed" ? "处理失败" : "正在准备比赛"}</span> : null}
         </div>
 
         {error ? <div className="error-panel" role="alert">{error}</div> : null}
@@ -440,34 +536,85 @@ function DemoDetailContent() {
           <>
             <div className="panel loading-panel">
               {status?.status === "failed"
-                ? `Demo status: failed. ${parseFailureMessage ?? "Replay could not be generated."}`
-                : `Demo status: ${status?.status ?? "loading"}. Replay will load when the worker completes.`}
+                ? `比赛处理失败。${parseFailureMessage ?? "暂时无法加载回放，请返回比赛库重试。"}`
+                : "正在准备回放，完成后会自动显示。"}
             </div>
             {status ? <DetailSummary items={summaryItems} /> : null}
           </>
         ) : (
           <>
-            <section id="player" className="player-stage" aria-label="Replay player">
+            <PersonalReviewPanel
+              key={preferredIdentity}
+              preferredIdentity={preferredIdentity}
+              match={preferredPlayerMatch}
+              players={replay.players}
+              selectedPlayer={selectedPlayer}
+              summary={personalSummary}
+              preferenceSaved={preferenceSaved}
+              onSaveIdentity={(identity) => {
+                setPreferredIdentity(identity.trim());
+                setPlayerOverride(null);
+                setPreferenceSaved(savePreferredPlayer(identity, () => window.localStorage));
+              }}
+              onSelectPlayer={selectPlayer}
+              onSeek={seekToFinding}
+            />
+            <div className="review-layout">
+            <div className="review-main-column">
+            <section id="player" className="review-stage" aria-label="Replay player" tabIndex={-1} ref={stageRef}>
+              <div className="review-stage-toolbar">
+                <div className="review-view-switch" role="group" aria-label="回放视图">
+                  <button type="button" aria-pressed={!videoDrivesClock} onClick={() => setViewMode("map")}>
+                    <MapIcon size={16} aria-hidden="true" /> 战术回放
+                  </button>
+                  <button type="button" aria-pressed={videoDrivesClock} disabled={videoPlayback !== "active"}
+                    title={videoPlayback === "active" ? "观看这一时刻的第一人称画面" : "这一时刻还没有可播放的视频"}
+                    onClick={() => setViewMode("auto")}>
+                    <Film size={16} aria-hidden="true" /> 第一人称
+                  </button>
+                </div>
+                <button className="secondary-button compact-button" type="button"
+                  disabled={tickClipRequesting || clipIsActive(currentTickClipJob) || !selectedPlayerId}
+                  onClick={() => void requestRenderClipAtCurrentTick()}>
+                  <Scissors size={15} aria-hidden="true" />
+                  {tickClipRequesting ? "正在提交" : clipIsActive(currentTickClipJob) ? "视频生成中" : playableClipVideo(currentTickClipJob) ? "观看此刻视频" : "生成此刻视频"}
+                </button>
+              </div>
+              <div className={`review-main-canvas ${videoDrivesClock ? "showing-video" : "showing-map"}`}>
+              {videoDrivesClock ? (
               <FirstPersonReplay
+                compact
                 ref={firstPersonReplayRef}
                 replay={replay}
                 currentTick={currentTick}
                 playing={playing}
                 speed={speed}
+                playbackState={videoPlayback}
+                mediaUnavailable={videoUnavailable}
                 renderRequesting={renderRequesting}
                 renderClipRequesting={tickClipRequesting}
                 latestRenderClipJob={latestRenderClipJob}
+                currentTickClipJob={currentTickClipJob}
+                renderClipPlayerSelected={Boolean(selectedPlayerId)}
                 onRequestMockRender={requestMockRender}
                 onRequestRenderClip={requestRenderClipAtCurrentTick}
                 onVideoTickChange={updateCoordinateFromTick}
+                onVideoUnavailable={setUnavailableVideoIdentity}
+                onViewVideoClip={viewVideoClip}
                 onVideoDurationChange={setDetectedVideoDuration}
                 onVideoTimeChange={setCurrentVideoTime}
               />
+              ) : (
+                <ReplayViewer replay={scopedReplay ?? replay} currentTick={currentTick}
+                  selectedPlayerId={selectedPlayerId} onSelectPlayer={selectPlayer} variant="featured" />
+              )}
+              </div>
               <ReviewCommandBar
                 mapName={status?.map_name ?? replay.mapName}
                 selectedRound={selectedRound}
                 currentTick={currentTick}
-                currentPovName={selectedPlayer?.name ?? "No player selected"}
+                roundTime={roundClock(currentTick, selectedRoundData?.startTick ?? 0, replay.tickRate)}
+                currentPovName={selectedPlayer?.name ?? "请选择玩家"}
                 playing={playing}
                 speed={speed}
                 previousFinding={previousFinding}
@@ -476,55 +623,63 @@ function DemoDetailContent() {
                 onSpeedChange={setSpeed}
                 onPreviousFinding={() => {
                   if (previousFinding) {
-                    seek(previousFinding.tick_start);
+                    seekToFinding(previousFinding.tick_start);
                   }
                 }}
                 onNextFinding={() => {
                   if (nextFinding) {
-                    seek(nextFinding.tick_start);
+                    seekToFinding(nextFinding.tick_start);
                   }
                 }}
               />
+              <Timeline currentTick={currentTick} selectedRound={selectedRound} rounds={replay.rounds}
+                tickRate={replay.tickRate} events={personalEvents} parserEvents={scopedReplay?.events ?? []}
+                selectedPlayerName={selectedPlayer?.name ?? null} onSeek={seek} />
             </section>
+            {videoPlayback !== "active" ? (
+              <div className="review-media-note" role="status">
+                <span>{videoUnavailable ? "视频暂时无法播放，已切换到战术回放。" : "当前时刻使用战术回放，可按需生成第一人称视频。"}</span>
+                {replay.video.url && !videoUnavailable ? <button type="button" className="text-button" onClick={viewVideoClip}>打开已保存的视频</button> : null}
+              </div>
+            ) : null}
             <RoundReviewPanel
               replay={replay}
-              coachingEvents={events}
+              coachingEvents={personalEvents}
+              selectedPlayerName={selectedPlayer?.name ?? null}
               currentTick={currentTick}
               selectedRound={selectedRound}
               onSelectRound={changeRound}
               onSeek={seek}
             />
-            <div className="evidence-ledger-workbench">
-              <div className="evidence-canvas-column">
-                <div className="review-workbench">
-                  <ReplayViewer
-                    replay={replay}
-                    currentTick={currentTick}
-                    selectedPlayerId={selectedPlayerId}
-                    onSelectPlayer={setSelectedPlayerId}
-                    variant="featured"
-                  />
-                  <Timeline
-                    currentTick={currentTick}
-                    selectedRound={selectedRound}
-                    rounds={replay.rounds}
-                    events={events}
-                    parserEvents={replay.events ?? []}
-                    onSeek={seek}
-                  />
-                </div>
-              </div>
+            <details className="review-saved-clips">
+              <summary><Film size={16} aria-hidden="true" /><span>已保存的视频</span>
+                <span className="saved-clips-count">{personalClips.filter((job) => playableClipVideo(job)).length} 段可播放</span>
+                {hasActiveRenderClipJob ? <span role="status">有视频正在生成</span> : null}
+              </summary>
+              <ClipLibrary jobs={personalClips} playerName={selectedPlayer?.name ?? null} rounds={replay.rounds}
+                selectedJobId={replay.video.renderJobId ?? null} onPlay={playSavedClip} />
+            </details>
+            </div>
               <CoachingPanel
-                events={events}
+                key={selectedPlayer?.id ?? "no-player"}
+                events={personalEvents}
+                selectedPlayerName={selectedPlayer?.name ?? null}
                 players={replay.players}
+                rounds={replay.rounds}
+                tickRate={replay.tickRate}
                 currentTick={currentTick}
                 selectedRound={selectedRound}
                 renderJobByEventId={renderJobByEventId}
                 requestingEventId={clipRequestingEventId}
-                onSeek={seek}
+                onSeek={seekToFinding}
                 onGenerateClip={requestRenderClipForEvent}
               />
             </div>
+            <details className="review-inspector">
+              <summary><span>高级工具</span><small>视频校准、生成记录与技术详情</small></summary>
+              <div className="review-inspector-content">
+              <button className="secondary-button compact-button" type="button" disabled={renderRequesting}
+                onClick={() => void requestMockRender()}>{renderRequesting ? "提交中" : "创建模拟视频任务（开发测试）"}</button>
             <section className="review-support-bay" aria-label="Render and calibration support">
               <RenderOperatorPanel
                 video={replay.video}
@@ -537,16 +692,11 @@ function DemoDetailContent() {
                 currentVideoTime={currentVideoTime}
                 detectedDurationSeconds={detectedVideoDuration}
                 video={replay.video}
+                calibrationDisabled={Boolean(replay.video.renderJobId)}
                 onSaveCalibration={saveManualVideoCalibration}
                 onUploadVideo={uploadManualVideo}
               />
             </section>
-            <details className="review-inspector">
-              <summary>
-                <span>Review inspector</span>
-                <small>Contract, calibration, parser and render diagnostics</small>
-              </summary>
-              <div className="review-inspector-content">
                 {status ? <DetailSummary items={summaryItems} /> : null}
                 {detailDiagnostics ? <ReplayDiagnosticsPanel diagnostics={detailDiagnostics} /> : null}
               </div>
@@ -562,6 +712,7 @@ function ReviewCommandBar({
   mapName,
   selectedRound,
   currentTick,
+  roundTime,
   currentPovName,
   playing,
   speed,
@@ -575,6 +726,7 @@ function ReviewCommandBar({
   mapName: string;
   selectedRound: number;
   currentTick: number;
+  roundTime: string;
   currentPovName: string;
   playing: boolean;
   speed: number;
@@ -586,28 +738,26 @@ function ReviewCommandBar({
   onNextFinding: () => void;
 }) {
   return (
-    <section className="review-command-bar" aria-label="Review transport">
+    <section className="review-command-bar" aria-label="Review transport" title={`${mapName} · tick ${Math.round(currentTick)}`}>
       <div className="review-command-coordinate">
-        <span className="workspace-kicker">Review transport</span>
         <div className="review-transport-readouts">
-          <TransportReadout label="Map" value={mapName} />
-          <TransportReadout label="Round" value={`R${selectedRound}`} />
-          <TransportReadout label="Tick" value={String(Math.round(currentTick))} emphasis />
-          <TransportReadout label="POV target" value={currentPovName} />
+          <TransportReadout label="回合" value={`第 ${selectedRound} 回合`} />
+          <TransportReadout label="时间" value={roundTime} emphasis />
+          <TransportReadout label="玩家" value={currentPovName} />
         </div>
       </div>
       <div className="review-command-actions">
         <button
-          className="secondary-button compact-button coordinate-play-button"
+          className="primary-button compact-button coordinate-play-button"
           type="button"
           onClick={onTogglePlay}
           aria-label={playing ? "Pause replay" : "Play replay"}
         >
           {playing ? <Pause size={17} /> : <Play size={17} />}
-          <span>{playing ? "Pause" : "Play"}</span>
+          <span>{playing ? "暂停" : "播放"}</span>
         </button>
         <label className="review-speed-control">
-          <span>Speed</span>
+          <span>倍速</span>
           <select
             className="speed-select"
             value={speed}
@@ -626,19 +776,19 @@ function ReviewCommandBar({
             type="button"
             onClick={onPreviousFinding}
             disabled={!previousFinding}
-            title={previousFinding ? `Previous finding at tick ${previousFinding.tick_start}` : "No previous finding"}
+            title={previousFinding ? "查看上一条建议" : "已经是第一条建议"}
           >
             <ChevronLeft size={15} aria-hidden="true" />
-            <span>Prev finding</span>
+            <span>上一条</span>
           </button>
           <button
             className="secondary-button compact-button"
             type="button"
             onClick={onNextFinding}
             disabled={!nextFinding}
-            title={nextFinding ? `Next finding at tick ${nextFinding.tick_start}` : "No next finding"}
+            title={nextFinding ? "查看下一条建议" : "没有下一条建议"}
           >
-            <span>Next finding</span>
+            <span>下一条</span>
             <ChevronRight size={15} aria-hidden="true" />
           </button>
         </div>
@@ -732,73 +882,4 @@ function DiagnosticMetric({
 
 function findRoundForTick(rounds: ReplayData["rounds"], tick: number) {
   return rounds.find((round) => tick >= round.startTick && tick <= round.endTick);
-}
-
-function buildEventClipRequest(replay: ReplayData, event: CoachingEvent): RenderClipRequest {
-  const tickRate = replay.tickRate || replay.video.tickRate || 64;
-  const range = clipRangeForTick(replay, event.tick_start, event.round_number, tickRate);
-  return {
-    eventId: event.id,
-    playerId: eventPlayerId(event),
-    tickStart: range.tickStart,
-    tickEnd: range.tickEnd,
-    tickRate,
-    roundNumber: event.round_number,
-    renderPreset: "event_clip_v1"
-  };
-}
-
-function buildTickClipRequest(
-  replay: ReplayData,
-  currentTick: number,
-  selectedRound: number,
-  selectedPlayerId: string | null
-): RenderClipRequest {
-  const tickRate = replay.tickRate || replay.video.tickRate || 64;
-  const range = clipRangeForTick(replay, currentTick, selectedRound, tickRate);
-  return {
-    playerId: selectedPlayerId ?? undefined,
-    tickStart: range.tickStart,
-    tickEnd: range.tickEnd,
-    tickRate,
-    roundNumber: selectedRound,
-    renderPreset: "selected_tick_v1"
-  };
-}
-
-function clipRangeForTick(
-  replay: ReplayData,
-  tick: number,
-  roundNumber: number,
-  tickRate: number
-) {
-  const paddingTicks = tickRate * 20;
-  const round = replay.rounds.find((item) => item.roundNumber === roundNumber);
-  const firstRound = replay.rounds[0];
-  const lastRound = replay.rounds[replay.rounds.length - 1];
-  const minTick = round?.startTick ?? firstRound?.startTick ?? 0;
-  const maxTick = round?.endTick ?? lastRound?.endTick ?? tick + paddingTicks;
-  const tickStart = Math.max(minTick, Math.round(tick - paddingTicks));
-  const tickEnd = Math.min(maxTick, Math.round(tick + paddingTicks));
-
-  if (tickEnd > tickStart) {
-    return { tickStart, tickEnd };
-  }
-
-  return {
-    tickStart: Math.max(minTick, Math.round(tick)),
-    tickEnd: Math.min(maxTick, Math.round(tick + tickRate))
-  };
-}
-
-function eventPlayerId(event: CoachingEvent): string | undefined {
-  const involvedPlayerIds = event.structured_context_json.involvedPlayerIds;
-  if (
-    Array.isArray(involvedPlayerIds) &&
-    involvedPlayerIds.length > 0 &&
-    typeof involvedPlayerIds[0] === "string"
-  ) {
-    return involvedPlayerIds[0];
-  }
-  return event.player_id || undefined;
 }

@@ -1,0 +1,30 @@
+{
+  "description": "Only the original closest pair from three real stored Nuke samples. Tests add one synthetic distant teammate to meet the three-player spacing precondition.",
+  "mapName": "de_nuke",
+  "samples": [
+    {
+      "roundNumber": 3,
+      "tick": 20507,
+      "players": [
+        {"id": "76561198998266210", "name": "xelex", "side": "T", "x": 54.2, "y": 66.53, "z": -415.96875},
+        {"id": "76561198310561479", "name": "PR", "side": "T", "x": 55.22, "y": 64.28, "z": -223.96875}
+      ]
+    },
+    {
+      "roundNumber": 10,
+      "tick": 74235,
+      "players": [
+        {"id": "76561198355739212", "name": "torzsi", "side": "T", "x": 51.2, "y": 52.24, "z": -146.328125},
+        {"id": "76561198998266210", "name": "xelex", "side": "T", "x": 48.74, "y": 52.61, "z": -415.96875}
+      ]
+    },
+    {
+      "roundNumber": 17,
+      "tick": 147147,
+      "players": [
+        {"id": "76561198998266210", "name": "xelex", "side": "CT", "x": 62.29, "y": 46.65, "z": -127.1875},
+        {"id": "76561198310561479", "name": "PR", "side": "CT", "x": 63.88, "y": 44.91, "z": -415.96875}
+      ]
+    }
+  ]
+}

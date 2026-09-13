@@ -19,6 +19,8 @@ const EVENT_PRESENTATION: Record<ReplayEventType, ParserEventPresentation> = {
   kill: { label: "Kill", tone: "combat", shortLabel: "K" },
   death: { label: "Death", tone: "combat", shortLabel: "D" },
   damage: { label: "Damage", tone: "damage", shortLabel: "D" },
+  bomb_pickup: { label: "Bomb pickup", tone: "objective", shortLabel: "+" },
+  bomb_dropped: { label: "Bomb dropped", tone: "objective", shortLabel: "B" },
   bomb_planted: { label: "Plant", tone: "objective", shortLabel: "P" },
   bomb_defused: { label: "Defuse", tone: "objective", shortLabel: "D" },
   bomb_exploded: { label: "Explode", tone: "objective", shortLabel: "X" },

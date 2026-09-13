@@ -24,6 +24,7 @@ function loadTypeScriptModule(relativePath) {
     exports: module.exports,
     module,
     require(specifier) {
+      if (specifier === "@/lib/bomb-site") return loadTypeScriptModule("./bomb-site.ts");
       if (specifier.startsWith("@/types/")) {
         return {};
       }
@@ -62,6 +63,22 @@ const coachingEvents = [
   coachingEvent({ id: "coach-r1-b", round_number: 1, tick_start: 360 }),
   coachingEvent({ id: "coach-r2", round_number: 2, tick_start: 820 })
 ];
+
+{
+  const model = buildRoundReviewModel({
+    rounds,
+    parserEvents: [
+      ...parserEvents,
+      replayEvent({ id: "drop-r1", type: "bomb_dropped", tick: 240, roundNumber: 1 }),
+      replayEvent({ id: "pickup-r1", type: "bomb_pickup", tick: 250, roundNumber: 1 }),
+      replayEvent({ id: "halftime-kill", type: "kill", tick: 580, roundNumber: 1 })
+    ],
+    coachingEvents, currentTick: 240, selectedRoundNumber: 1, tickRate: 64
+  });
+  assert.equal(model.selectedRound.bombEventCount, 3);
+  assert.equal(model.selectedRound.killCount, 2, "Between-round events must not inflate round kills");
+  assert.equal(model.selectedRound.bombPlant.tick, 310, "Bomb pickup must not replace the plant jump");
+}
 
 {
   const model = buildRoundReviewModel({
@@ -185,6 +202,17 @@ function round(overrides) {
     endTick: overrides.endTick,
     winnerSide: overrides.winnerSide
   };
+}
+
+{
+  const legacyPlant = replayEvent({ id: "legacy-plant", type: "bomb_planted", tick: 800,
+    roundNumber: 2, label: "Bomb planted 313", metadata: { site: "313" } });
+  const model = buildRoundReviewModel({ rounds, parserEvents: [legacyPlant],
+    currentTick: 845, selectedRoundNumber: 2, tickRate: 64 });
+  assert.equal(model.selectedRound.bombPlant.site, undefined);
+  assert.equal(model.selectedRound.bombPlant.label, "Bomb planted");
+  assert.equal(model.selectedRound.bombPlant.tick, 800);
+  assert.equal(legacyPlant.metadata.site, "313");
 }
 
 function replayEvent(overrides) {

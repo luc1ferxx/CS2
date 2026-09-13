@@ -53,7 +53,7 @@ class RenderWorkerMediaUploadTest(unittest.TestCase):
                     "read_bytes",
                     side_effect=AssertionError("media upload must not call Path.read_bytes"),
                 ),
-                patch.object(self.runner.urllib.request, "urlopen", side_effect=fake_urlopen),
+                patch.object(client, "_open_request", side_effect=fake_urlopen),
             ):
                 uploaded = client.upload_media("render-job-1", media_path)
 

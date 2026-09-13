@@ -10,6 +10,7 @@ interface VideoSetupPanelProps {
   currentVideoTime: number;
   detectedDurationSeconds: number | null;
   video: ReplayVideo;
+  calibrationDisabled?: boolean;
   onSaveCalibration: (calibration: VideoCalibrationUpdate) => Promise<void>;
   onUploadVideo: (file: File) => Promise<void>;
 }
@@ -18,6 +19,7 @@ export function VideoSetupPanel({
   currentVideoTime,
   detectedDurationSeconds,
   video,
+  calibrationDisabled = false,
   onSaveCalibration,
   onUploadVideo
 }: VideoSetupPanelProps) {
@@ -56,6 +58,7 @@ export function VideoSetupPanel({
   }
 
   async function handleSave() {
+    if (calibrationDisabled) return;
     const parsedTickStart = parseInteger(tickStart);
     const parsedTickEnd = parseInteger(tickEnd);
     const parsedTickRate = parseInteger(tickRate);
@@ -145,7 +148,8 @@ export function VideoSetupPanel({
         </div>
       </dl>
 
-      <div className="calibration-grid">
+      {calibrationDisabled ? <p className="setup-message">Saved clips keep their recorded timing. Upload an MP4 to use manual calibration.</p> : null}
+      <fieldset className="calibration-grid" disabled={calibrationDisabled} style={{ border: 0, padding: 0, margin: 0 }}>
         <label>
           <span>timeOriginSeconds</span>
           <input
@@ -188,13 +192,13 @@ export function VideoSetupPanel({
             onChange={(event) => setTickRate(event.target.value)}
           />
         </label>
-      </div>
+      </fieldset>
 
       <div className="calibration-actions">
         <button
           className="secondary-button compact-button"
           type="button"
-          disabled={!video.url}
+          disabled={!video.url || calibrationDisabled}
           onClick={() => setTimeOriginSeconds(currentVideoTime.toFixed(2))}
         >
           <TimerReset size={14} />
@@ -203,7 +207,7 @@ export function VideoSetupPanel({
         <button
           className="primary-button compact-button"
           type="button"
-          disabled={saving}
+          disabled={saving || calibrationDisabled}
           onClick={() => void handleSave()}
         >
           <Save size={14} />

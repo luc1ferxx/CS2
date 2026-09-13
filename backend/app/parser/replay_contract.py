@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import math
+import re
+import uuid
 from datetime import datetime, timezone
 from typing import Any, Callable
 
@@ -11,6 +13,8 @@ PARSER_EVENT_TYPES = {
     "bomb_planted",
     "bomb_defused",
     "bomb_exploded",
+    "bomb_pickup",
+    "bomb_dropped",
     "smoke",
     "flash",
     "molotov",
@@ -21,13 +25,15 @@ PARSER_EVENT_TYPES = {
 EVENT_FAMILY_TYPES = {
     "combat": {"kill", "death"},
     "damage": {"damage", "he", "molotov"},
-    "objective": {"bomb_planted", "bomb_defused", "bomb_exploded", "round_start", "round_end"},
+    "objective": {"bomb_planted", "bomb_defused", "bomb_exploded", "bomb_pickup", "bomb_dropped", "round_start", "round_end"},
     "utility": {"smoke", "flash"},
 }
 EVENT_LABELS = {
     "bomb_defused": "Bomb defused",
     "bomb_exploded": "Bomb exploded",
     "bomb_planted": "Bomb planted",
+    "bomb_pickup": "Bomb picked up",
+    "bomb_dropped": "Bomb dropped",
     "damage": "Damage",
     "death": "Death",
     "flash": "Flash",
@@ -45,12 +51,39 @@ MAX_METADATA_LIST_LENGTH = 16
 PositionNormalizer = Callable[[dict[str, Any]], dict[str, float] | None]
 
 
+def normalize_bomb_site(value: Any) -> str | None:
+    """CS2 entity indices are not portable A/B site identifiers."""
+    if not isinstance(value, str):
+        return None
+    site = value.strip().upper()
+    return site if site in {"A", "B"} else None
+
+
+def normalize_video_identity(video: dict[str, Any]) -> dict[str, str]:
+    """Optional render identity must never survive replacement by another source."""
+    if video.get("source") != "rendered" or video.get("status") != "ready":
+        return {}
+    identity: dict[str, str] = {}
+    pov = video.get("povSteamId")
+    if isinstance(pov, str) and re.fullmatch(r"7656[0-9]{13}", pov):
+        identity["povSteamId"] = pov
+    job_id = video.get("renderJobId")
+    if isinstance(job_id, str):
+        try:
+            canonical = str(uuid.UUID(job_id))
+            if canonical == job_id:
+                identity["renderJobId"] = canonical
+        except ValueError:
+            pass
+    return identity
+
+
 def normalize_replay_contract(replay: dict[str, Any]) -> dict[str, Any]:
     raw = replay if isinstance(replay, dict) else {}
     normalized = dict(raw)
     tick_rate = _positive_int_or_default(normalized.get("tickRate"), 64)
     rounds = _normalize_rounds(normalized.get("rounds"))
-    frames = _dict_list(normalized.get("frames"))
+    frames = _normalize_frame_optional_fields(normalized.get("frames"))
     tick_start, tick_end = _tick_bounds(rounds, frames)
 
     normalized["demoId"] = str(normalized.get("demoId") or "unknown")
@@ -89,6 +122,36 @@ def normalize_replay_events(
         [event for event in events if event is not None],
         key=lambda item: (int(item["tick"]), str(item["id"])),
     )
+
+
+def _finite_z_copy(value: dict[str, Any]) -> dict[str, Any]:
+    result = dict(value)
+    if "z" in result:
+        if _finite(result["z"]):
+            result["z"] = float(result["z"])
+        else:
+            result.pop("z")
+    return result
+
+
+def _normalize_frame_optional_fields(value: Any) -> list[dict[str, Any]]:
+    frames = _dict_list(value)
+    for frame in frames:
+        frame["players"] = [_finite_z_copy(player) for player in _dict_list(frame.get("players"))]
+        raw_bomb = frame.get("bombState")
+        bomb = _finite_z_copy(raw_bomb) if isinstance(raw_bomb, dict) else {"status": "unknown"}
+        status = bomb.get("status")
+        if not isinstance(status, str) or status not in {"unknown", "carried", "dropped", "planted", "defused", "exploded"}:
+            bomb = {"status": "unknown"}
+        if "x" in bomb or "y" in bomb:
+            if not _finite(bomb.get("x")) or not _finite(bomb.get("y")):
+                bomb.pop("x", None)
+                bomb.pop("y", None)
+        site = normalize_bomb_site(bomb.pop("site", None))
+        if site:
+            bomb["site"] = site
+        frame["bombState"] = bomb
+    return frames
 
 
 def normalize_kill_event(
@@ -150,7 +213,7 @@ def normalize_parser_event(
         return None
 
     raw_metadata = dict(event.get("metadata")) if isinstance(event.get("metadata"), dict) else {}
-    site = _optional_str(event.get("site"))
+    site = normalize_bomb_site(event.get("site")) or normalize_bomb_site(raw_metadata.pop("site", None))
     if site:
         raw_metadata["site"] = site
     metadata = _compact_metadata(raw_metadata)
@@ -197,6 +260,9 @@ def _normalize_rounds(value: Any) -> list[dict[str, Any]]:
 
 def _normalize_video(value: Any, tick_rate: int, tick_start: int, tick_end: int) -> dict[str, Any]:
     video = dict(value) if isinstance(value, dict) else {}
+    identity = normalize_video_identity(video)
+    video.pop("povSteamId", None)
+    video.pop("renderJobId", None)
     video_tick_rate = _positive_int_or_default(video.get("tickRate"), tick_rate)
     video_tick_start = _int_or_default(video.get("tickStart"), tick_start)
     video_tick_end = max(video_tick_start, _int_or_default(video.get("tickEnd"), tick_end))
@@ -209,6 +275,7 @@ def _normalize_video(value: Any, tick_rate: int, tick_start: int, tick_end: int)
     time_origin = float(video.get("timeOriginSeconds", 0) or 0) if _finite(video.get("timeOriginSeconds", 0)) else 0
     return {
         **video,
+        **identity,
         "status": str(video.get("status") or "ready"),
         "url": video.get("url"),
         "durationSeconds": max(0.0, duration_seconds),
@@ -296,20 +363,24 @@ def _attach_position(
         return
     event["x"] = position["x"]
     event["y"] = position["y"]
+    if _finite(position.get("z")):
+        event["z"] = float(position["z"])
 
 
 def _existing_position(source: dict[str, Any]) -> dict[str, float] | None:
     if not _finite(source.get("x")) or not _finite(source.get("y")):
         return None
-    return {"x": float(source["x"]), "y": float(source["y"])}
+    return {"x": float(source["x"]), "y": float(source["y"]),
+            **({"z": float(source["z"])} if _finite(source.get("z")) else {})}
 
 
 def _event_label(event_type: str, event: dict[str, Any], metadata: dict[str, Any]) -> str:
+    if event_type == "bomb_planted":
+        site = normalize_bomb_site(metadata.get("site"))
+        return f"Bomb planted {site}" if site else "Bomb planted"
     label = _optional_str(event.get("label"))
     if label:
         return label
-    if event_type == "bomb_planted" and metadata.get("site"):
-        return f"Bomb planted {metadata['site']}"
     return EVENT_LABELS[event_type]
 
 
@@ -429,7 +500,7 @@ def _normalize_side(value: Any) -> str | None:
 def _optional_int(value: Any) -> int | None:
     try:
         return int(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return None
 
 
@@ -450,5 +521,5 @@ def _optional_str(value: Any) -> str | None:
 def _finite(value: Any) -> bool:
     try:
         return math.isfinite(float(value))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return False

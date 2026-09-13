@@ -1,6 +1,6 @@
 "use client";
 
-import { FileUp, UploadCloud } from "lucide-react";
+import { FileUp, Loader2, UploadCloud } from "lucide-react";
 import { useRef } from "react";
 
 interface DemoUploaderProps {
@@ -19,13 +19,14 @@ export function DemoUploader({
   const inputRef = useRef<HTMLInputElement | null>(null);
 
   return (
-    <div className="upload-actions" aria-label="Create demo review">
+    <div className="upload-actions" aria-label="添加比赛">
       <input
         id={inputId}
         ref={inputRef}
         className="file-input"
         type="file"
         accept=".dem"
+        aria-label="选择 .dem 比赛文件"
         disabled={disabled}
         onChange={(event) => {
           const file = event.currentTarget.files?.[0];
@@ -37,29 +38,29 @@ export function DemoUploader({
       />
       <div className="upload-action-stack upload-real-action">
         <button
-          className="secondary-button"
+          className="primary-button"
           type="button"
           onClick={() => inputRef.current?.click()}
           disabled={disabled}
-          title="Upload a local .dem and queue the real parser flow"
+          title="上传 .dem 比赛文件，自动准备回放和复盘建议"
         >
-          <FileUp size={17} strokeWidth={2.2} />
-          Upload .dem
+          {disabled ? <Loader2 size={17} className="spin-icon" /> : <FileUp size={17} strokeWidth={2.2} />}
+          {disabled ? "正在添加…" : "上传比赛"}
         </button>
-        <span>parser intake</span>
+        <span>.dem 比赛文件</span>
       </div>
       <div className="upload-action-stack upload-mock-action">
         <button
-          className="primary-button"
+          className="secondary-button"
           type="button"
           onClick={onMockUpload}
           disabled={disabled}
-          title="Create a synthetic sandbox demo and queue a mock parse job"
+          title="创建一场模拟比赛，体验复盘功能"
         >
           <UploadCloud size={17} strokeWidth={2.2} />
-          Mock sandbox
+          示例比赛
         </button>
-        <span>synthetic sandbox</span>
+        <span>模拟数据</span>
       </div>
     </div>
   );

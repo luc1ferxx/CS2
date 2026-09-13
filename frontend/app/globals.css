@@ -6742,3 +6742,103 @@ select:disabled {
     opacity: 0.32;
   }
 }
+
+.personal-review-panel {
+  margin-bottom: 18px;
+  padding: 20px;
+}
+
+.personal-review-heading,
+.personal-review-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.personal-review-heading h2 { margin: 4px 0; }
+.personal-review-status { max-width: 700px; margin: 8px 0; color: var(--muted); font-size: 13px; }
+.personal-review-metrics { display: flex; flex-wrap: wrap; gap: 16px; font-size: 12px; color: var(--muted); }
+.personal-review-metrics strong { display: block; color: var(--text); font-size: 22px; font-variant-numeric: tabular-nums; }
+.personal-review-controls { margin-top: 12px; align-items: end; justify-content: start; }
+.personal-review-controls form,
+.personal-player-select { flex: 1 1 250px; min-width: 0; }
+.personal-review-controls label,
+.personal-player-select > span { display: block; margin-bottom: 7px; font-size: 12px; color: var(--muted); }
+.personal-identity-input { display: flex; gap: 8px; }
+.personal-review-controls input,
+.personal-review-controls select { min-width: 0; width: 100%; padding: 10px; border: 1px solid var(--line-strong); border-radius: var(--radius-hud); background: var(--surface); color: var(--text); }
+.personal-identity-input input { flex: 1; }
+.personal-identity-input button { flex-shrink: 0; }
+.personal-review-controls small { display: block; margin-top: 6px; color: var(--amber); }
+.personal-first-finding { margin-bottom: 7px; }
+.round-review-scope,
+.timeline-heading small { display: block; margin-top: 6px; color: var(--muted); font-size: 11px; }
+.coaching-guidance { padding: 10px 0; border-top: 1px solid var(--line); }
+.coaching-guidance strong { font-size: 12px; color: var(--text); }
+.coaching-guidance p { margin: 6px 0 0; color: var(--muted); font-size: 12px; line-height: 1.6; }
+
+@media (max-width: 600px) {
+  .personal-review-panel { padding: 14px; }
+  .personal-review-controls { gap: 12px; }
+  .personal-review-controls form,
+  .personal-player-select { flex-basis: 100%; }
+  .personal-first-finding { width: 100%; margin: 0; }
+}
+.clip-library {
+  padding: 14px 18px;
+}
+
+.clip-library-heading,
+.clip-library-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.clip-library-heading {
+  justify-content: space-between;
+}
+
+.clip-library-heading h2 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.clip-library-heading > span,
+.clip-library-empty,
+.clip-library-coordinate > span,
+.clip-library-coordinate > small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.clip-library-list {
+  list-style: none;
+  max-height: 260px;
+  overflow: auto;
+  margin: 12px 0 0;
+  padding: 0;
+}
+
+.clip-library-item {
+  padding: 10px;
+  border-top: 1px solid var(--line);
+  flex-wrap: wrap;
+}
+
+.clip-library-item.selected {
+  background: var(--teal-soft);
+}
+
+.clip-library-coordinate {
+  display: grid;
+  gap: 4px;
+  flex: 1 1 180px;
+  min-width: 0;
+}
+
+.clip-library-coordinate small {
+  overflow-wrap: anywhere;
+}

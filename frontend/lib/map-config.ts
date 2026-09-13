@@ -1,6 +1,8 @@
 import type { ReplayMapMetadata } from "@/types/replay";
 
 export type TacticalMapConfidence = "calibrated" | "approximate" | "fallback";
+export type TacticalMapLevel = "upper" | "lower";
+export type TacticalMapLevelMode = "auto" | TacticalMapLevel;
 export type TacticalMapTransform =
   | {
       type: "overview";
@@ -25,6 +27,8 @@ export interface TacticalMapConfig {
   displayName: string;
   radarImagePath: string;
   secondaryRadarImagePath?: string;
+  lowerLevelMaxZ?: number;
+  calibrationSource?: string;
   calibrated: boolean;
   confidence: Exclude<TacticalMapConfidence, "fallback">;
   attribution: string;
@@ -37,6 +41,8 @@ export interface TacticalMapPresentation {
   displayName: string;
   radarImagePath: string | null;
   secondaryRadarImagePath?: string | null;
+  lowerLevelMaxZ?: number;
+  calibrationSource?: string;
   calibrated: boolean;
   confidence: TacticalMapConfidence;
   attribution: string;
@@ -132,16 +138,18 @@ const TACTICAL_MAP_CONFIGS: Record<(typeof SUPPORTED_TACTICAL_MAP_NAMES)[number]
     displayName: "Nuke",
     radarImagePath: "/maps/de_nuke_radar.png",
     secondaryRadarImagePath: "/maps/de_nuke_lower_radar.png",
-    calibrated: false,
-    confidence: "approximate",
+    lowerLevelMaxZ: -495,
+    calibrationSource: "https://github.com/akiver/cs-demo-manager/blob/main/src/node/database/maps/default-maps.ts",
+    calibrated: true,
+    confidence: "calibrated",
     attribution: ASSET_ATTRIBUTION,
     source: "https://github.com/rabume/cs2-dma-radar",
     transform: {
-      type: "bounds",
-      minX: -4410,
-      maxX: 3040,
-      minY: -3290,
-      maxY: 3570
+      type: "overview",
+      posX: -3453,
+      posY: 2887,
+      scale: 7,
+      imageSize: 1024
     }
   },
   de_anubis: {
@@ -185,6 +193,8 @@ export function getTacticalMapPresentation(replay: {
       displayName: metadata.displayName,
       radarImagePath: metadata.radarImagePath,
       secondaryRadarImagePath: metadata.secondaryRadarImagePath ?? null,
+      lowerLevelMaxZ: metadata.lowerLevelMaxZ,
+      calibrationSource: metadata.calibrationSource,
       calibrated: metadata.calibrated,
       confidence: metadata.confidence,
       attribution: metadata.attribution,
@@ -247,6 +257,32 @@ export function sanitizeRadarPercent(value: number | null | undefined): number |
     return null;
   }
   return roundPercent(clamp(value));
+}
+
+export function getTacticalMapLevel(
+  config: Pick<TacticalMapPresentation, "secondaryRadarImagePath" | "lowerLevelMaxZ">,
+  z: number | null | undefined
+): TacticalMapLevel | null {
+  if (!config.secondaryRadarImagePath || !Number.isFinite(config.lowerLevelMaxZ) ||
+      typeof z !== "number" || !Number.isFinite(z)) {
+    return null;
+  }
+  return z <= config.lowerLevelMaxZ! ? "lower" : "upper";
+}
+
+export function resolveTacticalMapLevel(
+  config: TacticalMapPresentation,
+  mode: TacticalMapLevelMode,
+  selectedZ: number | null | undefined
+): { level: TacticalMapLevel; radarImagePath: string | null; followingPlayer: boolean } {
+  const playerLevel = getTacticalMapLevel(config, selectedZ);
+  const level = mode === "auto" ? playerLevel ?? "upper" : mode;
+  return {
+    level,
+    radarImagePath: level === "lower" && config.secondaryRadarImagePath
+      ? config.secondaryRadarImagePath : config.radarImagePath,
+    followingPlayer: mode === "auto" && playerLevel !== null
+  };
 }
 
 export function sanitizeRadarPoint<T extends { x?: number | null; y?: number | null }>(

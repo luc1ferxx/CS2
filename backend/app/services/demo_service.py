@@ -1,3 +1,4 @@
+import hashlib
 import io
 import json
 import logging
@@ -10,7 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, BinaryIO, Iterator
 
-from sqlalchemy import asc, case, desc, func, or_
+from sqlalchemy import asc, case, desc, func, or_, update
 from sqlalchemy.orm import Session
 
 from app.core.auth import normalize_owner_id
@@ -20,7 +21,7 @@ from app.models.coaching import CoachingEvent
 from app.models.demo import Demo
 from app.models.job import DemoJob
 from app.models.steam import SteamMatch
-from app.parser.replay_contract import normalize_replay_contract
+from app.parser.replay_contract import normalize_replay_contract, normalize_video_identity
 from app.schemas.coaching import CoachingEventOut
 from app.schemas.demo import (
     DemoIngestionStatus,
@@ -415,7 +416,7 @@ class DemoService:
             id=resolved_demo_id,
             owner_id=self._owner_id(),
             legacy_user_id=self._owner_id(),
-            name=f"Uploaded Demo {resolved_demo_id[:8]}",
+            name=accepted.display_filename,
             original_filename=accepted.display_filename,
             source_storage_key=accepted.reference,
             map_name="unknown",
@@ -1118,6 +1119,13 @@ class DemoService:
         return job
 
     def create_render_clip_job(self, demo: Demo, request: RenderClipRequest) -> DemoJob:
+        # PostgreSQL serializes matching requests before either can create a job.
+        query = self.db.query(Demo).filter(Demo.id == demo.id)
+        if self.owner_id is not None:
+            query = query.filter(Demo.owner_id == self.owner_id)
+        demo = query.populate_existing().with_for_update().one_or_none()
+        if demo is None or demo.status != "completed":
+            raise ValueError("Demo parse must complete before rendering")
         replay = self.load_replay_blob(demo)
         if replay is None:
             raise ValueError("Replay blob is not ready")
@@ -1134,8 +1142,30 @@ class DemoService:
                 f"Render clip duration must be {max_duration_seconds} seconds or less"
             )
 
-        job_id = str(uuid.uuid4())
-        _, pending = self._prepare_render_clip_video_status(demo, "queued", None)
+        request = self._resolve_render_pov(replay, request)
+        source_key = self.source_demo_storage_key(demo)
+        source_snapshot = None
+        if source_key.startswith("artifact://"):
+            parse_job = self.latest_parse_job(demo)
+            try:
+                source_snapshot = self.verify_source_artifact(demo, parse_job).snapshot
+            except (AcceptedArtifactError, AttributeError):
+                raise ValueError("Accepted render source is not available") from None
+        if settings.render_worker_mode == "external":
+            if source_snapshot is None:
+                raise ValueError("External rendering requires an accepted .dem upload")
+            if request.povSteamId is None:
+                raise ValueError("Select a player with a Steam ID before rendering")
+            if request.tickRate != replay.get("tickRate"):
+                raise ValueError("Render tickRate must match the parsed replay")
+            round_ends = [
+                value for item in replay.get("rounds", [])
+                if isinstance(item, dict)
+                and isinstance(value := item.get("endTick"), int)
+            ]
+            if request.tickStart < 0 or (round_ends and request.tickEnd > max(round_ends)):
+                raise ValueError("Render tick range must stay within the parsed replay")
+
         replay_storage_key = (
             getattr(demo, "replay_storage_key", None) or self.replay_blob_key(demo.id)
         )
@@ -1143,8 +1173,20 @@ class DemoService:
             request,
             duration_seconds=duration_seconds,
             max_duration_seconds=max_duration_seconds,
-            demo_storage_key=self.source_demo_storage_key(demo),
+            demo_storage_key=source_key,
             replay_storage_key=replay_storage_key,
+        )
+        if source_snapshot is not None:
+            metadata["sourceArtifact"] = source_snapshot.as_dict()
+        existing = self._reusable_render_clip_job(demo, metadata)
+        if existing is not None:
+            self.db.commit()
+            return existing
+
+        job_id = str(uuid.uuid4())
+        _, pending = self._prepare_render_clip_video_status(demo, "queued", None)
+        metadata["replayStorageKey"] = (
+            getattr(demo, "replay_storage_key", None) or self.replay_blob_key(demo.id)
         )
         job = DemoJob(
             id=job_id,
@@ -1165,17 +1207,66 @@ class DemoService:
             self._finish_replay_update(pending)
         self.db.refresh(job)
 
-        get_redis_client().lpush(
-            settings.redis_queue_name,
-            json.dumps(
-                {
-                    "job_id": job_id,
-                    "demo_id": demo.id,
-                    "job_type": RENDER_CLIP_JOB_TYPE,
-                }
-            ),
-        )
+        if settings.render_worker_mode == "fallback":
+            get_redis_client().lpush(
+                settings.redis_queue_name,
+                json.dumps(
+                    {
+                        "job_id": job_id,
+                        "demo_id": demo.id,
+                        "job_type": RENDER_CLIP_JOB_TYPE,
+                    }
+                ),
+            )
         return job
+
+    def _reusable_render_clip_job(
+        self, demo: Demo, requested: dict[str, Any]
+    ) -> DemoJob | None:
+        identity_fields = (
+            "demoStorageKey", "sourceArtifact", "playerId", "povSteamId",
+            "tickStart", "tickEnd", "tickRate", "renderPreset",
+        )
+        jobs = (
+            self.db.query(DemoJob)
+            .filter(
+                DemoJob.demo_id == demo.id,
+                DemoJob.job_type == RENDER_CLIP_JOB_TYPE,
+                DemoJob.status.in_(("queued", "pending", "rendering", "completed")),
+            )
+            .order_by(desc(DemoJob.created_at))
+            .all()
+        )
+        for job in jobs:
+            metadata = _job_metadata(job)
+            if any(metadata.get(key) != requested.get(key) for key in identity_fields):
+                continue
+            if job.status != "completed" or self.public_render_job_video(job) is not None:
+                return job
+        return None
+
+    def _resolve_render_pov(
+        self, replay: dict[str, Any], request: RenderClipRequest
+    ) -> RenderClipRequest:
+        if request.playerId is None and request.povSteamId is None:
+            return request
+        players = [player for player in replay.get("players", []) if isinstance(player, dict)]
+
+        def steam_id(player: dict[str, Any]) -> str | None:
+            value = player.get("steamId") or player.get("id")
+            if isinstance(value, str) and len(value) == 17 and value.isascii() and value.isdecimal():
+                return value
+            return None
+
+        matches = [
+            player for player in players
+            if (request.playerId is None or player.get("id") == request.playerId)
+            and (request.povSteamId is None or steam_id(player) == request.povSteamId)
+        ]
+        if len(matches) != 1:
+            raise ValueError("Render player and POV must identify one player in the replay")
+        selected = matches[0]
+        return request.model_copy(update={"playerId": selected["id"], "povSteamId": steam_id(selected)})
 
     def transition_mock_render_job(
         self,
@@ -1220,25 +1311,38 @@ class DemoService:
             self.db.query(DemoJob)
             .filter(DemoJob.demo_id == demo.id, DemoJob.job_type == RENDER_CLIP_JOB_TYPE)
             .order_by(desc(DemoJob.created_at))
-            .limit(20)
             .all()
         )
-        return [self.render_job_status(job) for job in jobs]
+        if not jobs:
+            return []
+        current_video = self.get_video_status(demo)
+        demo_video = self.public_video_status(demo, internal_video=current_video)
+        return [
+            self.render_job_status(job, demo_video=demo_video, current_video=current_video)
+            for job in jobs
+        ]
 
     def claim_render_clip_job(self, job: DemoJob) -> DemoJob:
         if job.job_type != RENDER_CLIP_JOB_TYPE:
             raise ValueError("Only render_clip jobs can be claimed by render workers")
         if job.status in {"completed", "failed"}:
             raise ValueError(f"Render job is already {job.status}")
-        if job.status not in {"queued", "pending"}:
-            return job
-
-        job.status = "rendering"
-        job.attempts += 1
-        if job.started_at is None:
-            job.started_at = utc_now()
-        job.finished_at = None
-        job.error_message = None
+        claimed = self.db.execute(
+            update(DemoJob)
+            .where(DemoJob.id == job.id, DemoJob.status.in_(("queued", "pending")))
+            .values(
+                status="rendering",
+                attempts=DemoJob.attempts + 1,
+                started_at=func.coalesce(DemoJob.started_at, utc_now()),
+                finished_at=None,
+                error_message=None,
+            )
+            .execution_options(synchronize_session=False)
+        )
+        if claimed.rowcount != 1:
+            self.db.rollback()
+            raise ValueError("Render job is already claimed or finished")
+        self.db.refresh(job)
         _, pending = self._prepare_render_clip_video_status(
             job.demo,
             "rendering",
@@ -1291,14 +1395,20 @@ class DemoService:
             .first()
         )
 
-    def render_job_status(self, job: DemoJob) -> RenderJobStatus:
+    def render_job_status(
+        self, job: DemoJob, *,
+        demo_video: dict[str, Any] | None = None,
+        current_video: dict[str, Any] | None = None,
+    ) -> RenderJobStatus:
         metadata = _job_metadata(job)
         public_metadata = {
             key: value
             for key, value in metadata.items()
-            if key not in {"demoStorageKey", "replayStorageKey", "outputArtifact"}
+            if key not in {"demoStorageKey", "replayStorageKey", "outputArtifact", "sourceArtifact", "completedVideo"}
         }
-        video = self.public_video_status(job.demo) if job.demo is not None else {}
+        video = demo_video if demo_video is not None else (
+            self.public_video_status(job.demo) if job.demo is not None else {}
+        )
         error_code, error_message = _public_render_failure(
             job.status,
             None,
@@ -1311,6 +1421,7 @@ class DemoService:
             status=job.status,
             source=_optional_str(video.get("source")) or "unknown",
             video_status=_optional_str(video.get("status")),
+            video=self.public_render_job_video(job, current_video=current_video),
             tick_start=_optional_int(metadata.get("tickStart")),
             tick_end=_optional_int(metadata.get("tickEnd")),
             tick_rate=_optional_int(metadata.get("tickRate")),
@@ -1338,19 +1449,18 @@ class DemoService:
             _optional_str(metadata.get("demoStorageKey"))
             or self.source_demo_storage_key(demo)
         )
-        demo_file_path = (
-            ""
-            if demo_storage_key.startswith("artifact://")
-            else str(self.source_demo_path(demo))
-        )
+        source_snapshot = self._render_source_snapshot(job) if metadata.get("sourceArtifact") else None
         return RenderJobManifest(
             manifestVersion=RENDER_WORKER_MANIFEST_VERSION,
             jobId=job.id,
             demoId=demo.id,
             jobType=job.job_type,
             status=job.status,
-            demoFilePath=demo_file_path,
+            demoFilePath="",
             demoStorageKey=demo_storage_key,
+            demoDownloadPath=f"/render-worker/jobs/{job.id}/source" if source_snapshot else None,
+            sourceSizeBytes=source_snapshot.size_bytes if source_snapshot else None,
+            sourceSha256=source_snapshot.sha256 if source_snapshot else None,
             replayStorageKey=getattr(demo, "replay_storage_key", None)
             or _optional_str(metadata.get("replayStorageKey")),
             originalFilename=demo.original_filename,
@@ -1365,11 +1475,81 @@ class DemoService:
             renderPreset=_optional_str(metadata.get("renderPreset")) or RENDER_CLIP_DEFAULT_PRESET,
         )
 
+    def _render_source_snapshot(self, job: DemoJob) -> AcceptedArtifactSnapshot:
+        try:
+            snapshot = parse_source_artifact_snapshot(_job_metadata(job).get("sourceArtifact"))
+            if (
+                job.job_type != RENDER_CLIP_JOB_TYPE
+                or snapshot.reference != job.demo.source_storage_key
+                or snapshot.reference != _job_metadata(job).get("demoStorageKey")
+            ):
+                raise ValueError
+            self.artifact_store.require_binding(
+                snapshot.reference,
+                owner_id=job.demo.owner_id,
+                demo_id=job.demo_id,
+                kind="source",
+                state="accepted",
+            )
+            return snapshot
+        except (AcceptedArtifactError, ArtifactStoreError, ValueError):
+            raise ValueError("Accepted render source binding is invalid") from None
+
+    def open_render_source(self, job: DemoJob) -> tuple[Any, AcceptedArtifactSnapshot]:
+        if job.status != "rendering":
+            raise ValueError("Render source download requires a rendering job")
+        snapshot = self._render_source_snapshot(job)
+        opened = None
+        try:
+            verified = verify_accepted_artifact(
+                self.artifact_store,
+                snapshot.reference,
+                owner_id=job.demo.owner_id,
+                demo_id=job.demo_id,
+                kind="source",
+                snapshot=snapshot,
+                max_bytes=settings.max_demo_upload_bytes,
+            )
+            opened = self.artifact_store.read_range(
+                snapshot.reference,
+                expected_generation=snapshot.generation,
+            )
+            if (
+                AcceptedArtifactSnapshot.from_metadata(opened.metadata) != verified.snapshot
+                or opened.start != 0
+                or opened.length != snapshot.size_bytes
+                or opened.total_size != snapshot.size_bytes
+            ):
+                raise ValueError
+            return opened, snapshot
+        except (AcceptedArtifactError, ArtifactStoreError, ValueError):
+            if opened is not None:
+                opened.close()
+            raise ValueError("Accepted render source is not available") from None
+
+    @staticmethod
+    def stream_render_source(opened: Any, snapshot: AcceptedArtifactSnapshot) -> Iterator[bytes]:
+        digest = hashlib.sha256()
+        size = 0
+        try:
+            for chunk in opened.iter_chunks(settings.upload_chunk_bytes):
+                size += len(chunk)
+                if size > snapshot.size_bytes:
+                    raise ValueError("Accepted render source integrity check failed")
+                digest.update(chunk)
+                yield chunk
+            if size != snapshot.size_bytes or digest.hexdigest() != snapshot.sha256:
+                raise ValueError("Accepted render source integrity check failed")
+        finally:
+            opened.close()
+
     def bind_render_worker_media(
         self,
         job: DemoJob,
         stored_video: StoredVideoUpload,
     ) -> AcceptedArtifactSnapshot:
+        # Serialize with completion so a late upload cannot replace a saved clip.
+        self.db.refresh(job, with_for_update=True)
         if job.job_type != RENDER_CLIP_JOB_TYPE:
             raise ValueError("Only render_clip jobs accept render worker media")
         if job.status != "rendering":
@@ -1469,11 +1649,123 @@ class DemoService:
             raise ValueError("Render worker media binding is invalid") from None
         return snapshot
 
+    def _verified_render_job_output(self, job: DemoJob) -> VerifiedAcceptedArtifact | None:
+        if (
+            job.job_type != RENDER_CLIP_JOB_TYPE
+            or job.status != "completed"
+            or job.demo is None
+            or (self.owner_id is not None and job.demo.owner_id != self.owner_id)
+        ):
+            return None
+        try:
+            snapshot = self._job_output_artifact(job)
+            if snapshot is None:
+                return None
+            return head_accepted_video(
+                self.artifact_store, snapshot.reference,
+                owner_id=job.demo.owner_id, demo_id=job.demo_id,
+                snapshot=snapshot, max_bytes=settings.max_video_upload_bytes,
+            )
+        except (AcceptedArtifactError, ArtifactStoreError, ValueError, OSError):
+            return None
+
+    def public_render_job_video(
+        self, job: DemoJob, *, current_video: dict[str, Any] | None = None
+    ) -> dict[str, Any] | None:
+        verified = self._verified_render_job_output(job)
+        if verified is None:
+            return None
+        metadata = _job_metadata(job)
+        calibration = metadata.get("completedVideo")
+        if not isinstance(calibration, dict):
+            # Older successful jobs kept calibration only in the active replay video.
+            current = current_video if current_video is not None else self.get_video_status(job.demo)
+            if (
+                current.get("status") != "ready"
+                or current.get("renderJobId") != job.id
+                or current.get("storageKey") != verified.snapshot.reference
+                or any(current.get(key) != metadata.get(key) for key in ("tickStart", "tickEnd", "tickRate"))
+            ):
+                return None
+            calibration = current
+        duration = _optional_float(calibration.get("durationSeconds"))
+        origin = _optional_float(calibration.get("timeOriginSeconds"))
+        start, end, rate = (
+            _optional_int(metadata.get(key)) for key in ("tickStart", "tickEnd", "tickRate")
+        )
+        if (
+            duration is None or origin is None
+            or not math.isfinite(duration) or not math.isfinite(origin)
+            or duration <= 0 or origin < 0 or origin >= duration
+            or start is None or end is None or rate is None or rate <= 0 or end <= start
+        ):
+            return None
+        return {
+            "status": "ready", "source": "rendered",
+            "url": f"/demos/{job.demo_id}/render/jobs/{job.id}/media/video",
+            "durationSeconds": duration, "timeOriginSeconds": origin,
+            "tickStart": start, "tickEnd": end, "tickRate": rate,
+            "povSteamId": _optional_str(metadata.get("povSteamId")),
+            "renderJobId": job.id, "errorCode": None, "errorMessage": None,
+        }
+
+    def open_private_render_video(
+        self, demo: Demo, job_id: str
+    ) -> tuple[BinaryIO, Any] | None:
+        job = (
+            self.db.query(DemoJob)
+            .filter(DemoJob.id == job_id, DemoJob.demo_id == demo.id)
+            .one_or_none()
+        )
+        if job is None:
+            return None
+        verified = self._verified_render_job_output(job)
+        if verified is None:
+            return None
+        return (
+            _AcceptedVideoHandle(
+                store=self.artifact_store, reference=verified.snapshot.reference,
+                owner_id=demo.owner_id, demo_id=demo.id, verified=verified,
+            ),
+            _PrivateArtifactStat(verified.snapshot.size_bytes),
+        )
+
+    def _retain_current_render_video(self, demo: Demo, video: Any) -> None:
+        if not isinstance(video, dict) or video.get("source") != "rendered":
+            return
+        job_id = _optional_str(video.get("renderJobId"))
+        if job_id is None:
+            return
+        job = self.db.query(DemoJob).filter(
+            DemoJob.id == job_id, DemoJob.demo_id == demo.id,
+        ).one_or_none()
+        if job is None or "completedVideo" in _job_metadata(job):
+            return
+        public_video = self.public_render_job_video(job)
+        if public_video is not None:
+            metadata = _job_metadata(job)
+            metadata["completedVideo"] = {
+                key: public_video[key] for key in ("durationSeconds", "timeOriginSeconds")
+            }
+            job.metadata_json = _metadata_json(metadata)
+
+    def _completed_render_retains_video(self, demo: Demo, reference: str) -> bool:
+        jobs = self.db.query(DemoJob).filter(
+            DemoJob.demo_id == demo.id, DemoJob.job_type == RENDER_CLIP_JOB_TYPE,
+            DemoJob.status == "completed",
+        ).all()
+        return any(
+            isinstance(output := _job_metadata(job).get("outputArtifact"), dict)
+            and output.get("reference") == reference
+            for job in jobs
+        )
+
     def apply_render_worker_result(
         self,
         job: DemoJob,
         result: RenderWorkerResult,
     ) -> dict[str, Any]:
+        self.db.refresh(job, with_for_update=True)
         if job.job_type != RENDER_CLIP_JOB_TYPE:
             raise ValueError("Only render_clip jobs accept render worker results")
         if job.status in {"completed", "failed"}:
@@ -1496,6 +1788,7 @@ class DemoService:
         if normalized_status not in {"completed", "ready"}:
             raise ValueError("status must be completed or failed")
 
+        self.db.refresh(job.demo, with_for_update=True)
         video = self._completed_render_clip_video(job, result)
         pending = self._prepare_replay_video_update(job.demo, video)
         video = pending.video
@@ -1506,6 +1799,9 @@ class DemoService:
         job.finished_at = utc_now()
         metadata = _job_metadata(job)
         metadata["replayStorageKey"] = pending.next_reference
+        metadata["completedVideo"] = {
+            key: video[key] for key in ("durationSeconds", "timeOriginSeconds")
+        }
         job.metadata_json = _metadata_json(metadata)
         try:
             self.db.commit()
@@ -1524,6 +1820,7 @@ class DemoService:
         *,
         error_code: str,
     ) -> dict[str, Any]:
+        self.db.refresh(job, with_for_update=True)
         if job.job_type != RENDER_CLIP_JOB_TYPE:
             raise ValueError("Only render_clip jobs can enter render failure")
         if job.status in {"completed", "failed"}:
@@ -1661,8 +1958,11 @@ class DemoService:
             return video
         raise ValueError("Invalid replay video contract")
 
-    def public_video_status(self, demo: Demo) -> dict[str, Any]:
-        internal_video = self.get_video_status(demo)
+    def public_video_status(
+        self, demo: Demo, *, internal_video: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        if internal_video is None:
+            internal_video = self.get_video_status(demo)
         video = _project_fields(
             internal_video,
             (
@@ -1675,6 +1975,7 @@ class DemoService:
                 "timeOriginSeconds",
             ),
         )
+        video.update(normalize_video_identity(internal_video))
         error_code, error_message = _public_render_failure(
             _optional_str(internal_video.get("status")),
             _optional_str(internal_video.get("errorCode")),
@@ -1797,6 +2098,7 @@ class DemoService:
             previous_reference
             and previous_reference.startswith("artifact://")
             and previous_reference != stored_video.storage_key
+            and not self._completed_render_retains_video(demo, previous_reference)
         ):
             self._delete_artifact_safely(previous_reference)
         return updated
@@ -1848,6 +2150,7 @@ class DemoService:
         replay = self.load_replay_blob(demo)
         if replay is None:
             raise ValueError("Replay blob is not ready")
+        self._retain_current_render_video(demo, replay.get("video"))
         replay["video"] = self._with_video_contract_defaults(video, replay)
         previous_reference = getattr(demo, "replay_storage_key", None)
         next_reference = self.write_replay_blob(demo.id, replay)
@@ -1899,8 +2202,12 @@ class DemoService:
         *,
         error_code: str | None = None,
     ) -> tuple[dict[str, Any], _PendingReplayUpdate | None]:
+        # A different job may have completed since this worker loaded the demo.
+        self.db.refresh(demo, with_for_update=True)
         current_video = self.get_video_status(demo)
-        if current_video.get("source") == "manual_upload":
+        if current_video.get("source") == "manual_upload" or (
+            current_video.get("status") == "ready" and self.private_video_available(demo)
+        ):
             return current_video, None
 
         public_error_code, public_error_message = _public_render_failure(
@@ -1983,6 +2290,8 @@ class DemoService:
             "tickEnd": result.tickEnd,
             "tickRate": result.tickRate,
             "source": "rendered",
+            "povSteamId": _optional_str(metadata.get("povSteamId")),
+            "renderJobId": job.id,
             "errorCode": None,
             "errorMessage": None,
             "timeOriginSeconds": result.timeOriginSeconds,
@@ -2046,8 +2355,13 @@ class DemoService:
             duration_seconds = round((tick_end - tick_start) / tick_rate, 2)
         time_origin_seconds = float(video.get("timeOriginSeconds", 0) or 0)
 
+        normalized_video = {
+            key: value for key, value in video.items()
+            if key not in {"povSteamId", "renderJobId"}
+        }
         return {
-            **video,
+            **normalized_video,
+            **normalize_video_identity(video),
             "status": video.get("status", "pending"),
             "url": video.get("url"),
             "durationSeconds": max(0, float(duration_seconds)),
@@ -2431,6 +2745,8 @@ def _public_map_metadata(value: dict[str, Any]) -> dict[str, Any]:
             "displayName",
             "radarImagePath",
             "secondaryRadarImagePath",
+            "lowerLevelMaxZ",
+            "calibrationSource",
             "calibrated",
             "confidence",
             "attribution",
@@ -2462,16 +2778,16 @@ def _public_replay_frame(value: dict[str, Any]) -> dict[str, Any]:
     projected["players"] = [
         _project_fields(
             player,
-            ("id", "name", "side", "x", "y", "alive", "hp", "hasBomb"),
+            ("id", "name", "side", "x", "y", "z", "alive", "hp", "hasBomb"),
         )
         for player in players
         if isinstance(player, dict)
     ] if isinstance(players, list) else []
     bomb_state = value.get("bombState")
     projected["bombState"] = (
-        _project_fields(bomb_state, ("status", "carrierPlayerId", "x", "y", "site"))
+        _project_fields(bomb_state, ("status", "carrierPlayerId", "x", "y", "z", "site"))
         if isinstance(bomb_state, dict)
-        else {"status": "carried"}
+        else {"status": "unknown"}
     )
     return projected
 
@@ -2511,6 +2827,7 @@ def _public_replay_event(value: dict[str, Any]) -> dict[str, Any]:
             "side",
             "x",
             "y",
+            "z",
             "label",
         ),
     )

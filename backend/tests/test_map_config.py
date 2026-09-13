@@ -5,6 +5,13 @@ from app.parser.normalizer import normalize_parser_output
 
 
 class MapConfigTest(unittest.TestCase):
+    def test_nuke_overview_and_floor_threshold(self) -> None:
+        config = get_map_config("de_nuke")
+        self.assertEqual(config["lowerLevelMaxZ"], -495)
+        self.assertEqual(config["secondaryRadarImagePath"], "/maps/de_nuke_lower_radar.png")
+        self.assertEqual(world_to_radar_percent("de_nuke", -3453, 2887), {"x": 0, "y": 0, "confidence": "calibrated"})
+        self.assertEqual(world_to_radar_percent("de_nuke", 3715, -4281), {"x": 100, "y": 100, "confidence": "calibrated"})
+
     def test_supported_maps_have_radar_metadata(self) -> None:
         self.assertEqual(
             SUPPORTED_MAP_NAMES,

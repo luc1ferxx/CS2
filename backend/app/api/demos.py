@@ -1,7 +1,9 @@
 import secrets
 
 from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, Response, UploadFile
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
+from starlette.background import BackgroundTask
 
 from app.core.auth import get_current_owner_id
 from app.core.config import settings
@@ -109,7 +111,9 @@ def render_job_created_response(
     job_status: RenderJobStatus,
     video: ReplayVideoStatus,
 ) -> RenderJobCreated:
-    return RenderJobCreated(**job_status.model_dump(), video=video)
+    return RenderJobCreated(
+        **job_status.model_dump(exclude={"video"}), video=job_status.video or video
+    )
 
 
 @router.get("/demos/{demo_id}/status", response_model=DemoStatus)
@@ -307,6 +311,34 @@ def get_render_worker_manifest(
         return service.render_job_manifest(job)
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.get("/render-worker/jobs/{job_id}/source", tags=["render-worker"])
+def download_render_worker_source(
+    job_id: str,
+    _: None = Depends(require_render_worker_token),
+    db: Session = Depends(get_db),
+) -> StreamingResponse:
+    service = DemoService.for_internal(db)
+    job = service.get_render_clip_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Render clip job not found")
+    try:
+        opened, snapshot = service.open_render_source(job)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from None
+    return StreamingResponse(
+        service.stream_render_source(opened, snapshot),
+        media_type="application/octet-stream",
+        headers={
+            "Content-Length": str(snapshot.size_bytes),
+            "Content-Disposition": 'attachment; filename="source.dem"',
+            "X-Content-SHA256": snapshot.sha256,
+            "Cache-Control": "private, no-store",
+            "X-Content-Type-Options": "nosniff",
+        },
+        background=BackgroundTask(opened.close),
+    )
 
 
 @router.post(

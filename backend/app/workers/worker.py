@@ -92,13 +92,7 @@ def process_real_parse_job(db: Session, demo: Demo, job: DemoJob) -> None:
         _fail_classified_parse_job(service, demo, job, exc, phase="normalization")
         return
 
-    service.complete_parse_job(
-        demo,
-        job,
-        replay,
-        events,
-        name=f"{replay['mapName']} parser spike {demo.id[:8]}",
-    )
+    service.complete_parse_job(demo, job, replay, events)
 
 
 def process_mock_render_job(db: Session, demo: Demo, job: DemoJob) -> None:
@@ -121,6 +115,10 @@ def process_mock_render_job(db: Session, demo: Demo, job: DemoJob) -> None:
 
 
 def process_render_clip_job(db: Session, demo: Demo, job: DemoJob) -> None:
+    # An external renderer polls the durable DB queue; stale Redis deliveries
+    # must not claim or fail its jobs after the mode is enabled.
+    if settings.render_worker_mode == "external":
+        return
     service = DemoService.for_internal(db)
 
     if job.status != "queued":
@@ -129,7 +127,14 @@ def process_render_clip_job(db: Session, demo: Demo, job: DemoJob) -> None:
     if service.load_replay_blob(demo) is None:
         raise ValueError("Replay blob is not ready")
 
-    service.claim_render_clip_job(job)
+    try:
+        service.claim_render_clip_job(job)
+    except ValueError:
+        # Another worker may have claimed the job since the initial read.
+        db.refresh(job)
+        if job.status != "queued":
+            return
+        raise
     service.fail_render_clip_job(
         job,
         RENDER_CLIP_NOT_CONNECTED_ERROR,

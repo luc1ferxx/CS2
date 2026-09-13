@@ -136,7 +136,7 @@ export function friendlyErrorMessage(message: string | null | undefined): string
 }
 
 export function shouldPollLibrary(input: PollLibraryInput): boolean {
-  return input.loading || input.creating || input.activeJobs > 0;
+  return !input.loading && (input.creating || input.activeJobs > 0);
 }
 
 export function libraryEmptyState(input: LibraryEmptyStateInput): LibraryEmptyState | null {
@@ -299,8 +299,16 @@ export type PlaybackReadiness = "ready" | "rendering" | "none" | "unavailable";
  *  - none: no video yet, but the parsed 2D tactical replay is watchable
  *  - unavailable: demo hasn't finished parsing, nothing to watch yet */
 export function playbackReadiness(demo: DemoSummary): PlaybackReadiness {
+  const hasRealVideoSource =
+    demo.video_source === "rendered" ||
+    demo.video_source === "manual_upload" ||
+    demo.video_source == null;
+  // A mock replay's ready state describes the tactical replay, not real footage.
+  // Older summaries can omit video status/source and expose only the completed job.
   const videoReady =
-    demo.latest_render_status === "completed" || demo.video_status === "ready";
+    hasRealVideoSource &&
+    (demo.video_status === "ready" ||
+      (demo.video_status == null && demo.latest_render_status === "completed"));
   if (videoReady) {
     return "ready";
   }

@@ -8,6 +8,8 @@ import { renderToStaticMarkup } from "react-dom/server";
 import vm from "node:vm";
 import ts from "typescript";
 
+import { parserEventReplay } from "./test-fixtures/replay-quality.mjs";
+
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const nodeRequire = createRequire(import.meta.url);
 
@@ -75,6 +77,16 @@ function loadTypeScriptModule(relativePath, runtimeImports = {}) {
       crossOrigin: "use-credentials"
     }
   );
+  assert.deepEqual(
+    { ...media.resolvePrivateMediaSource("/demos/demo-1/render/jobs/job-1/media/video") },
+    { src: "http://localhost:8000/demos/demo-1/render/jobs/job-1/media/video", crossOrigin: "use-credentials" }
+  );
+  for (const invalid of [
+    "/demos/demo-1/render/jobs/../media/video",
+    "/demos/demo-1/render/jobs/job-1/media/video?url=https://outside.example",
+    "/demos/demo-1/render/jobs/%2e%2e/media/video",
+    "/demos/demo-1/render/jobs/job-1/manifest"
+  ]) assert.equal(media.resolvePrivateMediaSource(invalid), null);
 }
 
 {
@@ -156,4 +168,109 @@ function loadTypeScriptModule(relativePath, runtimeImports = {}) {
   assert.match(playerSource, /crossOrigin=/);
   assert.match(playerSource, /refreshSession/);
   assert.doesNotMatch(playerSource, /createObjectURL|revokeObjectURL|fetch\s*\(/);
+}
+
+{
+  const { FirstPersonReplay } = loadTypeScriptModule(
+    "../components/replay/FirstPersonReplay.tsx",
+    {
+      "react/jsx-runtime": nodeRequire("react/jsx-runtime"),
+      react: nodeRequire("react"),
+      "lucide-react": nodeRequire("lucide-react"),
+      "@/components/auth/AuthProvider": { useAuth: () => ({ refreshSession: async () => true }) },
+      "@/lib/demo-library": loadTypeScriptModule("./demo-library.ts"),
+      "@/lib/media-url": loadTypeScriptModule("./media-url.ts"),
+      "@/lib/replay-time": loadTypeScriptModule("./replay-time.ts")
+    }
+  );
+
+  const { videoPlaybackState } = loadTypeScriptModule("./replay-time.ts");
+  function playerMarkup(videoOverrides = {}, replayOverrides = {}, currentTick = 100, selectedPlayerId = null, playerProps = {}) {
+    const fixture = parserEventReplay();
+    const replay = {
+      ...fixture,
+      video: { ...fixture.video, status: "ready", ...videoOverrides },
+      ...replayOverrides
+    };
+    return renderToStaticMarkup(React.createElement(FirstPersonReplay, {
+      replay,
+      currentTick,
+      playing: false,
+      speed: 1,
+      playbackState: videoPlaybackState(replay.video, currentTick, selectedPlayerId),
+      mediaUnavailable: false,
+      renderRequesting: false,
+      renderClipRequesting: false,
+      latestRenderClipJob: null,
+      onRequestMockRender() {},
+      onRequestRenderClip() {},
+      onVideoTickChange() {},
+      onVideoUnavailable() {},
+      onViewVideoClip() {},
+      ...playerProps
+    }));
+  }
+
+  const replayOnlyMarkup = playerMarkup();
+  assert.match(replayOnlyMarkup, /战术回放已就绪/);
+  assert.match(replayOnlyMarkup, /尚未生成第一人称视频/);
+  assert.doesNotMatch(replayOnlyMarkup, /视频文件尚未就绪/);
+  assert.match(replayOnlyMarkup, /生成这一刻的视频/);
+  assert.doesNotMatch(replayOnlyMarkup, /模拟视频任务/);
+  assert.match(playerMarkup({}, {}, 100, null, { showDevActions: true }), /模拟视频任务/);
+
+  const noFramesMarkup = playerMarkup({}, { frames: [] });
+  assert.match(noFramesMarkup, /暂无回放视频/);
+  assert.match(noFramesMarkup, /该比赛暂未提供可用的位置数据/);
+  assert.doesNotMatch(noFramesMarkup, /战术回放已就绪/);
+
+  for (const source of ["rendered", "manual_upload"]) {
+    const missingMediaMarkup = playerMarkup({ source });
+    assert.match(missingMediaMarkup, /视频文件尚未就绪/);
+    assert.match(missingMediaMarkup, /任务已结束/);
+    assert.doesNotMatch(missingMediaMarkup, /尚未生成第一人称视频/);
+  }
+
+  const queuedMarkup = playerMarkup({ status: "queued" });
+  assert.match(queuedMarkup, /视频等待生成/);
+  assert.doesNotMatch(queuedMarkup, /战术回放已就绪/);
+
+  const playableMarkup = playerMarkup({
+    source: "rendered", url: "/demos/demo-1/media/video",
+    tickStart: 0, tickEnd: 640, durationSeconds: 10
+  });
+  assert.match(playableMarkup, /<video/);
+  assert.doesNotMatch(playableMarkup, /render-status-overlay/);
+  assert.match(playableMarkup, /玩家视角未确认/);
+
+  const xelexId = "76561198998266210";
+  const clip = {
+    source: "rendered", url: "/demos/demo-1/media/video", povSteamId: xelexId,
+    tickStart: 6363, tickEnd: 7643, tickRate: 64, durationSeconds: 20
+  };
+  const players = [{ id: xelexId, name: "xelex", side: "T", color: "#fff" }];
+  const xelexClipMarkup = playerMarkup(clip, { players }, 6683, xelexId);
+  assert.match(xelexClipMarkup, /<video/);
+  assert.match(xelexClipMarkup, /xelex 的视角/);
+  assert.match(xelexClipMarkup, /观看 xelex 视频/);
+  assert.match(xelexClipMarkup, /0:05/);
+  const compactMarkup = playerMarkup(clip, { players }, 6683, xelexId, { compact: true });
+  assert.match(compactMarkup, /<video/);
+  assert.doesNotMatch(compactMarkup, /first-person-header|模拟视频任务|生成这一刻的视频/);
+  assert.doesNotMatch(compactMarkup, /视角未确认/);
+  const unverifiedCompactMarkup = playerMarkup({ ...clip, source: "manual_upload", povSteamId: null }, { players }, 6683, xelexId, { compact: true });
+  assert.match(unverifiedCompactMarkup, /<video/);
+  assert.match(unverifiedCompactMarkup, /class="hud-chip">视角未确认/);
+  assert.doesNotMatch(unverifiedCompactMarkup, /first-person-header/);
+  for (const tick of [6362, 7643, 20000]) {
+    const outsideClipMarkup = playerMarkup(clip, { players }, tick, xelexId);
+    assert.doesNotMatch(outsideClipMarkup, /<video/);
+    assert.match(outsideClipMarkup, /当前时刻不在视频范围内/);
+    assert.match(outsideClipMarkup, /战术回放/);
+    assert.match(outsideClipMarkup, /观看 xelex 视频/);
+  }
+
+  const invalidMediaMarkup = playerMarkup({ source: "rendered", url: "https://cdn.example/clip.mp4" });
+  assert.match(invalidMediaMarkup, /未能加载这段视频/);
+  assert.doesNotMatch(invalidMediaMarkup, /战术回放已就绪/);
 }

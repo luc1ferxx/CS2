@@ -24,6 +24,7 @@ function loadTypeScriptModule(relativePath) {
     exports: module.exports,
     module,
     require(specifier) {
+      if (specifier === "@/lib/bomb-site") return loadTypeScriptModule("./bomb-site.ts");
       if (specifier.startsWith("@/types/")) {
         return {};
       }
@@ -203,6 +204,27 @@ const events = [
 }
 
 {
+  const summary = evidenceSummaryForEvent({
+    ...events[2],
+    structured_context_json: {
+      ...events[2].structured_context_json,
+      verticalDistanceWorldUnits: 0,
+      maxStackedVerticalDistanceWorldUnits: 96
+    }
+  });
+  assert.deepEqual(normalize(summary.slice(0, 3)), [
+    { label: "distance", value: "2.1" },
+    { label: "verticalDistanceWorldUnits", value: "0" },
+    { label: "maxStackedVerticalDistanceWorldUnits", value: "96" }
+  ]);
+  assert.deepEqual(normalize(evidenceSummaryForEvent(events[2])), [
+    { label: "distance", value: "2.1" },
+    { label: "evidenceTicks", value: "1600" },
+    { label: "spacingType", value: "stacked" }
+  ], "Legacy findings without vertical evidence keep their existing evidence");
+}
+
+{
   const summary = evidenceSummaryForEvent(
     coachingEvent({
       id: "unknown-metadata",
@@ -238,6 +260,27 @@ const events = [
       { id: "spacing", leftPercent: 75, severity: "low" }
     ]
   );
+}
+
+{
+  for (const site of [313, "313", 0, 1, "0", "1", true, {}, []]) {
+    const event = coachingEvent({ id: "legacy-nuke-plant", tick_start: 90539,
+      structured_context_json: { bombEventType: "bomb_planted", bombEventLabel: "Bomb planted 313", site } });
+    const summary = evidenceSummaryForEvent(event);
+    assert.equal(summary.find((item) => item.label === "bombEventLabel").value, "炸弹已安放（包点未知）");
+    // Empty malformed arrays are intentionally omitted by the general evidence guard.
+    if (!Array.isArray(site)) assert.equal(summary.find((item) => item.label === "site").value, "未知");
+    assert.equal(event.structured_context_json.bombEventLabel, "Bomb planted 313");
+  }
+  for (const site of ["A", " b "]) {
+    const summary = evidenceSummaryForEvent(coachingEvent({ tick_start: 1,
+      structured_context_json: { bombEventType: "bomb_planted", bombEventLabel: "Bomb planted 313", site } }));
+    assert.equal(summary.find((item) => item.label === "site").value, site.trim().toUpperCase());
+    assert.match(summary.find((item) => item.label === "bombEventLabel").value, /[AB] 点/);
+  }
+  const legacyLabelOnly = evidenceSummaryForEvent(coachingEvent({ tick_start: 1,
+    structured_context_json: { bombEventLabel: "Bomb planted A" } }));
+  assert.equal(legacyLabelOnly[0].value, "炸弹已安放（A 点）");
 }
 
 function coachingEvent(overrides) {

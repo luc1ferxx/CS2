@@ -1,5 +1,11 @@
 # Map Asset Attribution
 
+Nuke's overview transform (`posX=-3453`, `posY=2887`, `scale=7`,
+1024 overview units) and lower floor threshold (`z <= -495`) use the CS2
+configuration maintained by [CS Demo Manager](https://github.com/akiver/cs-demo-manager/blob/main/src/node/database/maps/default-maps.ts),
+checked 2026-09-07. Upper and lower images share the same XY transform; Z remains
+in world units. Missing Z is shown explicitly instead of assigning a floor.
+
 The replay viewer uses CS2 radar images from `rabume/cs2-dma-radar`:
 
 - Source repository: https://github.com/rabume/cs2-dma-radar
@@ -21,12 +27,13 @@ licensed internal asset pipeline.
 | `de_inferno_radar.png` | CS2 Inferno tactical radar background | https://raw.githubusercontent.com/rabume/cs2-dma-radar/main/client/src/assets/map/de_inferno_radar.png | `074557015e7c5778a6f7177fe118d18152da351897a88ed55c29a29b67139415` |
 | `de_mirage_radar.png` | CS2 Mirage tactical radar background | https://raw.githubusercontent.com/rabume/cs2-dma-radar/main/client/src/assets/map/de_mirage_radar.png | `72b825fcd0e1ba1b7b6cd0129f8fc67eb08ff5809c15da9ddc34e35b9e13b1fd` |
 | `de_nuke_radar.png` | CS2 Nuke upper tactical radar background | https://raw.githubusercontent.com/rabume/cs2-dma-radar/main/client/src/assets/map/de_nuke_radar.png | `e648fa0e262f7a0f92f5243fe947179b6888e904a0cd85e9cafaf03252535d04` |
-| `de_nuke_lower_radar.png` | CS2 Nuke lower tactical radar background, reserved for future floor-aware rendering | https://raw.githubusercontent.com/rabume/cs2-dma-radar/main/client/src/assets/map/de_nuke_lower_radar.png | `046e4ff6ada2fcf97a755b07c9669912b74037ffdff1d95c294bd4e3e0cb399e` |
+| `de_nuke_lower_radar.png` | CS2 Nuke lower tactical radar background, selected by world Z | https://raw.githubusercontent.com/rabume/cs2-dma-radar/main/client/src/assets/map/de_nuke_lower_radar.png | `046e4ff6ada2fcf97a755b07c9669912b74037ffdff1d95c294bd4e3e0cb399e` |
 
 ## Coordinate Sources
 
 Dust II uses the official-style CS2 overview transform already present in this
-mock app. Mirage, Inferno, Ancient, Nuke, and Anubis use approximate bounds
+mock app. Nuke uses the calibrated overview transform documented above.
+Mirage, Inferno, Ancient, and Anubis use approximate bounds
 adapted from the same source repository's `Map.vue` map area configuration and
 are marked `calibrated: false` / `confidence: approximate` in app metadata.
 

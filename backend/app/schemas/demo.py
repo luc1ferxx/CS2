@@ -84,6 +84,11 @@ class ReplayVideoStatus(BaseModel):
     errorCode: str | None = None
     errorMessage: str | None = None
     timeOriginSeconds: float = 0
+    povSteamId: str | None = Field(default=None, pattern=r"^7656[0-9]{13}$")
+    renderJobId: str | None = Field(
+        default=None,
+        pattern=r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+    )
 
 
 class VideoCalibrationUpdate(BaseModel):
@@ -112,6 +117,7 @@ class RenderJobStatus(BaseModel):
     status: str
     source: str
     video_status: str | None = None
+    video: ReplayVideoStatus | None = None
     tick_start: int | None = None
     tick_end: int | None = None
     tick_rate: int | None = None
@@ -137,6 +143,9 @@ class RenderJobManifest(BaseModel):
     status: str
     demoFilePath: str
     demoStorageKey: str | None = None
+    demoDownloadPath: str | None = None
+    sourceSizeBytes: int | None = None
+    sourceSha256: str | None = None
     replayStorageKey: str | None = None
     originalFilename: str
     mapName: str

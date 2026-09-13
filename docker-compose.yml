@@ -89,6 +89,7 @@ services:
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
       DEV_USER_ID: ${DEV_USER_ID:-dev-user}
       MAX_RENDER_CLIP_SECONDS: ${MAX_RENDER_CLIP_SECONDS:-60}
+      RENDER_WORKER_MODE: ${RENDER_WORKER_MODE:-fallback}
       RENDER_WORKER_TOKEN: ${RENDER_WORKER_TOKEN:-dev-render-worker-token}
     ports:
       - "8000:8000"
@@ -144,6 +145,7 @@ services:
       MEDIA_URL_BASE: ${MEDIA_URL_BASE:-}
       DEV_USER_ID: ${DEV_USER_ID:-dev-user}
       MAX_RENDER_CLIP_SECONDS: ${MAX_RENDER_CLIP_SECONDS:-60}
+      RENDER_WORKER_MODE: ${RENDER_WORKER_MODE:-fallback}
       RENDER_WORKER_TOKEN: ${RENDER_WORKER_TOKEN:-dev-render-worker-token}
     volumes:
       - artifact-data:/data/artifact-v1

@@ -96,6 +96,24 @@ class RenderClipJobTest(unittest.TestCase):
 
                 self.assertEqual(db.query(DemoJob).count(), 0)
 
+    def test_reused_fallback_request_is_dispatched_only_once(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            with replay_storage_dir(Path(directory)), patch(
+                "app.services.demo_service.get_redis_client", return_value=FakeRedis(),
+            ) as redis_factory:
+                db = self.Session()
+                demo = add_completed_demo(db, "demo-render-reuse-dispatch")
+                service = DemoService.for_internal(db)
+                persist_replay(service, demo, replay_contract(demo.id))
+                request = RenderClipRequest(tickStart=640, tickEnd=1280, tickRate=64)
+                first = service.create_render_clip_job(demo, request)
+                again = service.create_render_clip_job(
+                    demo, request.model_copy(update={"eventId": "another-card"}),
+                )
+                self.assertEqual(again.id, first.id)
+                self.assertEqual(db.query(DemoJob).count(), 1)
+                self.assertEqual(len(redis_factory.return_value.payloads), 1)
+
     def test_too_long_clip_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             with replay_storage_dir(Path(directory)), patch(
@@ -207,14 +225,14 @@ class RenderClipJobTest(unittest.TestCase):
                 )
 
                 claimed = service.claim_render_clip_job(job)
-                claimed_again = service.claim_render_clip_job(claimed)
+                with self.assertRaisesRegex(ValueError, "already claimed"):
+                    service.claim_render_clip_job(claimed)
                 video = service.get_video_status(demo)
 
                 self.assertEqual(claimed.status, "rendering")
                 self.assertEqual(claimed.attempts, 1)
                 self.assertIsNotNone(claimed.started_at)
                 self.assertIsNone(claimed.finished_at)
-                self.assertEqual(claimed_again.attempts, 1)
                 self.assertEqual(video["status"], "rendering")
                 self.assertEqual(video["source"], "rendered")
                 self.assertIsNone(video["errorMessage"])
@@ -295,7 +313,7 @@ class RenderClipJobTest(unittest.TestCase):
                 self.assertEqual(manifest.manifestVersion, "render_worker_v1")
                 self.assertEqual(manifest.jobId, job.id)
                 self.assertEqual(manifest.demoId, demo.id)
-                self.assertEqual(manifest.demoFilePath, f"/data/uploads/{demo.id}/{demo.original_filename}")
+                self.assertEqual(manifest.demoFilePath, "")
                 self.assertEqual(manifest.demoStorageKey, f"local://uploads/{demo.id}/{demo.original_filename}")
                 self.assertEqual(manifest.replayStorageKey, demo.replay_storage_key)
                 self.assertNotEqual(manifest.replayStorageKey, replay_reference)
@@ -445,7 +463,7 @@ class RenderClipJobTest(unittest.TestCase):
                 status = service.render_job_status(job)
                 video = ReplayVideoStatus.model_validate(service.get_video_status(demo))
 
-                created = RenderJobCreated(**status.model_dump(), video=video)
+                created = RenderJobCreated(**status.model_dump(exclude={"video"}), video=video)
 
                 self.assertEqual(created.source, "rendered")
                 self.assertEqual(created.video_status, "queued")
@@ -1024,7 +1042,10 @@ def replay_contract(demo_id: str, video: dict | None = None) -> dict:
             "timeOriginSeconds": 0,
         },
         "rounds": [{"roundNumber": 1, "startTick": 0, "freezeEndTick": 0, "endTick": 5760}],
-        "players": [],
+        "players": [
+            {"id": "player-1", "name": "Player", "side": "CT"},
+            {"id": "t-entry", "name": "Entry", "side": "T", "steamId": "76561190000000001"},
+        ],
         "frames": [],
         "generatedAt": "2026-05-08T00:00:00Z",
     }

@@ -1,5 +1,6 @@
 import type { CoachingEvent, CoachingSeverity } from "@/types/coaching";
 import type { ReplayPlayer } from "@/types/replay";
+import { bombPlantEvidenceLabel, normalizeBombSite } from "@/lib/bomb-site";
 
 export type SeverityFilter = "all" | "high" | "medium" | "low";
 export type RuleFilter =
@@ -71,6 +72,8 @@ const RULE_LABELS: Record<string, string> = {
 const EVIDENCE_KEYS = [
   "relatedEventIds",
   "distance",
+  "verticalDistanceWorldUnits",
+  "maxStackedVerticalDistanceWorldUnits",
   "windowSeconds",
   "evidenceTicks",
   "utilityType",
@@ -190,7 +193,10 @@ export function evidenceSummaryForEvent(event: CoachingEvent): EvidenceSummaryIt
     }
     summary.push({
       label: key,
-      value: formatEvidenceValue(value)
+      value: key === "site" ? normalizeBombSite(value) ?? "未知" :
+        key === "bombEventLabel" && (context.bombEventType === "bomb_planted" ||
+          (typeof value === "string" && /^Bomb planted/i.test(value))) ?
+          bombPlantEvidenceLabel(value, context.site) : formatEvidenceValue(value)
     });
     if (summary.length >= 5) {
       break;

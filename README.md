@@ -2,7 +2,11 @@
 
 这是一个网站型 CS2 demo 复盘与规则教练原型。当前项目重点已经从单纯 mock 流程推进到“真实 `.dem` 解析 spike + Demo Library + 回放复盘界面 + deterministic coaching + render clip 合约”。
 
-当前版本保留规则型 2D 公测 V1 Stage 3 的 artifact/replay 能力，并增加 Steam-first 账号、比赛发现与 Demo 导入适配器基础：Steam OpenID 2.0、正式 account/external identity 映射、Redis opaque browser session、encrypted match-history authorization、近期 sharing-code cursor sync、authenticated `owner_id`，以及复用现有安全 intake 的 owner-scoped import API。由于 Valve 没有公开个人比赛 Demo 下载接口，且仓库尚无正式许可 Provider，运行时默认且仅允许 `disabled`；手动 `.dem` 上传仍是可靠入口。仍没有可靠任务恢复、parser 隔离、生产 observability/backup、OpenAI 调用或真实 CS2 自动渲染。
+已完成能力、真实验收数据和后续优先级见 [项目进展与下一步（2026-09-13）](docs/project_status_2026-09-13.md)。
+
+本机渲染试验：操作者明确启用的独立 Windows GPU worker 可以使用 CSDM 与 FFmpeg，通过 CS2 原生录制或兼容版本的 HLAE 生成所选玩家的短片段并回传 App。当前电脑已完成 xelex 的 20 秒真实片段验证，见 [本机录制验收](docs/local_xelex_render_acceptance_2026-09-07.md)。该模式不会成为网站用户的安装或录屏要求；浏览器仍只上传 `.dem`。
+
+当前版本保留规则型 2D 公测 V1 Stage 3 的 artifact/replay 能力，并增加 Steam-first 账号、比赛发现与 Demo 导入适配器基础：Steam OpenID 2.0、正式 account/external identity 映射、Redis opaque browser session、encrypted match-history authorization、近期 sharing-code cursor sync、authenticated `owner_id`，以及复用现有安全 intake 的 owner-scoped import API。由于 Valve 没有公开个人比赛 Demo 下载接口，且仓库尚无正式许可 Provider，运行时默认且仅允许 `disabled`；手动 `.dem` 上传仍是可靠入口。仍没有可靠任务恢复、parser 隔离、生产 observability/backup、OpenAI 调用或生产渲染集群。
 
 ## 当前状态
 
@@ -13,29 +17,32 @@
 - Steam match discovery：登录账号可提交 Game Authentication Code 和一个初始 Match Sharing Code；服务端 AES-GCM 加密凭证和 cursor，通过 Valve 官方 `GetNextMatchSharingCode` 每次最多发现 20 场，Dashboard 只展示真实 discovery/status，不伪造地图、比分、玩家或 Demo 来源。
 - Steam Demo import boundary：`POST /steam/matches/{id}/import` 将发现记录接到可插拔 `DemoSourceProvider`；本 build 只注册 fail-closed 的 disabled provider。未来获正式许可的 source 必须经过 exact-host HTTPS 下载保护和现有 quarantine → SHA-256/type validation → accepted promotion，不能绕过 artifact intake。
 - `/dashboard` Demo Library：搜索、状态/地图筛选、排序、bounded 上传/任务轮询、重命名、软归档、空/失败/无结果状态、渲染状态摘要。
+- 中文复盘工作区：桌面同屏显示视频或战术回放、播放控制、时间轴与个人建议；身份设置、历史片段和技术工具按需展开。点击建议会定位并显示对应画面，优先复用覆盖该时刻的已保存 POV 视频。见 [前端改版验收](docs/frontend_redesign_acceptance_2026-09-08.md)。
+- xelex 真实复盘质量：四场建议事实核对、站位高度/提示文案/包点编号修复、名称保留，以及新上传、真实片段生成与重播的完整验证证据见 [真实复盘质量验收](docs/real_review_quality_acceptance_2026-09-12.md)。
 - Upload/parser observability：demo list/detail responses 包含 compact ingestion snapshot，失败解析有短错误、attempts、stale/active/retryable 状态，并支持 owner-scoped retry。
 - Diagnostics boundary：`GET /diagnostics` 只在 development/test 提供 compact 排障信息，production 返回 `404`；`GET /demos/{demo_id}/diagnostics` 始终要求登录并按 owner 隔离。public `GET /health` 只返回 coarse status。
-- Private media：视频 metadata 只返回 `/demos/{demo_id}/media/video`；GET/HEAD/Range 在字节交付时再次验证 session、owner 和 artifact path，没有 public `/media/videos` static mount。
+- Private media：默认视频使用 `/demos/{demo_id}/media/video`，保存的片段使用 `/demos/{demo_id}/render/jobs/{job_id}/media/video`；GET/HEAD/Range 在字节交付时再次验证 session、owner 和 artifact path，没有 public `/media/videos` static mount。
 - Safe Artifact Intake：公开上传只接受 `.dem`；source 先流式写入 private quarantine，同时计算真实长度和 SHA-256，验证后 promotion 为 owner/demo-bound accepted artifact，只有 accepted source 才能创建 parser job。
 - Provider-neutral artifact storage：development/test 使用 private local adapter，production 必须配置 private S3-compatible adapter；source、replay、video 的逻辑 reference 不暴露 bucket、object key、provider URL 或本地路径。
 - Mock demo flow：快速生成合成 replay、coaching events 和 mock first-person shell。
 - Real demo parser spike：主产品入口上传 `.dem`，后端队列异步解析；archive upload 只保留为开发兼容路径。
 - Replay contract：回合、玩家、采样帧、击杀/死亡、compact parser events、地图 metadata、视频 metadata、contract diagnostics。
 - Demo detail review：first-person shell/video、tactical map、timeline、round selector、round review、coaching panel、Replay Contract diagnostics 同步到同一个 tick/round state。
+- Personal review：默认匹配 `xelex`，可保存昵称或 Steam ID、明确选择比赛中的其他玩家；建议、关键事件、回合建议计数和跳转跟随所选玩家。
 - Rules-based coaching：固定规则生成事件，不调用 LLM，不生成不透明 AI 文案。
-- Tactical map assets：Dust II、Mirage、Inferno、Ancient、Nuke、Anubis radar 支持；Dust II 使用 CS2 overview transform，其余是 approximate bounds。
+- Tactical map assets：Dust II、Mirage、Inferno、Ancient、Nuke、Anubis radar 支持；Dust II 和 Nuke 使用 CS2 overview transform，其余是 approximate bounds。Nuke 支持上下层与跟随所选玩家楼层。
 - Manual MP4 binding：仅用于开发和 QA，支持上传 `.mp4` 并保存 tick/video calibration。
 - `render_clip` boundary：用户可围绕 coaching event 或当前 tick 创建短 POV clip job。
 - Render Worker V1 contract：token-gated manifest claim、media upload、terminal-safe result callback。
-- `render-worker/` skeleton：fake video adapter 和 manual operator adapter，用同一套回调链证明 future GPU worker 合约。
+- `render-worker/`：fake/manual 开发适配器，以及操作者显式启用的 CSDM 本机真实录制适配器；真实视频通过 FFprobe 校验后回传。
 - Parser quality regression fixtures：backend/frontend compact fixtures 覆盖 legacy replay、malformed optional fields、missing event families、coaching evidence 和 degraded detail states。
 
 明确没有做的事情：
 
 - 不提供密码、Steam Guard、团队或通用账号管理 UI；只提供紧凑的 Steam 登录、当前账号和退出入口，浏览器不处理 provider token。
 - 不实现或启用社区 replay CDN/share-code 解码，不抓取 Steam 私有网页、不模拟 Game Coordinator；发现的比赛继续支持独立手动 `.dem` 上传兜底。
-- 不在 API 或 worker 容器里启动 CS2、Steam、OBS、ffmpeg。
-- 不控制用户电脑、不读取用户上传后的本地文件、不录屏。
+- 不在 API 或解析 worker 容器里启动 CS2、Steam、OBS、ffmpeg。
+- 网站不控制用户电脑、不读取用户上传后的本地文件、不录屏；独立录制工具只在操作者指定并启用的渲染电脑运行。
 - 不把用户上传 MP4 设计成主产品路径。
 - 不把 replay 大帧数据、raw parser dataframe、大视频或 `.dem` 文件塞进 PostgreSQL。
 - 不调用 OpenAI 或其它 LLM；coaching 结果是确定性规则输出。
@@ -51,7 +58,7 @@ user uploads .dem
   -> website immediately enables tactical replay, round review, timeline, and coaching review
   -> user clicks an event or tick
   -> if rendered footage exists, first-person video plays in sync
-  -> otherwise the mock first-person shell remains available
+  -> otherwise the main canvas shows the usable tactical replay
   -> user may request a render_clip job for a short selected range
 ```
 
@@ -67,7 +74,7 @@ frontend (Next.js)
     -> artifact storage service: uploads, replay blobs, summaries, videos
   -> worker process
     -> mock_parse / real_parse / mock_render / render_clip status handling
-  -> render-worker skeleton
+  -> standalone render-worker (fake / manual / opt-in CSDM)
     -> external process that calls token-gated render-worker API
 ```
 
@@ -117,8 +124,8 @@ backend/
   tests/fixtures/         compact regression fixtures
 
 render-worker/
-  runner.py               external worker skeleton CLI
-  adapters/               fake video and manual CS2 operator adapters
+  runner.py               external worker CLI
+  adapters/               fake video, manual CS2, and opt-in CSDM adapters
 
 docs/
   steam_auth_accounts_v1.md
@@ -132,7 +139,15 @@ docs/
 
 ## 本地运行
 
-完整本地栈：
+这台已配置 xelex 录制环境的 Windows 电脑，双击仓库根目录 **`Start CS2 Coach.cmd`**。也可以在 PowerShell 运行：
+
+```powershell
+& .\scripts\start-local.ps1
+```
+
+入口会等待 Docker 引擎，加载本机 loopback/external-worker 配置，启动 App、CSDM 数据库及录制进程，并确认健康状态。成功后双击入口自动打开 `/dashboard`；失败会保留错误窗口。它保留现有 demo 和视频，不重建镜像或清除数据。只启动网页可加 `-SkipRenderer`；只检查本机配置文件可加 `-PreflightOnly`。本机配置和软件位于 ignored `.local/`，此入口不负责在新电脑上安装录制软件。录制进程只处理网页提交的片段任务。
+
+其他开发环境首次构建完整本地栈（不启用上述本机录制环境）：
 
 ```bash
 docker compose up --build
@@ -182,7 +197,7 @@ python3 -m compileall backend/app
 PYTHONPATH=backend python3 -m unittest discover backend/tests
 ```
 
-Frontend helper regression tests live next to the helpers and are run directly with Node when those surfaces change:
+Frontend helper regression tests live next to the helpers. `scripts/verify.sh` runs every `lib/*.test.mjs` suite; individual suites can also be run directly:
 
 ```bash
 cd frontend
@@ -193,7 +208,11 @@ node lib/round-review.test.mjs
 node lib/coaching-review.test.mjs
 node lib/replay-quality-fixtures.test.mjs
 node lib/map-config.test.mjs
+node lib/personal-review.test.mjs
+node lib/replay-frames.test.mjs
 node lib/steam-matches.test.mjs
+node lib/auth.test.mjs
+node lib/private-media.test.mjs
 ```
 
 Release-candidate validation:
@@ -245,17 +264,19 @@ Dashboard 的紧凑 Steam 区域提供：
 
 `POST /uploads/demo` 的唯一公开产品类型是 `.dem`，实际字节上限为 1 GiB；`.zip` 和其它 archive 在写入前拒绝。API 不运行 parser：它先把请求流式写入 private quarantine，计算真实长度和 SHA-256，执行已固化的 extension/MIME/content policy，再把验证通过的 generation promotion 为 immutable accepted source。只有 accepted metadata 已绑定 owner/demo 并随 `Demo` + `real_parse` job 一起提交后才会推入 Redis。语义损坏但无法由 byte-level intake 证明的 `.dem` 仍由异步 parser 安全归类为 `INVALID_DEMO`。
 
-worker 使用 `demoparser2==0.41.0` 做 best-effort 解析：
+worker 使用 `demoparser2==0.42.0` 做 best-effort 解析：
 
 - map name、tick rate
 - rounds、freeze/end ticks、winner side
 - player roster
-- sampled player positions，最多约 720 个采样帧加死亡 tick
+- sampled player positions，常规采样间隔 0.25 秒；约 30,000 个常规采样 tick 的预算之外，保留回合边界、事件 tick 及事件前一 tick，超长比赛会放宽常规采样间隔
 - kills/deaths
 - best-effort damage events
 - best-effort round start/end events
-- best-effort bomb plant/defuse/explode events
+- best-effort bomb pickup/drop/plant/defuse/explode events，以及帧中的实际炸弹状态；缺少可信状态时显示 `unknown`
 - best-effort smoke/flash/molotov/he events
+
+这些精度改进只作用于新解析生成的 replay。旧记录需要从已保存的 source 重新解析，或重新上传 `.dem`；刷新页面不会增加旧 replay 的采样点或补齐 Z 坐标。播放只对相邻有效位置进行插值，生命值、存活和炸弹状态在记录的 tick 变化；不会跨回合或在旧的稀疏采样间虚构连续移动。
 
 解析失败会把 demo 标记为 `failed`，写入 compact failure metadata，并且不会继续跑 rules analyzer。单个 damage/bomb/utility/round event family 缺失不会让整个解析失败；这些缺失会作为 partial parse / replay diagnostics 暴露给 QA 界面。
 
@@ -337,6 +358,7 @@ For release-candidate sign-off, use `docs/release_candidate_qa_v1.md` as the sou
 
 打开 `/demos/{demoId}` 后，完成状态的 demo 会加载：
 
+- `PersonalReviewPanel`：默认昵称为 `xelex`；昵称与 Steam ID 均使用忽略大小写的完整匹配。偏好保存在当前浏览器，可修改；找不到玩家或存在重名时不自动指认其他玩家，使用 `Player to review` 明确选择。该偏好仅选择复盘对象，不改变登录身份或数据 owner。
 - `FirstPersonReplay`：有 owner-authorized `/demos/{demo_id}/media/video` 时用 credentialed GET/Range 播放 MP4；没有或无法访问时显示同步的 2D/mock first-person shell。
 - `Timeline`：play/pause、seek、0.5x/1x/2x/4x、coaching markers、parser event markers。
 - `ReplayViewer`：tactical map、玩家点位、死亡状态、bomb state、附近 parser events。
@@ -347,6 +369,8 @@ For release-candidate sign-off, use `docs/release_candidate_qa_v1.md` as the sou
 - `VideoSetupPanel`：开发/QA 用手动 MP4 上传和 sync calibration。
 
 这些视图共用同一个 `currentTick`、`selectedRound` 和 replay contract；不要引入平行状态来让回合列表、timeline、地图和 coaching 脱节。
+
+个人建议严格按 `event.player_id` 归属，`involvedPlayerIds` 只表示证据涉及的玩家。地图和时间线显示与所选玩家有关的事件，并保留炸弹与回合上下文；回合胜负、全场击杀/道具计数及快速跳转继续提供比赛背景。没有该玩家建议时会明确说明，不能据此认定没有问题。
 
 Detail 顶部的 compact summary strip 汇总 file、map、calibration/fallback、round count、coaching count、parser status/failure category、media status 和最新 render job status，方便 first-run preview 先判断 demo 是否可复盘。
 
@@ -366,6 +390,10 @@ Detail 顶部的 compact summary strip 汇总 file、map、calibration/fallback�
 - `late_post_plant_utility`
 
 规则输出包含 `ruleId`、`involvedPlayerIds`、`evidenceTicks`、`relatedEventIds`、距离/窗口/utility/bomb/site 等 compact evidence metadata。规则是 best-effort 和 deterministic 的：缺少 parser event family 时跳过对应规则，不让整个分析失败。
+
+建议以 `assessment=review_candidate` 表示待复核的片段，并附带 `action`、`limitation`、`targetPlayerId` 和 `evidenceSource`；展开卡片可读到具体尝试方向与证据局限。采样距离无法证明视线、可行路径、语音沟通或战术意图，候选不等于已经证明的失误。默认每位玩家最多 48 条、每场最多 480 条，按玩家和回合分配候选，避免前几轮耗尽全场名额。真实样本、运行和浏览器验收记录见 [个人复盘验收](docs/personal_review_acceptance_2026-09-07.md)。
+
+补枪判断使用同一击杀者与完整的 5 秒有效回合窗口；位置证据采用事件之前不超过 1 秒的采样。距离单位是 radar 百分点，Nuke 缺少高度或跨层时跳过相关几何判断；道具规则只统计已知 T 阵营的事件。
 
 ## Replay Contract
 
@@ -423,6 +451,8 @@ Malformed optional fields are ignored best-effort and reported through `degraded
 - `kill`
 - `death`
 - `damage`
+- `bomb_pickup`
+- `bomb_dropped`
 - `bomb_planted`
 - `bomb_defused`
 - `bomb_exploded`
@@ -467,10 +497,12 @@ videoTimeToTick(time) = tickStart + (time - timeOriginSeconds) * tickRate
 | `de_mirage` | `frontend/public/maps/de_mirage_radar.png` | approximate |
 | `de_inferno` | `frontend/public/maps/de_inferno_radar.png` | approximate |
 | `de_ancient` | `frontend/public/maps/de_ancient_radar.png` | approximate |
-| `de_nuke` | `frontend/public/maps/de_nuke_radar.png` | approximate |
+| `de_nuke` | `frontend/public/maps/de_nuke_radar.png` + `de_nuke_lower_radar.png` | calibrated overview + upper/lower |
 | `de_anubis` | `frontend/public/maps/de_anubis_radar.png` | approximate |
 
 Unknown maps 使用 fallback grid，不复用 Dust II 图片或坐标变换。
+
+Nuke 保留世界 Z 坐标，以集中配置的高度边界区分上下层，可手动切换或跟随所选玩家。没有高度数据的旧记录不会把玩家强放在某一层，界面会说明并保留可选择的名单。
 
 新增或更新地图时，同步修改 `backend/app/parser/map_config.py` 和 `frontend/lib/map-config.ts`，把 radar PNG 放在 `frontend/public/maps/`，更新 `frontend/public/maps/ATTRIBUTION.md`，并运行 `PYTHONPATH=backend python3 -m unittest backend.tests.test_map_config` 与 `cd frontend && node lib/map-config.test.mjs`。没有可信 transform 或 radar asset 时，保留 explicit fallback/approximate metadata，不要复用 Dust II transform。
 
@@ -499,16 +531,21 @@ API 会验证：
 - demo 已完成解析
 - replay blob 存在
 - `tickEnd > tickStart`
-- `tickRate > 0`
+- tick rate 与已解析 replay 一致，tick 区间落在 replay 范围内
+- 所选 POV 与已解析玩家名单一致
 - clip 时长不超过 `MAX_RENDER_CLIP_SECONDS`，默认 60 秒
 
-本地 worker 识别 `render_clip` 后会把 job 从 `queued` 推到 `rendering`，然后标记为 `failed`：
+默认 `RENDER_WORKER_MODE=fallback` 下，本地解析 worker 识别 `render_clip` 后会把 job 从 `queued` 推到 `rendering`，然后标记为 `failed`：
 
 ```text
 GPU worker not connected for render_clip. A separate Windows/Linux GPU worker or manual operator must process this job.
 ```
 
-这是有意设计的边界标记。API 容器不能负责真实 CS2 渲染。
+启用 `RENDER_WORKER_MODE=external` 后任务会保持 queued，等待独立录制进程原子领取。API 容器不能负责真实 CS2 渲染。
+
+Demo Detail 的玩家片段列表保留每个任务的回合、tick 区间和状态，完成后可直接播放。相同源文件快照、玩家 POV、tick 区间、tick rate 和 render preset 的请求复用正在进行的任务或仍可读取的已完成视频；不同 coaching event ID 不会重复生成相同 footage。失效文件和失败任务允许重新生成。后端在 PostgreSQL 中锁定同一个 demo 后检查和创建任务，避免多次点击或多个请求同时创建重复任务。
+
+`GET /demos/{demo_id}/render/jobs` 为可播放任务提供可选 `video` metadata，使用 job 专属私有地址。每段视频保留自己的时间校准，生成新片段或进行开发用手动上传后仍可播放旧片段。前端选中的片段与后台默认视频分别维护，轮询不会改变正在复盘的片段。旧任务若没有保存校准且已不再是当前视频，会显示为不可播放；不会猜测其时间偏移。
 
 ## Render Worker V1 API
 
@@ -562,13 +599,15 @@ curl -X POST http://localhost:8000/render-worker/jobs/{job_id}/result \
   }'
 ```
 
-API 只接受与同一个 `rendering` job、owner、demo、immutable generation 和请求 tick 区间完全匹配的 accepted output。另一个 job 的 artifact、过期 generation、不同 tick 范围或没有先绑定 media 的 callback 都会失败关闭。Development local adapter 仍可解析旧 `/media/videos/...` callback 作为 legacy compatibility，但 runner 的正常路径必须使用 media upload 返回的 accepted `storageKey`。User payload 只投影 `/demos/{demo_id}/media/video`，不返回 `storageKey`。
+API 只接受与同一个 `rendering` job、owner、demo、immutable generation 和请求 tick 区间完全匹配的 accepted output。另一个 job 的 artifact、过期 generation、不同 tick 范围或没有先绑定 media 的 callback 都会失败关闭。Development local adapter 仍可解析旧 `/media/videos/...` callback 作为 legacy compatibility，但 runner 的正常路径必须使用 media upload 返回的 accepted `storageKey`。User payload 只投影默认或 job 专属的私有媒体路由，不返回 `storageKey`。
 
 失败回调把 replay failure state 与 terminal job 放在同一个 DB transaction 中，并在提交后删除该 job 的 bound output candidate；如果当前 replay video 是 `manual_upload`，失败不会清掉已有手动视频 metadata。成功回调同样原子提交新 replay reference 与 terminal job，随后清理旧 replay generation。已完成或已失败的 terminal render job 会拒绝后续 callback，避免 late callback 改写最终状态。
 
-## Render Worker Skeleton
+## Standalone Render Worker
 
-`render-worker/runner.py` 是外部 worker skeleton，不做真实渲染。
+`render-worker/runner.py` 默认使用 fake adapter。操作者可以在指定 Windows GPU 电脑设置 `RENDER_ADAPTER=csdm`，连接已安装并配置的 CSDM、HLAE、FFmpeg/FFprobe 与 PostgreSQL 客户端。
+
+API 和解析 worker 同时设置 `RENDER_WORKER_MODE=external` 后，短片任务保留在数据库等待独立 worker 领取。默认 `fallback` 保留 GPU 未连接提示。源文件通过 token 保护的 `GET /render-worker/jobs/{job_id}/source` 下载，校验 manifest 的长度与 SHA256，不读取浏览器用户的本地文件。单机运行使用固定工作目录和进程锁；当前没有分布式租约恢复服务。
 
 配置：
 
@@ -659,6 +698,7 @@ Video and render:
 - `POST /demos/{demo_id}/render/mock`
 - `POST /demos/{demo_id}/render/clip`
 - `GET /demos/{demo_id}/render/jobs`
+- `GET|HEAD /demos/{demo_id}/render/jobs/{job_id}/media/video`（支持 Range）
 
 Render worker:
 
@@ -771,13 +811,15 @@ Minimal local smoke for a clean environment. For internal preview handoff, use `
 - Parser frame 是采样数据，不是完整 tick density。
 - `demoparser2` 对不同 demo 的 event family 和字段可用性不稳定；normalizer 必须继续容错。
 - Bomb/utility events 是 best-effort；缺失时 UI count、quick jump 或 event-backed rules 可能为空。
-- Tactical map 只有 Dust II 是 calibrated；其它支持地图是 approximate。
+- Tactical map 的 Dust2、Nuke 已标记 calibrated；Mirage、Ancient、Inferno、Anubis 仍为 approximate，需要更多真实样本校准。
 - 没有经济、装备快照、line-of-sight、utility trajectory 和高级战术上下文。
-- `render_clip` 当前只创建合约 job；真实视频要等外部 GPU worker。
+- `render_clip` 已通过本机显式启用的独立 Windows worker 生成 xelex 真实短片，并验证保存与重播；其它地图、Demo/游戏版本兼容及生产 GPU 集群仍待验收。默认未连接 worker 时保留明确的失败提示。
 - Manual MP4 必须人工校准，且只能代表它实际覆盖的 tick range。
 - Ingestion snapshots、safe diagnostics、replay diagnostics 和 regression fixtures 是 compact QA/debugging aids，不是生产 telemetry、日志平台或 parser trace storage。
 
 ## Next Useful Work
+
+下一步优先验证 xelex 建议的实际帮助，减少重复站位提醒并改善排序，然后扩充地图校准、可复现安装配置与解析/录制任务恢复。完整优先级和完成标准见 [项目进展与下一步](docs/project_status_2026-09-13.md)。
 
 Steam Demo 导入适配器保持 fail closed：仅 Valve 明确授权的 partner endpoint 或正式许可 Provider 才能在后续独立审阅中注册；任何社区 share-code/CDN 路径继续默认关闭且标为 unsupported/experimental，下载内容必须进入现有 artifact intake。手动 `.dem` 上传始终保留为可靠兜底。之后再按独立阶段推进可靠任务投递、parser 隔离、migration/CI/CD/observability/backup 和真实 demo corpus；不跨阶段捆绑。
 

@@ -5,12 +5,83 @@ from pathlib import Path
 from unittest.mock import patch
 
 from app.parser.demo_parser import (
+    _align_round_numbers,
     _build_bomb_events,
     _build_frames,
+    _build_kills,
+    _build_round_events,
     _build_rounds,
     _build_utility_events,
     parse_demo_file,
 )
+
+
+class DemoParserRoundAssignmentTest(unittest.TestCase):
+    def test_restarted_initial_round_keeps_match_numbers_and_boundaries(self) -> None:
+        starts = [
+            {"tick": 0, "round": 1, "total_rounds_played": 0},
+            {"tick": 326, "round": 1, "total_rounds_played": 0},
+            {"tick": 14889, "round": 2, "total_rounds_played": 1},
+        ]
+        ends = [
+            {"tick": 0, "round": 0, "total_rounds_played": 0, "winner": None},
+            {"tick": 14441, "round": 1, "total_rounds_played": 1, "winner": "CT"},
+            {"tick": 20778, "round": 2, "total_rounds_played": 2, "winner": "T"},
+        ]
+        rounds = _build_rounds(
+            starts,
+            [{"tick": 7832, "total_rounds_played": 0}, {"tick": 16169, "total_rounds_played": 1}],
+            ends, {}, 64,
+        )
+
+        self.assertEqual(
+            [(item["roundNumber"], item["startTick"], item["freezeEndTick"], item["endTick"], item["winnerSide"]) for item in rounds],
+            [(1, 326, 7832, 14441, "CT"), (2, 14889, 16169, 20778, "T")],
+        )
+        markers = _build_round_events(starts, ends, rounds)
+        self.assertEqual(
+            [(item["type"], item["tick"], item["roundNumber"]) for item in markers],
+            [("round_start", 326, 1), ("round_end", 14441, 1), ("round_start", 14889, 2), ("round_end", 20778, 2)],
+        )
+        kills = _build_kills([{"tick": 11702, "total_rounds_played": 0}, {"tick": 19000, "total_rounds_played": 1}])
+        self.assertEqual([item["roundNumber"] for item in _align_round_numbers(kills, rounds)], [1, 2])
+
+    def test_missing_end_does_not_borrow_next_rounds_winner(self) -> None:
+        rounds = _build_rounds(
+            [{"tick": 100}, {"tick": 300}],
+            [{"tick": 150}, {"tick": 350}],
+            [{"tick": 500, "winner": "T"}], {}, 64,
+        )
+        self.assertEqual([item["roundNumber"] for item in rounds], [1, 2])
+        self.assertEqual([item["endTick"] for item in rounds], [299, 500])
+        self.assertEqual([item["freezeEndTick"] for item in rounds], [150, 350])
+        self.assertIsNone(rounds[0]["winnerSide"])
+        self.assertEqual(rounds[1]["winnerSide"], "T")
+
+    def test_round_end_counter_is_completed_count_and_explicit_round_wins(self) -> None:
+        markers = _build_round_events([], [
+            {"tick": 500, "total_rounds_played": 2},
+            {"tick": 700, "round": 3, "total_rounds_played": 4},
+        ])
+        self.assertEqual([item["roundNumber"] for item in markers], [2, 3])
+        kills = _build_kills([{"tick": 600, "round": 3, "total_rounds_played": 4}])
+        self.assertEqual(kills[0]["roundNumber"], 3)
+
+    def test_missing_starts_use_real_end_numbers_and_ignore_initial_sentinel(self) -> None:
+        rounds = _build_rounds([], [], [
+            {"tick": 0, "round": 0},
+            {"tick": 500, "round": 1, "winner": "CT"},
+            {"tick": 900, "round": 2, "winner": "T"},
+        ], {}, 64)
+        self.assertEqual([(item["roundNumber"], item["startTick"], item["endTick"]) for item in rounds], [(1, 0, 500), (2, 501, 900)])
+
+    def test_tick_window_aligns_missing_metadata_without_reassigning_post_round_events(self) -> None:
+        rounds = [{"roundNumber": 2, "startTick": 300, "endTick": 500}]
+        events = _align_round_numbers([
+            {"tick": 400, "roundNumber": 1},
+            {"tick": 550, "roundNumber": 3},
+        ], rounds)
+        self.assertEqual([item["roundNumber"] for item in events], [2, 3])
 
 
 class DemoParserFrameBuildTest(unittest.TestCase):

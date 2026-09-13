@@ -16,6 +16,7 @@ interface RoundReviewPanelProps {
   coachingEvents: CoachingEvent[];
   currentTick: number;
   selectedRound: number;
+  selectedPlayerName?: string | null;
   onSelectRound: (roundNumber: number) => void;
   onSeek: (tick: number) => void;
 }
@@ -25,6 +26,7 @@ export function RoundReviewPanel({
   coachingEvents,
   currentTick,
   selectedRound,
+  selectedPlayerName,
   onSelectRound,
   onSeek
 }: RoundReviewPanelProps) {
@@ -110,57 +112,27 @@ export function RoundReviewPanel({
     <section className="round-ribbon-panel" aria-label="Round review">
       <div className="round-ribbon-heading">
         <div>
-          <span className="workspace-kicker">Match narrative</span>
-          <h2>Round rail</h2>
+          <h2>回合</h2>
         </div>
         {selectedSummary ? (
           <div className="round-ribbon-state" aria-label={`Selected round ${selectedSummary.roundNumber} state`}>
-            <span className="round-ribbon-selected">R{selectedSummary.roundNumber}</span>
+            <span className="round-ribbon-selected">第 {selectedSummary.roundNumber} 回合</span>
             <span className={`round-outcome-pill ${selectedSummary.winnerSide.toLowerCase()}`}>
-              {selectedSummary.winnerSide} won
+              {selectedSummary.winnerSide} 获胜
             </span>
             <span className="round-ribbon-state-detail">
-              {selectedSummary.coachingEventCount} coaching · {selectedSummary.killCount} kills
+              {selectedSummary.coachingEventCount} 条建议
             </span>
           </div>
         ) : null}
       </div>
 
-      {selectedSummary ? (
-        <div className="round-ribbon-detail">
-          <div className="round-ribbon-metrics" aria-label={`Round ${selectedSummary.roundNumber} evidence summary`}>
-            <RoundRibbonMetric label="Start" value={selectedSummary.startTick} />
-            <RoundRibbonMetric label="Live" value={selectedSummary.freezeEndTick} />
-            <RoundRibbonMetric label="First kill" value={formatEventReference(selectedSummary.firstKill.tick, selectedSummary.firstKill.playerName)} />
-            <RoundRibbonMetric label="Plant" value={formatEventReference(selectedSummary.bombPlant.tick, selectedSummary.bombPlant.site)} />
-            <RoundRibbonMetric label="End" value={selectedSummary.endTick} />
-          </div>
-          <div className="round-ribbon-actions" aria-label="Round quick jumps">
-            {jumpTargets.map((target) => (
-              <button
-                key={target.id}
-                className="round-ribbon-jump"
-                type="button"
-                disabled={!target.available || target.tick === null}
-                onClick={() => {
-                  if (target.tick !== null) {
-                    onSeek(target.tick);
-                  }
-                }}
-                title={target.tick === null ? `${target.label} unavailable` : `Jump to tick ${target.tick}`}
-              >
-                <JumpTargetIcon target={target} />
-                <span>{target.label}</span>
-              </button>
-            ))}
-          </div>
-        </div>
-      ) : (
+      {!selectedSummary ? (
         <div className="round-review-empty">
-          <strong>No round data</strong>
-          <span>Round summaries and quick jumps are unavailable for this replay contract.</span>
+          <strong>暂无回合数据</strong>
+          <span>这场比赛暂时无法按回合跳转。</span>
         </div>
-      )}
+      ) : null}
 
       <div ref={trackRef} className="round-ribbon-track" aria-label="Round rail">
         {model.rounds.map((round, roundIndex) => (
@@ -183,27 +155,49 @@ export function RoundReviewPanel({
             aria-pressed={round.isSelected}
             tabIndex={round.isSelected ? 0 : -1}
             aria-label={`Round ${round.roundNumber}, ${round.winnerSide} won, ${round.coachingEventCount} coaching events${round.isCurrent ? ", current playback round" : ""}${round.isSelected ? ", selected" : ""}`}
-            title={`Select round ${round.roundNumber}: ${round.killCount} kills, ${round.bombEventCount} bomb events, ${round.utilityEventCount} utility events, ${round.coachingEventCount} coaching events`}
+            title={`第 ${round.roundNumber} 回合：${round.killCount} 次击杀，${round.coachingEventCount} 条建议`}
           >
             <div className="round-ribbon-item-top">
-              <strong>R{round.roundNumber}</strong>
-              <span className={`round-side-chip ${round.winnerSide.toLowerCase()}`}>
-                {round.winnerSide}
-              </span>
-            </div>
-            <div className="round-ribbon-event-line">
-              <span>K {round.killCount}</span>
-              <span>B {round.bombEventCount}</span>
-              <span>U {round.utilityEventCount}</span>
+              <strong>{round.roundNumber}</strong>
             </div>
             <div className="round-ribbon-review-count">
               <span aria-hidden="true" />
               <strong>{round.coachingEventCount}</strong>
-              <small>review</small>
+              <small>条</small>
             </div>
           </button>
         ))}
       </div>
+
+      {selectedSummary ? (
+        <details className="round-review-details">
+          <summary>本回合详情与快速跳转</summary>
+          {selectedPlayerName !== undefined ? (
+            <p className="round-review-scope">{selectedPlayerName ? `建议针对 ${selectedPlayerName}` : "选择玩家后查看建议"}；击杀、安装炸弹等为全场事件。</p>
+          ) : null}
+          <div className="round-ribbon-detail">
+            <div className="round-ribbon-actions" aria-label="Round quick jumps">
+              {jumpTargets.map((target) => (
+                <button key={target.id} className="round-ribbon-jump" type="button"
+                  disabled={!target.available || target.tick === null}
+                  onClick={() => { if (target.tick !== null) onSeek(target.tick); }}
+                  aria-label={target.label}
+                  title={target.tick === null ? `${jumpLabel(target)}暂无数据` : `跳转至 Tick ${target.tick}`}>
+                  <JumpTargetIcon target={target} />
+                  <span>{jumpLabel(target)}</span>
+                </button>
+              ))}
+            </div>
+            <div className="round-ribbon-metrics" aria-label={`Round ${selectedSummary.roundNumber} evidence summary`}>
+              <RoundRibbonMetric label="回合开始 · Tick" value={selectedSummary.startTick} />
+              <RoundRibbonMetric label="冻结结束 · Tick" value={selectedSummary.freezeEndTick} />
+              <RoundRibbonMetric label="首次击杀 · Tick" value={formatEventReference(selectedSummary.firstKill.tick, selectedSummary.firstKill.playerName)} />
+              <RoundRibbonMetric label="安装炸弹 · Tick" value={formatEventReference(selectedSummary.bombPlant.tick, selectedSummary.bombPlant.site)} />
+              <RoundRibbonMetric label="回合结束 · Tick" value={selectedSummary.endTick} />
+            </div>
+          </div>
+        </details>
+      ) : null}
     </section>
   );
 }
@@ -228,6 +222,10 @@ function JumpTargetIcon({ target }: { target: RoundJumpTarget }) {
     return <Crosshair size={14} aria-hidden="true" />;
   }
   return <Bomb size={14} aria-hidden="true" />;
+}
+
+function jumpLabel(target: RoundJumpTarget): string {
+  return { round_start: "回合开始", live_start: "冻结结束", first_kill: "首次击杀", bomb_plant: "安装炸弹" }[target.id];
 }
 
 function formatEventReference(tick: number | null, detail?: string | null) {

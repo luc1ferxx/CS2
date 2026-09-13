@@ -1,5 +1,5 @@
 export type PlayerSide = "T" | "CT";
-export type BombStatus = "carried" | "planted" | "dropped";
+export type BombStatus = "unknown" | "carried" | "planted" | "dropped" | "defused" | "exploded";
 
 export interface ReplayRound {
   roundNumber: number;
@@ -23,6 +23,7 @@ export interface ReplayFramePlayer {
   side: PlayerSide;
   x: number;
   y: number;
+  z?: number;
   alive: boolean;
   hp: number;
   hasBomb: boolean;
@@ -33,6 +34,7 @@ export interface BombState {
   carrierPlayerId?: string;
   x?: number;
   y?: number;
+  z?: number;
   site?: string;
 }
 
@@ -62,6 +64,8 @@ export interface ReplayMapMetadata {
   displayName: string;
   radarImagePath: string | null;
   secondaryRadarImagePath?: string | null;
+  lowerLevelMaxZ?: number;
+  calibrationSource?: string;
   calibrated: boolean;
   confidence: ReplayMapConfidence;
   attribution: string;
@@ -91,6 +95,8 @@ export interface ReplayVideo {
   errorCode?: string | null;
   errorMessage?: string | null;
   timeOriginSeconds: number;
+  povSteamId?: string | null;
+  renderJobId?: string | null;
 }
 
 export type ReplayEventType =
@@ -100,6 +106,8 @@ export type ReplayEventType =
   | "bomb_planted"
   | "bomb_defused"
   | "bomb_exploded"
+  | "bomb_pickup"
+  | "bomb_dropped"
   | "smoke"
   | "flash"
   | "molotov"
@@ -121,6 +129,7 @@ export interface ReplayEvent {
   side?: PlayerSide | null;
   x?: number | null;
   y?: number | null;
+  z?: number | null;
   label: string;
   metadata?: Record<string, unknown>;
 }

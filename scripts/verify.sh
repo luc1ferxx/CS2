@@ -16,6 +16,9 @@ run python3 -m compileall render-worker
 run python3 -m unittest discover render-worker/tests
 
 cd "$ROOT_DIR/frontend"
+for helper_test in lib/*.test.mjs; do
+  run node "$helper_test"
+done
 run npm run lint
 run npm run typecheck
 run npm run build

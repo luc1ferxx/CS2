@@ -4,6 +4,27 @@ from app.parser.replay_contract import normalize_replay_contract
 
 
 class ReplayContractTest(unittest.TestCase):
+    def test_rendered_video_identity_is_optional_validated_and_source_specific(self) -> None:
+        identity = {"povSteamId": "76561198998266210",
+                    "renderJobId": "fb347c00-f7e2-415e-aef4-e1435c07a229"}
+        video = {"source": "rendered", "status": "ready", **identity}
+        normalized = normalize_replay_contract({"video": video})["video"]
+        for key, value in identity.items():
+            self.assertEqual(normalized[key], value)
+        for change in (
+            {"povSteamId": 76561198998266210, "renderJobId": 4},
+            {"povSteamId": "xelex", "renderJobId": "../../secret"},
+            {"povSteamId": None, "renderJobId": None},
+            {"source": "manual_upload"}, {"status": "queued"},
+        ):
+            with self.subTest(change=change):
+                normalized = normalize_replay_contract({"video": {**video, **change}})["video"]
+                self.assertNotIn("povSteamId", normalized)
+                self.assertNotIn("renderJobId", normalized)
+        legacy = normalize_replay_contract({"video": {"source": "rendered", "status": "ready"}})["video"]
+        self.assertNotIn("povSteamId", legacy)
+        self.assertNotIn("renderJobId", legacy)
+
     def test_old_replay_without_events_loads_with_empty_events(self) -> None:
         replay = normalize_replay_contract(
             {

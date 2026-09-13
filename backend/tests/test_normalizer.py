@@ -65,7 +65,7 @@ class NormalizerTest(unittest.TestCase):
         self.assertEqual(len(replay["frames"]), 1)
         self.assertEqual(len(replay["kills"]), 1)
         self.assertEqual(len(replay["deaths"]), 1)
-        self.assertEqual(replay["frames"][0]["bombState"]["status"], "carried")
+        self.assertEqual(replay["frames"][0]["bombState"]["status"], "unknown")
         for player in replay["frames"][0]["players"]:
             self.assertGreaterEqual(player["x"], 0)
             self.assertLessEqual(player["x"], 100)

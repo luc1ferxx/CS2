@@ -1,16 +1,19 @@
 "use client";
 
-import { ChevronDown, Crosshair, Scissors } from "lucide-react";
+import { ChevronDown, Crosshair, Play, Video } from "lucide-react";
 
 import type { ReviewEvent } from "@/lib/coaching-review";
 import type { RenderJobStatus } from "@/lib/api";
+import { coachingCopy, coachingEvidenceLabel, coachingSeverityLabel } from "@/lib/coaching-copy";
 import { isRenderActiveStatus } from "@/lib/demo-library";
+import { playableClipVideo } from "@/lib/render-clips";
 import type { CoachingEvent } from "@/types/coaching";
 
 interface CoachingEventCardProps {
   reviewEvent: ReviewEvent;
   active: boolean;
   inspected: boolean;
+  locationLabel?: string;
   renderJob?: RenderJobStatus;
   clipRequesting: boolean;
   onToggleInspect: () => void;
@@ -19,115 +22,103 @@ interface CoachingEventCardProps {
 }
 
 export function CoachingEventCard({
-  reviewEvent,
-  active,
-  inspected,
-  renderJob,
-  clipRequesting,
-  onToggleInspect,
-  onSeek,
-  onGenerateClip
+  reviewEvent, active, inspected, locationLabel, renderJob, clipRequesting,
+  onToggleInspect, onSeek, onGenerateClip
 }: CoachingEventCardProps) {
   const { event } = reviewEvent;
+  const copy = coachingCopy(event);
   const clipBusy = clipRequesting || isRenderActiveStatus(renderJob?.status);
-  const primaryEvidence = reviewEvent.evidence[0];
+  const clipReady = Boolean(playableClipVideo(renderJob));
+  const clipFailed = renderJob?.status === "failed";
+  const originalAction = event.structured_context_json.action;
+  const originalLimitation = event.structured_context_json.limitation;
+  const clipLabel = clipRequesting ? "等待生成" : clipReady ? "观看视频" :
+    renderJob?.status === "rendering" || renderJob?.status === "processing" ? "生成中" :
+      clipBusy ? "等待生成" : clipFailed ? "重试" : "生成视频";
   const inspectorId = `coaching-event-${event.id}-evidence`;
 
   return (
     <article
       className={`event-card evidence-ledger-item ${event.severity} ${active ? "active" : ""} ${inspected ? "inspected" : ""}`}
+      aria-label={copy.title}
     >
+      <div className="coaching-card-summary">
+        <div className="coaching-card-location">
+          <span title="从回合开始计时">{locationLabel ?? `第 ${event.round_number} 回合`}</span>
+          <span className={`event-severity-pill ${event.severity}`}>{coachingSeverityLabel(event.severity)}</span>
+        </div>
+        <h3 className="event-title">{copy.title}</h3>
+        <p className="coaching-card-guidance">{copy.guidance}</p>
+      </div>
+
+      <div className="event-card-actions">
+        <button
+          className="primary-button compact-button locate-tick-button"
+          type="button"
+          onClick={() => onSeek(event.tick_start)}
+          aria-label={`查看这一刻：${copy.title}`}
+        >
+          <Crosshair size={14} aria-hidden="true" />
+          查看这一刻
+        </button>
+        <button
+          className="secondary-button compact-button generate-clip-button"
+          type="button"
+          onClick={() => onGenerateClip(event)}
+          disabled={clipBusy}
+          title={clipReady ? "播放已保存的视频" : clipFailed ? "重新生成这段视频" : "首次生成后保存，之后可以直接重播"}
+        >
+          {clipReady ? <Play size={14} aria-hidden="true" /> : <Video size={14} aria-hidden="true" />}
+          {clipLabel}
+        </button>
+      </div>
+
       <button
-        className="event-card-seek event-card-inspect evidence-ledger-seek evidence-ledger-inspect"
+        className="coaching-evidence-toggle"
         type="button"
         onClick={onToggleInspect}
         aria-expanded={inspected}
         aria-controls={inspectorId}
-        aria-label={`${inspected ? "Hide" : "Inspect"} evidence for ${event.title} at tick ${event.tick_start}`}
-        title={`${inspected ? "Hide" : "Inspect"} evidence without changing the review tick`}
+        aria-label={`${inspected ? "收起" : "查看"}依据：${copy.title}`}
       >
-        <div className="evidence-ledger-leading">
-          <span className={`event-severity-pill ${event.severity}`}>{event.severity}</span>
-          <div className="event-title-block">
-            <h3 className="event-title">{event.title}</h3>
-            <span className="event-rule-label">{reviewEvent.ruleLabel}</span>
-          </div>
-        </div>
-        <div className="evidence-ledger-coordinates">
-          <span>R{event.round_number}</span>
-          <span>Tick {event.tick_start}</span>
-          <span className="event-rule-id">{reviewEvent.ruleId}</span>
-          {primaryEvidence ? (
-            <span className="event-ledger-evidence-preview">
-              {primaryEvidence.label}: {primaryEvidence.value}
-            </span>
-          ) : null}
-        </div>
-        <ChevronDown size={16} className="event-ledger-seek-icon" aria-hidden="true" />
+        {inspected ? "收起依据" : "查看依据"}
+        <ChevronDown size={14} aria-hidden="true" />
       </button>
       {inspected ? (
         <div id={inspectorId} className="event-ledger-inspector">
           <p className="event-message">{event.message}</p>
+          {copy.limitation ? (
+            <div className="coaching-guidance limitation"><strong>判断边界</strong><p>{copy.limitation}</p></div>
+          ) : null}
+          {(typeof originalAction === "string" && originalAction !== copy.guidance) ||
+            (typeof originalLimitation === "string" && originalLimitation !== copy.limitation) ? (
+              <details className="coaching-original-context">
+                <summary>原始分析记录</summary>
+                {typeof originalAction === "string" ? <p>{originalAction}</p> : null}
+                {typeof originalLimitation === "string" ? <p>{originalLimitation}</p> : null}
+              </details>
+            ) : null}
           <div className="event-meta">
-            <span className="mini-pill">{event.category}</span>
-            <span className="mini-pill">Evidence tick {event.tick_start}</span>
+            {event.structured_context_json.assessment === "review_candidate" ? <span className="mini-pill">待复盘线索</span> : null}
+            <span className="mini-pill">选手 {event.player_name || event.player_id || "未知"}</span>
+            <span className="mini-pill">规则 {reviewEvent.ruleId}</span>
+            <span className="mini-pill">证据 tick {event.tick_start}</span>
           </div>
           <div className="event-involved">
-            <span>Players</span>
-            <strong>
-              {reviewEvent.involvedPlayers.length > 0
-                ? reviewEvent.involvedPlayers.join(", ")
-                : "Unknown"}
-            </strong>
+            <span>相关选手</span>
+            <strong>{reviewEvent.involvedPlayers.length > 0 ? reviewEvent.involvedPlayers.join("、") : "未知"}</strong>
           </div>
           {reviewEvent.evidence.length > 0 ? (
             <dl className="event-evidence">
               {reviewEvent.evidence.map((item) => (
                 <div key={`${event.id}-${item.label}`} className="event-evidence-chip">
-                  <dt>{item.label}</dt>
+                  <dt>{coachingEvidenceLabel(item.label)}</dt>
                   <dd>{item.value}</dd>
                 </div>
               ))}
             </dl>
           ) : null}
-          <div className="event-card-actions">
-            {renderJob ? (
-              <span
-                className={`mini-pill clip-job-pill ${renderJob.status}`}
-                title={renderJob.error_message ?? `Clip job ${renderJob.status}`}
-              >
-                Clip {renderJob.status}
-              </span>
-            ) : null}
-            <button
-              className="secondary-button compact-button locate-tick-button"
-              type="button"
-              onClick={() => onSeek(event.tick_start)}
-              title={`Locate the shared review coordinate at tick ${event.tick_start}`}
-            >
-              <Crosshair size={14} aria-hidden="true" />
-              Locate at Tick {event.tick_start}
-            </button>
-            <button
-              className="secondary-button compact-button generate-clip-button"
-              type="button"
-              onClick={() => onGenerateClip(event)}
-              disabled={clipBusy}
-              title="Create a first-person clip job for this coaching event"
-            >
-              <Scissors size={14} />
-              {clipRequesting ? "Queuing" : "Generate Clip for this event"}
-            </button>
-          </div>
-        </div>
-      ) : renderJob ? (
-        <div className="event-ledger-render-state">
-          <span
-            className={`mini-pill clip-job-pill ${renderJob.status}`}
-            title={renderJob.error_message ?? `Clip job ${renderJob.status}`}
-          >
-            Clip {renderJob.status}
-          </span>
+          {clipFailed ? <p className="coaching-clip-error">视频生成失败，可以点击重试。</p> : null}
         </div>
       ) : null}
     </article>

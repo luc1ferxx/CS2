@@ -48,6 +48,12 @@ const parserEvents = [
 ];
 
 {
+  assert.deepEqual(normalize(parserEventPresentationForType("bomb_pickup")), {
+    label: "Bomb pickup", tone: "objective", shortLabel: "+"
+  });
+  assert.deepEqual(normalize(parserEventPresentationForType("bomb_dropped")), {
+    label: "Bomb dropped", tone: "objective", shortLabel: "B"
+  });
   assert.deepEqual(normalize(parserEventPresentationForType("bomb_planted")), {
     label: "Plant",
     tone: "objective",

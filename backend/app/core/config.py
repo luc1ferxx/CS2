@@ -225,6 +225,7 @@ class Settings:
     dev_user_id: str = os.getenv("DEV_USER_ID", "dev-user")
     max_render_clip_seconds: int = int(os.getenv("MAX_RENDER_CLIP_SECONDS", "60"))
     render_worker_token: str = os.getenv("RENDER_WORKER_TOKEN", "dev-render-worker-token")
+    render_worker_mode: str = os.getenv("RENDER_WORKER_MODE", "fallback")
     cors_origins_raw: str = os.getenv(
         "CORS_ORIGINS",
         "http://localhost:3000,http://127.0.0.1:3000",
@@ -271,6 +272,8 @@ class Settings:
         return f"{self.backend_public_url}/auth/steam/callback"
 
     def validate_runtime_configuration(self) -> None:
+        if self.render_worker_mode not in {"fallback", "external"}:
+            raise RuntimeError("RENDER_WORKER_MODE must be fallback or external")
         self._validate_explicit_auth_mode()
         self._validate_auth_provider()
         if self.auth_mode != "production":
@@ -363,6 +366,8 @@ class Settings:
         self._validate_steam_demo_import_configuration()
 
     def validate_worker_runtime_configuration(self) -> None:
+        if self.render_worker_mode not in {"fallback", "external"}:
+            raise RuntimeError("RENDER_WORKER_MODE must be fallback or external")
         self._validate_explicit_auth_mode()
         if self.auth_mode == "production":
             self._validate_production_render_worker_token()
