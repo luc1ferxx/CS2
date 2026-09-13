@@ -1,0 +1,65 @@
+# Local development on macOS/Linux; use through scripts/dev.sh.
+# !override requires Docker Compose 2.24.4 or newer.
+x-dev-backend: &dev-backend
+  AUTH_MODE: development
+  AUTH_COOKIE_SECURE: "0"
+  DEV_USER_ID: dev-user
+  DATABASE_URL: postgresql+psycopg2://cs2coach:cs2coach@postgres:5432/cs2coach
+  REDIS_URL: redis://redis:6379/0
+  REDIS_QUEUE_NAME: cs2-demo-jobs
+  ARTIFACT_STORAGE_BACKEND: local
+  ARTIFACT_STORAGE_ROOT: /data
+  REPLAY_STORAGE_DIR: /data/replays
+  DEMO_UPLOAD_STORAGE_DIR: /data/uploads
+  VIDEO_STORAGE_DIR: /data/videos
+  SUMMARY_STORAGE_DIR: /data/summaries
+  BACKEND_PUBLIC_URL: http://localhost:8000
+  FRONTEND_PUBLIC_URL: http://localhost:3000
+  MEDIA_URL_BASE: ""
+  CORS_ORIGINS: http://localhost:3000,http://127.0.0.1:3000
+  RENDER_WORKER_MODE: fallback
+
+services:
+  postgres:
+    environment:
+      POSTGRES_DB: cs2coach
+      POSTGRES_USER: cs2coach
+      POSTGRES_PASSWORD: cs2coach
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cs2coach -d cs2coach"]
+
+  api:
+    environment: *dev-backend
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    ports: !override
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - ./backend/app:/app/app:ro
+
+  worker:
+    environment: *dev-backend
+    volumes:
+      - ./backend/app:/app/app:ro
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import sys; from app.core.redis import get_redis_client; from app.services.diagnostics import read_worker_heartbeat; sys.exit(0 if read_worker_heartbeat(get_redis_client())['alive'] else 1)"
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+
+  frontend:
+    environment:
+      NEXT_PUBLIC_API_BASE_URL: http://localhost:8000
+      NEXT_TELEMETRY_DISABLED: "1"
+    ports: !override
+      - "127.0.0.1:3000:3000"
+    volumes:
+      - ./frontend/app:/app/app:ro
+      - ./frontend/components:/app/components:ro
+      - ./frontend/lib:/app/lib:ro
+      - ./frontend/public:/app/public:ro
+      - ./frontend/types:/app/types:ro

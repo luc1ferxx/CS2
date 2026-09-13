@@ -139,6 +139,8 @@ docs/
 
 ## 本地运行
 
+在 Mac 继续开发 Windows 桌面版，可使用 `bash scripts/dev.sh` 启动独立的本地开发栈，包含解析和复盘，不启动真实视频设备。首次配置、源码更新和数据交接见 [Mac 开发与 Windows 发布](docs/macos_development_windows_release_v1.md)。
+
 这台已配置 xelex 录制环境的 Windows 电脑，双击仓库根目录 **`Start CS2 Coach.cmd`**。也可以在 PowerShell 运行：
 
 ```powershell
@@ -819,7 +821,7 @@ Minimal local smoke for a clean environment. For internal preview handoff, use `
 
 ## Next Useful Work
 
-下一步优先验证 xelex 建议的实际帮助，减少重复站位提醒并改善排序，然后扩充地图校准、可复现安装配置与解析/录制任务恢复。完整优先级和完成标准见 [项目进展与下一步](docs/project_status_2026-09-13.md)。
+用户当前目标是让其他人下载安装 Windows 软件，后续日常开发在 Mac 完成。下一步优先完成 [桌面版安装发行](docs/desktop_distribution_v1.md)，确定本地/联网解析方式，由 Windows 构建环境生成安装包，并在没有开发环境的 Windows 电脑上验收安装、导入和复盘。之后继续验证 xelex 建议的实际帮助、减少重复提醒、改善排序和扩充地图校准；完整计划见 [项目进展与下一步](docs/project_status_2026-09-13.md)。
 
 Steam Demo 导入适配器保持 fail closed：仅 Valve 明确授权的 partner endpoint 或正式许可 Provider 才能在后续独立审阅中注册；任何社区 share-code/CDN 路径继续默认关闭且标为 unsupported/experimental，下载内容必须进入现有 artifact intake。手动 `.dem` 上传始终保留为可靠兜底。之后再按独立阶段推进可靠任务投递、parser 隔离、migration/CI/CD/observability/backup 和真实 demo corpus；不跨阶段捆绑。
 
