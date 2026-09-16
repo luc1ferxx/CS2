@@ -26,11 +26,13 @@ import {
   getDemoStatus,
   getDemoVideo,
   getRenderJobs,
+  getRenderWorkerStatus,
   getReplay,
   saveVideoCalibration,
   uploadDemoVideo,
   type RenderClipRequest,
   type RenderJobStatus,
+  type RenderWorkerStatus,
   type VideoCalibrationUpdate
 } from "@/lib/api";
 import {
@@ -45,6 +47,7 @@ import { resolvePrivateMediaSource } from "@/lib/media-url";
 import { advanceReplayTick, videoMediaIdentity, videoPlaybackState } from "@/lib/replay-time";
 import { roundClock, savedClipAtTick, usesVideoClock } from "@/lib/review-workspace";
 import { buildEventClipRequest, buildTickClipRequest, clipIsActive, clipsForPlayer, matchingClipJob, playableClipVideo, retainSelectedClip, reviewVideo, type SelectedClip } from "@/lib/render-clips";
+import { renderWorkerNotice } from "@/lib/render-worker";
 import {
   DEFAULT_PLAYER_IDENTITY,
   coachingForPlayer,
@@ -87,6 +90,7 @@ function DemoDetailContent() {
   const [clipRequestingEventId, setClipRequestingEventId] = useState<string | null>(null);
   const [tickClipRequesting, setTickClipRequesting] = useState(false);
   const [renderJobs, setRenderJobs] = useState<RenderJobStatus[]>([]);
+  const [renderWorker, setRenderWorker] = useState<RenderWorkerStatus | null>(null);
   // A background render may update the demo's default video without changing the clip being reviewed.
   const replay = useMemo(() => loadedReplay
     ? { ...loadedReplay, video: reviewVideo(loadedReplay.video, renderJobs, selectedClip, demoId) }
@@ -254,6 +258,10 @@ function DemoDetailContent() {
       ?? matchingClipJob(renderJobs, buildTickClipRequest(replay, currentTick, selectedRound, selectedPlayerId))
     : null, [currentTick, renderJobs, replay, selectedPlayerId, selectedRound]);
   const latestRenderClipJob = renderJobs[0] ?? null;
+  const tickClipWorkerNotice = useMemo(
+    () => renderWorkerNotice(renderWorker, currentTickClipJob),
+    [currentTickClipJob, renderWorker]
+  );
   const hasActiveRenderClipJob = renderJobs.some((job) => isRenderActiveStatus(job.status));
   const summaryItems = useMemo(
     () => detailSummaryItems({ status, replay, latestRenderJob: latestRenderClipJob }),
@@ -269,8 +277,15 @@ function DemoDetailContent() {
 
   const loadRenderState = useCallback(async () => {
     try {
-      const [nextJobs, video] = await Promise.all([getRenderJobs(demoId), getDemoVideo(demoId)]);
+      const [nextJobs, video, worker] = await Promise.all([
+        getRenderJobs(demoId),
+        getDemoVideo(demoId),
+        // A queued job goes nowhere without a renderer, so liveness rides along
+        // with the same poll that already drives the job list.
+        getRenderWorkerStatus().catch(() => null)
+      ]);
       setRenderJobs(nextJobs);
+      setRenderWorker(worker);
       setReplay((currentReplay) =>
         currentReplay ? { ...currentReplay, video } : currentReplay
       );
@@ -463,6 +478,9 @@ function DemoDetailContent() {
     }
     const response = await createRenderClipJob(demoId, request);
     setRenderJobs((currentJobs) => [response, ...currentJobs.filter((job) => job.job_id !== response.job_id)]);
+    // The job is created either way, so surface an offline renderer now rather
+    // than leaving the caller on "queued" until the next poll.
+    if (response.render_worker) setRenderWorker(response.render_worker);
     if (playableClipVideo(response)) {
       playSavedClip(response, tick);
     } else {
@@ -575,9 +593,10 @@ function DemoDetailContent() {
                 </div>
                 <button className="secondary-button compact-button" type="button"
                   disabled={tickClipRequesting || clipIsActive(currentTickClipJob) || !selectedPlayerId}
+                  title={tickClipWorkerNotice?.detail}
                   onClick={() => void requestRenderClipAtCurrentTick()}>
                   <Scissors size={15} aria-hidden="true" />
-                  {tickClipRequesting ? "正在提交" : clipIsActive(currentTickClipJob) ? "视频生成中" : playableClipVideo(currentTickClipJob) ? "观看此刻视频" : "生成此刻视频"}
+                  {tickClipRequesting ? "正在提交" : tickClipWorkerNotice ? tickClipWorkerNotice.label : clipIsActive(currentTickClipJob) ? "视频生成中" : playableClipVideo(currentTickClipJob) ? "观看此刻视频" : "生成此刻视频"}
                 </button>
               </div>
               <div className={`review-main-canvas ${videoDrivesClock ? "showing-video" : "showing-map"}`}>
@@ -596,6 +615,7 @@ function DemoDetailContent() {
                 latestRenderClipJob={latestRenderClipJob}
                 currentTickClipJob={currentTickClipJob}
                 renderClipPlayerSelected={Boolean(selectedPlayerId)}
+                renderWorker={renderWorker}
                 onRequestMockRender={requestMockRender}
                 onRequestRenderClip={requestRenderClipAtCurrentTick}
                 onVideoTickChange={updateCoordinateFromTick}
@@ -684,6 +704,7 @@ function DemoDetailContent() {
               <RenderOperatorPanel
                 video={replay.video}
                 latestJob={latestRenderClipJob}
+                renderWorker={renderWorker}
                 jobCount={renderJobs.length}
                 refreshing={renderJobsRefreshing}
                 onRefresh={() => void refreshRenderOperatorState()}

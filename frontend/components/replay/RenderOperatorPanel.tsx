@@ -2,13 +2,15 @@
 
 import { AlertTriangle, CheckCircle2, Clock3, RefreshCw, Wrench } from "lucide-react";
 
-import type { RenderJobStatus } from "@/lib/api";
+import type { RenderJobStatus, RenderWorkerStatus } from "@/lib/api";
 import { friendlyErrorMessage } from "@/lib/demo-library";
+import { renderWorkerOperatorHint } from "@/lib/render-worker";
 import type { ReplayVideo } from "@/types/replay";
 
 interface RenderOperatorPanelProps {
   video: ReplayVideo;
   latestJob: RenderJobStatus | null;
+  renderWorker?: RenderWorkerStatus | null;
   jobCount: number;
   refreshing: boolean;
   onRefresh: () => void;
@@ -17,12 +19,13 @@ interface RenderOperatorPanelProps {
 export function RenderOperatorPanel({
   video,
   latestJob,
+  renderWorker = null,
   jobCount,
   refreshing,
   onRefresh
 }: RenderOperatorPanelProps) {
   const request = latestJob ? renderRequest(latestJob) : null;
-  const state = operatorState(video, latestJob);
+  const state = operatorState(video, latestJob, renderWorker);
 
   return (
     <section className="panel render-operator-panel" aria-label="Render operator status">
@@ -104,7 +107,11 @@ export function RenderOperatorPanel({
   );
 }
 
-function operatorState(video: ReplayVideo, latestJob: RenderJobStatus | null) {
+function operatorState(
+  video: ReplayVideo,
+  latestJob: RenderJobStatus | null,
+  renderWorker: RenderWorkerStatus | null
+) {
   if (latestJob?.status === "failed" || (video.status === "failed" && latestJob?.status !== "completed")) {
     return {
       label: "Failed",
@@ -122,9 +129,12 @@ function operatorState(video: ReplayVideo, latestJob: RenderJobStatus | null) {
   }
 
   if (latestJob?.status === "queued") {
+    const offlineHint = renderWorkerOperatorHint(renderWorker);
     return {
-      label: "Queued",
-      nextAction: "Waiting for a render worker or operator; check diagnostics for worker heartbeat before preparing the job manually.",
+      label: offlineHint ? "Queued, no render worker" : "Queued",
+      nextAction:
+        offlineHint ??
+        "Waiting for a render worker to claim the job; it starts on its own once one polls.",
       tone: "waiting"
     } as const;
   }

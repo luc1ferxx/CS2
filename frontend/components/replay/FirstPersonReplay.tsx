@@ -11,9 +11,10 @@ import {
 } from "react";
 
 import { useAuth } from "@/components/auth/AuthProvider";
-import type { RenderJobStatus } from "@/lib/api";
+import type { RenderJobStatus, RenderWorkerStatus } from "@/lib/api";
 import { friendlyErrorMessage, isRenderActiveStatus } from "@/lib/demo-library";
 import { resolvePrivateMediaSource } from "@/lib/media-url";
+import { renderWorkerNotice } from "@/lib/render-worker";
 import { tickToVideoTime, videoMediaIdentity, videoTimeRange, videoTimeToTick, type VideoPlaybackState } from "@/lib/replay-time";
 import type { ReplayData, ReplayFrame } from "@/types/replay";
 
@@ -29,6 +30,7 @@ interface FirstPersonReplayProps {
   latestRenderClipJob: RenderJobStatus | null;
   currentTickClipJob?: RenderJobStatus | null;
   renderClipPlayerSelected?: boolean;
+  renderWorker?: RenderWorkerStatus | null;
   compact?: boolean;
   showDevActions?: boolean;
   onRequestMockRender: () => void;
@@ -56,6 +58,7 @@ export const FirstPersonReplay = forwardRef<FirstPersonReplayHandle, FirstPerson
   latestRenderClipJob,
   currentTickClipJob,
   renderClipPlayerSelected = true,
+  renderWorker = null,
   compact = false,
   showDevActions = false,
   onRequestMockRender,
@@ -85,6 +88,7 @@ export const FirstPersonReplay = forwardRef<FirstPersonReplayHandle, FirstPerson
     renderClipRequesting ||
     isRenderActiveStatus(currentTickClipJob?.status);
   const tickClipReady = currentTickClipJob?.status === "completed" && currentTickClipJob.video?.status === "ready" && Boolean(currentTickClipJob.video.url);
+  const clipWorkerNotice = renderWorkerNotice(renderWorker, currentTickClipJob);
   const progress = Math.min(
     1,
     Math.max(0, (videoTime - timeRange.start) / Math.max(1, timeRange.end - timeRange.start))
@@ -249,10 +253,10 @@ export const FirstPersonReplay = forwardRef<FirstPersonReplayHandle, FirstPerson
             type="button"
             onClick={onRequestRenderClip}
             disabled={clipJobBusy || !renderClipPlayerSelected}
-            title={tickClipReady ? "观看当前时刻已保存的视频" : "生成当前时刻的第一人称片段，完成后可重复观看"}
+            title={clipWorkerNotice ? clipWorkerNotice.detail : tickClipReady ? "观看当前时刻已保存的视频" : "生成当前时刻的第一人称片段，完成后可重复观看"}
           >
             <Scissors size={14} />
-            {renderClipRequesting ? "正在提交…" : tickClipReady ? "观看这一刻" : isRenderActiveStatus(currentTickClipJob?.status) ? statusLabel(currentTickClipJob?.status ?? "queued") : "生成这一刻的视频"}
+            {renderClipRequesting ? "正在提交…" : tickClipReady ? "观看这一刻" : clipWorkerNotice ? clipWorkerNotice.label : isRenderActiveStatus(currentTickClipJob?.status) ? statusLabel(currentTickClipJob?.status ?? "queued") : "生成这一刻的视频"}
           </button>
           {showDevActions ? <button
             className="secondary-button compact-button"

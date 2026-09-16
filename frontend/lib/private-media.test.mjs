@@ -104,6 +104,7 @@ function loadTypeScriptModule(relativePath, runtimeImports = {}) {
     "lucide-react": icons,
     "@/lib/api": {},
     "@/lib/demo-library": { friendlyErrorMessage: (value) => value },
+    "@/lib/render-worker": loadTypeScriptModule("./render-worker.ts"),
     "@/types/replay": {}
   };
   const { RenderOperatorPanel } = loadTypeScriptModule(
@@ -180,6 +181,7 @@ function loadTypeScriptModule(relativePath, runtimeImports = {}) {
       "@/components/auth/AuthProvider": { useAuth: () => ({ refreshSession: async () => true }) },
       "@/lib/demo-library": loadTypeScriptModule("./demo-library.ts"),
       "@/lib/media-url": loadTypeScriptModule("./media-url.ts"),
+      "@/lib/render-worker": loadTypeScriptModule("./render-worker.ts"),
       "@/lib/replay-time": loadTypeScriptModule("./replay-time.ts")
     }
   );
@@ -218,6 +220,28 @@ function loadTypeScriptModule(relativePath, runtimeImports = {}) {
   assert.match(replayOnlyMarkup, /生成这一刻的视频/);
   assert.doesNotMatch(replayOnlyMarkup, /模拟视频任务/);
   assert.match(playerMarkup({}, {}, 100, null, { showDevActions: true }), /模拟视频任务/);
+
+  // A queued clip with nothing to claim it used to sit on "等待生成" forever.
+  const queuedClipJob = { job_id: "queued-job", status: "queued" };
+  const offlineWorker = {
+    mode: "external", required: true, connected: false, status: "offline",
+    last_seen_at: "2026-09-16T12:00:00+00:00", age_seconds: 600, busy_rendering: false
+  };
+  const offlineClipMarkup = playerMarkup({}, {}, 100, null, {
+    currentTickClipJob: queuedClipJob, renderWorker: offlineWorker
+  });
+  assert.match(offlineClipMarkup, /渲染器未连接<\/button>/);
+  assert.match(offlineClipMarkup, /任务已保留/);
+  assert.doesNotMatch(offlineClipMarkup, /等待生成<\/button>/);
+  const connectedClipMarkup = playerMarkup({}, {}, 100, null, {
+    currentTickClipJob: queuedClipJob, renderWorker: { ...offlineWorker, connected: true, status: "connected" }
+  });
+  assert.match(connectedClipMarkup, /等待生成<\/button>/);
+  assert.doesNotMatch(connectedClipMarkup, /渲染器未连接/);
+  assert.doesNotMatch(
+    playerMarkup({}, {}, 100, null, { currentTickClipJob: queuedClipJob }),
+    /渲染器未连接/
+  );
 
   const noFramesMarkup = playerMarkup({}, { frames: [] });
   assert.match(noFramesMarkup, /暂无回放视频/);

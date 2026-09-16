@@ -96,8 +96,19 @@ export interface RenderJobStatus {
   finished_at?: string | null;
 }
 
-interface RenderJobCreated extends RenderJobStatus {
+export interface RenderWorkerStatus {
+  mode: string;
+  required: boolean;
+  connected: boolean;
+  status: "connected" | "rendering" | "offline" | "never_seen" | string;
+  last_seen_at?: string | null;
+  age_seconds?: number | null;
+  busy_rendering: boolean;
+}
+
+export interface RenderJobCreated extends RenderJobStatus {
   video: ReplayVideo;
+  render_worker?: RenderWorkerStatus | null;
 }
 
 export interface VideoCalibrationUpdate {
@@ -326,6 +337,10 @@ export function createRenderClipJob(
 
 export function getRenderJobs(demoId: string): Promise<RenderJobStatus[]> {
   return requestJson<RenderJobStatus[]>(`/demos/${demoId}/render/jobs`);
+}
+
+export function getRenderWorkerStatus(): Promise<RenderWorkerStatus> {
+  return requestJson<RenderWorkerStatus>("/render/worker");
 }
 
 export function getCoaching(demoId: string): Promise<CoachingEvent[]> {
