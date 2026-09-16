@@ -1,0 +1,220 @@
+# API Reference V1
+
+本文件是 HTTP 接口的完整清单和调用示例。README 只保留产品边界和合同描述，具体路由与 curl 命令看这里。
+
+接口的行为约束（owner 隔离、fail-closed、private media）由 `production_auth_owner_private_media_v1.md` 定义，本文件不重复。
+
+API 运行时的交互式文档在 `http://localhost:8000/docs`。
+
+## 用户 API
+
+所有 demo/upload/replay/coaching/library/render/private-media 路由都从可信 session 派生 `owner_id`，并复用各自已有的 owner-scoped 查询。
+
+### Core
+
+- `GET /health`
+- `GET /diagnostics`（仅 development/test；production 返回 `404`）
+- `GET /auth/steam/login`
+- `GET /auth/steam/callback`
+- `GET /auth/me`
+- `POST /auth/logout`
+- `GET /auth/login`、`GET /auth/oidc/callback`、`GET /auth/session`（`AUTH_PROVIDER=oidc` / legacy frontend 兼容）
+- `GET /steam/connection`
+- `POST /steam/connection/credentials`
+- `DELETE /steam/connection`
+- `POST /steam/sync`
+- `GET /steam/matches`
+- `POST /steam/matches/{match_id}/import`
+- `GET /demos`
+- `PATCH /demos/{demo_id}`
+- `POST /demos/{demo_id}/archive`
+- `GET /demos/{demo_id}/status`
+- `GET /demos/{demo_id}/diagnostics`
+- `POST /demos/{demo_id}/parse/retry`
+- `POST /uploads/mock`
+- `POST /uploads/demo`
+
+### Replay and coaching
+
+- `GET /demos/{demo_id}/replay`
+- `GET /demos/{demo_id}/coaching`
+
+### Video and render
+
+- `GET /demos/{demo_id}/video`
+- `GET|HEAD /demos/{demo_id}/media/video`（校验 session + owner；支持 byte range）
+- `POST /demos/{demo_id}/video/upload`
+- `POST /demos/{demo_id}/video/calibration`
+- `POST /demos/{demo_id}/render/mock`
+- `POST /demos/{demo_id}/render/clip`
+- `GET /demos/{demo_id}/render/jobs`
+- `GET|HEAD /demos/{demo_id}/render/jobs/{job_id}/media/video`（支持 Range）
+
+### Render worker（service credential，非 browser session）
+
+- `GET /render-worker/jobs/next`
+- `GET /render-worker/jobs/{job_id}/manifest`
+- `GET /render-worker/jobs/{job_id}/source`
+- `POST /render-worker/jobs/{job_id}/media`
+- `POST /render-worker/jobs/{job_id}/result`
+
+## 调用示例
+
+下列示例中的 `X-Dev-User-Id` header 只在显式 development/test mode 可用，production 会忽略或拒绝它，绝不作为 identity fallback。
+
+### 健康检查
+
+```bash
+curl http://localhost:8000/health
+curl http://localhost:8000/diagnostics
+```
+
+`/health` 只返回 coarse `status=ok|degraded`，不泄漏 dependency、URL 或 storage 配置。development/test 的 `/diagnostics` 返回 compact readiness、Redis queue/worker heartbeat、job counts、recent failed job summary 和 render-worker inferred status；production 对该 system endpoint 返回 `404`。它不暴露本地 storage path、env dump、token、stack trace、raw parser data 或上传内容。
+
+### 上传 `.dem`
+
+```bash
+curl -F "file=@sample.dem" http://localhost:8000/uploads/demo
+# development/test harness only:
+curl -H "X-Dev-User-Id: owner-a" -F "file=@sample.dem" http://localhost:8000/uploads/demo
+```
+
+### 重试失败的解析
+
+source artifact 仍存在时，owner-scoped retry 可以不重新上传就重新排队：
+
+```bash
+curl -X POST http://localhost:8000/demos/{demo_id}/parse/retry
+# development/test harness only:
+curl -X POST -H "X-Dev-User-Id: owner-a" http://localhost:8000/demos/{demo_id}/parse/retry
+```
+
+### 创建 render clip
+
+```bash
+curl -X POST http://localhost:8000/demos/{demo_id}/render/clip \
+  -H "Content-Type: application/json" \
+  -d '{
+    "eventId": "event-id",
+    "playerId": "player-id",
+    "tickStart": 1000,
+    "tickEnd": 3560,
+    "tickRate": 64,
+    "roundNumber": 3,
+    "renderPreset": "event_clip_v1"
+  }'
+```
+
+API 在**任何 `RENDER_WORKER_MODE` 下**都会验证：demo 已完成解析、replay blob 存在、`tickRate > 0`、`tickEnd > tickStart`、所选 POV 与已解析玩家名单一致、clip 时长不超过 `MAX_RENDER_CLIP_SECONDS`（默认 60 秒）。
+
+**仅当 `RENDER_WORKER_MODE=external`** 时（默认是 `fallback`，不执行这几条）额外验证：source 必须是 accepted `.dem`、必须选中带 Steam ID 的玩家、tick rate 与已解析 replay 一致、tick 区间落在 replay 范围内。见 `backend/app/services/demo_service.py` 的 `create_render_clip_job`。
+
+### 手动 MP4 绑定（开发/QA）
+
+```bash
+curl -F "file=@clip.mp4" http://localhost:8000/demos/{demo_id}/video/upload
+```
+
+```bash
+curl -X POST http://localhost:8000/demos/{demo_id}/video/calibration \
+  -H "Content-Type: application/json" \
+  -d '{"timeOriginSeconds":12.5,"tickStart":12345,"tickEnd":54321}'
+```
+
+## Render Worker V1 API
+
+Render worker API 使用独立的 `X-Render-Worker-Token` service credential，不接受 browser session 代替。本地默认 token 是 `dev-render-worker-token`；production 必须配置非默认 `RENDER_WORKER_TOKEN`，否则 startup validation fails closed。Stage 3 保留这条 service-to-service auth，并在 multipart parser 消费媒体 body 前拒绝错误 token。
+
+### 领取任务
+
+获取下一个 queued manifest 并默认 claim 为 `rendering`：
+
+```bash
+curl http://localhost:8000/render-worker/jobs/next \
+  -H "X-Render-Worker-Token: dev-render-worker-token"
+```
+
+获取指定 job manifest 并默认 claim 为 `rendering`：
+
+```bash
+curl http://localhost:8000/render-worker/jobs/{job_id}/manifest \
+  -H "X-Render-Worker-Token: dev-render-worker-token"
+```
+
+只检查 manifest 而不 claim，用 `claim=false`：
+
+```bash
+curl "http://localhost:8000/render-worker/jobs/{job_id}/manifest?claim=false" \
+  -H "X-Render-Worker-Token: dev-render-worker-token"
+```
+
+### 上传媒体
+
+仅在 job 已 claim 为 `rendering` 后上传 dev/worker mp4。响应中的 `storageKey` 是该 job 的 immutable `outputArtifact` snapshot reference，必须原样用于成功回调：
+
+```bash
+curl -X POST http://localhost:8000/render-worker/jobs/{job_id}/media \
+  -H "X-Render-Worker-Token: dev-render-worker-token" \
+  -F "file=@clip.mp4"
+```
+
+### 提交回调
+
+```bash
+curl -X POST http://localhost:8000/render-worker/jobs/{job_id}/result \
+  -H "X-Render-Worker-Token: dev-render-worker-token" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "status": "completed",
+    "videoUrl": "/demos/demo-id/media/video",
+    "storageKey": "artifact://v1/accepted/video/...",
+    "tickStart": 1000,
+    "tickEnd": 3560,
+    "tickRate": 64,
+    "timeOriginSeconds": 0,
+    "durationSeconds": 40,
+    "errorMessage": null
+  }'
+```
+
+### 回调的原子性与拒绝条件
+
+API 只接受与同一个 `rendering` job、owner、demo、immutable generation 和请求 tick 区间完全匹配的 accepted output。另一个 job 的 artifact、过期 generation、不同 tick 范围或没有先绑定 media 的 callback 都会失败关闭。Development local adapter 仍可解析旧 `/media/videos/...` callback 作为 legacy compatibility，但 runner 的正常路径必须使用 media upload 返回的 accepted `storageKey`。User payload 只投影默认或 job 专属的私有媒体路由，不返回 `storageKey`。
+
+失败回调把 replay failure state 与 terminal job 放在同一个 DB transaction 中，并在提交后删除该 job 的 bound output candidate；如果当前 replay video 是 `manual_upload`，失败不会清掉已有手动视频 metadata。成功回调同样原子提交新 replay reference 与 terminal job，随后清理旧 replay generation。已完成或已失败的 terminal render job 会拒绝后续 callback，避免 late callback 改写最终状态。
+
+## 响应片段
+
+### Ingestion snapshot
+
+Demo list/detail responses 包含：
+
+```json
+{
+  "phase": "uploaded",
+  "active": true,
+  "stale": false,
+  "retryable": false,
+  "attemptCount": 0,
+  "jobType": "real_parse",
+  "jobStatus": "queued",
+  "hasSourceDemo": true,
+  "failure": null
+}
+```
+
+解析失败会保留 compact failure metadata，含 `errorCode`、`message`、`failedAt`、`updatedAt`、`retryable`、`attemptCount`。
+
+### Parser failure taxonomy
+
+短 `errorCode` 加一句安全文案：
+
+- `INVALID_DEMO`：无效、不可读或 archive 内没有 `.dem`
+- `UNSUPPORTED_PARSER_FORMAT`：上传格式或 parser support 不可用
+- `MISSING_MATCH_METADATA`：缺少 rounds、playback ticks 或可采样 event ticks
+- `MISSING_FRAMES`：parser 没有返回可用 player position ticks
+- `NORMALIZATION_FAILED`：parser 输出无法整理成 replay contract
+- `STORAGE_READ_FAILED`：上传 source artifact 无法从 storage service 读取
+- `PARSER_UNEXPECTED`：未分类 parser exception
+
+Parser/demo failure responses 和 diagnostics 不包含本地路径、stack trace 或 raw parser dump；开发排障细节只保留在 worker process logs。
