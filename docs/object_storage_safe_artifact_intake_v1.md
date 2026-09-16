@@ -90,7 +90,12 @@ The storage boundary owns:
 - context-managed source materialization;
 - backend-neutral readiness without exposing paths or provider configuration.
 
-The local adapter uses no-follow directory/file descriptors and atomic temporary-file replacement for write, read, promotion, and delete operations. It must reject leaf and parent symlinks and check/reopen races.
+The local adapter uses atomic temporary-file replacement for write, read, promotion, and delete operations, and must reject leaf and parent links plus check/reopen races. It selects one of two directory backends by probing `os.supports_dir_fd`, never by platform name:
+
+- Where `dir_fd`, `O_NOFOLLOW`, and `O_DIRECTORY` exist (Linux, the deployed target), every leaf operation runs against a pinned directory descriptor, so a component swapped between two operations cannot redirect the second one.
+- Where they do not (Windows), the adapter re-resolves the path and re-rejects links on every operation, including directory junctions that `S_ISLNK` cannot see and that must therefore be matched on `FILE_ATTRIBUTE_REPARSE_POINT`. Reads additionally compare `st_dev`/`st_ino` before and after opening.
+
+The portable backend is weaker by design, and the difference is real: an attacker who can already write inside the artifact root can swap a directory component between two operations there, which a pinned descriptor prevents outright. Closing that gap would require holding a true directory handle through `ctypes` and `CreateFileW` with `FILE_FLAG_BACKUP_SEMANTICS`. The weaker path is proportionate because `Settings.validate_runtime_configuration` rejects `ARTIFACT_STORAGE_BACKEND=local` in production, leaving it to development, test, and single-user desktop use where the artifact root sits inside the operator's own profile. Both backends are held to the same contract suite on every platform, so Linux CI covers the code Windows runs.
 
 The object adapter maps the same logical reference to a private bucket prefix. It does not set public ACLs or generate browser URLs. Reads bind the previously validated version ID or ETag so a HEAD-to-GET replacement cannot substitute another generation. The S3-compatible protocol is an adapter choice, not a cloud-vendor decision.
 

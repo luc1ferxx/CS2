@@ -4,11 +4,12 @@ import unittest
 from contextlib import contextmanager
 from pathlib import Path
 
+from fixtures.filesystem import create_directory_link, requires_directory_links, requires_symlinks
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from app.core.config import settings
 from app.api.replay import get_replay
+from app.core.config import settings
 from app.core.database import Base
 from app.models import Demo
 from app.parser.map_config import map_metadata_for
@@ -260,6 +261,7 @@ class PublicMediaProjectionTest(unittest.TestCase):
                 )
                 self.assertIsNone(service.get_private_video_path(demo))
 
+    @requires_symlinks
     def test_private_video_path_rejects_symlink_escape(self) -> None:
         demo = add_demo(self.db, "demo-private-symlink")
 
@@ -270,6 +272,35 @@ class PublicMediaProjectionTest(unittest.TestCase):
             link = settings.video_storage_dir / demo.id / "clip.mp4"
             link.parent.mkdir(parents=True, exist_ok=True)
             link.symlink_to(outside)
+
+            service = DemoService.for_internal(self.db)
+            bind_replay(
+                self.db,
+                service,
+                demo,
+                replay_contract(
+                    demo.id,
+                    storage_key=f"local://videos/{demo.id}/clip.mp4",
+                    url=f"/media/videos/{demo.id}/clip.mp4",
+                ),
+            )
+
+            self.assertIsNone(service.get_private_video_path(demo))
+
+    @requires_directory_links
+    def test_private_video_path_rejects_linked_demo_directory(self) -> None:
+        demo = add_demo(self.db, "demo-private-linked-dir")
+
+        with tempfile.TemporaryDirectory() as directory, storage_dirs(Path(directory)):
+            root = Path(directory)
+            outside_directory = root / "outside-videos"
+            outside_directory.mkdir()
+            (outside_directory / "clip.mp4").write_bytes(b"outside-video")
+            demo_directory = settings.video_storage_dir / demo.id
+            demo_directory.parent.mkdir(parents=True, exist_ok=True)
+            # A junction is the unprivileged form of this escape on Windows, and
+            # it is invisible to S_ISLNK, so the reparse flag has to catch it.
+            create_directory_link(demo_directory, outside_directory)
 
             service = DemoService.for_internal(self.db)
             bind_replay(

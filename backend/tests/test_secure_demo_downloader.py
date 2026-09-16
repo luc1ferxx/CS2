@@ -1,11 +1,13 @@
 import hashlib
 import queue
-import socket
 import tempfile
 import threading
 import unittest
 from pathlib import Path
+from typing import ClassVar
 from unittest.mock import patch
+
+from fixtures.filesystem import assert_private_file_mode
 
 from app.core.config import Settings
 from app.services.demo_source_provider import DemoSource
@@ -19,7 +21,6 @@ from app.services.secure_demo_downloader import (
     _PinnedHTTPSConnection,
     secure_demo_downloader_from_settings,
 )
-
 
 PUBLIC_IP = "93.184.216.34"
 DEMO_BYTES = b"HL2DEMO\x00" + (b"safe-demo-byte" * 8)
@@ -124,7 +125,7 @@ class FakeHttpResponse:
 
 
 class FakePinnedConnection:
-    instances: list["FakePinnedConnection"] = []
+    instances: ClassVar[list["FakePinnedConnection"]] = []
 
     def __init__(self, **kwargs: object):
         self.kwargs = dict(kwargs)
@@ -191,7 +192,7 @@ class SecureDemoDownloaderTest(unittest.TestCase):
             with downloader.download(source) as downloaded:
                 scratch_path = downloaded.path
                 self.assertTrue(scratch_path.exists())
-                self.assertEqual(scratch_path.stat().st_mode & 0o777, 0o600)
+                assert_private_file_mode(self, scratch_path)
                 self.assertEqual(downloaded.stream.read(), DEMO_BYTES)
                 self.assertEqual(downloaded.size_bytes, len(DEMO_BYTES))
                 self.assertEqual(
@@ -461,7 +462,7 @@ class SecureDemoDownloaderTest(unittest.TestCase):
             def read1(self, size: int) -> bytes:
                 del size
                 self.read1_calls += 1
-                raise socket.timeout("signed-url-secret")
+                raise TimeoutError("signed-url-secret")
 
         blocked_response = BlockingHttpResponse()
 

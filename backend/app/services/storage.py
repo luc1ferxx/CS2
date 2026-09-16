@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import errno
 import hashlib
 import hmac
 import json
@@ -9,11 +10,18 @@ import re
 import stat
 import tempfile
 import uuid
-from contextlib import contextmanager
+from collections.abc import Iterator, Mapping
+from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, BinaryIO, ContextManager, Iterator, Mapping, Protocol, runtime_checkable
+from typing import (
+    Any,
+    BinaryIO,
+    ClassVar,
+    Protocol,
+    runtime_checkable,
+)
 from urllib.parse import urlparse
 
 from app.core.config import settings
@@ -122,7 +130,7 @@ class ArtifactReference:
         )
 
     @classmethod
-    def parse(cls, reference: str) -> "ArtifactReference":
+    def parse(cls, reference: str) -> ArtifactReference:
         parsed = urlparse(reference)
         if (
             parsed.scheme != "artifact"
@@ -205,7 +213,7 @@ class ArtifactMetadata:
             "sizeBytes": self.size_bytes,
             "sha256": self.sha256,
             "generation": self.generation,
-            "createdAt": self.created_at.astimezone(timezone.utc)
+            "createdAt": self.created_at.astimezone(UTC)
             .isoformat()
             .replace("+00:00", "Z"),
             "contentType": self.content_type,
@@ -260,7 +268,7 @@ class ArtifactRead:
             self._closed = True
             self._handle.close()
 
-    def __enter__(self) -> "ArtifactRead":
+    def __enter__(self) -> ArtifactRead:
         return self
 
     def __exit__(self, exc_type: Any, exc: Any, traceback: Any) -> None:
@@ -341,7 +349,7 @@ class ArtifactStore(Protocol):
         expected_sha256: str,
         max_bytes: int,
         suffix: str = ".dem",
-    ) -> ContextManager[Path]: ...
+    ) -> AbstractContextManager[Path]: ...
 
     def iter_quarantine_before(
         self,
@@ -358,6 +366,306 @@ class ArtifactStore(Protocol):
         owner_id: str | None = None,
         demo_id: str | None = None,
     ) -> list[str]: ...
+
+
+_FILE_ATTRIBUTE_REPARSE_POINT = 0x400
+
+_O_BINARY = getattr(os, "O_BINARY", 0)
+_O_CLOEXEC = getattr(os, "O_CLOEXEC", 0)
+_O_DIRECTORY = getattr(os, "O_DIRECTORY", 0)
+_O_NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
+_O_NOINHERIT = getattr(os, "O_NOINHERIT", 0)
+
+_DIRECTORY_OPEN_FLAGS = os.O_RDONLY | _O_DIRECTORY | _O_CLOEXEC | _O_NOFOLLOW
+_LEAF_READ_FLAGS = os.O_RDONLY | _O_BINARY | _O_CLOEXEC | _O_NOFOLLOW | _O_NOINHERIT
+_LEAF_CREATE_FLAGS = (
+    os.O_WRONLY
+    | os.O_CREAT
+    | os.O_EXCL
+    | _O_BINARY
+    | _O_CLOEXEC
+    | _O_NOFOLLOW
+    | _O_NOINHERIT
+)
+
+_DIRECTORY_FD_OPERATIONS = (os.link, os.mkdir, os.open, os.rename, os.stat, os.unlink)
+SUPPORTS_DIRECTORY_FD = (
+    all(operation in os.supports_dir_fd for operation in _DIRECTORY_FD_OPERATIONS)
+    and os.scandir in os.supports_fd
+    and bool(_O_DIRECTORY)
+    and bool(_O_NOFOLLOW)
+)
+
+
+def _is_reparse_point(status: os.stat_result) -> bool:
+    """Report Windows reparse points, which ``S_ISLNK`` does not see.
+
+    A directory junction is a reparse point that ``stat.S_ISLNK`` and
+    ``Path.is_symlink`` both report as a plain directory, so the mode bits
+    alone cannot decide whether a component redirects elsewhere.
+    """
+    return bool(getattr(status, "st_file_attributes", 0) & _FILE_ATTRIBUTE_REPARSE_POINT)
+
+
+def _reject_linked_component(status: os.stat_result, path: Path) -> None:
+    """Raise the same ``OSError`` POSIX ``O_NOFOLLOW`` raises for a link."""
+    if stat.S_ISLNK(status.st_mode) or _is_reparse_point(status):
+        raise OSError(errno.ELOOP, "Artifact path component is a link", str(path))
+
+
+class _ArtifactDirectory:
+    """One opened artifact directory; every leaf operation is relative to it.
+
+    Subclasses differ only in how a name is resolved to an object. Callers get
+    the same contract either way: links are never followed, directories are
+    never silently substituted for files, and a missing name raises
+    ``FileNotFoundError``.
+    """
+
+    def close(self) -> None:
+        raise NotImplementedError
+
+    @classmethod
+    def open_root(cls, artifact_root: Path, *, create: bool) -> _ArtifactDirectory:
+        raise NotImplementedError
+
+    def open_child(self, name: str, *, create: bool) -> _ArtifactDirectory:
+        raise NotImplementedError
+
+    def iter_names(self) -> Iterator[str]:
+        raise NotImplementedError
+
+    def leaf_exists(self, name: str) -> bool:
+        raise NotImplementedError
+
+    def create_leaf(self, name: str) -> int:
+        raise NotImplementedError
+
+    def open_leaf(self, name: str) -> int:
+        raise NotImplementedError
+
+    def link_leaf(
+        self,
+        source_name: str,
+        target_name: str,
+        *,
+        target: _ArtifactDirectory | None = None,
+    ) -> None:
+        raise NotImplementedError
+
+    def rename_leaf(self, source_name: str, target_name: str) -> None:
+        raise NotImplementedError
+
+    def unlink_leaf(self, name: str) -> None:
+        raise NotImplementedError
+
+    def open_optional_child(self, name: str) -> _ArtifactDirectory | None:
+        try:
+            return self.open_child(name, create=False)
+        except (OSError, ArtifactIntegrityError):
+            return None
+
+    def _require_same_backend(self, other: _ArtifactDirectory) -> None:
+        if type(other) is not type(self):
+            raise ArtifactStoreError("Artifact directory handles are mismatched")
+
+
+class _PosixArtifactDirectory(_ArtifactDirectory):
+    """Directory pinned by a descriptor, so no later operation can be redirected.
+
+    ``dir_fd`` resolves each name against the inode this handle holds open.
+    Swapping a path component after the handle exists cannot retarget a
+    subsequent read, link or unlink, which is what closes the TOCTOU window.
+    """
+
+    __slots__ = ("_fd",)
+
+    def __init__(self, directory_fd: int):
+        self._fd = directory_fd
+
+    @classmethod
+    def open_root(cls, artifact_root: Path, *, create: bool) -> _PosixArtifactDirectory:
+        if create:
+            artifact_root.mkdir(mode=0o700, parents=True, exist_ok=True)
+        root_status = os.lstat(artifact_root)
+        if stat.S_ISLNK(root_status.st_mode) or not stat.S_ISDIR(root_status.st_mode):
+            raise ArtifactIntegrityError("Artifact root is unsafe")
+        return cls(os.open(artifact_root, _DIRECTORY_OPEN_FLAGS))
+
+    def close(self) -> None:
+        os.close(self._fd)
+
+    def open_child(self, name: str, *, create: bool) -> _PosixArtifactDirectory:
+        if create:
+            try:
+                os.mkdir(name, mode=0o700, dir_fd=self._fd)
+            except FileExistsError:
+                pass
+        child_fd = os.open(name, _DIRECTORY_OPEN_FLAGS, dir_fd=self._fd)
+        if not stat.S_ISDIR(os.fstat(child_fd).st_mode):
+            os.close(child_fd)
+            raise ArtifactIntegrityError("Artifact directory is unsafe")
+        return _PosixArtifactDirectory(child_fd)
+
+    def iter_names(self) -> Iterator[str]:
+        with os.scandir(self._fd) as entries:
+            for entry in entries:
+                yield entry.name
+
+    def leaf_exists(self, name: str) -> bool:
+        try:
+            os.stat(name, dir_fd=self._fd, follow_symlinks=False)
+            return True
+        except FileNotFoundError:
+            return False
+
+    def create_leaf(self, name: str) -> int:
+        return os.open(name, _LEAF_CREATE_FLAGS, 0o600, dir_fd=self._fd)
+
+    def open_leaf(self, name: str) -> int:
+        return os.open(name, _LEAF_READ_FLAGS, dir_fd=self._fd)
+
+    def link_leaf(
+        self,
+        source_name: str,
+        target_name: str,
+        *,
+        target: _ArtifactDirectory | None = None,
+    ) -> None:
+        destination = self if target is None else target
+        self._require_same_backend(destination)
+        os.link(
+            source_name,
+            target_name,
+            src_dir_fd=self._fd,
+            dst_dir_fd=destination._fd,
+            follow_symlinks=False,
+        )
+
+    def rename_leaf(self, source_name: str, target_name: str) -> None:
+        os.rename(source_name, target_name, src_dir_fd=self._fd, dst_dir_fd=self._fd)
+
+    def unlink_leaf(self, name: str) -> None:
+        try:
+            os.unlink(name, dir_fd=self._fd)
+        except FileNotFoundError:
+            pass
+
+
+class _PortableArtifactDirectory(_ArtifactDirectory):
+    """Path-resolved directory for platforms without ``dir_fd`` support.
+
+    Windows has no ``dir_fd``, no ``O_NOFOLLOW`` and no ``O_DIRECTORY``, so this
+    backend re-resolves the path on every operation and re-rejects links each
+    time, including junctions that ``S_ISLNK`` cannot see. Reads additionally
+    compare the identity seen before and after opening.
+
+    This is weaker than the POSIX backend by design: an attacker able to write
+    into the artifact root can still swap a directory component between two
+    operations, which a pinned descriptor would prevent outright. The store is
+    only reachable with ``ARTIFACT_STORAGE_BACKEND=local``, which
+    ``Settings.validate_runtime_configuration`` rejects in production.
+    """
+
+    __slots__ = ("_path",)
+
+    def __init__(self, directory_path: Path):
+        self._path = directory_path
+
+    @classmethod
+    def open_root(cls, artifact_root: Path, *, create: bool) -> _PortableArtifactDirectory:
+        resolved_root = Path(os.path.abspath(artifact_root))
+        if create:
+            resolved_root.mkdir(mode=0o700, parents=True, exist_ok=True)
+        root_status = os.lstat(resolved_root)
+        if (
+            stat.S_ISLNK(root_status.st_mode)
+            or _is_reparse_point(root_status)
+            or not stat.S_ISDIR(root_status.st_mode)
+        ):
+            raise ArtifactIntegrityError("Artifact root is unsafe")
+        return cls(resolved_root)
+
+    def close(self) -> None:
+        return None
+
+    def open_child(self, name: str, *, create: bool) -> _PortableArtifactDirectory:
+        child_path = self._path / name
+        if create:
+            try:
+                child_path.mkdir(mode=0o700)
+            except FileExistsError:
+                pass
+        child_status = os.lstat(child_path)
+        _reject_linked_component(child_status, child_path)
+        if not stat.S_ISDIR(child_status.st_mode):
+            raise NotADirectoryError(
+                errno.ENOTDIR,
+                "Artifact path component is not a directory",
+                str(child_path),
+            )
+        return _PortableArtifactDirectory(child_path)
+
+    def iter_names(self) -> Iterator[str]:
+        with os.scandir(self._path) as entries:
+            for entry in entries:
+                yield entry.name
+
+    def leaf_exists(self, name: str) -> bool:
+        try:
+            os.stat(self._path / name, follow_symlinks=False)
+            return True
+        except FileNotFoundError:
+            return False
+
+    def create_leaf(self, name: str) -> int:
+        return os.open(self._path / name, _LEAF_CREATE_FLAGS, 0o600)
+
+    def open_leaf(self, name: str) -> int:
+        leaf_path = self._path / name
+        before = os.lstat(leaf_path)
+        _reject_linked_component(before, leaf_path)
+        leaf_fd = os.open(leaf_path, _LEAF_READ_FLAGS)
+        try:
+            opened = os.fstat(leaf_fd)
+            if opened.st_dev != before.st_dev or opened.st_ino != before.st_ino:
+                raise OSError(
+                    errno.ELOOP,
+                    "Artifact leaf was replaced while opening",
+                    str(leaf_path),
+                )
+        except BaseException:
+            os.close(leaf_fd)
+            raise
+        return leaf_fd
+
+    def link_leaf(
+        self,
+        source_name: str,
+        target_name: str,
+        *,
+        target: _ArtifactDirectory | None = None,
+    ) -> None:
+        destination = self if target is None else target
+        self._require_same_backend(destination)
+        source_path = self._path / source_name
+        # os.link cannot take follow_symlinks on Windows, so reject links first.
+        _reject_linked_component(os.lstat(source_path), source_path)
+        os.link(source_path, destination._path / target_name)
+
+    def rename_leaf(self, source_name: str, target_name: str) -> None:
+        os.rename(self._path / source_name, self._path / target_name)
+
+    def unlink_leaf(self, name: str) -> None:
+        try:
+            os.unlink(self._path / name)
+        except FileNotFoundError:
+            pass
+
+
+_DEFAULT_DIRECTORY_BACKEND: type[_ArtifactDirectory] = (
+    _PosixArtifactDirectory if SUPPORTS_DIRECTORY_FD else _PortableArtifactDirectory
+)
 
 
 class _ArtifactReferenceBoundary:
@@ -435,14 +743,7 @@ class _ArtifactReferenceBoundary:
             directory_path = Path(directory)
             os.chmod(directory_path, 0o700)
             materialized_path = directory_path / f"artifact{suffix}"
-            flags = (
-                os.O_WRONLY
-                | os.O_CREAT
-                | os.O_EXCL
-                | getattr(os, "O_CLOEXEC", 0)
-                | getattr(os, "O_NOFOLLOW", 0)
-            )
-            file_fd = os.open(materialized_path, flags, 0o600)
+            file_fd = os.open(materialized_path, _LEAF_CREATE_FLAGS, 0o600)
             digest = hashlib.sha256()
             size_bytes = 0
             try:
@@ -506,6 +807,8 @@ class _ArtifactReferenceBoundary:
 class LocalArtifactStore(_ArtifactReferenceBoundary):
     """Provider-neutral artifact contract backed by a private local root."""
 
+    directory_backend: ClassVar[type[_ArtifactDirectory]] = _DEFAULT_DIRECTORY_BACKEND
+
     def __init__(self, artifact_root: Path):
         self.artifact_root = Path(artifact_root)
 
@@ -529,14 +832,14 @@ class LocalArtifactStore(_ArtifactReferenceBoundary):
         generation = uuid.uuid4().hex
         data_name, metadata_name = self._leaf_names(parsed)
         temp_name = f".{parsed.artifact_id}.{uuid.uuid4().hex}.tmp"
-        directory_fd = self._open_artifact_directory(parsed, create=True)
+        directory = self._open_artifact_directory(parsed, create=True)
         published_data = False
         try:
-            if self._leaf_exists(directory_fd, data_name) or self._leaf_exists(
-                directory_fd, metadata_name
+            if self._leaf_exists(directory, data_name) or self._leaf_exists(
+                directory, metadata_name
             ):
                 raise ArtifactConflictError("Artifact already exists")
-            file_fd = self._create_temp_file(directory_fd, temp_name)
+            file_fd = self._create_temp_file(directory, temp_name)
             digest = hashlib.sha256()
             size_bytes = 0
             try:
@@ -555,15 +858,15 @@ class LocalArtifactStore(_ArtifactReferenceBoundary):
                     handle.flush()
                     os.fsync(handle.fileno())
             except Exception:
-                self._unlink_leaf(directory_fd, temp_name)
+                self._unlink_leaf(directory, temp_name)
                 raise
             if expected_size is not None and size_bytes != expected_size:
-                self._unlink_leaf(directory_fd, temp_name)
+                self._unlink_leaf(directory, temp_name)
                 raise ArtifactIntegrityError("Artifact size does not match")
 
-            self._publish_new_leaf(directory_fd, temp_name, data_name)
+            self._publish_new_leaf(directory, temp_name, data_name)
             published_data = True
-            data_stat = self._stat_regular_leaf(directory_fd, data_name)
+            data_stat = self._stat_regular_leaf(directory, data_name)
             metadata = ArtifactMetadata(
                 reference=reference,
                 owner_id=parsed.owner_id,
@@ -578,7 +881,7 @@ class LocalArtifactStore(_ArtifactReferenceBoundary):
                 policy_version=policy_version,
             )
             self._write_metadata_leaf(
-                directory_fd,
+                directory,
                 metadata_name,
                 metadata,
                 data_stat=data_stat,
@@ -586,33 +889,33 @@ class LocalArtifactStore(_ArtifactReferenceBoundary):
             return metadata
         except ArtifactStoreError:
             if published_data:
-                self._unlink_leaf(directory_fd, data_name)
+                self._unlink_leaf(directory, data_name)
             raise
         except Exception as exc:
             if published_data:
-                self._unlink_leaf(directory_fd, data_name)
+                self._unlink_leaf(directory, data_name)
             raise ArtifactStoreError("Artifact write failed safely") from exc
         finally:
-            self._unlink_leaf(directory_fd, temp_name)
-            os.close(directory_fd)
+            self._unlink_leaf(directory, temp_name)
+            directory.close()
 
     def head(self, reference: str) -> ArtifactMetadata | None:
         parsed = self.parse_reference(reference)
         data_name, metadata_name = self._leaf_names(parsed)
         try:
-            directory_fd = self._open_artifact_directory(parsed, create=False)
+            directory = self._open_artifact_directory(parsed, create=False)
         except FileNotFoundError:
             return None
         except OSError as exc:
             raise ArtifactIntegrityError("Artifact directory is unsafe") from exc
         try:
             try:
-                raw_metadata = self._read_small_leaf(directory_fd, metadata_name)
+                raw_metadata = self._read_small_leaf(directory, metadata_name)
                 metadata_payload = json.loads(raw_metadata.decode("utf-8"))
                 metadata = self._metadata_from_payload(metadata_payload)
                 if metadata.reference != reference:
                     raise ArtifactIntegrityError("Artifact metadata binding is invalid")
-                data_stat = self._stat_regular_leaf(directory_fd, data_name)
+                data_stat = self._stat_regular_leaf(directory, data_name)
                 identity = metadata_payload.get("fileIdentity")
                 if not isinstance(identity, dict) or (
                     identity.get("device") != data_stat.st_dev
@@ -629,7 +932,7 @@ class LocalArtifactStore(_ArtifactReferenceBoundary):
             except OSError as exc:
                 raise ArtifactIntegrityError("Artifact object is unsafe") from exc
         finally:
-            os.close(directory_fd)
+            directory.close()
 
     def read_range(
         self,
@@ -642,14 +945,14 @@ class LocalArtifactStore(_ArtifactReferenceBoundary):
         parsed = self.parse_reference(reference)
         data_name, metadata_name = self._leaf_names(parsed)
         try:
-            directory_fd = self._open_artifact_directory(parsed, create=False)
+            directory = self._open_artifact_directory(parsed, create=False)
         except (FileNotFoundError, OSError) as exc:
             raise ArtifactNotFoundError("Artifact was not found") from exc
         data_fd: int | None = None
         try:
             try:
                 payload = json.loads(
-                    self._read_small_leaf(directory_fd, metadata_name).decode("utf-8")
+                    self._read_small_leaf(directory, metadata_name).decode("utf-8")
                 )
                 metadata = self._metadata_from_payload(payload)
             except FileNotFoundError as exc:
@@ -661,8 +964,7 @@ class LocalArtifactStore(_ArtifactReferenceBoundary):
             if expected_generation is not None and metadata.generation != expected_generation:
                 raise ArtifactIntegrityError("Artifact generation changed")
 
-            flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
-            data_fd = os.open(data_name, flags, dir_fd=directory_fd)
+            data_fd = directory.open_leaf(data_name)
             data_stat = os.fstat(data_fd)
             identity = payload.get("fileIdentity") if isinstance(payload, dict) else None
             if (
@@ -696,7 +998,7 @@ class LocalArtifactStore(_ArtifactReferenceBoundary):
         finally:
             if data_fd is not None:
                 os.close(data_fd)
-            os.close(directory_fd)
+            directory.close()
 
     def promote(
         self,
@@ -728,29 +1030,27 @@ class LocalArtifactStore(_ArtifactReferenceBoundary):
             artifact_id=source_reference.artifact_id,
         )
         accepted_uri = accepted_reference.to_uri()
-        source_data_name, source_metadata_name = self._leaf_names(source_reference)
+        source_data_name, _ = self._leaf_names(source_reference)
         target_data_name, target_metadata_name = self._leaf_names(accepted_reference)
-        source_directory_fd = self._open_artifact_directory(source_reference, create=False)
-        target_directory_fd = self._open_artifact_directory(accepted_reference, create=True)
+        source_directory = self._open_artifact_directory(source_reference, create=False)
+        target_directory = self._open_artifact_directory(accepted_reference, create=True)
         target_published = False
         try:
-            if self._leaf_exists(target_directory_fd, target_data_name) or self._leaf_exists(
-                target_directory_fd, target_metadata_name
+            if self._leaf_exists(target_directory, target_data_name) or self._leaf_exists(
+                target_directory, target_metadata_name
             ):
                 raise ArtifactConflictError("Accepted artifact already exists")
-            source_stat = self._stat_regular_leaf(source_directory_fd, source_data_name)
+            source_stat = self._stat_regular_leaf(source_directory, source_data_name)
             try:
-                os.link(
+                source_directory.link_leaf(
                     source_data_name,
                     target_data_name,
-                    src_dir_fd=source_directory_fd,
-                    dst_dir_fd=target_directory_fd,
-                    follow_symlinks=False,
+                    target=target_directory,
                 )
             except FileExistsError as exc:
                 raise ArtifactConflictError("Accepted artifact already exists") from exc
             target_published = True
-            target_stat = self._stat_regular_leaf(target_directory_fd, target_data_name)
+            target_stat = self._stat_regular_leaf(target_directory, target_data_name)
             if (
                 target_stat.st_dev != source_stat.st_dev
                 or target_stat.st_ino != source_stat.st_ino
@@ -759,7 +1059,7 @@ class LocalArtifactStore(_ArtifactReferenceBoundary):
             ):
                 raise ArtifactIntegrityError("Artifact generation changed during promotion")
             target_digest = self._sha256_regular_leaf(
-                target_directory_fd,
+                target_directory,
                 target_data_name,
                 expected_size=expected_size,
             )
@@ -779,19 +1079,19 @@ class LocalArtifactStore(_ArtifactReferenceBoundary):
                 policy_version=source_metadata.policy_version,
             )
             self._write_metadata_leaf(
-                target_directory_fd,
+                target_directory,
                 target_metadata_name,
                 accepted_metadata,
                 data_stat=target_stat,
             )
         except Exception:
             if target_published:
-                self._unlink_leaf(target_directory_fd, target_metadata_name)
-                self._unlink_leaf(target_directory_fd, target_data_name)
+                self._unlink_leaf(target_directory, target_metadata_name)
+                self._unlink_leaf(target_directory, target_data_name)
             raise
         finally:
-            os.close(target_directory_fd)
-            os.close(source_directory_fd)
+            target_directory.close()
+            source_directory.close()
 
         verified = self.head(accepted_uri)
         if verified is None or verified != accepted_metadata:
@@ -816,7 +1116,7 @@ class LocalArtifactStore(_ArtifactReferenceBoundary):
         parsed = self.parse_reference(reference)
         data_name, metadata_name = self._leaf_names(parsed)
         try:
-            directory_fd = self._open_artifact_directory(parsed, create=False)
+            directory = self._open_artifact_directory(parsed, create=False)
         except FileNotFoundError:
             return False
         claim_token = uuid.uuid4().hex
@@ -826,22 +1126,12 @@ class LocalArtifactStore(_ArtifactReferenceBoundary):
         metadata_claimed = False
         try:
             try:
-                os.rename(
-                    metadata_name,
-                    claimed_metadata_name,
-                    src_dir_fd=directory_fd,
-                    dst_dir_fd=directory_fd,
-                )
+                directory.rename_leaf(metadata_name, claimed_metadata_name)
                 metadata_claimed = True
             except FileNotFoundError:
                 return False
             try:
-                os.rename(
-                    data_name,
-                    claimed_data_name,
-                    src_dir_fd=directory_fd,
-                    dst_dir_fd=directory_fd,
-                )
+                directory.rename_leaf(data_name, claimed_data_name)
                 data_claimed = True
             except FileNotFoundError as exc:
                 raise ArtifactIntegrityError("Artifact object is incomplete") from exc
@@ -849,7 +1139,7 @@ class LocalArtifactStore(_ArtifactReferenceBoundary):
             try:
                 payload = json.loads(
                     self._read_small_leaf(
-                        directory_fd,
+                        directory,
                         claimed_metadata_name,
                     ).decode("utf-8")
                 )
@@ -860,7 +1150,7 @@ class LocalArtifactStore(_ArtifactReferenceBoundary):
                 raise ArtifactIntegrityError("Artifact metadata binding is invalid")
             if expected_generation is not None and metadata.generation != expected_generation:
                 raise ArtifactIntegrityError("Artifact generation changed")
-            data_stat = self._stat_regular_leaf(directory_fd, claimed_data_name)
+            data_stat = self._stat_regular_leaf(directory, claimed_data_name)
             identity = payload.get("fileIdentity") if isinstance(payload, dict) else None
             if (
                 not isinstance(identity, dict)
@@ -871,9 +1161,9 @@ class LocalArtifactStore(_ArtifactReferenceBoundary):
             ):
                 raise ArtifactIntegrityError("Artifact generation changed")
 
-            self._unlink_leaf(directory_fd, claimed_metadata_name)
+            self._unlink_leaf(directory, claimed_metadata_name)
             metadata_claimed = False
-            self._unlink_leaf(directory_fd, claimed_data_name)
+            self._unlink_leaf(directory, claimed_data_name)
             data_claimed = False
             return True
         except ArtifactStoreError:
@@ -883,17 +1173,17 @@ class LocalArtifactStore(_ArtifactReferenceBoundary):
         finally:
             if data_claimed:
                 self._restore_claimed_leaf(
-                    directory_fd,
+                    directory,
                     claimed_data_name,
                     data_name,
                 )
             if metadata_claimed:
                 self._restore_claimed_leaf(
-                    directory_fd,
+                    directory,
                     claimed_metadata_name,
                     metadata_name,
                 )
-            os.close(directory_fd)
+            directory.close()
 
     @contextmanager
     def materialize(
@@ -930,14 +1220,7 @@ class LocalArtifactStore(_ArtifactReferenceBoundary):
             directory_path = Path(directory)
             os.chmod(directory_path, 0o700)
             materialized_path = directory_path / f"artifact{suffix}"
-            flags = (
-                os.O_WRONLY
-                | os.O_CREAT
-                | os.O_EXCL
-                | getattr(os, "O_CLOEXEC", 0)
-                | getattr(os, "O_NOFOLLOW", 0)
-            )
-            file_fd = os.open(materialized_path, flags, 0o600)
+            file_fd = os.open(materialized_path, _LEAF_CREATE_FLAGS, 0o600)
             digest = hashlib.sha256()
             size_bytes = 0
             try:
@@ -979,48 +1262,56 @@ class LocalArtifactStore(_ArtifactReferenceBoundary):
     ) -> Iterator[ArtifactMetadata]:
         normalized_cutoff = self._normalize_now(cutoff)
         try:
-            root_fd = self._open_root(create=False)
+            root = self._open_root(create=False)
         except FileNotFoundError:
             return
         try:
-            artifact_fd = self._open_child_directory(root_fd, "artifact-v1")
-            if artifact_fd is None:
+            artifact_directory = self._open_child_directory(root, "artifact-v1")
+            if artifact_directory is None:
                 return
             try:
-                quarantine_fd = self._open_child_directory(artifact_fd, "quarantine")
-                if quarantine_fd is None:
+                quarantine = self._open_child_directory(artifact_directory, "quarantine")
+                if quarantine is None:
                     return
                 try:
-                    for kind in self._iter_directory_names(quarantine_fd):
+                    for kind in self._iter_directory_names(quarantine):
                         if kind not in _ARTIFACT_KINDS:
                             continue
-                        kind_fd = self._open_child_directory(quarantine_fd, kind)
-                        if kind_fd is None:
+                        kind_directory = self._open_child_directory(quarantine, kind)
+                        if kind_directory is None:
                             continue
                         try:
-                            for owner_token in self._iter_directory_names(kind_fd):
+                            for owner_token in self._iter_directory_names(kind_directory):
                                 try:
                                     parsed_owner = _decode_reference_identity(owner_token)
                                 except ArtifactReferenceError:
                                     continue
                                 if owner_id is not None and parsed_owner != owner_id:
                                     continue
-                                owner_fd = self._open_child_directory(kind_fd, owner_token)
-                                if owner_fd is None:
+                                owner_directory = self._open_child_directory(
+                                    kind_directory,
+                                    owner_token,
+                                )
+                                if owner_directory is None:
                                     continue
                                 try:
-                                    for demo_token in self._iter_directory_names(owner_fd):
+                                    for demo_token in self._iter_directory_names(owner_directory):
                                         try:
                                             parsed_demo = _decode_reference_identity(demo_token)
                                         except ArtifactReferenceError:
                                             continue
                                         if demo_id is not None and parsed_demo != demo_id:
                                             continue
-                                        demo_fd = self._open_child_directory(owner_fd, demo_token)
-                                        if demo_fd is None:
+                                        demo_directory = self._open_child_directory(
+                                            owner_directory,
+                                            demo_token,
+                                        )
+                                        if demo_directory is None:
                                             continue
                                         try:
-                                            for filename in self._iter_directory_names(demo_fd):
+                                            for filename in self._iter_directory_names(
+                                                demo_directory
+                                            ):
                                                 suffix = ".metadata.json"
                                                 if not filename.endswith(suffix):
                                                     continue
@@ -1044,17 +1335,17 @@ class LocalArtifactStore(_ArtifactReferenceBoundary):
                                                 ):
                                                     yield metadata
                                         finally:
-                                            os.close(demo_fd)
+                                            demo_directory.close()
                                 finally:
-                                    os.close(owner_fd)
+                                    owner_directory.close()
                         finally:
-                            os.close(kind_fd)
+                            kind_directory.close()
                 finally:
-                    os.close(quarantine_fd)
+                    quarantine.close()
             finally:
-                os.close(artifact_fd)
+                artifact_directory.close()
         finally:
-            os.close(root_fd)
+            root.close()
 
     def cleanup_quarantine_before(
         self,
@@ -1110,10 +1401,10 @@ class LocalArtifactStore(_ArtifactReferenceBoundary):
 
     @staticmethod
     def _normalize_now(now: datetime | None) -> datetime:
-        value = now or datetime.now(timezone.utc)
+        value = now or datetime.now(UTC)
         if value.tzinfo is None:
             raise ArtifactStoreError("Artifact timestamp is invalid")
-        return value.astimezone(timezone.utc)
+        return value.astimezone(UTC)
 
     @staticmethod
     def _leaf_names(reference: ArtifactReference) -> tuple[str, str]:
@@ -1128,127 +1419,79 @@ class LocalArtifactStore(_ArtifactReferenceBoundary):
             _encode_reference_identity(reference.demo_id),
         )
 
-    def _open_root(self, *, create: bool) -> int:
-        if create:
-            self.artifact_root.mkdir(mode=0o700, parents=True, exist_ok=True)
-        root_stat = os.lstat(self.artifact_root)
-        if stat.S_ISLNK(root_stat.st_mode) or not stat.S_ISDIR(root_stat.st_mode):
-            raise ArtifactIntegrityError("Artifact root is unsafe")
-        flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_CLOEXEC", 0)
-        no_follow = getattr(os, "O_NOFOLLOW", 0)
-        return os.open(self.artifact_root, flags | no_follow)
+    def _open_root(self, *, create: bool) -> _ArtifactDirectory:
+        return self.directory_backend.open_root(self.artifact_root, create=create)
 
-    def _open_artifact_directory(self, reference: ArtifactReference, *, create: bool) -> int:
-        current_fd = self._open_root(create=create)
-        flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_CLOEXEC", 0)
-        no_follow = getattr(os, "O_NOFOLLOW", 0)
+    def _open_artifact_directory(
+        self,
+        reference: ArtifactReference,
+        *,
+        create: bool,
+    ) -> _ArtifactDirectory:
+        current = self._open_root(create=create)
         try:
             for segment in self._relative_directory_parts(reference):
-                if create:
-                    try:
-                        os.mkdir(segment, mode=0o700, dir_fd=current_fd)
-                    except FileExistsError:
-                        pass
-                next_fd = os.open(segment, flags | no_follow, dir_fd=current_fd)
-                next_stat = os.fstat(next_fd)
-                if not stat.S_ISDIR(next_stat.st_mode):
-                    os.close(next_fd)
-                    raise ArtifactIntegrityError("Artifact directory is unsafe")
-                os.close(current_fd)
-                current_fd = next_fd
-            return current_fd
+                child = current.open_child(segment, create=create)
+                current.close()
+                current = child
+            return current
         except Exception:
-            os.close(current_fd)
+            current.close()
             raise
 
     @staticmethod
-    def _open_child_directory(parent_fd: int, name: str) -> int | None:
-        flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_CLOEXEC", 0)
+    def _open_child_directory(
+        parent: _ArtifactDirectory,
+        name: str,
+    ) -> _ArtifactDirectory | None:
+        return parent.open_optional_child(name)
+
+    @staticmethod
+    def _iter_directory_names(directory: _ArtifactDirectory) -> Iterator[str]:
+        return directory.iter_names()
+
+    @staticmethod
+    def _leaf_exists(directory: _ArtifactDirectory, name: str) -> bool:
+        return directory.leaf_exists(name)
+
+    @staticmethod
+    def _create_temp_file(directory: _ArtifactDirectory, name: str) -> int:
+        return directory.create_leaf(name)
+
+    @staticmethod
+    def _publish_new_leaf(
+        directory: _ArtifactDirectory,
+        temporary_name: str,
+        final_name: str,
+    ) -> None:
         try:
-            child_fd = os.open(
-                name,
-                flags | getattr(os, "O_NOFOLLOW", 0),
-                dir_fd=parent_fd,
-            )
-        except OSError:
-            return None
-        child_stat = os.fstat(child_fd)
-        if not stat.S_ISDIR(child_stat.st_mode):
-            os.close(child_fd)
-            return None
-        return child_fd
-
-    @staticmethod
-    def _iter_directory_names(directory_fd: int) -> Iterator[str]:
-        with os.scandir(directory_fd) as entries:
-            for entry in entries:
-                yield entry.name
-
-    @staticmethod
-    def _leaf_exists(directory_fd: int, name: str) -> bool:
-        try:
-            os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
-            return True
-        except FileNotFoundError:
-            return False
-
-    @staticmethod
-    def _create_temp_file(directory_fd: int, name: str) -> int:
-        flags = (
-            os.O_WRONLY
-            | os.O_CREAT
-            | os.O_EXCL
-            | getattr(os, "O_CLOEXEC", 0)
-            | getattr(os, "O_NOFOLLOW", 0)
-        )
-        return os.open(name, flags, 0o600, dir_fd=directory_fd)
-
-    @staticmethod
-    def _publish_new_leaf(directory_fd: int, temporary_name: str, final_name: str) -> None:
-        try:
-            os.link(
-                temporary_name,
-                final_name,
-                src_dir_fd=directory_fd,
-                dst_dir_fd=directory_fd,
-                follow_symlinks=False,
-            )
+            directory.link_leaf(temporary_name, final_name)
         except FileExistsError as exc:
             raise ArtifactConflictError("Artifact already exists") from exc
         finally:
-            LocalArtifactStore._unlink_leaf(directory_fd, temporary_name)
+            directory.unlink_leaf(temporary_name)
 
     @staticmethod
-    def _unlink_leaf(directory_fd: int, name: str) -> None:
-        try:
-            os.unlink(name, dir_fd=directory_fd)
-        except FileNotFoundError:
-            pass
+    def _unlink_leaf(directory: _ArtifactDirectory, name: str) -> None:
+        directory.unlink_leaf(name)
 
     @staticmethod
     def _restore_claimed_leaf(
-        directory_fd: int,
+        directory: _ArtifactDirectory,
         claimed_name: str,
         canonical_name: str,
     ) -> None:
         try:
-            os.link(
-                claimed_name,
-                canonical_name,
-                src_dir_fd=directory_fd,
-                dst_dir_fd=directory_fd,
-                follow_symlinks=False,
-            )
+            directory.link_leaf(claimed_name, canonical_name)
         except FileExistsError:
             pass
         except OSError:
             return
-        LocalArtifactStore._unlink_leaf(directory_fd, claimed_name)
+        directory.unlink_leaf(claimed_name)
 
     @staticmethod
-    def _stat_regular_leaf(directory_fd: int, name: str) -> os.stat_result:
-        flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
-        file_fd = os.open(name, flags, dir_fd=directory_fd)
+    def _stat_regular_leaf(directory: _ArtifactDirectory, name: str) -> os.stat_result:
+        file_fd = directory.open_leaf(name)
         try:
             result = os.fstat(file_fd)
             if not stat.S_ISREG(result.st_mode):
@@ -1259,13 +1502,12 @@ class LocalArtifactStore(_ArtifactReferenceBoundary):
 
     @staticmethod
     def _sha256_regular_leaf(
-        directory_fd: int,
+        directory: _ArtifactDirectory,
         name: str,
         *,
         expected_size: int,
     ) -> str:
-        flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
-        file_fd = os.open(name, flags, dir_fd=directory_fd)
+        file_fd = directory.open_leaf(name)
         try:
             before = os.fstat(file_fd)
             if not stat.S_ISREG(before.st_mode) or before.st_size != expected_size:
@@ -1296,7 +1538,7 @@ class LocalArtifactStore(_ArtifactReferenceBoundary):
 
     def _write_metadata_leaf(
         self,
-        directory_fd: int,
+        directory: _ArtifactDirectory,
         metadata_name: str,
         metadata: ArtifactMetadata,
         *,
@@ -1310,20 +1552,19 @@ class LocalArtifactStore(_ArtifactReferenceBoundary):
         }
         encoded = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
         temp_name = f".{metadata_name}.{uuid.uuid4().hex}.tmp"
-        file_fd = self._create_temp_file(directory_fd, temp_name)
+        file_fd = self._create_temp_file(directory, temp_name)
         try:
             with os.fdopen(file_fd, "wb", closefd=True) as handle:
                 handle.write(encoded)
                 handle.flush()
                 os.fsync(handle.fileno())
-            self._publish_new_leaf(directory_fd, temp_name, metadata_name)
+            self._publish_new_leaf(directory, temp_name, metadata_name)
         finally:
-            self._unlink_leaf(directory_fd, temp_name)
+            self._unlink_leaf(directory, temp_name)
 
     @staticmethod
-    def _read_small_leaf(directory_fd: int, name: str) -> bytes:
-        flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
-        file_fd = os.open(name, flags, dir_fd=directory_fd)
+    def _read_small_leaf(directory: _ArtifactDirectory, name: str) -> bytes:
+        file_fd = directory.open_leaf(name)
         try:
             file_stat = os.fstat(file_fd)
             if not stat.S_ISREG(file_stat.st_mode) or file_stat.st_size > 64 * 1024:
@@ -1588,10 +1829,10 @@ class S3ArtifactStore(_ArtifactReferenceBoundary):
         try:
             response_generation = self._generation_from_response(response)
             content_length = int(response.get("ContentLength", -1))
-        except (ArtifactStoreError, TypeError, ValueError):
+        except (ArtifactStoreError, TypeError, ValueError) as exc:
             if hasattr(body, "close"):
                 body.close()
-            raise ArtifactIntegrityError("Artifact read metadata is invalid")
+            raise ArtifactIntegrityError("Artifact read metadata is invalid") from exc
         if (
             response_generation != metadata.generation
             or content_length != expected_length
@@ -1885,7 +2126,7 @@ class S3ArtifactStore(_ArtifactReferenceBoundary):
             "artifact-reference": reference,
             "sha256": sha256,
             "size-bytes": str(size_bytes),
-            "created-at": created_at.astimezone(timezone.utc)
+            "created-at": created_at.astimezone(UTC)
             .isoformat()
             .replace("+00:00", "Z"),
         }
@@ -2085,7 +2326,9 @@ def artifact_store_from_settings(
 
 
 class LocalStorageService:
-    CATEGORIES = {"uploads", "replays", "summaries", "videos"}
+    CATEGORIES: ClassVar[set[str]] = {"uploads", "replays", "summaries", "videos"}
+
+    directory_backend: ClassVar[type[_ArtifactDirectory]] = _DEFAULT_DIRECTORY_BACKEND
 
     def __init__(
         self,
@@ -2101,7 +2344,7 @@ class LocalStorageService:
         }
 
     @classmethod
-    def from_settings(cls) -> "LocalStorageService":
+    def from_settings(cls) -> LocalStorageService:
         return cls(
             settings.artifact_storage_root,
             {
@@ -2166,43 +2409,29 @@ class LocalStorageService:
         if Path(segments[1]).suffix.lower() != ".mp4":
             return None
 
-        no_follow = getattr(os, "O_NOFOLLOW", None)
-        directory = getattr(os, "O_DIRECTORY", None)
-        if no_follow is None or directory is None:
-            return None
-
-        root_fd: int | None = None
-        demo_fd: int | None = None
+        root_directory: _ArtifactDirectory | None = None
+        demo_directory: _ArtifactDirectory | None = None
         video_fd: int | None = None
         try:
             root = self.category_roots["videos"].resolve(strict=True)
-            common_flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
-            root_fd = os.open(root, common_flags | directory | no_follow)
-            demo_fd = os.open(
-                segments[0],
-                common_flags | directory | no_follow,
-                dir_fd=root_fd,
-            )
-            video_fd = os.open(
-                segments[1],
-                common_flags | no_follow,
-                dir_fd=demo_fd,
-            )
+            root_directory = self.directory_backend.open_root(root, create=False)
+            demo_directory = root_directory.open_child(segments[0], create=False)
+            video_fd = demo_directory.open_leaf(segments[1])
             stat_result = os.fstat(video_fd)
             if not stat.S_ISREG(stat_result.st_mode):
                 return None
             handle = os.fdopen(video_fd, "rb", closefd=True)
             video_fd = None
             return handle, stat_result
-        except OSError:
+        except (OSError, ArtifactStoreError):
             return None
         finally:
             if video_fd is not None:
                 os.close(video_fd)
-            if demo_fd is not None:
-                os.close(demo_fd)
-            if root_fd is not None:
-                os.close(root_fd)
+            if demo_directory is not None:
+                demo_directory.close()
+            if root_directory is not None:
+                root_directory.close()
 
     def replay_key_belongs_to_demo(self, demo_id: str, storage_key: str) -> bool:
         try:

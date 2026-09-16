@@ -46,3 +46,5 @@
 ## 当前交付状态
 
 已有功能和真实验收记录见 [项目进展](project_status_2026-09-13.md)。本文件确定新的交付要求与路线，不代表已经产出可分发安装包；桌面框架、正式服务部署、安装签名和干净设备验收仍待完成。
+
+后端本地 artifact 存储原先只能在 POSIX 运行（依赖 `dir_fd`、`O_NOFOLLOW`、`O_DIRECTORY`），在 Windows 上导致 150 项后端测试失败，是首发 Windows 的阻塞项。现已改为按能力探测选择目录后端，Windows 全量后端测试通过；两个后端的安全边界差异见 [安全 artifact intake](object_storage_safe_artifact_intake_v1.md)。

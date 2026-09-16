@@ -1,14 +1,21 @@
 import io
 import json
-import os
 import tempfile
 import unittest
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import patch
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from fixtures.filesystem import (
+    CAN_UNLINK_OPEN_FILE,
+    advance_mtime,
+    create_directory_link,
+    requires_directory_links,
+    requires_symlinks,
+    try_replace_with_link,
+)
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -21,7 +28,6 @@ from app.models import Demo
 from app.services.demo_service import DemoService
 from app.services.storage import ArtifactReference, LocalStorageService
 from app.services.upload_service import store_video_artifact
-
 
 OWNER_A = "owner-a"
 VIDEO_BYTES = b"0123456789abcdef"
@@ -213,6 +219,7 @@ class PrivateMediaApiTest(unittest.TestCase):
             other_reference,
         )
 
+    @requires_symlinks
     def test_private_video_rejects_symlinked_artifact(self) -> None:
         # Legacy local media remains supported only as an explicit compatibility boundary.
         self.add_ready_video("demo-owner-a", OWNER_A, legacy=True)
@@ -228,6 +235,7 @@ class PrivateMediaApiTest(unittest.TestCase):
         self.assertEqual(response.json(), {"detail": "Media not found"})
         self.assertNotIn(str(outside_path), response.text)
 
+    @requires_directory_links
     def test_private_video_rejects_symlinked_demo_directory(self) -> None:
         # Legacy local media remains supported only as an explicit compatibility boundary.
         self.add_ready_video("demo-owner-a", OWNER_A, legacy=True)
@@ -236,7 +244,9 @@ class PrivateMediaApiTest(unittest.TestCase):
         owner_b_directory = settings.video_storage_dir / "demo-owner-b"
         (owner_a_directory / "clip.mp4").unlink()
         owner_a_directory.rmdir()
-        owner_a_directory.symlink_to(owner_b_directory, target_is_directory=True)
+        # A junction is the unprivileged form of this attack on Windows, and it
+        # is invisible to S_ISLNK, so it must be rejected by its reparse flag.
+        create_directory_link(owner_a_directory, owner_b_directory)
 
         response = self.client.get("/demos/demo-owner-a/media/video")
 
@@ -246,16 +256,20 @@ class PrivateMediaApiTest(unittest.TestCase):
 
     def test_private_video_stream_remains_bound_to_the_validated_file(self) -> None:
         # This test pins the already-open file descriptor in the legacy local adapter.
+        # POSIX proves it by swapping the path for a link once the descriptor is
+        # open. Windows refuses that swap outright while a handle is open, which
+        # enforces the same guarantee earlier, so the swap is attempted and the
+        # binding is asserted from the streamed bytes either way.
         self.add_ready_video("demo-owner-a", OWNER_A, legacy=True)
         video_path = settings.video_storage_dir / "demo-owner-a" / "clip.mp4"
         outside_path = Path(self.temp_dir.name) / "outside.mp4"
         outside_path.write_bytes(b"outside-video")
         original_open = LocalStorageService.open_video_for_demo
+        replaced: list[bool] = []
 
         def open_then_replace(storage, demo_id, storage_key):
             opened = original_open(storage, demo_id, storage_key)
-            video_path.unlink()
-            video_path.symlink_to(outside_path)
+            replaced.append(try_replace_with_link(video_path, outside_path))
             return opened
 
         with patch.object(
@@ -268,6 +282,13 @@ class PrivateMediaApiTest(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.content, VIDEO_BYTES)
         self.assertNotEqual(response.content, outside_path.read_bytes())
+        self.assertEqual(len(replaced), 1)
+        if not replaced[0]:
+            # The swap was refused, which only happens where the open handle
+            # itself blocks the unlink. Assert that is why, and that the
+            # validated file is still intact rather than silently gone.
+            self.assertFalse(CAN_UNLINK_OPEN_FILE)
+            self.assertEqual(video_path.read_bytes(), VIDEO_BYTES)
 
     def test_private_video_rejects_traversal_in_artifact_metadata(self) -> None:
         # Traversal syntax only exists in the legacy local storage-key format.
@@ -304,12 +325,8 @@ class PrivateMediaApiTest(unittest.TestCase):
     def test_private_video_rejects_accepted_content_drift(self) -> None:
         video_reference = self.add_ready_video("demo-owner-a", OWNER_A)
         data_path, _ = self.accepted_artifact_paths(video_reference)
-        original_stat = data_path.stat()
         data_path.write_bytes(b"fedcba9876543210")
-        os.utime(
-            data_path,
-            ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns + 1),
-        )
+        advance_mtime(data_path)
 
         response = self.client.get("/demos/demo-owner-a/media/video")
 
@@ -337,7 +354,7 @@ class PrivateMediaApiTest(unittest.TestCase):
         archived: bool = False,
         legacy: bool = False,
     ) -> str:
-        timestamp = datetime(2026, 7, 16, tzinfo=timezone.utc)
+        timestamp = datetime(2026, 7, 16, tzinfo=UTC)
         with self.Session() as db:
             demo = Demo(
                 id=demo_id,

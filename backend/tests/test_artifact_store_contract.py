@@ -5,21 +5,33 @@ import os
 import tempfile
 import unittest
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
+from fixtures.filesystem import (
+    advance_mtime,
+    assert_private_file_mode,
+    create_directory_link,
+    requires_directory_links,
+    requires_symlinks,
+)
+
 from app.services.storage import (
-    ArtifactMetadata,
+    SUPPORTS_DIRECTORY_FD,
     ArtifactBindingError,
     ArtifactConflictError,
     ArtifactIntegrityError,
+    ArtifactMetadata,
     ArtifactNotFoundError,
     ArtifactReferenceError,
     ArtifactStoreError,
     ArtifactTooLargeError,
     LocalArtifactStore,
+    LocalStorageService,
     S3ArtifactStore,
+    _PortableArtifactDirectory,
+    _PosixArtifactDirectory,
     create_artifact_store,
 )
 
@@ -64,7 +76,7 @@ class _FakeS3Client:
             content_type=kwargs.get("ContentType"),
             etag=hashlib.sha256(payload).hexdigest(),
             version_id=str(self._version),
-            last_modified=datetime.now(timezone.utc),
+            last_modified=datetime.now(UTC),
         )
         self.objects.setdefault((kwargs["Bucket"], kwargs["Key"]), []).append(stored)
         return {"ETag": f'"{stored.etag}"', "VersionId": stored.version_id}
@@ -287,7 +299,7 @@ class ArtifactStoreContractTest(unittest.TestCase):
                 size_bytes=1,
                 sha256=hashlib.sha256(b"x").hexdigest(),
                 generation="version:secret\nheader",
-                created_at=datetime(2026, 7, 16, tzinfo=timezone.utc),
+                created_at=datetime(2026, 7, 16, tzinfo=UTC),
             )
 
     def test_binding_rejects_another_owner_or_demo(self) -> None:
@@ -320,7 +332,7 @@ class ArtifactStoreContractTest(unittest.TestCase):
 
     def test_bounded_write_and_head_preserve_integrity_metadata(self) -> None:
         payload = b"bounded artifact payload"
-        created_at = datetime(2026, 7, 16, 8, 30, tzinfo=timezone.utc)
+        created_at = datetime(2026, 7, 16, 8, 30, tzinfo=UTC)
         with tempfile.TemporaryDirectory() as directory:
             store = LocalArtifactStore(Path(directory))
             reference = store.new_reference(
@@ -412,7 +424,7 @@ class ArtifactStoreContractTest(unittest.TestCase):
 
     def test_promotion_verifies_integrity_and_removes_quarantine(self) -> None:
         payload = b"accepted demo artifact"
-        accepted_at = datetime(2026, 7, 16, 9, 0, tzinfo=timezone.utc)
+        accepted_at = datetime(2026, 7, 16, 9, 0, tzinfo=UTC)
         with tempfile.TemporaryDirectory() as directory:
             store = LocalArtifactStore(Path(directory))
             quarantine = store.new_reference(
@@ -562,7 +574,7 @@ class ArtifactStoreContractTest(unittest.TestCase):
             ) as materialized:
                 self.assertEqual(materialized.read_bytes(), payload)
                 self.assertEqual(materialized.suffix, ".dem")
-                self.assertEqual(materialized.stat().st_mode & 0o777, 0o600)
+                assert_private_file_mode(self, materialized)
                 materialized_parent = materialized.parent
 
             self.assertFalse(materialized.exists())
@@ -599,7 +611,7 @@ class ArtifactStoreContractTest(unittest.TestCase):
             self.assertFalse(materialized_parent.exists())
 
     def test_ttl_cleanup_lists_only_old_valid_quarantine_objects(self) -> None:
-        now = datetime(2026, 7, 16, 10, 0, tzinfo=timezone.utc)
+        now = datetime(2026, 7, 16, 10, 0, tzinfo=UTC)
         with tempfile.TemporaryDirectory() as directory:
             store = LocalArtifactStore(Path(directory))
             old_quarantine = store.new_reference(
@@ -673,6 +685,7 @@ class ArtifactStoreContractTest(unittest.TestCase):
                     with self.assertRaises(ArtifactReferenceError):
                         store.parse_reference(reference)
 
+    @requires_symlinks
     def test_local_store_rejects_symlink_replacement_without_reading_bytes(self) -> None:
         payload = b"private artifact"
         with tempfile.TemporaryDirectory() as directory:
@@ -697,6 +710,7 @@ class ArtifactStoreContractTest(unittest.TestCase):
             with self.assertRaises(ArtifactIntegrityError):
                 store.read_range(reference)
 
+    @requires_directory_links
     def test_local_store_rejects_symlinked_parent_directory(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -717,14 +731,16 @@ class ArtifactStoreContractTest(unittest.TestCase):
             demo_directory = stored_blob.parent
             moved_directory = root / "moved-demo-directory"
             demo_directory.rename(moved_directory)
-            demo_directory.symlink_to(moved_directory, target_is_directory=True)
+            # A junction is the unprivileged form of this attack on Windows, and
+            # S_ISLNK cannot see one, so it must be caught by its reparse flag.
+            create_directory_link(demo_directory, moved_directory)
 
             with self.assertRaises(ArtifactIntegrityError):
                 store.head(reference)
             with self.assertRaises(ArtifactNotFoundError):
                 store.read_range(reference)
 
-    def test_local_delete_rechecks_generation_inside_the_delete_directory_fd(self) -> None:
+    def test_local_delete_rechecks_generation_inside_the_delete_directory_handle(self) -> None:
         class DeleteRaceStore(LocalArtifactStore):
             def __init__(self, root: Path):
                 super().__init__(root)
@@ -732,7 +748,7 @@ class ArtifactStoreContractTest(unittest.TestCase):
                 self.open_count = 0
 
             def _open_artifact_directory(self, reference, *, create):
-                directory_fd = super()._open_artifact_directory(reference, create=create)
+                directory = super()._open_artifact_directory(reference, create=create)
                 if self.arm_race and not create:
                     self.open_count += 1
                     if self.open_count == 1:
@@ -747,7 +763,7 @@ class ArtifactStoreContractTest(unittest.TestCase):
                             json.dumps(payload, separators=(",", ":")),
                             encoding="utf-8",
                         )
-                return directory_fd
+                return directory
 
         with tempfile.TemporaryDirectory() as directory:
             store = DeleteRaceStore(Path(directory))
@@ -1184,7 +1200,7 @@ class ArtifactStoreContractTest(unittest.TestCase):
         self.assertFalse(materialized_parent.exists())
 
     def test_s3_ttl_cleanup_scans_only_quarantine_prefix(self) -> None:
-        now = datetime(2026, 7, 16, 12, 0, tzinfo=timezone.utc)
+        now = datetime(2026, 7, 16, 12, 0, tzinfo=UTC)
         client = _FakeS3Client()
         store = S3ArtifactStore(
             bucket="private-test-bucket",
@@ -1241,7 +1257,7 @@ class ArtifactStoreContractTest(unittest.TestCase):
         self.assertIsNotNone(store.head(accepted))
 
     def test_s3_ttl_cleanup_is_bounded_to_one_maintenance_batch(self) -> None:
-        now = datetime(2026, 7, 16, 12, 0, tzinfo=timezone.utc)
+        now = datetime(2026, 7, 16, 12, 0, tzinfo=UTC)
         client = _FakeS3Client()
         store = S3ArtifactStore(
             bucket="private-test-bucket",
@@ -1286,6 +1302,188 @@ class ArtifactStoreContractTest(unittest.TestCase):
             self.assertIsInstance(object_store, S3ArtifactStore)
             with self.assertRaisesRegex(Exception, "backend"):
                 create_artifact_store(backend="unknown")
+
+
+class PortableArtifactDirectoryTest(unittest.TestCase):
+    """Hold the portable directory backend to the same contract as the POSIX one.
+
+    Windows has no ``dir_fd``, no ``O_NOFOLLOW`` and no ``O_DIRECTORY``, so the
+    local store falls back to a backend that re-resolves each path and re-rejects
+    links on every operation instead of pinning a directory descriptor once.
+    Forcing that backend on every platform keeps Linux CI covering the code
+    Windows actually runs, rather than leaving it exercised only on Windows.
+    """
+
+    def portable_store(self, root: Path) -> LocalArtifactStore:
+        class PortableStore(LocalArtifactStore):
+            directory_backend = _PortableArtifactDirectory
+
+        return PortableStore(root)
+
+    def test_backends_are_selected_by_capability_not_by_platform_name(self) -> None:
+        expected = (
+            _PosixArtifactDirectory
+            if SUPPORTS_DIRECTORY_FD
+            else _PortableArtifactDirectory
+        )
+
+        self.assertIs(LocalArtifactStore.directory_backend, expected)
+        self.assertIs(LocalStorageService.directory_backend, expected)
+        if os.name == "nt":
+            # Windows can never satisfy the probe; anything else is a real answer
+            # about that host rather than something this suite should assert.
+            self.assertFalse(SUPPORTS_DIRECTORY_FD)
+
+    def test_portable_backend_round_trips_quarantine_through_accepted(self) -> None:
+        payload = b"portable backend artifact"
+        with tempfile.TemporaryDirectory() as directory:
+            store = self.portable_store(Path(directory))
+            quarantine = store.new_reference(
+                owner_id="owner-a",
+                demo_id="demo-a",
+                kind="source",
+                state="quarantine",
+                artifact_id="b" * 32,
+            )
+            written = store.write_stream(
+                quarantine,
+                io.BytesIO(payload),
+                max_bytes=1024,
+            )
+
+            self.assertEqual(store.head(quarantine), written)
+            with store.read_range(
+                quarantine,
+                expected_generation=written.generation,
+            ) as opened:
+                self.assertEqual(opened.read(), payload)
+
+            accepted = store.promote(
+                quarantine,
+                expected_generation=written.generation,
+                expected_size=written.size_bytes,
+                expected_sha256=written.sha256,
+            )
+
+            self.assertEqual(accepted.state, "accepted")
+            self.assertIsNone(store.head(quarantine))
+            with store.read_range(
+                accepted.reference,
+                expected_generation=accepted.generation,
+            ) as opened:
+                self.assertEqual(opened.read(), payload)
+
+            self.assertTrue(
+                store.delete(
+                    accepted.reference,
+                    expected_generation=accepted.generation,
+                )
+            )
+            self.assertIsNone(store.head(accepted.reference))
+
+    def test_portable_backend_materializes_a_private_copy(self) -> None:
+        payload = b"portable materialization"
+        with tempfile.TemporaryDirectory() as directory:
+            store = self.portable_store(Path(directory))
+            reference = store.new_reference(
+                owner_id="owner-a",
+                demo_id="demo-a",
+                kind="source",
+                state="quarantine",
+                artifact_id="c" * 32,
+            )
+            written = store.write_stream(
+                reference,
+                io.BytesIO(payload),
+                max_bytes=1024,
+            )
+            metadata = store.promote(
+                reference,
+                expected_generation=written.generation,
+                expected_size=written.size_bytes,
+                expected_sha256=written.sha256,
+            )
+
+            with store.materialize(
+                metadata.reference,
+                expected_generation=metadata.generation,
+                expected_size=metadata.size_bytes,
+                expected_sha256=metadata.sha256,
+                max_bytes=1024,
+                suffix=".dem",
+            ) as materialized:
+                self.assertEqual(materialized.read_bytes(), payload)
+                assert_private_file_mode(self, materialized)
+
+            self.assertFalse(materialized.exists())
+
+    def test_portable_backend_rejects_content_drift_on_read(self) -> None:
+        payload = b"portable drift artifact"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            store = self.portable_store(root)
+            reference = store.new_reference(
+                owner_id="owner-a",
+                demo_id="demo-a",
+                kind="source",
+                state="quarantine",
+                artifact_id="d" * 32,
+            )
+            written = store.write_stream(reference, io.BytesIO(payload), max_bytes=1024)
+            stored_blob = next(root.rglob("d" * 32 + ".blob"))
+            stored_blob.write_bytes(b"tampered drift artifact")
+            advance_mtime(stored_blob)
+
+            with self.assertRaises(ArtifactIntegrityError):
+                store.read_range(
+                    reference,
+                    expected_generation=written.generation,
+                )
+
+    @requires_directory_links
+    def test_portable_backend_rejects_a_linked_directory_component(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            store = self.portable_store(root)
+            reference = store.new_reference(
+                owner_id="owner-a",
+                demo_id="demo-a",
+                kind="source",
+                state="quarantine",
+                artifact_id="e" * 32,
+            )
+            store.write_stream(reference, io.BytesIO(b"linked parent"), max_bytes=1024)
+            stored_blob = next(root.rglob("e" * 32 + ".blob"))
+            demo_directory = stored_blob.parent
+            moved_directory = root / "moved-portable-directory"
+            demo_directory.rename(moved_directory)
+            # On Windows this is a junction, which S_ISLNK cannot see, so the
+            # backend has to reject it by its reparse-point attribute instead.
+            create_directory_link(demo_directory, moved_directory)
+
+            with self.assertRaises(ArtifactIntegrityError):
+                store.head(reference)
+            with self.assertRaises(ArtifactNotFoundError):
+                store.read_range(reference)
+
+    def test_portable_backend_rejects_a_directory_where_a_leaf_is_expected(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            store = self.portable_store(root)
+            reference = store.new_reference(
+                owner_id="owner-a",
+                demo_id="demo-a",
+                kind="source",
+                state="quarantine",
+                artifact_id="a" * 32,
+            )
+            store.write_stream(reference, io.BytesIO(b"leaf swap"), max_bytes=1024)
+            stored_blob = next(root.rglob("a" * 32 + ".blob"))
+            stored_blob.unlink()
+            stored_blob.mkdir()
+
+            with self.assertRaises((ArtifactIntegrityError, ArtifactNotFoundError)):
+                store.read_range(reference)
 
 
 if __name__ == "__main__":
