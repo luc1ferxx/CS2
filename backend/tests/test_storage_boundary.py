@@ -15,7 +15,6 @@ from app.schemas.demo import RenderWorkerResult
 from app.services.demo_service import DemoService
 from app.services.storage import ArtifactReference
 
-
 VALID_DEMO = b"HL2DEMO\x00" + (b"bounded-demo-payload" * 2)
 
 

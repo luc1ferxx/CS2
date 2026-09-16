@@ -2,9 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import uuid
+from collections.abc import Iterator
 from contextlib import contextmanager
-from typing import Iterator
-
 
 STEAM_DEMO_DOWNLOAD_ACQUIRE_SCRIPT = """
 local redis_time = redis.call('TIME')
@@ -127,15 +126,12 @@ def steam_demo_download_limiter_from_settings(
     return SteamDemoDownloadLimiter(
         redis_client,
         global_limit=int(
-            getattr(runtime_settings, "steam_demo_download_global_concurrency")
+            runtime_settings.steam_demo_download_global_concurrency
         ),
         owner_limit=int(
-            getattr(runtime_settings, "steam_demo_download_owner_concurrency")
+            runtime_settings.steam_demo_download_owner_concurrency
         ),
         lease_seconds=int(
-            getattr(
-                runtime_settings,
-                "steam_demo_download_concurrency_lease_seconds",
-            )
+            runtime_settings.steam_demo_download_concurrency_lease_seconds
         ),
     )

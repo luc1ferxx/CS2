@@ -11,7 +11,7 @@ class AdapterConfigError(ValueError):
 
 
 class RenderWorkerClient(Protocol):
-    def upload_media(self, job_id: str, media_path: Path) -> "UploadedMedia":
+    def upload_media(self, job_id: str, media_path: Path) -> UploadedMedia:
         ...
 
     def post_result(self, job_id: str, payload: dict[str, Any]) -> dict[str, Any]:

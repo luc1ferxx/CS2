@@ -24,7 +24,6 @@ from app.services.steam_auth_service import (
     get_steam_auth_service,
 )
 
-
 router = APIRouter(prefix="/auth", tags=["auth"])
 NO_REFERRER_HEADERS = {"Referrer-Policy": "no-referrer"}
 

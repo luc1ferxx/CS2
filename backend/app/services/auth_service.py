@@ -278,7 +278,7 @@ def get_auth_service() -> AuthService:
 def derive_owner_id(issuer: str, subject: str) -> str:
     if not issuer.strip() or not subject.strip():
         raise ValueError("Verified issuer and subject must be non-empty")
-    digest = hashlib.sha256(f"{issuer}\0{subject}".encode("utf-8")).digest()
+    digest = hashlib.sha256(f"{issuer}\0{subject}".encode()).digest()
     encoded = base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
     return f"owner_v1_{encoded}"
 

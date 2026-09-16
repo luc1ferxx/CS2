@@ -11,22 +11,17 @@ import ssl
 import tempfile
 import threading
 import time
-from contextlib import contextmanager
+from collections.abc import Callable, Iterable, Iterator, Mapping
+from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import (
     BinaryIO,
-    Callable,
-    ContextManager,
-    Iterable,
-    Iterator,
-    Mapping,
     Protocol,
 )
 from urllib.parse import SplitResult, urljoin, urlsplit, urlunsplit
 
 from app.services.demo_source_provider import DemoSource
-
 
 DEFAULT_DEMO_CONTENT_TYPES = frozenset(
     {
@@ -119,13 +114,13 @@ class StreamingResponse(Protocol):
 
     def iter_raw(self, chunk_size: int) -> Iterable[bytes]: ...
 
-    def __enter__(self) -> "StreamingResponse": ...
+    def __enter__(self) -> StreamingResponse: ...
 
     def __exit__(self, exc_type: object, exc: object, traceback: object) -> object: ...
 
 
 class PinnedHttpsTransport(Protocol):
-    def open(self, **kwargs: object) -> ContextManager[StreamingResponse]: ...
+    def open(self, **kwargs: object) -> AbstractContextManager[StreamingResponse]: ...
 
 
 @dataclass(frozen=True)
@@ -298,12 +293,12 @@ class _StdlibStreamingResponse:
         self._deadline = deadline
         self._read_timeout_seconds = read_timeout_seconds
         self._timeout_setter = timeout_setter
-        self.status_code = int(getattr(response, "status"))
-        self.headers = _strict_response_headers(getattr(response, "headers"))
+        self.status_code = int(response.status)
+        self.headers = _strict_response_headers(response.headers)
 
     def iter_raw(self, chunk_size: int) -> Iterable[bytes]:
         read1 = getattr(self._response, "read1", None)
-        reader = read1 if callable(read1) else getattr(self._response, "read")
+        reader = read1 if callable(read1) else self._response.read
         while True:
             if self._timeout_setter is not None:
                 self._timeout_setter()
@@ -311,7 +306,7 @@ class _StdlibStreamingResponse:
                 self._deadline.bounded_timeout(self._read_timeout_seconds)
             try:
                 chunk = reader(chunk_size)
-            except (TimeoutError, socket.timeout):
+            except TimeoutError:
                 raise DemoDownloadError(
                     "demo_download_timeout",
                     "Demo download timed out.",
@@ -413,7 +408,7 @@ class StdlibPinnedHttpsTransport:
             )
         except DemoDownloadError:
             raise
-        except (TimeoutError, socket.timeout):
+        except TimeoutError:
             raise DemoDownloadError(
                 "demo_download_timeout",
                 "Demo download timed out.",
@@ -630,7 +625,7 @@ class SecureDemoDownloader:
             )
         except DemoDownloadError:
             raise
-        except (TimeoutError, socket.timeout):
+        except TimeoutError:
             raise DemoDownloadError(
                 "demo_download_timeout",
                 "Demo download timed out.",
@@ -813,22 +808,19 @@ def secure_demo_downloader_from_settings(
     policy = DemoDownloadPolicy(
         exact_hosts=exact_hosts,
         max_bytes=int(
-            getattr(runtime_settings, "steam_demo_download_max_bytes")
+            runtime_settings.steam_demo_download_max_bytes
         ),
         max_redirects=int(
-            getattr(runtime_settings, "steam_demo_download_max_redirects")
+            runtime_settings.steam_demo_download_max_redirects
         ),
         connect_timeout_seconds=float(
-            getattr(
-                runtime_settings,
-                "steam_demo_download_connect_timeout_seconds",
-            )
+            runtime_settings.steam_demo_download_connect_timeout_seconds
         ),
         read_timeout_seconds=float(
-            getattr(runtime_settings, "steam_demo_download_read_timeout_seconds")
+            runtime_settings.steam_demo_download_read_timeout_seconds
         ),
         total_timeout_seconds=float(
-            getattr(runtime_settings, "steam_demo_download_total_timeout_seconds")
+            runtime_settings.steam_demo_download_total_timeout_seconds
         ),
     )
     return SecureDemoDownloader(

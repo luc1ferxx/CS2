@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import (
     CheckConstraint,
@@ -17,7 +17,6 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
-
 
 STEAM_CONNECTION_STATUSES = (
     "connected",
@@ -38,7 +37,7 @@ STEAM_MATCH_STATUSES = (
 
 
 def utc_now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class SteamConnection(Base):
@@ -112,7 +111,7 @@ class SteamConnection(Base):
         DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
     )
 
-    matches: Mapped[list["SteamMatch"]] = relationship(
+    matches: Mapped[list[SteamMatch]] = relationship(
         "SteamMatch",
         back_populates="connection",
         cascade="all, delete-orphan",

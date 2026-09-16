@@ -7,29 +7,40 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
 
-from app.parser.map_config import get_map_config
+from app.parser.map_config import REFERENCE_WORLD_UNITS_PER_PERCENT, get_map_config
 
 CoachingEventCandidate = dict[str, Any]
+
+# Horizontal distances are world units. Normalized frames store radar percent,
+# so ReplayContext resolves the map's world-units-per-percent scale and the
+# distance helpers convert before any threshold comparison. Without that step a
+# single threshold silently means a different real distance on every map --
+# Dust II spans 4506 world units across the radar, Nuke spans 7168.
+AxisScale = tuple[float, float]
 
 
 @dataclass(frozen=True)
 class RuleConfig:
     trade_window_seconds: float = 5.0
-    same_area_distance: float = 12.0
-    isolated_teammate_distance: float = 22.0
-    poor_spacing_min_distance: float = 2.5
-    poor_spacing_max_distance: float = 28.0
-    # Raw CS2 world units; a conservative candidate filter, not a visibility test.
+    # All distances below are CS2 world units (a player is ~72 units tall,
+    # ~32 wide, and runs ~250 units/second). They were derived from the earlier
+    # radar-percent values at the Dust II scale of 45.056 units per percent, so
+    # Dust II behaviour is unchanged and every other map is now measured on the
+    # same physical scale instead of its own.
+    same_area_distance: float = 540.0
+    isolated_teammate_distance: float = 990.0
+    poor_spacing_min_distance: float = 112.0
+    poor_spacing_max_distance: float = 1260.0
     max_stacked_vertical_distance: float = 128.0
     max_events_per_round_per_rule: int = 1
     dedupe_tick_window_seconds: float = 3.0
     max_events_total: int = 480
     max_events_per_player: int = 48
     max_position_age_seconds: float = 1.0
-    post_plant_cluster_distance: float = 6.0
+    post_plant_cluster_distance: float = 270.0
     post_plant_min_duration_seconds: float = 4.0
     post_plant_min_players: int = 3
-    retake_site_distance: float = 12.0
+    retake_site_distance: float = 540.0
     retake_desync_seconds: float = 4.0
     execute_utility_window_seconds: float = 12.0
     min_execute_utility_events: int = 2
@@ -134,7 +145,7 @@ def find_untraded_deaths(
             continue
 
         attacker_position = context.player_position_at(attacker_id, attacker_name, tick)
-        distance = _distance_or_none(death_position, attacker_position)
+        distance = _distance_or_none(death_position, attacker_position, context.world_units_per_percent)
         events.append(
             _event(
                 replay,
@@ -227,8 +238,9 @@ def find_isolated_entries(
         if not context.geometry_valid([victim, *teammates]):
             continue
 
-        nearest_teammate = min(teammates, key=lambda teammate: _distance(victim, teammate))
-        nearest_distance = _distance(victim, nearest_teammate)
+        scale = context.world_units_per_percent
+        nearest_teammate = min(teammates, key=lambda teammate: _distance(victim, teammate, scale))
+        nearest_distance = _distance(victim, nearest_teammate, scale)
         if nearest_distance <= config.isolated_teammate_distance:
             continue
 
@@ -247,7 +259,7 @@ def find_isolated_entries(
                 title="Review opening-death support distance",
                 message=(
                     f"{victim_name} was the opening death on T; in the preceding position sample, "
-                    f"the nearest living teammate was {nearest_distance:.1f} radar percentage points away."
+                    f"the nearest living teammate was {nearest_distance:.0f} world units away."
                 ),
                 involved_player_ids=[victim_id, teammate_id],
                 evidence_ticks=[int(frame["tick"]), tick],
@@ -279,7 +291,10 @@ def find_poor_spacing(
         round_info = context.round_by_number.get(round_number, {})
         if context.live_round_at(tick) is None:
             continue
-        if tick < int(round_info.get("freezeEndTick", round_info.get("startTick", 0))) + context.tick_rate * 8:
+        # _normalize_rounds() always writes int startTick/freezeEndTick. The annotation only keeps
+        # mypy from widening dict.get() to "Any | None" when the default is itself an Any expression.
+        round_start_tick: Any = round_info.get("freezeEndTick", round_info.get("startTick", 0))
+        if tick < int(round_start_tick) + context.tick_rate * 8:
             continue
 
         for side in ("T", "CT"):
@@ -293,7 +308,7 @@ def find_poor_spacing(
             if not context.geometry_valid(alive_players):
                 continue
 
-            spacing = _spacing_snapshot(alive_players)
+            spacing = _spacing_snapshot(alive_players, context.world_units_per_percent)
             if spacing is None:
                 continue
 
@@ -322,10 +337,10 @@ def find_poor_spacing(
             title = "Review distance from teammates" if spacing_type == "too_far" else "Review close teammate spacing"
             message = (
                 f"In this sample, {_player_name(focus_player)} is "
-                f"{spacing['maxNearestDistance']:.1f} radar percentage points from the nearest living teammate."
+                f"{spacing['maxNearestDistance']:.0f} world units from the nearest living teammate."
                 if spacing_type == "too_far"
                 else f"In this sample, the closest {side} teammates are "
-                f"{spacing['minPairDistance']:.1f} radar percentage points apart."
+                f"{spacing['minPairDistance']:.0f} world units apart."
             )
             events.append(
                 _event(
@@ -390,7 +405,7 @@ def find_post_plant_spread_issues(
                 segment = []
                 continue
 
-            max_pair_distance = _max_pair_distance(alive_t)
+            max_pair_distance = _max_pair_distance(alive_t, context.world_units_per_percent)
             if max_pair_distance is None or max_pair_distance > config.post_plant_cluster_distance:
                 segment = []
                 continue
@@ -637,7 +652,7 @@ def find_post_plant_spacing_with_bomb_event(
                 segment = []
                 continue
 
-            max_pair_distance = _max_pair_distance(alive_t)
+            max_pair_distance = _max_pair_distance(alive_t, context.world_units_per_percent)
             if max_pair_distance is None or max_pair_distance > config.post_plant_cluster_distance:
                 segment = []
                 continue
@@ -714,7 +729,7 @@ def find_retake_desyncs(
                     continue
                 if not context.geometry_valid([player, frame.get("bombState", {})]):
                     continue
-                if _distance_to_xy(player, bomb_position) <= config.retake_site_distance:
+                if _distance_to_xy(player, bomb_position, context.world_units_per_percent) <= config.retake_site_distance:
                     first_entry_by_ct[player_id] = (int(frame.get("tick", 0)), player)
 
         if len(first_entry_by_ct) < 2:
@@ -800,6 +815,7 @@ class ReplayContext:
         }
         map_config = {**(get_map_config(str(replay.get("mapName") or "")) or {}), **(replay.get("mapMetadata") or {})}
         self.lower_level_max_z = map_config.get("lowerLevelMaxZ") if isinstance(map_config, dict) else None
+        self.world_units_per_percent = _axis_scale(map_config.get("worldUnitsPerPercent"))
 
     def geometry_valid(self, players: list[dict[str, Any]]) -> bool:
         if self.lower_level_max_z is None:
@@ -843,7 +859,9 @@ class ReplayContext:
 
     def live_round_at(self, tick: int) -> int | None:
         for item in self.rounds:
-            start = int(item.get("freezeEndTick", item.get("startTick", 0)))
+            # Same Any-default dict.get() widening as find_poor_spacing(); rounds carry int ticks.
+            start_tick: Any = item.get("freezeEndTick", item.get("startTick", 0))
+            start = int(start_tick)
             if start <= tick <= int(item.get("endTick", 0)):
                 return int(item.get("roundNumber", 1))
         return None
@@ -983,10 +1001,10 @@ def _event(
         action = "Before the next contact, check whether a teammate can follow up your fight; review the route and timing for a trade if you need support."
     map_metadata = replay.get("mapMetadata")
     if rule_id not in {"untraded_death", "weak_utility_before_execute", "late_post_plant_utility"}:
-        limitation += " Distances are radar percentage points, not travel distance."
+        limitation += " Distances are straight-line world units, not travel distance."
         if isinstance(map_metadata, dict) and not map_metadata.get("calibrated"):
             limitation += " Map calibration is approximate."
-    round_info = next((item for item in replay.get("rounds", []) if item.get("roundNumber") == round_number), {})
+    round_info: dict[str, Any] = next((item for item in replay.get("rounds", []) if item.get("roundNumber") == round_number), {})
     tick_end = min(tick_end, int(round_info.get("endTick", tick_end)))
     return {
         "id": str(uuid.uuid5(uuid.NAMESPACE_URL, f"{replay.get('demoId')}:{rule_id}:{player_id}:{round_number}:{tick_start}:{tick_end}")),
@@ -1016,7 +1034,7 @@ def _event(
     }
 
 
-def _spacing_snapshot(players: list[dict[str, Any]]) -> dict[str, Any] | None:
+def _spacing_snapshot(players: list[dict[str, Any]], scale: AxisScale) -> dict[str, Any] | None:
     nearest: list[tuple[dict[str, Any], float]] = []
     min_pair_distance = math.inf
     closest_pair: tuple[dict[str, Any], dict[str, Any]] | None = None
@@ -1025,7 +1043,7 @@ def _spacing_snapshot(players: list[dict[str, Any]]) -> dict[str, Any] | None:
         for other in players:
             if other is player or not _has_xy(other):
                 continue
-            distance = _distance(player, other)
+            distance = _distance(player, other, scale)
             distances.append(distance)
             if distance < min_pair_distance:
                 min_pair_distance = distance
@@ -1058,34 +1076,68 @@ def _find_frame_player(
     return None
 
 
-def _distance(first: dict[str, Any], second: dict[str, Any]) -> float:
-    return math.hypot(float(first["x"]) - float(second["x"]), float(first["y"]) - float(second["y"]))
+def _axis_scale(raw: Any) -> AxisScale:
+    """Per-axis world units per radar percentage point, with a safe fallback.
+
+    Replays produced before this field existed, and any map whose transform
+    carries no fixed scale, fall back to the Dust II reference so thresholds
+    keep the physical meaning they were tuned for instead of collapsing to
+    raw percentages.
+    """
+    fallback = (REFERENCE_WORLD_UNITS_PER_PERCENT, REFERENCE_WORLD_UNITS_PER_PERCENT)
+    if not isinstance(raw, dict):
+        return fallback
+    resolved: list[float] = []
+    for axis, default in (("x", fallback[0]), ("y", fallback[1])):
+        value = raw.get(axis)
+        if isinstance(value, (int, float)) and math.isfinite(value) and value > 0:
+            resolved.append(float(value))
+        else:
+            resolved.append(default)
+    return (resolved[0], resolved[1])
 
 
-def _distance_or_none(first: dict[str, Any] | None, second: dict[str, Any] | None) -> float | None:
+def _distance(first: dict[str, Any], second: dict[str, Any], scale: AxisScale) -> float:
+    """Horizontal distance in world units between two radar-percent positions."""
+    return math.hypot(
+        (float(first["x"]) - float(second["x"])) * scale[0],
+        (float(first["y"]) - float(second["y"])) * scale[1],
+    )
+
+
+def _distance_or_none(
+    first: dict[str, Any] | None,
+    second: dict[str, Any] | None,
+    scale: AxisScale,
+) -> float | None:
     if not first or not second or not _has_xy(first) or not _has_xy(second):
         return None
-    return _distance(first, second)
+    return _distance(first, second, scale)
 
 
 def _vertical_distance_or_none(first: dict[str, Any], second: dict[str, Any]) -> float | None:
-    heights = [first.get("z"), second.get("z")]
+    # list[Any]: the all() guard below rejects None (and every non-finite value) before the
+    # float() calls, but mypy cannot narrow element types through a generator inside all().
+    heights: list[Any] = [first.get("z"), second.get("z")]
     if not all(isinstance(z, (int, float)) and math.isfinite(z) for z in heights):
         return None
     return abs(float(heights[0]) - float(heights[1]))
 
 
-def _distance_to_xy(player: dict[str, Any], point: tuple[float, float]) -> float:
-    return math.hypot(float(player["x"]) - point[0], float(player["y"]) - point[1])
+def _distance_to_xy(player: dict[str, Any], point: tuple[float, float], scale: AxisScale) -> float:
+    return math.hypot(
+        (float(player["x"]) - point[0]) * scale[0],
+        (float(player["y"]) - point[1]) * scale[1],
+    )
 
 
-def _max_pair_distance(players: list[dict[str, Any]]) -> float | None:
+def _max_pair_distance(players: list[dict[str, Any]], scale: AxisScale) -> float | None:
     if len(players) < 2:
         return None
     max_distance = 0.0
     for index, player in enumerate(players):
         for other in players[index + 1 :]:
-            max_distance = max(max_distance, _distance(player, other))
+            max_distance = max(max_distance, _distance(player, other, scale))
     return max_distance
 
 

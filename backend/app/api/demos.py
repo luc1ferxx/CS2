@@ -13,12 +13,12 @@ from app.schemas.demo import (
     DemoStatus,
     DemoUpdate,
     RenderClipRequest,
-    RenderJobManifest,
     RenderJobCreated,
+    RenderJobManifest,
     RenderJobStatus,
+    RenderWorkerMediaUpload,
     RenderWorkerResult,
     RenderWorkerResultAccepted,
-    RenderWorkerMediaUpload,
     ReplayVideoStatus,
     VideoCalibrationUpdate,
 )
@@ -165,7 +165,7 @@ def upload_demo_video(
             max_bytes=settings.max_video_upload_bytes,
             chunk_size=settings.upload_chunk_bytes,
         )
-        video = service.attach_manual_video(demo, stored_video)
+        service.attach_manual_video(demo, stored_video)
     except DemoUploadValidationError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except ValueError as exc:
@@ -187,7 +187,7 @@ def update_demo_video_calibration(
         raise HTTPException(status_code=404, detail="Demo not found")
 
     try:
-        video = service.update_video_calibration(
+        service.update_video_calibration(
             demo,
             duration_seconds=calibration.durationSeconds,
             tick_start=calibration.tickStart,

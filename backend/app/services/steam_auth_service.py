@@ -6,9 +6,9 @@ import re
 import secrets
 import time
 import xml.etree.ElementTree as ElementTree
+from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from typing import Iterable
+from datetime import UTC, datetime
 from urllib.parse import urlencode, urlparse
 
 import httpx
@@ -22,7 +22,6 @@ from app.services.auth_service import (
     _is_valid_opaque_value,
     _safe_return_to,
 )
-
 
 OPENID_NAMESPACE = "http://specs.openid.net/auth/2.0"
 OPENID_IDENTIFIER_SELECT = f"{OPENID_NAMESPACE}/identifier_select"
@@ -354,7 +353,7 @@ class SteamAuthService:
         try:
             issued_at = datetime.strptime(
                 match.group(1), "%Y-%m-%dT%H:%M:%SZ"
-            ).replace(tzinfo=timezone.utc)
+            ).replace(tzinfo=UTC)
         except ValueError as exc:
             raise AuthenticationError(
                 "Steam OpenID callback could not be verified"
@@ -469,7 +468,7 @@ def _safe_avatar_url(value: object) -> str | None:
     try:
         parsed = urlparse(value)
         hostname = parsed.hostname or ""
-        parsed.port
+        _ = parsed.port  # accessing .port is what raises ValueError on a malformed port
     except ValueError:
         return None
     trusted_host = (

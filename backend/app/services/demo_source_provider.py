@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Protocol
+from typing import NoReturn, Protocol
 
 
 @dataclass(frozen=True)
@@ -50,7 +50,7 @@ class DisabledDemoSourceProvider:
     provider_id = "disabled"
     available = False
 
-    def resolve(self, *, share_code: str) -> None:
+    def resolve(self, *, share_code: str) -> NoReturn:
         del share_code
         raise DemoSourceUnavailableError()
 

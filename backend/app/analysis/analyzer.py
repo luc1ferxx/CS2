@@ -1,18 +1,18 @@
 from __future__ import annotations
 
-from typing import Any
 import uuid
+from typing import Any
 
 from app.analysis.rules import (
-    CoachingEventCandidate,
     DEFAULT_RULE_CONFIG,
+    CoachingEventCandidate,
     RuleConfig,
     dedupe_events,
     find_isolated_entries,
     find_late_post_plant_utility,
+    find_poor_spacing,
     find_post_plant_spacing_with_bomb_event,
     find_post_plant_spread_issues,
-    find_poor_spacing,
     find_retake_desyncs,
     find_untraded_deaths,
     find_weak_utility_before_execute,
@@ -81,7 +81,7 @@ def _balanced_limit(events: list[CoachingEventCandidate], config: RuleConfig) ->
                 if rounds[round_number]:
                     queue.append(rounds[round_number].pop(0))
         queues[player_id] = queue[:max(0, config.max_events_per_player)]
-    selected_ids = set()
+    selected_ids: set[str] = set()
     while any(queues.values()) and len(selected_ids) < max(0, config.max_events_total):
         for queue in queues.values():
             if queue and len(selected_ids) < config.max_events_total:

@@ -2,11 +2,9 @@ from __future__ import annotations
 
 import re
 import secrets
-from collections.abc import Awaitable, Callable
-from typing import Any
 
 from starlette.responses import JSONResponse
-
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 DEMO_ENVELOPE_LIMIT_BYTES = (1024 * 1024 * 1024) + (8 * 1024 * 1024)
 VIDEO_ENVELOPE_LIMIT_BYTES = (2 * 1024 * 1024 * 1024) + (8 * 1024 * 1024)
@@ -18,11 +16,6 @@ _VIDEO_UPLOAD_PATH = re.compile(r"^/demos/[^/]+/video/upload$")
 _WORKER_MEDIA_PATH = re.compile(r"^/render-worker/jobs/[^/]+/media$")
 _WORKER_RESULT_PATH = re.compile(r"^/render-worker/jobs/[^/]+/result$")
 
-AsgiMessage = dict[str, Any]
-Receive = Callable[[], Awaitable[AsgiMessage]]
-Send = Callable[[AsgiMessage], Awaitable[None]]
-AsgiApp = Callable[[dict[str, Any], Receive, Send], Awaitable[None]]
-
 
 class _RequestBodyTooLarge(Exception):
     pass
@@ -31,7 +24,7 @@ class _RequestBodyTooLarge(Exception):
 class MultipartRequestLimitMiddleware:
     def __init__(
         self,
-        app: AsgiApp,
+        app: ASGIApp,
         *,
         demo_envelope_limit_bytes: int = DEMO_ENVELOPE_LIMIT_BYTES,
         video_envelope_limit_bytes: int = VIDEO_ENVELOPE_LIMIT_BYTES,
@@ -53,7 +46,7 @@ class MultipartRequestLimitMiddleware:
 
     async def __call__(
         self,
-        scope: dict[str, Any],
+        scope: Scope,
         receive: Receive,
         send: Send,
     ) -> None:
@@ -83,7 +76,7 @@ class MultipartRequestLimitMiddleware:
 
         received_bytes = 0
 
-        async def limited_receive() -> AsgiMessage:
+        async def limited_receive() -> Message:
             nonlocal received_bytes
             message = await receive()
             if message.get("type") == "http.request":
@@ -99,7 +92,7 @@ class MultipartRequestLimitMiddleware:
         finally:
             self._active_uploads -= 1
 
-    def _limit_for_scope(self, scope: dict[str, Any]) -> int | None:
+    def _limit_for_scope(self, scope: Scope) -> int | None:
         if scope.get("type") != "http" or scope.get("method", "").upper() != "POST":
             return None
         path = scope.get("path", "")
@@ -114,7 +107,7 @@ class MultipartRequestLimitMiddleware:
         return None
 
     @staticmethod
-    def _is_worker_post_scope(scope: dict[str, Any]) -> bool:
+    def _is_worker_post_scope(scope: Scope) -> bool:
         return (
             scope.get("type") == "http"
             and scope.get("method", "").upper() == "POST"
@@ -144,7 +137,7 @@ class MultipartRequestLimitMiddleware:
 class SensitiveJsonRequestLimitMiddleware:
     def __init__(
         self,
-        app: AsgiApp,
+        app: ASGIApp,
         *,
         steam_credentials_limit_bytes: int = STEAM_CREDENTIALS_JSON_LIMIT_BYTES,
     ) -> None:
@@ -155,7 +148,7 @@ class SensitiveJsonRequestLimitMiddleware:
 
     async def __call__(
         self,
-        scope: dict[str, Any],
+        scope: Scope,
         receive: Receive,
         send: Send,
     ) -> None:
@@ -176,7 +169,7 @@ class SensitiveJsonRequestLimitMiddleware:
 
         received_bytes = 0
 
-        async def limited_receive() -> AsgiMessage:
+        async def limited_receive() -> Message:
             nonlocal received_bytes
             message = await receive()
             if message.get("type") == "http.request":
@@ -207,7 +200,7 @@ def _has_trustworthy_oversized_content_length(
 
 
 async def _send_request_too_large(
-    scope: dict[str, Any],
+    scope: Scope,
     receive: Receive,
     send: Send,
 ) -> None:
@@ -223,7 +216,7 @@ async def _send_request_too_large(
 
 
 async def _send_invalid_worker_token(
-    scope: dict[str, Any],
+    scope: Scope,
     receive: Receive,
     send: Send,
 ) -> None:
@@ -236,7 +229,7 @@ async def _send_invalid_worker_token(
 
 
 async def _send_sensitive_request_too_large(
-    scope: dict[str, Any],
+    scope: Scope,
     receive: Receive,
     send: Send,
 ) -> None:
@@ -252,7 +245,7 @@ async def _send_sensitive_request_too_large(
 
 
 async def _send_upload_busy(
-    scope: dict[str, Any],
+    scope: Scope,
     receive: Receive,
     send: Send,
 ) -> None:

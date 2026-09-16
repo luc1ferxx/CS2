@@ -12,9 +12,18 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from adapters.base import AdapterConfigError, UploadedMedia
-from adapters.csdm import CSDMAdapter, CSDMConfig, RenderError, assert_native_capture_workspace_empty, probe_video, run_command, validate_manifest
 from runner import NoRedirectHandler, RenderWorkerApiClient, RunnerConfig, csdm_adapter, process_job, renderer_lock
+
+from adapters.base import AdapterConfigError, UploadedMedia
+from adapters.csdm import (
+    CSDMAdapter,
+    CSDMConfig,
+    RenderError,
+    assert_native_capture_workspace_empty,
+    probe_video,
+    run_command,
+    validate_manifest,
+)
 
 
 def manifest():

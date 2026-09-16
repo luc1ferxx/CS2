@@ -20,7 +20,6 @@ from app.core.request_limits import (
 from app.services.artifact_intake import ArtifactIntakeError, ArtifactIntakePolicy, ArtifactIntakeService
 from app.services.storage import artifact_store_from_settings
 
-
 app = FastAPI(title="CS2 Demo AI Coach Mock API", version="0.1.0")
 logger = logging.getLogger(__name__)
 install_auth_callback_access_log_redaction()

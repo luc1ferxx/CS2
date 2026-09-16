@@ -6,7 +6,6 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-
 RUNNER_PATH = Path(__file__).resolve().parents[1] / "runner.py"
 
 

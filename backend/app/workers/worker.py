@@ -1,6 +1,6 @@
 import json
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -13,6 +13,7 @@ from app.models.demo import Demo
 from app.models.job import DemoJob
 from app.parser.demo_parser import DemoParserError, parse_demo_file
 from app.parser.normalizer import normalize_parser_output
+from app.services.artifact_binding import AcceptedArtifactError
 from app.services.demo_service import (
     RENDER_CLIP_JOB_TYPE,
     RENDER_CLIP_NOT_CONNECTED_ERROR,
@@ -21,14 +22,13 @@ from app.services.demo_service import (
     RENDER_WORKER_UNAVAILABLE_ERROR_CODE,
     DemoService,
 )
-from app.services.artifact_binding import AcceptedArtifactError
 from app.services.diagnostics import write_worker_heartbeat
-from app.services.storage import ArtifactStoreError, StorageKeyError
 from app.services.mock_replay_service import build_mock_replay
+from app.services.storage import ArtifactStoreError, StorageKeyError
 
 
 def utc_now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def process_job(db: Session, job_id: str, demo_id: str) -> None:
@@ -160,7 +160,7 @@ def fail_job(db: Session, job_id: str, demo_id: str, error: Any) -> None:
         except Exception:
             _log_job_failure(job.id, "mock-render-failure-update", error)
         return
-    elif demo is not None and job is not None and job.job_type == RENDER_CLIP_JOB_TYPE:
+    if demo is not None and job is not None and job.job_type == RENDER_CLIP_JOB_TYPE:
         try:
             service = DemoService.for_internal(db)
             service.fail_render_clip_job(
@@ -171,7 +171,7 @@ def fail_job(db: Session, job_id: str, demo_id: str, error: Any) -> None:
         except Exception:
             _log_job_failure(job.id, "render-clip-failure-update", error)
         return
-    elif demo is not None and job is not None and job.job_type in {"real_parse", "mock_parse"}:
+    if demo is not None and job is not None and job.job_type in {"real_parse", "mock_parse"}:
         failure = _parse_failure_for_exception(error, phase="parse")
         DemoService.for_internal(db).fail_parse_job(
             demo,
@@ -180,7 +180,7 @@ def fail_job(db: Session, job_id: str, demo_id: str, error: Any) -> None:
             error_code=failure["errorCode"],
         )
         return
-    elif demo is not None:
+    if demo is not None:
         demo.status = "failed"
         demo.error_message = "Background job failed. Retry the operation."
     if job is not None:
@@ -202,12 +202,21 @@ def run_worker() -> None:
 
     while True:
         write_worker_heartbeat(redis_client)
-        item = redis_client.brpop(settings.redis_queue_name, timeout=5)
+        # redis-py 5.2.1 annotates brpop's `keys` parameter as `List`, but the
+        # implementation immediately calls `list_or_args(keys, None)`, which
+        # wraps a bare str/bytes key in a list. A single-key str is supported
+        # at runtime; the annotation is just narrower than the behaviour.
+        item = redis_client.brpop(settings.redis_queue_name, timeout=5)  # type: ignore[arg-type]
         write_worker_heartbeat(redis_client)
         if item is None:
             continue
 
-        _, raw_payload = item
+        # redis-py 5.2.1 shares one signature between its sync and async command
+        # mixins, so brpop is declared `Awaitable[list] | list` and mypy cannot
+        # tell the two clients apart. This is the synchronous client (see
+        # app.core.redis.get_redis_client -> redis.Redis), which always returns
+        # the plain list, so the Awaitable arm is unreachable here.
+        _, raw_payload = item  # type: ignore[misc]
         payload = json.loads(raw_payload)
         job_id = str(payload["job_id"])
         demo_id = str(payload["demo_id"])

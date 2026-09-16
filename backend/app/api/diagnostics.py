@@ -17,7 +17,6 @@ from app.services.diagnostics import (
     write_worker_heartbeat,
 )
 
-
 router = APIRouter(tags=["diagnostics"])
 
 
@@ -42,7 +41,7 @@ def get_demo_diagnostics(
 
 
 __all__ = [
-    "router",
     "read_worker_heartbeat",
+    "router",
     "write_worker_heartbeat",
 ]

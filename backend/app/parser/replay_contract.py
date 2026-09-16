@@ -3,8 +3,9 @@ from __future__ import annotations
 import math
 import re
 import uuid
-from datetime import datetime, timezone
-from typing import Any, Callable
+from collections.abc import Callable
+from datetime import UTC, datetime
+from typing import Any, SupportsFloat, SupportsIndex, TypeGuard
 
 PARSER_EVENT_TYPES = {
     "kill",
@@ -102,7 +103,7 @@ def normalize_replay_contract(replay: dict[str, Any]) -> dict[str, Any]:
         rounds,
     )
     normalized["video"] = _normalize_video(normalized.get("video"), tick_rate, tick_start, tick_end)
-    normalized["generatedAt"] = str(normalized.get("generatedAt") or datetime.now(timezone.utc).isoformat())
+    normalized["generatedAt"] = str(normalized.get("generatedAt") or datetime.now(UTC).isoformat())
     normalized["contractVersion"] = _contract_version(raw)
     normalized["diagnostics"] = _replay_diagnostics(raw, normalized)
     return normalized
@@ -212,7 +213,8 @@ def normalize_parser_event(
     if event_type is None or tick is None:
         return None
 
-    raw_metadata = dict(event.get("metadata")) if isinstance(event.get("metadata"), dict) else {}
+    metadata_value = event.get("metadata")
+    raw_metadata = dict(metadata_value) if isinstance(metadata_value, dict) else {}
     site = normalize_bomb_site(event.get("site")) or normalize_bomb_site(raw_metadata.pop("site", None))
     if site:
         raw_metadata["site"] = site
@@ -309,7 +311,7 @@ def _replay_diagnostics(raw: dict[str, Any], normalized: dict[str, Any]) -> dict
         for field in ("events", "rounds", "players", "frames", "video")
         if field not in raw
     ]
-    degraded_fields = [
+    degraded_fields: list[str] = [
         field
         for field in ("rounds", "players", "frames", "events")
         if field in raw and not isinstance(raw.get(field), list)
@@ -340,7 +342,7 @@ def _replay_diagnostics(raw: dict[str, Any], normalized: dict[str, Any]) -> dict
 
 
 def _event_family_counts(events: list[dict[str, Any]]) -> dict[str, int]:
-    counts = {family: 0 for family in EVENT_FAMILY_TYPES}
+    counts = dict.fromkeys(EVENT_FAMILY_TYPES, 0)
     for event in events:
         event_type = _optional_str(event.get("type"))
         for family, event_types in EVENT_FAMILY_TYPES.items():
@@ -518,7 +520,9 @@ def _optional_str(value: Any) -> str | None:
     return None if value is None else str(value)
 
 
-def _finite(value: Any) -> bool:
+# TypeGuard, not plain bool: a True result means float(value) already succeeded,
+# so callers may pass the value to float() without a further None check.
+def _finite(value: Any) -> TypeGuard[SupportsFloat | SupportsIndex | str]:
     try:
         return math.isfinite(float(value))
     except (TypeError, ValueError, OverflowError):

@@ -1,10 +1,9 @@
 import base64
-import hashlib
 import json
 import logging
 import time
 import unittest
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from urllib.parse import parse_qs, urlparse
 
 from fastapi import FastAPI
@@ -30,7 +29,6 @@ from app.services.steam_auth_service import (
     SteamAuthService,
     get_steam_auth_service,
 )
-
 
 # Synthetic bit-layout fixtures near the uint32 account-id ceiling. They were
 # not collected from a user or copied from a Steam profile.
@@ -731,12 +729,12 @@ def assertion_params(
 
 
 def current_nonce(suffix: str) -> str:
-    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    timestamp = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     return f"{timestamp}{suffix}"
 
 
 def make_demo(demo_id: str, owner_id: str) -> Demo:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     return Demo(
         id=demo_id,
         owner_id=owner_id,

@@ -1,0 +1,116 @@
+# Ruff configuration — CS2 Demo AI Coach
+#
+# Scope: the whole repository (backend/, render-worker/, scripts/).
+#
+# Design rule for this file: the selected rule set MUST be green on `main`.
+# A linter that reports pre-existing violations on every run gets ignored, and
+# then it catches nothing. Every exclusion below is therefore either a framework
+# idiom that the rule genuinely mis-reads, or a documented piece of debt with a
+# way to turn it back on.
+
+line-length = 120
+target-version = "py312"
+
+extend-exclude = [
+    ".venv",
+    ".local",
+    "output",
+    "node_modules",
+    "**/__pycache__",
+]
+
+[lint]
+select = [
+    "F",    # pyflakes — undefined names, unused imports/variables
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "I",    # isort — import ordering
+    "UP",   # pyupgrade — outdated syntax for the pinned Python
+    "B",    # flake8-bugbear — real bug classes (loop-variable capture, etc.)
+    "C4",   # flake8-comprehensions
+    "SIM",  # flake8-simplify
+    "RET",  # flake8-return
+    "PIE",  # flake8-pie
+    "T20",  # flake8-print — print() in library code should be logging
+    "N",    # pep8-naming
+    "A",    # flake8-builtins — shadowing builtins
+    "RUF",  # ruff-specific
+]
+
+ignore = [
+    # E501 (line-too-long) is not enforced. At line-length 120 there are 55
+    # violations, and they are concentrated in string literals that no linter
+    # or formatter can reflow: 19 in analysis/rules.py (player-facing coaching
+    # copy) and 12 in render-worker/adapters/csdm.py (command templates).
+    # Wrapping those would churn product-critical text for zero defect value.
+    # `line-length` above still guides every other rule. To enforce it later,
+    # drop this entry and reflow the remaining lines.
+    "E501",
+
+    # The three rules below are readability preferences, not defect detectors,
+    # and this codebase consistently makes the opposite choice. Enforcing them
+    # would mean ~20 rewrites of correct code.
+    "SIM105",  # try/except/pass -> contextlib.suppress
+    "SIM102",  # nested if -> single if (the nesting here carries comments)
+    "SIM108",  # if/else block -> ternary
+
+    # N818 wants every exception class to end in "Error". `SmokeFailure` and
+    # `_RequestBodyTooLarge` already read as exceptions at their raise/except
+    # sites; renaming them buys nothing.
+    "N818",
+]
+
+[lint.per-file-ignores]
+# Pydantic response/request models mirror the JSON wire format, which is
+# camelCase by API contract. N815 (mixed-case class variable) is exactly wrong
+# here: renaming these fields would break the frontend.
+"backend/app/schemas/*" = ["N815"]
+
+# Tests: nested `with` blocks are how unittest.mock patches stack, and a
+# collapsed single `with` is harder to read, not easier. Unused arguments are
+# test doubles conforming to a real signature.
+#
+# N806: `Session = sessionmaker(...)` is SQLAlchemy's own convention — the call
+#   returns a class, so PascalCase is correct.
+# N805: one parametrised helper is invoked unbound and takes the case, not self.
+# B023: the five closures flagged here (test_worker_demo_names.py,
+#   test_steam_match_sync.py) are invoked synchronously inside the same loop
+#   iteration that defines them, so the late-binding trap B023 exists to catch
+#   cannot fire. The rule stays enabled for all non-test code.
+"backend/tests/*" = ["SIM117", "ARG001", "ARG002", "N806", "N805", "B023"]
+
+# The worker writes progress to stdout on purpose: in a container, stdout *is*
+# the log sink, and every call passes flush=True. Worth unifying with the
+# module's existing _log_job_failure() later — that is a logging-config change,
+# not a lint fix.
+"backend/app/workers/*" = ["T20"]
+
+# render-worker runs as a standalone process: it adjusts sys.path before
+# importing siblings (E402), its adapters implement fixed callback signatures
+# (ARG00x), and it writes operator-facing progress to stdout by design (T20).
+# SIM112: `SystemRoot` is the documented Windows spelling of that variable.
+# RUF005: the concatenations build subprocess argv lists, where the explicit
+#   `base + [extra]` form reads better than unpacking.
+"render-worker/*" = ["E402", "ARG001", "ARG002", "SIM117", "T20", "SIM112", "RUF005"]
+
+# Operator CLI scripts: printing to stdout is the entire point.
+"scripts/*" = ["T20"]
+
+[lint.flake8-bugbear]
+# FastAPI's dependency-injection contract *requires* these calls in argument
+# defaults. All 48 B008 hits in this repo are `Depends`/`File`; none is the
+# mutable-default bug B008 exists to catch.
+extend-immutable-calls = [
+    "fastapi.Body",
+    "fastapi.Cookie",
+    "fastapi.Depends",
+    "fastapi.File",
+    "fastapi.Form",
+    "fastapi.Header",
+    "fastapi.Path",
+    "fastapi.Query",
+    "fastapi.Security",
+]
+
+[lint.isort]
+known-first-party = ["app", "adapters"]

@@ -5,9 +5,9 @@ from pathlib import Path
 
 from app.core.config import settings
 from app.services.upload_service import (
-    DemoUploadValidationError,
     MAX_DEMO_UPLOAD_BYTES,
     MAX_VIDEO_UPLOAD_BYTES,
+    DemoUploadValidationError,
     store_demo_upload,
     store_video_upload,
     validate_demo_upload,

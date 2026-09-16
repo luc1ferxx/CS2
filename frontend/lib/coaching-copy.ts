@@ -17,22 +17,22 @@ const RULE_COPY: Record<string, CoachingCopy> = {
   isolated_entry: {
     title: "检查首次交火的支援距离",
     guidance: "和最近的队友一起回看首次交火，确认后续补枪的路线与时机。",
-    limitation: "采样位置的直线距离无法判断视野、可走路线或队友责任；雷达距离也不等于实际移动距离。"
+    limitation: "采样位置的直线距离无法判断视野、可走路线或队友责任，也不等于实际移动距离。"
   },
   poor_spacing: {
     title: "检查与队友的站位间距",
     guidance: "交火前留出避免被一起扫射的空间，同时确保队友能够跟上补枪。",
-    limitation: "单个位置采样只提示值得回看的时刻；绕后、交叉火力、高低差和集中站位都可能是战术安排。雷达距离不等于实际移动距离。"
+    limitation: "单个位置采样只提示值得回看的时刻；绕后、交叉火力、高低差和集中站位都可能是战术安排。直线距离不等于实际移动距离。"
   },
   post_plant_spread: {
     title: "检查下包后的交叉火力",
     guidance: "下包后尝试覆盖不同的枪线，同时保留与队友互相补枪的机会。",
-    limitation: "采样位置接近不代表枪线一定重复，也无法证明整段时间都缺少覆盖；雷达距离不等于实际移动距离。"
+    limitation: "采样位置接近不代表枪线一定重复，也无法证明整段时间都缺少覆盖；直线距离不等于实际移动距离。"
   },
   post_plant_spacing_with_bomb_event: {
     title: "检查下包后的站位分工",
     guidance: "回看下包后的站位，确认各自覆盖不同方向，并能够互相补枪。",
-    limitation: "下包事件有记录，但仅凭采样距离无法判断枪线覆盖是否合理；雷达距离不等于实际移动距离。"
+    limitation: "下包事件有记录，但仅凭采样距离无法判断枪线覆盖是否合理；直线距离不等于实际移动距离。"
   },
   retake_desync: {
     title: "检查回防进场的时机",
@@ -54,7 +54,7 @@ const RULE_COPY: Record<string, CoachingCopy> = {
 const EVIDENCE_LABELS: Record<string, string> = {
   verticalDistanceWorldUnits: "高度差（世界坐标单位）",
   maxStackedVerticalDistanceWorldUnits: "过近候选的最大高度差",
-  relatedEventIds: "关联事件", distance: "雷达距离（百分点）", windowSeconds: "观察窗口（秒）",
+  relatedEventIds: "关联事件", distance: "直线距离（世界坐标单位）", windowSeconds: "观察窗口（秒）",
   evidenceTicks: "证据位置（tick）", utilityType: "道具类型", utilityLabel: "道具",
   utilityTypes: "道具类型", utilityCount: "记录的道具数", requiredUtilityCount: "规则参考数量",
   bombTick: "炸弹事件位置（tick）", bombEventType: "炸弹事件类型", bombEventLabel: "炸弹事件",
@@ -97,7 +97,7 @@ export function coachingCopy(event: CoachingEvent): CoachingCopy {
     if (context.spacingType === "too_far") {
       title = "检查与队友的支援距离";
       guidance = "接触敌人前，先确认队友能否及时支援；必要时等队友靠近或准备好再一起接触。";
-      limitation = "单个位置采样不能判断视野、可走路线或战术意图；绕后、交叉火力和分散控图都可能合理。雷达距离不等于实际移动距离。";
+      limitation = "单个位置采样不能判断视野、可走路线或战术意图；绕后、交叉火力和分散控图都可能合理。直线距离不等于实际移动距离。";
     }
   }
   const approximate = textValue(context.limitation).includes("Map calibration is approximate.");

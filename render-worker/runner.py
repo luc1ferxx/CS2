@@ -11,20 +11,20 @@ import threading
 import urllib.error
 import urllib.request
 import uuid
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, BinaryIO, Callable, Iterator, Protocol
+from typing import Any, BinaryIO, Protocol
 
 RUNNER_ROOT = Path(__file__).resolve().parent
 if str(RUNNER_ROOT) not in sys.path:
     sys.path.insert(0, str(RUNNER_ROOT))
 
 from adapters.base import AdapterConfigError, AdapterResult, UploadedMedia
-from adapters.csdm import CSDMAdapter, CSDMConfig, assert_game_not_running, safe_job_id, validate_manifest
 from adapters.cs2_manual import CS2ManualAdapter
+from adapters.csdm import CSDMAdapter, CSDMConfig, assert_game_not_running, safe_job_id, validate_manifest
 from adapters.fake_video import FakeVideoAdapter
-
 
 DEFAULT_API_BASE_URL = "http://localhost:8000"
 DEFAULT_RENDER_WORKER_TOKEN = "dev-render-worker-token"
@@ -224,8 +224,8 @@ class RenderWorkerApiClient:
             'Content-Disposition: form-data; name="file"; '
             f'filename="{filename}"\r\n'
             "Content-Type: video/mp4\r\n\r\n"
-        ).encode("utf-8")
-        suffix = f"\r\n--{boundary}--\r\n".encode("utf-8")
+        ).encode()
+        suffix = f"\r\n--{boundary}--\r\n".encode()
 
         with media_path.open("rb") as media_file:
             media_size = os.fstat(media_file.fileno()).st_size

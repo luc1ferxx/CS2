@@ -1,4 +1,5 @@
-from typing import BinaryIO, Iterator
+from collections.abc import Iterator
+from typing import BinaryIO
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
@@ -8,7 +9,6 @@ from app.core.auth import get_current_owner_id
 from app.core.config import settings
 from app.core.database import get_db
 from app.services.demo_service import DemoService
-
 
 router = APIRouter(tags=["media"])
 

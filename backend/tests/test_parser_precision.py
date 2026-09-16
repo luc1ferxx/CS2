@@ -1,3 +1,4 @@
+import itertools
 import math
 import unittest
 
@@ -22,7 +23,7 @@ class ParserPrecisionTest(unittest.TestCase):
             [{"tick": 137}, {"tick": 487}, {"tick": "bad"}, {"tick": math.inf}], {}, 64,
         )
         self.assertTrue({100, 130, 136, 137, 486, 487, 1100}.issubset(ticks))
-        self.assertLessEqual(max(b - a for a, b in zip(ticks, ticks[1:])), 16)
+        self.assertLessEqual(max(b - a for a, b in itertools.pairwise(ticks)), 16)
 
     def test_long_match_regular_sampling_is_bounded_without_discarding_event_ticks(self):
         ticks = _sample_ticks(
@@ -36,7 +37,7 @@ class ParserPrecisionTest(unittest.TestCase):
             def parse_ticks(self, props, ticks):
                 if "inventory" in props:
                     raise RuntimeError("optional inventory unsupported")
-                return [{"tick": ticks[0], **{key: 10 for key in props}}]
+                return [{"tick": ticks[0], **dict.fromkeys(props, 10)}]
 
         record = _parse_tick_records(Parser(), [100])[0]
         self.assertEqual(record["Z"], 10)

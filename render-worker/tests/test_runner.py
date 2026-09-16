@@ -5,7 +5,6 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 
-
 RUNNER_PATH = Path(__file__).resolve().parents[1] / "runner.py"
 
 

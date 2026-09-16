@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -138,7 +138,7 @@ def build_status(manifest: dict[str, Any], output_path: Path) -> dict[str, Any]:
         "adapter": "cs2-manual",
         "jobId": manifest["jobId"],
         "demoId": manifest["demoId"],
-        "preparedAt": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "preparedAt": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
         "expectedVideoPath": str(output_path),
         "state": "waiting_for_manual_recording",
         "nextAction": (

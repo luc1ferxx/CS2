@@ -3,7 +3,7 @@ import logging
 import tempfile
 import threading
 import unittest
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import httpx
 from fastapi import FastAPI
@@ -18,7 +18,8 @@ from app.core.access_log import suppress_outbound_http_request_logging
 from app.core.auth import SessionCsrfMiddleware
 from app.core.config import Settings
 from app.core.database import Base, get_db
-from app.models import Account, ExternalIdentity, SteamConnection, SteamMatch
+from app.models import Account, ExternalIdentity, SteamConnection
+from app.services.auth_service import get_auth_service
 from app.services.steam_credentials import SteamCredentialCipher
 from app.services.steam_match_service import (
     STEAM_MATCH_HISTORY_ENDPOINT,
@@ -34,8 +35,6 @@ from app.services.steam_sync_rate_limit import (
     SteamSyncRateLimitError,
     SteamSyncRateLimitUnavailableError,
 )
-from app.services.auth_service import get_auth_service
-
 
 OWNER_A = "owner_v1_stage2_owner_a"
 OWNER_B = "owner_v1_stage2_owner_b"
@@ -105,7 +104,7 @@ class SequenceHttpClient:
 
 class MutableClock:
     def __init__(self) -> None:
-        self.now = datetime(2026, 7, 19, 12, 0, tzinfo=timezone.utc)
+        self.now = datetime(2026, 7, 19, 12, 0, tzinfo=UTC)
 
     def __call__(self) -> datetime:
         return self.now
@@ -916,7 +915,7 @@ class SteamMatchSyncTest(unittest.TestCase):
 
     @staticmethod
     def _add_account(db, owner_id: str, steam_id: str) -> None:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         db.add(
             Account(
                 owner_id=owner_id,
@@ -968,8 +967,8 @@ def numbered_code(number: int) -> str:
 
 def aware(value: datetime) -> datetime:
     if value.tzinfo is None:
-        return value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc)
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
 
 
 if __name__ == "__main__":

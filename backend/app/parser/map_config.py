@@ -121,11 +121,49 @@ _MAP_CONFIGS: dict[str, dict[str, Any]] = {
 }
 
 
+# Normalized frames carry radar percent (0-100), not world units, so a rule
+# threshold expressed in percent means a different real distance on every map.
+# Each config therefore publishes how many world units one percentage point is
+# worth, and the analyzer converts before comparing against its thresholds.
+#
+# Dust II is the reference scale: it is one of the two truly calibrated maps and
+# the thresholds in RuleConfig were originally tuned against it.
+REFERENCE_WORLD_UNITS_PER_PERCENT = 4.4 * 1024.0 / 100.0
+
+
+def world_units_per_percent(config: dict[str, Any] | None) -> dict[str, float] | None:
+    """World units spanned by one radar percentage point, per axis.
+
+    Returns ``None`` when the transform carries no fixed scale (the dynamic
+    bounds fallback), because that scale is only known per replay.
+    """
+    if not isinstance(config, dict):
+        return None
+    transform = config.get("transform")
+    if not isinstance(transform, dict):
+        return None
+    if transform.get("type") == "overview":
+        radar_size = float(transform["scale"]) * float(transform["imageSize"])
+        return {"x": radar_size / 100.0, "y": radar_size / 100.0}
+    if transform.get("type") == "bounds":
+        return {
+            "x": (float(transform["maxX"]) - float(transform["minX"])) / 100.0,
+            "y": (float(transform["maxY"]) - float(transform["minY"])) / 100.0,
+        }
+    return None
+
+
 def get_map_config(map_name: str | None) -> dict[str, Any] | None:
     if not map_name:
         return None
     config = _MAP_CONFIGS.get(map_name)
-    return deepcopy(config) if config else None
+    if not config:
+        return None
+    resolved = deepcopy(config)
+    scale = world_units_per_percent(resolved)
+    if scale is not None:
+        resolved["worldUnitsPerPercent"] = scale
+    return resolved
 
 
 def map_metadata_for(map_name: str | None) -> dict[str, Any]:

@@ -4,10 +4,10 @@ from typing import Annotated
 from fastapi import Depends, Header, HTTPException, Request
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.responses import JSONResponse, Response
+from starlette.types import ASGIApp
 
 from app.core.config import Settings, settings
 from app.services.auth_service import AuthService, get_auth_service
-
 
 DEV_OWNER_HEADER = "X-Dev-User-Id"
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
@@ -16,7 +16,7 @@ SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
 class SessionCsrfMiddleware(BaseHTTPMiddleware):
     def __init__(
         self,
-        app: object,
+        app: ASGIApp,
         runtime_settings: Settings = settings,
         auth_service_factory: Callable[[], AuthService] = get_auth_service,
     ):
@@ -128,10 +128,6 @@ def _protect_browser_response(request: Request, response: Response) -> Response:
 
 def _is_private_browser_path(path: str) -> bool:
     return (
-        path == "/demos"
-        or path.startswith("/demos/")
-        or path.startswith("/uploads/")
-        or path.startswith("/auth/")
-        or path.startswith("/steam/")
-        or path == "/diagnostics"
+        path in ("/demos", "/diagnostics")
+        or path.startswith(("/demos/", "/uploads/", "/auth/", "/steam/"))
     )

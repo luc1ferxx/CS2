@@ -5,8 +5,8 @@ from app.services.steam_sync_rate_limit import (
     STEAM_SYNC_OWNER_REQUEST_LIMIT,
     STEAM_SYNC_PUBLISHER_BLOCK_SCRIPT,
     STEAM_SYNC_RATE_LIMIT_SCRIPT,
-    SteamSyncRateLimitError,
     SteamSyncRateLimiter,
+    SteamSyncRateLimitError,
     SteamSyncRateLimitUnavailableError,
 )
 

@@ -262,7 +262,7 @@ class RulesAnalyzerTest(unittest.TestCase):
 
         events = analyze_replay(
             replay,
-            config=RuleConfig(post_plant_min_duration_seconds=4, post_plant_cluster_distance=6),
+            config=RuleConfig(post_plant_min_duration_seconds=4, post_plant_cluster_distance=270),
         )
 
         post_plant = [event for event in events if event["structured_context_json"]["ruleId"] == "post_plant_spread_issue"]
@@ -304,7 +304,7 @@ class RulesAnalyzerTest(unittest.TestCase):
 
         events = analyze_replay(
             replay,
-            config=RuleConfig(retake_site_distance=5, retake_desync_seconds=4),
+            config=RuleConfig(retake_site_distance=225, retake_desync_seconds=4),
         )
 
         retake = [event for event in events if event["structured_context_json"]["ruleId"] == "retake_desync"]
@@ -372,7 +372,7 @@ class RulesAnalyzerTest(unittest.TestCase):
 
         events = analyze_replay(
             replay,
-            config=RuleConfig(post_plant_min_duration_seconds=4, post_plant_cluster_distance=6),
+            config=RuleConfig(post_plant_min_duration_seconds=4, post_plant_cluster_distance=270),
         )
         rule_ids = {event["structured_context_json"]["ruleId"] for event in events}
 
@@ -467,7 +467,7 @@ class RulesAnalyzerTest(unittest.TestCase):
 
         events = analyze_replay(
             replay,
-            config=RuleConfig(post_plant_min_duration_seconds=4, post_plant_cluster_distance=6),
+            config=RuleConfig(post_plant_min_duration_seconds=4, post_plant_cluster_distance=270),
         )
 
         spacing = [

@@ -8,8 +8,9 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from adapters.base import AdapterConfigError, UploadedMedia
 from runner import RunnerConfig, build_parser, poll, renderer_lock, stop_after_current_job
+
+from adapters.base import AdapterConfigError, UploadedMedia
 
 
 class StopEvent:
@@ -126,7 +127,7 @@ class PollRunnerTest(unittest.TestCase):
             with self.assertRaises(AdapterConfigError):
                 with renderer_lock(self.root):
                     self.fail("another consumer acquired the same worker")
-            return None
+            return
 
         with patch.object(client, "fetch_next_manifest", side_effect=fetch):
             poll(self.config, client=client, stop_event=stop, on_result=lambda _: None)

@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import hmac
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
-from typing import Any, BinaryIO, Callable, Protocol
+from datetime import UTC, datetime, timedelta
+from typing import Any, BinaryIO, Protocol
 
 from app.services.storage import (
     ArtifactBindingError,
@@ -16,7 +17,6 @@ from app.services.storage import (
     ArtifactStoreError,
     ArtifactTooLargeError,
 )
-
 
 ARTIFACT_INTAKE_POLICY_VERSION = "artifact_intake_v1"
 DEFAULT_MAX_SOURCE_BYTES = 1024 * 1024 * 1024
@@ -224,7 +224,7 @@ class ArtifactIntakeService:
     ):
         self.store = store
         self.policy = policy or ArtifactIntakePolicy()
-        self._now = now or (lambda: datetime.now(timezone.utc))
+        self._now = now or (lambda: datetime.now(UTC))
 
     def intake_demo(
         self,
@@ -265,7 +265,14 @@ class ArtifactIntakeService:
             )
             written = self.store.write_stream(
                 quarantine_reference,
-                captured_stream,
+                # `_ArtifactStore` mirrors `storage.ArtifactStore`, whose `stream`
+                # parameter is `BinaryIO`. `typing.BinaryIO` is nominal for mypy -- a
+                # wrapper can only satisfy it by inheriting it -- so this capture
+                # wrapper cannot be typed as one, even though it implements the exact
+                # `read`/`tell`/`seek` surface both store backends use. Narrowing the
+                # parameter to that minimal surface instead would stop the real
+                # `ArtifactStore` from satisfying this protocol at its call sites.
+                captured_stream,  # type: ignore[arg-type]
                 max_bytes=self.policy.max_source_bytes,
                 chunk_size=self.policy.stream_chunk_bytes,
                 content_type=normalized_content_type,
@@ -523,7 +530,7 @@ def _has_incompatible_content_prefix(prefix: bytes) -> bool:
 def _normalize_datetime(value: datetime) -> datetime:
     if not isinstance(value, datetime) or value.tzinfo is None:
         raise ValueError("Artifact intake timestamp must be timezone-aware")
-    return value.astimezone(timezone.utc)
+    return value.astimezone(UTC)
 
 
 def _isoformat_utc(value: datetime) -> str:

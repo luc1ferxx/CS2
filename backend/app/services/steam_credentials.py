@@ -12,7 +12,6 @@ from dataclasses import dataclass
 from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-
 AES_GCM_KEY_BYTES = 32
 AES_GCM_NONCE_BYTES = 12
 AES_GCM_TAG_BYTES = 16

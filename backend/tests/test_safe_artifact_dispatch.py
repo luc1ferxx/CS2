@@ -15,7 +15,6 @@ from app.services.artifact_intake import ArtifactIntakeError
 from app.services.demo_service import DemoDispatchError, DemoService
 from app.services.storage import ArtifactReference, LocalArtifactStore
 
-
 VALID_DEMO = b"bounded-demo-content-for-intake"
 
 

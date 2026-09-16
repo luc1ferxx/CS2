@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 
@@ -86,7 +86,7 @@ def build_mock_replay(demo_id: str) -> tuple[dict[str, Any], list[dict[str, Any]
         "kills": _mock_kills(),
         "deaths": _mock_kills(),
         "events": _mock_replay_events(),
-        "generatedAt": datetime.now(timezone.utc).isoformat(),
+        "generatedAt": datetime.now(UTC).isoformat(),
     }
 
     return replay, _coaching_events(demo_id)

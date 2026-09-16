@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import desc, func, text
@@ -20,7 +20,6 @@ from app.services.storage import (
     artifact_store_from_settings,
 )
 
-
 WORKER_HEARTBEAT_KEY = "cs2-demo-coach:worker:heartbeat"
 WORKER_HEARTBEAT_TTL_SECONDS = 120
 WORKER_HEARTBEAT_ALIVE_SECONDS = 90
@@ -33,7 +32,7 @@ _ABSOLUTE_PATH_RE = re.compile(
 
 
 def utc_now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def write_worker_heartbeat(redis_client: Any, *, now: datetime | None = None) -> None:
@@ -263,7 +262,8 @@ def _recent_failed_jobs(db: Session) -> list[dict[str, Any]]:
 
 def _failed_job_summary(job: DemoJob) -> dict[str, Any]:
     metadata = _job_metadata(job)
-    failure = metadata.get("failure") if isinstance(metadata.get("failure"), dict) else {}
+    raw_failure = metadata.get("failure")
+    failure: dict[str, Any] = raw_failure if isinstance(raw_failure, dict) else {}
     message = compact_safe_message(
         _optional_str(failure.get("message"))
         or job.error_message
@@ -471,7 +471,7 @@ def _parse_datetime(value: str | None) -> datetime | None:
 
 def _aware_datetime(value: datetime) -> datetime:
     if value.tzinfo is None:
-        return value.replace(tzinfo=timezone.utc)
+        return value.replace(tzinfo=UTC)
     return value
 
 

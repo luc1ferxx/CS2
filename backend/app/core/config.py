@@ -7,7 +7,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlparse
 
-
 DEFAULT_ARTIFACT_STORAGE_ROOT = Path(os.getenv("ARTIFACT_STORAGE_ROOT", "/data"))
 SUPPORTED_AUTH_MODES = {"development", "test", "production"}
 SUPPORTED_AUTH_PROVIDERS = {"oidc", "steam"}
@@ -42,7 +41,7 @@ def _validate_https_url(env_name: str, value: str) -> None:
     try:
         parsed = urlparse(value)
         hostname = parsed.hostname
-        parsed.port
+        _ = parsed.port  # accessing .port is what raises ValueError on a malformed port
     except ValueError as exc:
         raise RuntimeError(f"{env_name} must be a valid https URL in production") from exc
     if (
@@ -419,7 +418,7 @@ class Settings:
         if self.object_storage_endpoint_url:
             try:
                 parsed = urlparse(self.object_storage_endpoint_url)
-                parsed.port
+                _ = parsed.port  # accessing .port is what raises ValueError on a malformed port
             except ValueError as exc:
                 raise RuntimeError(
                     "OBJECT_STORAGE_ENDPOINT_URL must be a valid URL"

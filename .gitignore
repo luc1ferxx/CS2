@@ -8,6 +8,11 @@ __pycache__/
 .venv/
 venv/
 
+# Tooling caches (ruff and mypy each self-ignore, but only once the directory
+# already exists -- listing them here keeps `git status` clean from the start)
+.ruff_cache/
+.mypy_cache/
+
 # Node / Next.js
 node_modules/
 .next/

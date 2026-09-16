@@ -3,7 +3,7 @@ from __future__ import annotations
 import secrets
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -113,7 +113,7 @@ class AccountService:
         display_name: str | None,
         avatar_url: str | None,
     ) -> AccountIdentity:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         identity = self._find_identity(provider, subject)
         if identity is not None:
             if preferred_owner_id is not None and identity.owner_id != preferred_owner_id:

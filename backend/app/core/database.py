@@ -8,7 +8,6 @@ from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from app.core.config import settings
 
-
 SCHEMA_UPGRADE_LOCK_ID = 7_302_202_607_190_001
 
 

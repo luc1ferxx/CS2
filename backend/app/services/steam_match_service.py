@@ -3,10 +3,12 @@ from __future__ import annotations
 import json
 import re
 import uuid
+from collections.abc import Callable, Iterator, Mapping
+from contextlib import AbstractContextManager
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from email.utils import parsedate_to_datetime
-from typing import Callable
+from typing import Any, Protocol
 
 import httpx
 from sqlalchemy import or_
@@ -22,10 +24,9 @@ from app.services.steam_credentials import (
     SteamCredentialError,
 )
 from app.services.steam_sync_rate_limit import (
-    SteamSyncRateLimitError,
     SteamSyncRateLimiter,
+    SteamSyncRateLimitError,
 )
-
 
 STEAM_MATCH_HISTORY_ENDPOINT = (
     "https://api.steampowered.com/ICSGOPlayers_730/"
@@ -100,8 +101,39 @@ class SteamHttpResponse:
         return json.loads(self.content)
 
 
+class _SteamStreamResponse(Protocol):
+    """The streaming-response surface ``_fetch_match_response`` consumes."""
+
+    @property
+    def status_code(self) -> int: ...
+
+    @property
+    def headers(self) -> Mapping[str, str]: ...
+
+    def iter_bytes(self, *, chunk_size: int = ...) -> Iterator[bytes]: ...
+
+
+class _SteamHttpClient(Protocol):
+    """The single upstream call this service makes.
+
+    Declared structurally so the default stays the ``httpx`` module while the
+    tests keep passing their own sequenced/blocking doubles.
+    """
+
+    def stream(
+        self,
+        method: str,
+        url: str,
+        *,
+        params: Mapping[str, str],
+        headers: Mapping[str, str],
+        timeout: float,
+        follow_redirects: bool,
+    ) -> AbstractContextManager[_SteamStreamResponse]: ...
+
+
 def utc_now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def validate_game_auth_code(value: str) -> str:
@@ -127,7 +159,7 @@ class SteamMatchService:
         runtime_settings: Settings = settings,
         cipher: SteamCredentialCipher | None = None,
         sync_rate_limiter: SteamSyncRateLimiter | None = None,
-        http_client: object = httpx,
+        http_client: _SteamHttpClient = httpx,
         clock: Callable[[], datetime] = utc_now,
     ):
         self.db = db
@@ -780,9 +812,11 @@ class SteamMatchService:
             now - _as_utc(lease_heartbeat)
         ).total_seconds() < SYNC_LEASE_SECONDS
 
-    def _next_code(self, response: object, *, expected_na: bool) -> str:
+    def _next_code(self, response: SteamHttpResponse, *, expected_na: bool) -> str:
         try:
-            payload = response.json()
+            # The decoded body is an arbitrary JSON document: the except clause
+            # below is what validates its shape, so the lookups stay untyped.
+            payload: Any = response.json()
             result = payload["result"]
             next_code = result["nextcode"]
         except (KeyError, TypeError, ValueError):
@@ -824,11 +858,11 @@ def _retry_after_seconds(response: object | None, now: datetime) -> int | None:
     except (TypeError, ValueError, OverflowError):
         return None
     if retry_at.tzinfo is None:
-        retry_at = retry_at.replace(tzinfo=timezone.utc)
-    return max(1, int((retry_at.astimezone(timezone.utc) - now).total_seconds()))
+        retry_at = retry_at.replace(tzinfo=UTC)
+    return max(1, int((retry_at.astimezone(UTC) - now).total_seconds()))
 
 
 def _as_utc(value: datetime) -> datetime:
     if value.tzinfo is None:
-        return value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc)
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)

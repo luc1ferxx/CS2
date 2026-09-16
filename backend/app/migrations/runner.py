@@ -18,13 +18,12 @@ from sqlalchemy import (
     Table,
     UniqueConstraint,
     func,
-    inspect,
     insert,
+    inspect,
     select,
     text,
 )
 from sqlalchemy.engine import Connection
-
 
 MIGRATION_TABLE_NAME = "app_schema_migrations"
 

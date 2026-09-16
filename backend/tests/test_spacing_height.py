@@ -29,13 +29,21 @@ class StackedHeightEvidenceTest(unittest.TestCase):
 
     def test_real_nuke_platform_pairs_do_not_become_close_spacing(self):
         fixture = json.loads((Path(__file__).parent / "fixtures/nuke_stacked_height_samples.json").read_text())
+        # Measured in world units these pairs are 169-178 units apart, just wider
+        # than the default stacked threshold, so both configs widen it by the same
+        # amount. The vertical threshold is then the only difference between them,
+        # which is what this test is about.
+        stacked = RuleConfig(poor_spacing_min_distance=200)
         for sample in fixture["samples"]:
             with self.subTest(tick=sample["tick"]):
                 replay = self.sample_replay(sample["players"], sample["tick"], sample["roundNumber"])
                 # Both players are in the upper-map bucket; the old floor check alone accepts them.
-                permissive = find_poor_spacing(replay, RuleConfig(max_stacked_vertical_distance=512))
+                permissive = find_poor_spacing(
+                    replay, RuleConfig(poor_spacing_min_distance=200, max_stacked_vertical_distance=512)
+                )
                 self.assertEqual(len(permissive), 1)
                 self.assertEqual(permissive[0]["structured_context_json"]["spacingType"], "stacked")
+                self.assertEqual(find_poor_spacing(replay, stacked), [])
                 self.assertEqual(find_poor_spacing(replay), [])
 
     def test_flat_pair_and_threshold_boundary_still_produce_explicit_evidence(self):
@@ -62,6 +70,20 @@ class StackedHeightEvidenceTest(unittest.TestCase):
             with self.subTest(map_name=map_name):
                 self.assertEqual(find_poor_spacing(self.sample_replay(self.flat_pair(200), map_name=map_name)), [])
                 self.assertEqual(len(find_poor_spacing(self.sample_replay(self.flat_pair(), map_name=map_name))), 1)
+
+    def test_same_world_distance_gets_the_same_verdict_on_every_map(self):
+        # Radar percent means a different real distance per map: one point is
+        # 4.4 * 1024 / 100 world units on Dust II and 7.0 * 1024 / 100 on Nuke.
+        # A threshold in world units has to survive that difference, so 160 units
+        # apart must read as "not stacked" on both even though the same gap is
+        # 3.55 radar points on Dust II and only 2.23 on Nuke.
+        for map_name, units_per_percent in (("de_dust2", 4.4 * 1024 / 100), ("de_nuke", 7.0 * 1024 / 100)):
+            for world_distance, expected_events in ((60, 1), (160, 0)):
+                with self.subTest(map_name=map_name, world_distance=world_distance):
+                    pair = self.flat_pair()
+                    pair[1]["x"] = pair[0]["x"] + world_distance / units_per_percent
+                    events = find_poor_spacing(self.sample_replay(pair, map_name=map_name))
+                    self.assertEqual(len(events), expected_events)
 
     def test_legacy_non_multilevel_replays_keep_best_effort_2d_spacing(self):
         for height in (None, float("nan")):

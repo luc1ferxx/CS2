@@ -5,14 +5,14 @@ import json
 import os
 import sys
 import time
-import uuid
-from http.client import HTTPConnection, HTTPException, HTTPSConnection
 import urllib.error
 import urllib.request
-from urllib.parse import urlsplit
+import uuid
+from collections.abc import Mapping, Sequence
+from http.client import HTTPConnection, HTTPException, HTTPSConnection
 from pathlib import Path
-from typing import Any, Mapping, Sequence
-
+from typing import Any
+from urllib.parse import urlsplit
 
 API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000").rstrip("/")
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000").rstrip("/")
@@ -305,15 +305,15 @@ def upload_sample_demo(path: Path) -> str:
     boundary = f"----cloud-preview-smoke-{uuid.uuid4().hex}"
     preamble = b"".join(
         [
-            f"--{boundary}\r\n".encode("utf-8"),
+            f"--{boundary}\r\n".encode(),
             (
                 'Content-Disposition: form-data; name="file"; '
                 f'filename="{path.name}"\r\n'
-            ).encode("utf-8"),
+            ).encode(),
             b"Content-Type: application/octet-stream\r\n\r\n",
         ]
     )
-    closing = f"\r\n--{boundary}--\r\n".encode("utf-8")
+    closing = f"\r\n--{boundary}--\r\n".encode()
 
     try:
         response_status, response_body = post_multipart_file(
@@ -402,4 +402,4 @@ if __name__ == "__main__":
     except SmokeFailure as exc:
         print(f"cloud preview smoke failed: {exc}", file=sys.stderr)
         print(failure_diagnostics_summary(), file=sys.stderr)
-        raise SystemExit(1)
+        raise SystemExit(1) from exc

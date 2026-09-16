@@ -5,11 +5,12 @@ import logging
 import math
 import os
 import uuid
+from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, BinaryIO, Iterator
+from typing import Any, BinaryIO
 
 from sqlalchemy import asc, case, desc, func, or_, update
 from sqlalchemy.orm import Session
@@ -50,7 +51,6 @@ from app.services.artifact_intake import (
     ArtifactIntakeService,
 )
 from app.services.storage import (
-    ArtifactMetadata,
     ArtifactStore,
     ArtifactStoreError,
     LocalStorageService,
@@ -58,7 +58,6 @@ from app.services.storage import (
     artifact_store_from_settings,
 )
 from app.services.upload_service import StoredVideoUpload, demo_upload_key
-
 
 RENDER_CLIP_JOB_TYPE = "render_clip"
 RENDER_FAILED_ERROR_CODE = "RENDER_FAILED"
@@ -168,7 +167,7 @@ class _AcceptedVideoHandle:
 
 
 def utc_now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class DemoService:
@@ -2434,7 +2433,7 @@ def _steam_match_duration_seconds(video: Any) -> int | None:
     duration = float(value)
     if not math.isfinite(duration) or duration < 0 or duration > 24 * 60 * 60:
         return None
-    return int(round(duration))
+    return round(duration)
 
 
 def _steam_match_round_wins(
@@ -2549,7 +2548,7 @@ def _aware_datetime(value: datetime | None) -> datetime:
     if value is None:
         return utc_now()
     if value.tzinfo is None:
-        return value.replace(tzinfo=timezone.utc)
+        return value.replace(tzinfo=UTC)
     return value
 
 

@@ -1,8 +1,5 @@
 import unittest
 
-from app.analysis.analyzer import analyze_replay
-from app.parser.normalizer import normalize_parser_output
-from app.parser.replay_contract import normalize_replay_contract
 from fixtures.parser_quality import (
     coaching_evidence_replay_blob,
     legacy_replay_blob_without_events,
@@ -10,6 +7,10 @@ from fixtures.parser_quality import (
     missing_event_families_replay_blob,
     replay_contract_v1_blob_with_parser_events,
 )
+
+from app.analysis.analyzer import analyze_replay
+from app.parser.normalizer import normalize_parser_output
+from app.parser.replay_contract import normalize_replay_contract
 
 
 class ParserQualityFixturesTest(unittest.TestCase):

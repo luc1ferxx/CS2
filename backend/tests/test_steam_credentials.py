@@ -7,7 +7,6 @@ from app.services.steam_credentials import (
     SteamCredentialError,
 )
 
-
 TEST_KEY = base64.urlsafe_b64encode(b"k" * 32).decode("ascii")
 
 

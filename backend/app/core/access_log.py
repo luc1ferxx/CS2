@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import logging
 
-
 SENSITIVE_CALLBACK_PATHS = (
     "/auth/steam/callback",
     "/auth/oidc/callback",

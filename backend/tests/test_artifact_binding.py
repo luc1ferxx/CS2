@@ -5,11 +5,12 @@ import io
 import json
 import tempfile
 import unittest
+from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Iterator, Mapping
+from typing import Any
 
 from app.services.artifact_binding import (
     ACCEPTED_ARTIFACT_POLICY_VERSION,
@@ -24,8 +25,7 @@ from app.services.artifact_binding import (
 )
 from app.services.storage import ArtifactMetadata, ArtifactReference, LocalArtifactStore
 
-
-NOW = datetime(2026, 7, 16, 8, 30, tzinfo=timezone.utc)
+NOW = datetime(2026, 7, 16, 8, 30, tzinfo=UTC)
 OWNER_ID = "owner-a"
 DEMO_ID = "demo-a"
 ARTIFACT_ID = "a" * 32
@@ -97,7 +97,7 @@ class FakeArtifactRead:
     def close(self) -> None:
         self.closed = True
 
-    def __enter__(self) -> "FakeArtifactRead":
+    def __enter__(self) -> FakeArtifactRead:
         return self
 
     def __exit__(self, *_: Any) -> None:

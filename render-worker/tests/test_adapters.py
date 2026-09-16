@@ -4,7 +4,6 @@ import tempfile
 import unittest
 from pathlib import Path
 
-
 RENDER_WORKER_ROOT = Path(__file__).resolve().parents[1]
 if str(RENDER_WORKER_ROOT) not in sys.path:
     sys.path.insert(0, str(RENDER_WORKER_ROOT))

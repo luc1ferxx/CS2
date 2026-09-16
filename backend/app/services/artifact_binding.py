@@ -4,14 +4,14 @@ import hashlib
 import hmac
 import json
 import re
-from contextlib import contextmanager
+from collections.abc import Iterator, Mapping
+from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, ContextManager, Iterator, Mapping, Protocol
+from typing import Any, Protocol
 
 from app.services.storage import ArtifactMetadata, ArtifactReference
-
 
 ACCEPTED_ARTIFACT_POLICY_VERSION = "artifact_intake_v1"
 _SNAPSHOT_FIELDS = frozenset(
@@ -60,7 +60,7 @@ class ArtifactReadProtocol(Protocol):
 
     def close(self) -> None: ...
 
-    def __enter__(self) -> "ArtifactReadProtocol": ...
+    def __enter__(self) -> ArtifactReadProtocol: ...
 
     def __exit__(self, exc_type: Any, exc: Any, traceback: Any) -> Any: ...
 
@@ -96,13 +96,13 @@ class ArtifactStoreProtocol(Protocol):
         expected_sha256: str,
         max_bytes: int,
         suffix: str = ".dem",
-    ) -> ContextManager[Path]: ...
+    ) -> AbstractContextManager[Path]: ...
 
 
 def _canonical_utc(value: datetime) -> str:
     if not isinstance(value, datetime) or value.tzinfo is None:
         raise AcceptedArtifactError("ARTIFACT_SNAPSHOT_INVALID")
-    return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+    return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
 
 
 def _reject_json_constant(_: str) -> Any:
@@ -118,7 +118,7 @@ def _parse_timestamp(value: Any) -> datetime:
         raise AcceptedArtifactError("ARTIFACT_SNAPSHOT_INVALID") from None
     if parsed.tzinfo is None:
         raise AcceptedArtifactError("ARTIFACT_SNAPSHOT_INVALID")
-    return parsed.astimezone(timezone.utc)
+    return parsed.astimezone(UTC)
 
 
 def _validate_generation(value: Any) -> str:
@@ -143,7 +143,7 @@ class AcceptedArtifactSnapshot:
     state: str = "accepted"
 
     @classmethod
-    def from_mapping(cls, payload: Mapping[str, Any] | Any) -> "AcceptedArtifactSnapshot":
+    def from_mapping(cls, payload: Mapping[str, Any] | Any) -> AcceptedArtifactSnapshot:
         if not isinstance(payload, Mapping):
             raise AcceptedArtifactError("ARTIFACT_SNAPSHOT_INVALID")
         try:
@@ -185,7 +185,7 @@ class AcceptedArtifactSnapshot:
         )
 
     @classmethod
-    def from_metadata(cls, metadata: ArtifactMetadata | Any) -> "AcceptedArtifactSnapshot":
+    def from_metadata(cls, metadata: ArtifactMetadata | Any) -> AcceptedArtifactSnapshot:
         try:
             return cls.from_mapping(
                 {

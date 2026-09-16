@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import time
-
+from collections.abc import Callable
+from typing import Any, Protocol
 
 STEAM_SYNC_RATE_WINDOW_SECONDS = 60
 STEAM_SYNC_OWNER_REQUEST_LIMIT = 3
@@ -58,8 +59,33 @@ class SteamSyncRateLimitUnavailableError(RuntimeError):
     pass
 
 
+class _RateLimitRedis(Protocol):
+    """The only Redis surface this limiter touches.
+
+    Declared structurally so production can pass a real ``redis.Redis`` and the
+    tests their in-memory doubles, without this module importing redis.
+
+    ``keys_and_args`` is ``Any`` rather than ``object`` because redis-py
+    annotates it as ``*keys_and_args: str`` even though EVAL encodes any
+    primitive; the calls below legitimately pass ints for the TTL and the two
+    limits, so a stricter annotation here would reject the real client.
+    """
+
+    def eval(
+        self,
+        script: str,
+        numkeys: int,
+        *keys_and_args: Any,
+    ) -> object: ...
+
+
 class SteamSyncRateLimiter:
-    def __init__(self, redis_client: object, *, clock: object = time.time):
+    def __init__(
+        self,
+        redis_client: _RateLimitRedis,
+        *,
+        clock: Callable[[], float] = time.time,
+    ):
         self.redis = redis_client
         self.clock = clock
 

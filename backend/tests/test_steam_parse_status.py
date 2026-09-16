@@ -1,7 +1,7 @@
 import json
 import tempfile
 import unittest
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import patch
 
@@ -14,7 +14,6 @@ from app.models import Account, Demo, DemoJob, SteamConnection, SteamMatch
 from app.services.demo_service import DemoService
 from app.services.storage import LocalArtifactStore
 from app.workers.worker import process_real_parse_job
-
 
 OWNER_A = "owner_v1_parse_status_a"
 OWNER_B = "owner_v1_parse_status_b"
@@ -36,7 +35,7 @@ class SteamParseStatusTest(unittest.TestCase):
         self.scratch = tempfile.TemporaryDirectory()
         self.store = LocalArtifactStore(Path(self.scratch.name))
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         with self.Session() as db:
             for owner_id, suffix in ((OWNER_A, "a"), (OWNER_B, "b")):
                 db.add(Account(owner_id=owner_id, created_at=now, updated_at=now))
@@ -257,7 +256,7 @@ class SteamParseStatusTest(unittest.TestCase):
         match_owner_id: str = OWNER_A,
         job_type: str = "real_parse",
     ) -> tuple[Demo, DemoJob, SteamMatch]:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         demo = Demo(
             id="demo-parse-status",
             owner_id=OWNER_A,

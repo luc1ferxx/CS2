@@ -2,7 +2,7 @@ import io
 import json
 import tempfile
 import unittest
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
 from sqlalchemy import create_engine
@@ -35,7 +35,7 @@ class DemoLibraryTest(unittest.TestCase):
             "archived.dem",
             "de_inferno",
             archived=True,
-            created_at=datetime(2026, 5, 9, tzinfo=timezone.utc),
+            created_at=datetime(2026, 5, 9, tzinfo=UTC),
         )
         service = DemoService(db, owner_id=settings.dev_user_id)
 
@@ -56,7 +56,7 @@ class DemoLibraryTest(unittest.TestCase):
             "alpha.dem",
             "de_mirage",
             status="failed",
-            created_at=datetime(2026, 5, 1, tzinfo=timezone.utc),
+            created_at=datetime(2026, 5, 1, tzinfo=UTC),
         )
         dust_late = add_demo(
             db,
@@ -65,7 +65,7 @@ class DemoLibraryTest(unittest.TestCase):
             "furia-dust2.dem",
             "de_dust2",
             status="completed",
-            created_at=datetime(2026, 5, 3, tzinfo=timezone.utc),
+            created_at=datetime(2026, 5, 3, tzinfo=UTC),
         )
         dust_early = add_demo(
             db,
@@ -74,7 +74,7 @@ class DemoLibraryTest(unittest.TestCase):
             "ancient-source.dem",
             "de_dust2",
             status="completed",
-            created_at=datetime(2026, 5, 2, tzinfo=timezone.utc),
+            created_at=datetime(2026, 5, 2, tzinfo=UTC),
         )
         service = DemoService(db, owner_id=settings.dev_user_id)
 
@@ -115,7 +115,7 @@ class DemoLibraryTest(unittest.TestCase):
 
     def test_list_demos_uses_deterministic_tiebreakers_for_equal_sort_fields(self) -> None:
         db = self.Session()
-        timestamp = datetime(2026, 5, 10, tzinfo=timezone.utc)
+        timestamp = datetime(2026, 5, 10, tzinfo=UTC)
         add_demo(db, "demo-tie-b", "Same Name", "b.dem", "de_dust2", created_at=timestamp)
         add_demo(db, "demo-tie-a", "Same Name", "a.dem", "de_dust2", created_at=timestamp)
         service = DemoService(db, owner_id=settings.dev_user_id)
@@ -169,7 +169,7 @@ class DemoLibraryTest(unittest.TestCase):
     def test_list_item_includes_compact_ingestion_snapshot_for_active_upload(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             db = self.Session()
-            timestamp = datetime.now(timezone.utc)
+            timestamp = datetime.now(UTC)
             demo = add_demo(
                 db,
                 "demo-active-upload",
@@ -218,7 +218,7 @@ class DemoLibraryTest(unittest.TestCase):
 
     def test_failed_parse_ingestion_snapshot_has_compact_failure_metadata(self) -> None:
         db = self.Session()
-        timestamp = datetime(2026, 5, 8, tzinfo=timezone.utc)
+        timestamp = datetime(2026, 5, 8, tzinfo=UTC)
         demo = add_demo(
             db,
             "demo-parse-failed",
@@ -258,7 +258,7 @@ class DemoLibraryTest(unittest.TestCase):
 
     def test_active_parse_snapshot_marks_stale_when_status_is_old(self) -> None:
         db = self.Session()
-        old_timestamp = datetime.now(timezone.utc) - timedelta(minutes=30)
+        old_timestamp = datetime.now(UTC) - timedelta(minutes=30)
         demo = add_demo(
             db,
             "demo-stale-parse",
@@ -309,7 +309,7 @@ def add_demo(
     source_storage_key: str | None = None,
     error_message: str | None = None,
 ) -> Demo:
-    timestamp = created_at or datetime(2026, 5, 8, tzinfo=timezone.utc)
+    timestamp = created_at or datetime(2026, 5, 8, tzinfo=UTC)
     demo = Demo(
         id=demo_id,
         owner_id=settings.dev_user_id,

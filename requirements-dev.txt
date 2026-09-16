@@ -1,0 +1,13 @@
+# Development and CI tooling for CS2 Demo AI Coach.
+#
+# Runtime dependencies live in backend/requirements.txt. This file holds only
+# the checks, and it is installed by the `lint` and `typecheck` jobs in
+# .github/workflows/ci.yml.
+#
+# These versions are PINNED on purpose. Both tools add new rules and new
+# inference in minor releases, so an unpinned tool turns a green `main` red
+# without anybody changing a line of code -- which is exactly how a team learns
+# to ignore its own CI. Bump these deliberately, in their own commit, with the
+# resulting violations either fixed or recorded in ruff.toml / mypy.ini.
+ruff==0.14.0
+mypy==1.18.2

@@ -11,7 +11,6 @@ from adapters.base import (
     is_api_media_url_path,
 )
 
-
 NO_RENDERER_ERROR = (
     "DEV_FAKE_VIDEO_PATH is not set or does not exist; real renderer is not connected. "
     "This skeleton does not start CS2, Steam, OBS, or ffmpeg."

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hmac
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
@@ -12,32 +12,31 @@ from app.core.config import Settings, settings
 from app.models.demo import Demo
 from app.models.job import DemoJob
 from app.models.steam import SteamMatch
+from app.services.artifact_intake import ArtifactIntakeError
+from app.services.demo_service import (
+    DemoArtifactBindError,
+    DemoDispatchError,
+    DemoService,
+)
 from app.services.demo_source_provider import (
     DemoSource,
     DemoSourceProvider,
     DemoSourceUnavailableError,
     demo_source_provider_from_settings,
 )
-from app.services.demo_service import (
-    DemoArtifactBindError,
-    DemoDispatchError,
-    DemoService,
-)
-from app.services.artifact_intake import ArtifactIntakeError
 from app.services.secure_demo_downloader import DemoDownloadError
-from app.services.storage import ArtifactStore
 from app.services.steam_credentials import SteamCredentialCipher
 from app.services.steam_demo_download_limiter import (
     SteamDemoDownloadCapacityError,
     SteamDemoDownloadLimiterUnavailableError,
 )
-
+from app.services.storage import ArtifactStore
 
 PARSER_DISPATCH_RETRY_AFTER_SECONDS = 30
 
 
 def utc_now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class SteamDemoImportNotFoundError(RuntimeError):
@@ -748,5 +747,5 @@ def steam_match_parser_dispatch_retryable(
 
 def _as_utc(value: datetime) -> datetime:
     if value.tzinfo is None:
-        return value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc)
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)

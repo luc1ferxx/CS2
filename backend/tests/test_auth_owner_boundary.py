@@ -2,7 +2,7 @@ import io
 import json
 import tempfile
 import unittest
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import patch
 
@@ -20,7 +20,6 @@ from app.models import Demo, DemoJob
 from app.schemas.demo import RenderClipRequest
 from app.services.artifact_intake import ArtifactIntakeService
 from app.services.demo_service import DemoService
-
 
 OWNER_A = "owner-a"
 OWNER_B = "owner-b"
@@ -711,7 +710,7 @@ def add_demo(
     archived: bool = False,
     source_storage_key: str | None = None,
 ) -> Demo:
-    timestamp = datetime(2026, 5, 8, tzinfo=timezone.utc)
+    timestamp = datetime(2026, 5, 8, tzinfo=UTC)
     demo = Demo(
         id=demo_id,
         owner_id=owner_id,

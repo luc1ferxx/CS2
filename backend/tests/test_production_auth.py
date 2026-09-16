@@ -1,15 +1,15 @@
 import base64
-import json
 import hashlib
+import json
 import time
 import unittest
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from urllib.parse import parse_qs, urlparse
 
 import jwt
+from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
-from cryptography.hazmat.primitives.asymmetric import rsa
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -26,7 +26,6 @@ from app.services.auth_service import (
     derive_owner_id,
     get_auth_service,
 )
-
 
 PRODUCTION_TEST_STEAM_KEY = base64.urlsafe_b64encode(b"p" * 32).decode("ascii")
 
@@ -1052,7 +1051,7 @@ def authenticated_user_api_client(subject: str, session_factory) -> TestClient:
 
 
 def make_demo(demo_id: str, owner_id: str) -> Demo:
-    now = datetime(2026, 7, 16, tzinfo=timezone.utc)
+    now = datetime(2026, 7, 16, tzinfo=UTC)
     return Demo(
         id=demo_id,
         owner_id=owner_id,

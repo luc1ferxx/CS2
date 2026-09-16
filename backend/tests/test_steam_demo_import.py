@@ -1,10 +1,10 @@
-import unittest
 import hashlib
 import io
 import json
 import tempfile
+import unittest
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import patch
 
@@ -21,20 +21,19 @@ from app.models import Account, Demo, DemoJob, SteamConnection, SteamMatch
 from app.services.demo_service import DemoDispatchError, DemoService
 from app.services.demo_source_provider import DemoSource, DisabledDemoSourceProvider
 from app.services.secure_demo_downloader import DemoDownloadError, DownloadedDemo
-from app.services.storage import LocalArtifactStore
 from app.services.steam_credentials import SteamCredentialCipher
-from app.services.steam_demo_import_service import SteamDemoImportService
+from app.services.steam_demo_download_limiter import (
+    SteamDemoDownloadCapacityError,
+)
 from app.services.steam_demo_import_service import (
     SteamDemoImportFailedError,
     SteamDemoImportInProgressError,
     SteamDemoImportNotFoundError,
+    SteamDemoImportService,
     SteamDemoSourceUnavailableError,
 )
-from app.services.steam_demo_download_limiter import (
-    SteamDemoDownloadCapacityError,
-)
 from app.services.steam_match_service import SteamMatchService
-
+from app.services.storage import LocalArtifactStore
 
 OWNER_A = "owner_v1_stage3_owner_a"
 MATCH_ID = "stage3-match-a"
@@ -201,7 +200,7 @@ class SteamDemoImportTest(unittest.TestCase):
             steam_credential_encryption_key_version="v1",
         )
         self.cipher = SteamCredentialCipher(self.settings)
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         encrypted = self.cipher.encrypt(
             SHARE_CODE,
             owner_id=OWNER_A,
@@ -601,7 +600,7 @@ class SteamDemoImportTest(unittest.TestCase):
                     2000,
                     1,
                     1,
-                    tzinfo=timezone.utc,
+                    tzinfo=UTC,
                 )
                 self.assertEqual(match.parser_dispatched_job_id, job.id)
                 db.commit()
@@ -679,7 +678,7 @@ class SteamDemoImportTest(unittest.TestCase):
                     2000,
                     1,
                     1,
-                    tzinfo=timezone.utc,
+                    tzinfo=UTC,
                 )
                 db.commit()
 
@@ -906,7 +905,7 @@ class SteamDemoImportTest(unittest.TestCase):
                                 2099,
                                 1,
                                 1,
-                                tzinfo=timezone.utc,
+                                tzinfo=UTC,
                             ),
                         )
                         callback_db.add(newer_job)
@@ -966,7 +965,7 @@ class SteamDemoImportTest(unittest.TestCase):
 
             match = db.query(SteamMatch).filter(SteamMatch.id == MATCH_ID).one()
             match.import_run_id = "active-run"
-            match.import_lease_expires_at = datetime(2099, 1, 1, tzinfo=timezone.utc)
+            match.import_lease_expires_at = datetime(2099, 1, 1, tzinfo=UTC)
             db.commit()
 
             owner_a_service = SteamDemoImportService(
@@ -989,7 +988,7 @@ class SteamDemoImportTest(unittest.TestCase):
                     2000,
                     1,
                     1,
-                    tzinfo=timezone.utc,
+                    tzinfo=UTC,
                 )
                 db.commit()
 
@@ -1083,7 +1082,7 @@ class SteamDemoImportTest(unittest.TestCase):
                         2099,
                         1,
                         1,
-                        tzinfo=timezone.utc,
+                        tzinfo=UTC,
                     )
                     match.status = "downloading"
                     callback_db.commit()
@@ -1143,7 +1142,7 @@ class SteamDemoImportTest(unittest.TestCase):
                 2000,
                 1,
                 1,
-                tzinfo=timezone.utc,
+                tzinfo=UTC,
             )
             db.commit()
 
@@ -1153,7 +1152,7 @@ class SteamDemoImportTest(unittest.TestCase):
         self.assertNotIn("import_lease_expires_at", expired)
 
         with self.Session() as db:
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
             db.add(
                 Demo(
                     id="stage3-demo-ready",

@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import math
-from datetime import datetime, timezone
-from typing import Any
+from datetime import UTC, datetime
+from typing import Any, SupportsFloat, SupportsIndex, TypeGuard
 
 from app.parser.map_config import map_metadata_for, world_to_radar_percent
 from app.parser.replay_contract import normalize_replay_events as normalize_contract_events
@@ -33,7 +33,7 @@ def normalize_parser_output(demo_id: str, parsed: dict[str, Any]) -> dict[str, A
         "contractVersion": "replay_contract_v1",
         "demoId": demo_id,
         "mapName": map_name,
-        "mapMetadata": map_metadata_for(map_name),
+        "mapMetadata": _resolved_map_metadata(map_name, bounds),
         "tickRate": tick_rate,
         "video": {
             "status": "ready",
@@ -57,7 +57,7 @@ def normalize_parser_output(demo_id: str, parsed: dict[str, Any]) -> dict[str, A
             rounds,
             position_normalizer=_event_position_normalizer(map_name, bounds),
         ),
-        "generatedAt": datetime.now(timezone.utc).isoformat(),
+        "generatedAt": datetime.now(UTC).isoformat(),
     }
 
 
@@ -222,6 +222,25 @@ def _scale(value: float, low: float, high: float) -> float:
     return 5 + ((value - low) / (high - low)) * 90
 
 
+def _resolved_map_metadata(map_name: str, bounds: dict[str, float]) -> dict[str, Any]:
+    """Map metadata with a usable percent-to-world-unit scale attached.
+
+    Calibrated and approximate maps carry a fixed scale from their transform.
+    The dynamic bounds fallback does not: it stretches whatever this match's
+    players touched across 90 percentage points, so the scale is only knowable
+    here, per replay. Without it the analyzer would compare a percent distance
+    against a world-unit threshold.
+    """
+    metadata = map_metadata_for(map_name)
+    if metadata.get("worldUnitsPerPercent"):
+        return metadata
+    span_x = bounds["max_x"] - bounds["min_x"]
+    span_y = bounds["max_y"] - bounds["min_y"]
+    if span_x > 0 and span_y > 0:
+        metadata["worldUnitsPerPercent"] = {"x": span_x / 90.0, "y": span_y / 90.0}
+    return metadata
+
+
 def _normalize_position(
     x: float,
     y: float,
@@ -323,7 +342,9 @@ def _float_or_default(value: Any, default: float) -> float:
     return parsed if math.isfinite(parsed) else default
 
 
-def _finite(value: Any) -> bool:
+# TypeGuard, not plain bool: a True result means float(value) already succeeded,
+# so callers may pass the value to float() without a further None check.
+def _finite(value: Any) -> TypeGuard[SupportsFloat | SupportsIndex | str]:
     try:
         return math.isfinite(float(value))
     except (TypeError, ValueError, OverflowError):

@@ -2,7 +2,7 @@ import io
 import tempfile
 import unittest
 from dataclasses import replace
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from app.services.artifact_intake import (
@@ -17,8 +17,7 @@ from app.services.storage import (
     LocalArtifactStore,
 )
 
-
-NOW = datetime(2026, 7, 16, 10, 30, tzinfo=timezone.utc)
+NOW = datetime(2026, 7, 16, 10, 30, tzinfo=UTC)
 VALID_DEMO = b"HL2DEMO\x00" + (b"bounded-demo-payload" * 2)
 
 

@@ -65,7 +65,7 @@ for (const id of ["__proto__", "toString", "constructor"]) {
   assert.equal(copy.coachingCopy({ ...unknown, structured_context_json: { ...unknown.structured_context_json, ruleId: id } }).title, unknown.title);
   assert.equal(copy.coachingEvidenceLabel(id), id);
 }
-for (const search of ["过近", "补枪", "xelex", "poor_spacing", "2.1", "雷达距离"]) assert.equal(copy.coachingMatchesSearch(reviewEvent, search), true, search);
+for (const search of ["过近", "补枪", "xelex", "poor_spacing", "2.1", "直线距离"]) assert.equal(copy.coachingMatchesSearch(reviewEvent, search), true, search);
 assert.equal(copy.coachingMatchesSearch(reviewEvent, "不存在的内容"), false);
 
 const props = {
@@ -82,7 +82,7 @@ assert.doesNotMatch(closedCard, /poor_spacing|证据 tick|2\.1 radar/,
 assert.match(closedCard, /aria-expanded="false"/);
 const openCard = renderToStaticMarkup(React.createElement(CoachingEventCard, { ...props, inspected: true }));
 assert.match(openCard, /判断边界/);
-assert.match(openCard, /雷达距离（百分点）/);
+assert.match(openCard, /直线距离（世界坐标单位）/);
 assert.match(openCard, /A sample does not establish visibility/,
   "Original limitations remain available alongside the translated rule guidance");
 const oldPlantEvent = { ...event, id: "legacy-nuke-plant",

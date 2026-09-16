@@ -4,10 +4,18 @@ import math
 import zipfile
 from collections import defaultdict
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from app.parser.replay_contract import normalize_bomb_site
 from app.services.upload_service import MAX_DEMO_UPLOAD_BYTES, safe_upload_filename
+
+if TYPE_CHECKING:
+    from collections.abc import Buffer
+    from typing import SupportsFloat, SupportsIndex, TypeGuard
+
+    # Exactly what builtins.float() accepts. `_finite(value)` returning True is
+    # already the claim that float(value) succeeds, so the guard narrows to this.
+    type _FloatConvertible = SupportsFloat | SupportsIndex | str | Buffer
 
 MAX_SAMPLE_FRAMES = 30000
 SAMPLE_INTERVAL_SECONDS = 0.25
@@ -323,7 +331,7 @@ def _build_rounds(
             return []
         return [_round(1, 0, min(playback_ticks, 15 * tick_rate), playback_ticks, None)]
 
-    rounds = []
+    rounds: list[dict[str, Any]] = []
     for index, start_record in enumerate(start_records):
         start_tick = int(start_record["tick"])
         next_record = start_records[index + 1] if index + 1 < len(start_records) else None
@@ -892,7 +900,9 @@ def _record_has_bomb(record: dict[str, Any]) -> bool | None:
     for key in ("has_bomb", "hasBomb"):
         if (value := _safe_bool(record.get(key))) is not None:
             return value
-    inventory = record.get("inventory")
+    # demoparser2 hands back a numpy array here; the hasattr guard below also
+    # covers the None that dict.get() adds to the (already Any) value type.
+    inventory: Any = record.get("inventory")
     if hasattr(inventory, "tolist"):
         inventory = inventory.tolist()
     if isinstance(inventory, (list, tuple)):
@@ -904,11 +914,11 @@ def _derive_tick_rate(header: dict[str, Any]) -> int:
     for key in ("tick_rate", "tickRate"):
         value = header.get(key)
         if value:
-            return int(round(float(value)))
+            return round(float(value))
     playback_ticks = header.get("playback_ticks")
     playback_time = header.get("playback_time")
     if playback_ticks and playback_time:
-        tick_rate = int(round(float(playback_ticks) / float(playback_time)))
+        tick_rate = round(float(playback_ticks) / float(playback_time))
         if 16 <= tick_rate <= 256:
             return tick_rate
     return 64
@@ -920,7 +930,7 @@ def _int_or_default(value: Any, default: int) -> int:
     return int(value)
 
 
-def _finite(value: Any) -> bool:
+def _finite(value: Any) -> TypeGuard[_FloatConvertible]:
     try:
         return math.isfinite(float(value))
     except (TypeError, ValueError, OverflowError):

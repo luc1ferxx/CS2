@@ -21,7 +21,6 @@ from app.services.demo_service import DemoService
 from app.services.upload_service import store_video_artifact
 from app.workers.worker import process_render_clip_job
 
-
 XELEX_ID = "76561198998266210"
 OTHER_ID = "76561190000000001"
 SOURCE_BYTES = b"PBDEMS2\0" + b"\0" * 64

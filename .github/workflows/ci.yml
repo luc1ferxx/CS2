@@ -1,0 +1,188 @@
+# CI for CS2 Demo AI Coach
+#
+# Why this file exists: before it, the only proof that the suite passed was a
+# human running scripts/verify.sh in a one-off container and pasting the count
+# into a document. That made platform-specific defects invisible for as long as
+# nobody happened to test on the other OS.
+#
+# Design rules:
+#
+#  1. Every job here MUST be green on `main`. A red default branch trains people
+#     to ignore CI, and then it catches nothing. New checks arrive already
+#     passing, or with their debt written down (see ruff.toml and mypy.ini).
+#  2. Jobs are independent -- none declares `needs` -- so one failure does not
+#     mask the others. A contributor sees every problem in a single run.
+#  3. Versions are pinned (Python, Node, ruff, mypy). An unpinned tool turns
+#     `main` red without anybody changing a line of code.
+#
+# The backend suite runs against sqlite:///:memory:, so no Postgres or Redis
+# service container is needed. render-worker imports only the standard library,
+# so its job installs nothing at all.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A new push to the same branch cancels the previous run. Keeps the queue short
+# without dropping runs on `main`.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+
+env:
+  PYTHON_VERSION: '3.12'
+  NODE_VERSION: '22'
+
+jobs:
+  backend-tests:
+    name: Backend tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install backend dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt
+
+      # Cheap syntax gate: fails in seconds on a broken file instead of surfacing
+      # as a confusing import error partway through discovery.
+      - name: Byte-compile
+        run: python -m compileall -q backend
+
+      - name: Run tests
+        env:
+          PYTHONPATH: backend
+        run: python -m unittest discover backend/tests --verbose
+
+  render-worker-tests:
+    name: render-worker tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      # No install step on purpose: render-worker imports only the standard
+      # library. If a dependency ever creeps in, this job is where it surfaces.
+      - name: Run tests
+        run: python -m unittest discover render-worker/tests --verbose
+
+  frontend:
+    name: Frontend
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: frontend
+    env:
+      # CI should not report telemetry. This also keeps `next build` from
+      # writing its config file into the runner's home directory, which fails
+      # on any host where that path is redirected onto another volume.
+      NEXT_TELEMETRY_DISABLED: 1
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      # The 17 files in lib/*.test.mjs are plain node scripts that assert with
+      # node:assert -- there is no test runner to aggregate them. Looping with
+      # `set -e` would stop at the first failure, so instead every file runs and
+      # the failures are reported together.
+      - name: Unit tests
+        run: |
+          failed=""
+          for f in lib/*.test.mjs; do
+            echo "::group::$f"
+            if node "$f"; then
+              echo "PASS $f"
+            else
+              echo "FAIL $f"
+              failed="$failed $f"
+            fi
+            echo "::endgroup::"
+          done
+          if [ -n "$failed" ]; then
+            echo "::error::Failing frontend test files:$failed"
+            exit 1
+          fi
+          echo "All frontend test files passed."
+
+      - name: Build
+        run: npm run build
+
+  lint:
+    name: Lint (ruff)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+
+      - name: Install tooling
+        run: pip install -r requirements-dev.txt
+
+      # Configuration and rule rationale live in ruff.toml.
+      - name: ruff check
+        run: ruff check --output-format=github .
+
+  typecheck:
+    name: Typecheck (mypy)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: |
+            backend/requirements.txt
+            requirements-dev.txt
+
+      # mypy needs the runtime packages present to resolve FastAPI, SQLAlchemy
+      # and Pydantic types. Without them it degrades to Any and stops finding
+      # anything useful, so this job installs the full backend requirements.
+      - name: Install dependencies and tooling
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt -r requirements-dev.txt
+
+      # Scope and per-module debt live in mypy.ini.
+      - name: mypy
+        run: mypy

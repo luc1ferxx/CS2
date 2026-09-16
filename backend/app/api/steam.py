@@ -5,9 +5,9 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.routing import APIRoute
+from sqlalchemy.orm import Session
 from starlette.requests import Request
 from starlette.responses import Response as StarletteResponse
-from sqlalchemy.orm import Session
 
 from app.core.auth import get_current_owner_id, require_trusted_origin
 from app.core.config import settings
@@ -20,6 +20,23 @@ from app.schemas.steam import (
     SteamMatchView,
     SteamSyncResult,
 )
+from app.services.demo_source_provider import demo_source_provider_from_settings
+from app.services.secure_demo_downloader import secure_demo_downloader_from_settings
+from app.services.steam_demo_download_limiter import (
+    steam_demo_download_limiter_from_settings,
+)
+from app.services.steam_demo_import_service import (
+    SteamDemoImportFailedError,
+    SteamDemoImportInProgressError,
+    SteamDemoImportNotFoundError,
+    SteamDemoImportService,
+    SteamDemoSourceUnavailableError,
+    steam_match_import_retryable,
+    steam_match_parser_dispatch_retryable,
+)
+from app.services.steam_demo_import_service import (
+    utc_now as steam_import_utc_now,
+)
 from app.services.steam_match_service import (
     SteamAuthorizationRequiredError,
     SteamConnectionConflictError,
@@ -31,24 +48,9 @@ from app.services.steam_match_service import (
     SteamSyncRetryError,
     SteamUpstreamProtocolError,
 )
-from app.services.steam_demo_import_service import (
-    SteamDemoImportFailedError,
-    SteamDemoImportInProgressError,
-    SteamDemoImportNotFoundError,
-    SteamDemoImportService,
-    SteamDemoSourceUnavailableError,
-    steam_match_import_retryable,
-    steam_match_parser_dispatch_retryable,
-    utc_now as steam_import_utc_now,
-)
-from app.services.demo_source_provider import demo_source_provider_from_settings
-from app.services.secure_demo_downloader import secure_demo_downloader_from_settings
-from app.services.steam_demo_download_limiter import (
-    steam_demo_download_limiter_from_settings,
-)
 from app.services.steam_sync_rate_limit import (
-    SteamSyncRateLimitError,
     SteamSyncRateLimiter,
+    SteamSyncRateLimitError,
     SteamSyncRateLimitUnavailableError,
 )
 
@@ -316,10 +318,10 @@ def _match_view(match: object, *, db: Session | None = None) -> SteamMatchView:
         getattr(match, "demo_id", None)
     )
     return SteamMatchView(
-        id=getattr(match, "id"),
-        status=getattr(match, "status"),
-        discovered_at=getattr(match, "discovered_at"),
-        updated_at=getattr(match, "updated_at"),
+        id=match.id,
+        status=match.status,
+        discovered_at=match.discovered_at,
+        updated_at=match.updated_at,
         demo_id=getattr(match, "demo_id", None),
         provider_id=getattr(match, "provider_id", None),
         map_name=getattr(match, "map_name", None) if ready else None,

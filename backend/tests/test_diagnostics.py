@@ -1,7 +1,7 @@
 import json
 import tempfile
 import unittest
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
@@ -11,8 +11,8 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from app.api import diagnostics
 from app import main
+from app.api import diagnostics
 from app.core.config import settings
 from app.core.database import Base, get_db
 from app.models import Demo, DemoJob
@@ -81,7 +81,7 @@ class DiagnosticsEndpointTest(unittest.TestCase):
             db.close()
 
     def test_diagnostics_reports_safe_dependency_readiness_and_job_counts(self) -> None:
-        now = datetime(2026, 5, 12, 10, 0, tzinfo=timezone.utc)
+        now = datetime(2026, 5, 12, 10, 0, tzinfo=UTC)
         diagnostics.write_worker_heartbeat(self.redis, now=now)
         with self.Session() as db:
             add_demo(db, "demo-ok", status="completed")
@@ -157,7 +157,7 @@ class DiagnosticsEndpointTest(unittest.TestCase):
         self.assertEqual(denied.status_code, 404)
 
     def test_worker_heartbeat_can_be_written_and_read(self) -> None:
-        now = datetime(2026, 5, 12, 10, 0, tzinfo=timezone.utc)
+        now = datetime(2026, 5, 12, 10, 0, tzinfo=UTC)
         diagnostics.write_worker_heartbeat(self.redis, now=now)
 
         heartbeat = diagnostics.read_worker_heartbeat(
@@ -239,8 +239,8 @@ def add_demo(
         source_storage_key=source_storage_key,
         replay_storage_key=replay_storage_key,
         error_message=error_message,
-        created_at=datetime(2026, 5, 12, tzinfo=timezone.utc),
-        updated_at=datetime(2026, 5, 12, 10, tzinfo=timezone.utc),
+        created_at=datetime(2026, 5, 12, tzinfo=UTC),
+        updated_at=datetime(2026, 5, 12, 10, tzinfo=UTC),
     )
     db.add(demo)
     db.commit()
@@ -267,11 +267,11 @@ def add_job(
         attempts=1,
         error_message=error_message,
         metadata_json=json.dumps(metadata or {}),
-        started_at=datetime(2026, 5, 12, 9, 59, tzinfo=timezone.utc),
-        finished_at=datetime(2026, 5, 12, 10, 0, tzinfo=timezone.utc)
+        started_at=datetime(2026, 5, 12, 9, 59, tzinfo=UTC),
+        finished_at=datetime(2026, 5, 12, 10, 0, tzinfo=UTC)
         if status in {"completed", "failed"}
         else None,
-        created_at=datetime(2026, 5, 12, 9, 58, tzinfo=timezone.utc),
+        created_at=datetime(2026, 5, 12, 9, 58, tzinfo=UTC),
     )
     db.add(job)
     db.commit()

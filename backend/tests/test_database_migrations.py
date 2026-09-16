@@ -1,5 +1,5 @@
 import unittest
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.exc import IntegrityError
@@ -91,7 +91,7 @@ class DatabaseMigrationTest(unittest.TestCase):
         with self.engine.begin() as connection:
             run_schema_migrations(connection)
         Session = sessionmaker(bind=self.engine)
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         owner_id = "owner_v1_" + ("a" * 43)
         with Session() as db:
             db.add(Account(owner_id=owner_id, created_at=now, updated_at=now))
@@ -303,7 +303,7 @@ class DatabaseMigrationTest(unittest.TestCase):
         with self.engine.begin() as connection:
             run_schema_migrations(connection)
         Session = sessionmaker(bind=self.engine)
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         owner_id = "owner_v1_" + ("a" * 43)
         with Session() as db:
             db.add(Account(owner_id=owner_id, created_at=now, updated_at=now))
