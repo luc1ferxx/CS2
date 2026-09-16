@@ -15,6 +15,7 @@ from sqlalchemy.pool import StaticPool
 from app.api import demos, private_media
 from app.core.config import Settings, settings
 from app.core.database import Base, get_db
+from app.core.redis import get_redis_client
 from app.models import DemoJob
 from app.schemas.demo import RenderClipRequest
 from app.services.demo_service import DemoService
@@ -49,6 +50,10 @@ class ExternalRenderWorkerTest(unittest.TestCase):
         self.app.include_router(demos.router)
         self.app.include_router(private_media.router)
         self.app.dependency_overrides[get_db] = self.override_get_db
+        # Without this the heartbeat would reach whatever Redis the developer
+        # happens to have running locally.
+        self.redis = FakeRedis()
+        self.app.dependency_overrides[get_redis_client] = lambda: self.redis
         self.client = TestClient(self.app)
         self.headers = {"X-Render-Worker-Token": settings.render_worker_token}
         with self.Session() as db:
@@ -480,6 +485,123 @@ class ExternalRenderWorkerTest(unittest.TestCase):
         self.assertEqual(replacement.status_code, 200, replacement.text)
         self.assertIsNone(replacement.json()["povSteamId"])
         self.assertIsNone(replacement.json()["renderJobId"])
+
+    def test_polling_records_a_heartbeat_even_with_no_work_to_claim(self) -> None:
+        self.assertEqual(self.worker_status()["status"], "never_seen")
+
+        empty = self.client.get("/render-worker/jobs/next", headers=self.headers)
+
+        self.assertEqual(empty.status_code, 204)
+        # An idle renderer polls an empty queue every 5 seconds; that is exactly
+        # the state this endpoint has to prove is healthy.
+        status = self.worker_status()
+        self.assertTrue(status["connected"])
+        self.assertEqual(status["status"], "connected")
+        self.assertEqual(status["age_seconds"], 0)
+        self.assertIsNotNone(status["last_seen_at"])
+
+    def test_claiming_a_job_records_a_heartbeat_and_an_invalid_token_does_not(self) -> None:
+        job_id = self.create_job()
+
+        rejected = self.client.get(
+            "/render-worker/jobs/next",
+            headers={"X-Render-Worker-Token": "wrong-token"},
+        )
+
+        self.assertEqual(rejected.status_code, 401)
+        self.assertEqual(self.worker_status()["status"], "never_seen")
+
+        claimed = self.client.get("/render-worker/jobs/next", headers=self.headers)
+
+        self.assertEqual(claimed.status_code, 200, claimed.text)
+        self.assertEqual(claimed.json()["jobId"], job_id)
+        self.assertTrue(self.worker_status()["connected"])
+
+    def test_worker_status_reports_the_configured_mode_before_any_poll(self) -> None:
+        status = self.worker_status()
+
+        self.assertTrue(status["required"])
+        self.assertEqual(status["mode"], "external")
+        self.assertFalse(status["connected"])
+        self.assertFalse(status["busy_rendering"])
+        self.assertIsNone(status["age_seconds"])
+
+    def test_clip_request_still_queues_durably_while_the_renderer_is_offline(self) -> None:
+        with patch("app.services.demo_service.get_redis_client") as redis_factory:
+            response = self.request_clip()
+        redis_factory.assert_not_called()
+
+        self.assertEqual(response.status_code, 201, response.text)
+        body = response.json()
+        self.assertEqual(body["status"], "queued")
+        # The caller learns immediately rather than watching "queued" until the
+        # next poll, but the job itself is untouched: it waits for the renderer.
+        self.assertFalse(body["render_worker"]["connected"])
+        self.assertTrue(body["render_worker"]["required"])
+        self.assertEqual(body["render_worker"]["status"], "never_seen")
+        with self.Session() as db:
+            self.assertEqual(db.get(DemoJob, body["job_id"]).status, "queued")
+
+        self.client.get("/render-worker/jobs/next", headers=self.headers)
+        second = self.request_clip()
+        self.assertEqual(second.status_code, 201, second.text)
+        self.assertTrue(second.json()["render_worker"]["connected"])
+
+    def test_a_render_in_progress_counts_as_liveness_once_the_heartbeat_goes_stale(self) -> None:
+        job_id = self.create_job()
+        claimed = self.client.get("/render-worker/jobs/next", headers=self.headers)
+        self.assertEqual(claimed.status_code, 200, claimed.text)
+        with self.Session() as db:
+            self.assertEqual(db.get(DemoJob, job_id).status, "rendering")
+
+        # A single render blocks the 5s poll loop for minutes, so the heartbeat
+        # ages out long before anything is actually wrong.
+        self.redis.values.clear()
+
+        status = self.worker_status()
+        self.assertTrue(status["connected"])
+        self.assertEqual(status["status"], "rendering")
+        self.assertTrue(status["busy_rendering"])
+
+    def test_render_worker_endpoints_survive_a_redis_outage(self) -> None:
+        job_id = self.create_job()
+        self.app.dependency_overrides[get_redis_client] = BrokenRedis
+
+        claimed = self.client.get("/render-worker/jobs/next", headers=self.headers)
+
+        # The heartbeat is an observability signal; losing Redis must not take a
+        # healthy renderer offline.
+        self.assertEqual(claimed.status_code, 200, claimed.text)
+        self.assertEqual(claimed.json()["jobId"], job_id)
+        status = self.worker_status()
+        self.assertEqual(status["status"], "rendering")
+        self.assertTrue(status["connected"])
+
+    def worker_status(self) -> dict:
+        response = self.client.get("/render/worker")
+        self.assertEqual(response.status_code, 200, response.text)
+        return response.json()
+
+
+class FakeRedis:
+    def __init__(self) -> None:
+        self.values: dict[str, str] = {}
+
+    def get(self, key: str) -> str | None:
+        return self.values.get(key)
+
+    def setex(self, key: str, _: int, value: str) -> None:
+        self.values[key] = value
+
+
+class BrokenRedis:
+    """Stands in for Redis being down while the rest of the stack is fine."""
+
+    def get(self, _: str) -> str:
+        raise ConnectionError("redis is unreachable")
+
+    def setex(self, *_: object) -> None:
+        raise ConnectionError("redis is unreachable")
 
 
 if __name__ == "__main__":

@@ -1,4 +1,5 @@
 import secrets
+from typing import Any
 
 from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, Response, UploadFile
 from fastapi.responses import StreamingResponse
@@ -8,6 +9,7 @@ from starlette.background import BackgroundTask
 from app.core.auth import get_current_owner_id
 from app.core.config import settings
 from app.core.database import get_db
+from app.core.redis import get_redis_client
 from app.schemas.demo import (
     DemoListItem,
     DemoStatus,
@@ -19,10 +21,12 @@ from app.schemas.demo import (
     RenderWorkerMediaUpload,
     RenderWorkerResult,
     RenderWorkerResultAccepted,
+    RenderWorkerStatus,
     ReplayVideoStatus,
     VideoCalibrationUpdate,
 )
 from app.services.demo_service import DemoDispatchError, DemoService
+from app.services.diagnostics import render_worker_availability, write_render_worker_heartbeat
 from app.services.upload_service import DemoUploadValidationError, store_video_artifact
 
 router = APIRouter(tags=["demos"])
@@ -30,12 +34,33 @@ router = APIRouter(tags=["demos"])
 
 def require_render_worker_token(
     x_render_worker_token: str | None = Header(default=None, alias="X-Render-Worker-Token"),
+    redis_client: Any = Depends(get_redis_client),
 ) -> None:
     if not x_render_worker_token or not secrets.compare_digest(
         x_render_worker_token,
         settings.render_worker_token,
     ):
         raise HTTPException(status_code=401, detail="Invalid render worker token")
+    # Every render-worker route funnels through here, so one write covers the
+    # whole surface. The heartbeat is an observability signal: a Redis outage
+    # must never turn a healthy render worker's request into a failure.
+    try:
+        write_render_worker_heartbeat(redis_client)
+    except Exception:
+        pass
+
+
+def render_worker_status_response(db: Session, redis_client: Any) -> RenderWorkerStatus:
+    availability = render_worker_availability(db, redis_client)
+    return RenderWorkerStatus(
+        mode=availability["mode"],
+        required=availability["required"],
+        connected=availability["connected"],
+        status=availability["status"],
+        last_seen_at=availability["lastSeenAt"],
+        age_seconds=availability["ageSeconds"],
+        busy_rendering=availability["busyRendering"],
+    )
 
 
 @router.get("/demos", response_model=list[DemoListItem])
@@ -110,9 +135,12 @@ def retry_demo_parse(
 def render_job_created_response(
     job_status: RenderJobStatus,
     video: ReplayVideoStatus,
+    render_worker: RenderWorkerStatus | None = None,
 ) -> RenderJobCreated:
     return RenderJobCreated(
-        **job_status.model_dump(exclude={"video"}), video=job_status.video or video
+        **job_status.model_dump(exclude={"video"}),
+        video=job_status.video or video,
+        render_worker=render_worker,
     )
 
 
@@ -231,6 +259,7 @@ def create_render_clip_job(
     demo_id: str,
     request: RenderClipRequest,
     db: Session = Depends(get_db),
+    redis_client: Any = Depends(get_redis_client),
     owner_id: str = Depends(get_current_owner_id),
 ) -> RenderJobCreated:
     service = DemoService(db, owner_id=owner_id)
@@ -250,7 +279,21 @@ def create_render_clip_job(
     return render_job_created_response(
         job_status,
         ReplayVideoStatus.model_validate(service.public_video_status(demo)),
+        # The job is durable and stays queued either way, but the caller should
+        # learn immediately that nothing will pick it up yet.
+        render_worker_status_response(db, redis_client),
     )
+
+
+@router.get("/render/worker", response_model=RenderWorkerStatus)
+def get_render_worker_status(
+    db: Session = Depends(get_db),
+    redis_client: Any = Depends(get_redis_client),
+    _: str = Depends(get_current_owner_id),
+) -> RenderWorkerStatus:
+    # The render worker is a single global process, not a per-demo resource, so
+    # this is owner-authenticated but not demo-scoped.
+    return render_worker_status_response(db, redis_client)
 
 
 @router.get("/demos/{demo_id}/render/jobs", response_model=list[RenderJobStatus])

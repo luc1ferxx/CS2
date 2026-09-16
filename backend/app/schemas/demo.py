@@ -186,5 +186,16 @@ class RenderWorkerMediaUpload(BaseModel):
     sizeBytes: int
 
 
+class RenderWorkerStatus(BaseModel):
+    mode: str
+    required: bool
+    connected: bool
+    status: str
+    last_seen_at: str | None = None
+    age_seconds: int | None = None
+    busy_rendering: bool = False
+
+
 class RenderJobCreated(RenderJobStatus):
     video: ReplayVideoStatus
+    render_worker: RenderWorkerStatus | None = None
