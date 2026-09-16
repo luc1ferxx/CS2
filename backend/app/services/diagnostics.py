@@ -23,6 +23,20 @@ from app.services.storage import (
 WORKER_HEARTBEAT_KEY = "cs2-demo-coach:worker:heartbeat"
 WORKER_HEARTBEAT_TTL_SECONDS = 120
 WORKER_HEARTBEAT_ALIVE_SECONDS = 90
+
+RENDER_WORKER_HEARTBEAT_KEY = "cs2-demo-coach:render-worker:heartbeat"
+# The TTL is deliberately far longer than the alive window. Between the two, the
+# key still holds a real timestamp while reading as offline, which lets callers
+# say "last polled 5 minutes ago" instead of "never connected" -- two states that
+# mean very different things to an operator.
+RENDER_WORKER_HEARTBEAT_TTL_SECONDS = 900
+# render-worker/runner.py polls every 5 seconds, so this tolerates 6 missed polls.
+RENDER_WORKER_HEARTBEAT_ALIVE_SECONDS = 30
+# A render blocks the poll loop for minutes, so a rendering job stands in for a
+# heartbeat. The bound stops a worker that died mid-render from reading as alive
+# forever.
+RENDER_WORKER_BUSY_GRACE_SECONDS = 1800
+
 MAX_RECENT_FAILURES = 10
 MAX_MESSAGE_LENGTH = 240
 
@@ -36,12 +50,7 @@ def utc_now() -> datetime:
 
 
 def write_worker_heartbeat(redis_client: Any, *, now: datetime | None = None) -> None:
-    seen_at = _aware_datetime(now or utc_now())
-    redis_client.setex(
-        WORKER_HEARTBEAT_KEY,
-        WORKER_HEARTBEAT_TTL_SECONDS,
-        json.dumps({"lastSeenAt": seen_at.isoformat()}, separators=(",", ":")),
-    )
+    _write_heartbeat(redis_client, WORKER_HEARTBEAT_KEY, WORKER_HEARTBEAT_TTL_SECONDS, now)
 
 
 def read_worker_heartbeat(
@@ -49,7 +58,99 @@ def read_worker_heartbeat(
     *,
     now: datetime | None = None,
 ) -> dict[str, Any]:
-    payload = redis_client.get(WORKER_HEARTBEAT_KEY)
+    return _read_heartbeat(
+        redis_client,
+        WORKER_HEARTBEAT_KEY,
+        WORKER_HEARTBEAT_ALIVE_SECONDS,
+        now,
+    )
+
+
+def write_render_worker_heartbeat(redis_client: Any, *, now: datetime | None = None) -> None:
+    _write_heartbeat(
+        redis_client,
+        RENDER_WORKER_HEARTBEAT_KEY,
+        RENDER_WORKER_HEARTBEAT_TTL_SECONDS,
+        now,
+    )
+
+
+def read_render_worker_heartbeat(
+    redis_client: Any,
+    *,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    return _read_heartbeat(
+        redis_client,
+        RENDER_WORKER_HEARTBEAT_KEY,
+        RENDER_WORKER_HEARTBEAT_ALIVE_SECONDS,
+        now,
+    )
+
+
+def render_worker_availability(
+    db: Session | None,
+    redis_client: Any,
+    *,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Report whether an external render worker is reachable right now.
+
+    A render blocks the worker's poll loop for minutes, so a job it is actively
+    rendering counts as liveness even once the heartbeat has gone stale.
+    """
+    current = _aware_datetime(now or utc_now())
+    try:
+        heartbeat = read_render_worker_heartbeat(redis_client, now=current)
+    except Exception:
+        heartbeat = {"alive": False, "lastSeenAt": None, "ageSeconds": None}
+
+    busy_rendering = _has_active_render_clip_job(db, current) if db is not None else False
+    alive = bool(heartbeat["alive"])
+    connected = alive or busy_rendering
+
+    if connected:
+        status = "connected" if alive else "rendering"
+    elif heartbeat["lastSeenAt"] is None:
+        status = "never_seen"
+    else:
+        status = "offline"
+
+    return {
+        "mode": settings.render_worker_mode,
+        # Only the external mode waits on a separate process; the fallback mode
+        # fails render jobs itself with a clear error, so callers must not
+        # surface "render worker not connected" there.
+        "required": settings.render_worker_mode == "external",
+        "connected": connected,
+        "status": status,
+        "lastSeenAt": heartbeat["lastSeenAt"],
+        "ageSeconds": heartbeat["ageSeconds"],
+        "busyRendering": busy_rendering,
+    }
+
+
+def _write_heartbeat(
+    redis_client: Any,
+    key: str,
+    ttl_seconds: int,
+    now: datetime | None,
+) -> None:
+    seen_at = _aware_datetime(now or utc_now())
+    redis_client.setex(
+        key,
+        ttl_seconds,
+        json.dumps({"lastSeenAt": seen_at.isoformat()}, separators=(",", ":")),
+    )
+
+
+def _read_heartbeat(
+    redis_client: Any,
+    key: str,
+    alive_seconds: int,
+    now: datetime | None,
+) -> dict[str, Any]:
+    payload = redis_client.get(key)
     if payload is None:
         return {"alive": False, "lastSeenAt": None, "ageSeconds": None}
     if isinstance(payload, bytes):
@@ -67,10 +168,23 @@ def read_worker_heartbeat(
     current = _aware_datetime(now or utc_now())
     age_seconds = max(0, int((current - last_seen).total_seconds()))
     return {
-        "alive": age_seconds <= WORKER_HEARTBEAT_ALIVE_SECONDS,
+        "alive": age_seconds <= alive_seconds,
         "lastSeenAt": last_seen.isoformat(),
         "ageSeconds": age_seconds,
     }
+
+
+def _has_active_render_clip_job(db: Session, now: datetime) -> bool:
+    job = (
+        db.query(DemoJob)
+        .filter(DemoJob.job_type == RENDER_CLIP_JOB_TYPE, DemoJob.status == "rendering")
+        .order_by(desc(DemoJob.started_at))
+        .first()
+    )
+    if job is None or job.started_at is None:
+        return False
+    elapsed = (now - _aware_datetime(job.started_at)).total_seconds()
+    return elapsed <= RENDER_WORKER_BUSY_GRACE_SECONDS
 
 
 def build_system_diagnostics(
@@ -107,7 +221,7 @@ def build_system_diagnostics(
         },
         "dependencies": dependencies,
         "worker": worker,
-        "renderWorker": _render_worker_status(db) if database["ok"] else _unknown_render_worker_status(),
+        "renderWorker": _render_worker_status(db if database["ok"] else None, redis_client, current),
         "jobs": jobs,
         "generatedAt": current.isoformat(),
     }
@@ -283,7 +397,14 @@ def _failed_job_summary(job: DemoJob) -> dict[str, Any]:
     }
 
 
-def _render_worker_status(db: Session) -> dict[str, Any]:
+def _render_worker_status(
+    db: Session | None,
+    redis_client: Any,
+    now: datetime,
+) -> dict[str, Any]:
+    availability = render_worker_availability(db, redis_client, now=now)
+    if db is None:
+        return availability
     latest = (
         db.query(DemoJob)
         .filter(DemoJob.job_type == RENDER_CLIP_JOB_TYPE)
@@ -291,35 +412,13 @@ def _render_worker_status(db: Session) -> dict[str, Any]:
         .first()
     )
     if latest is None:
-        return _unknown_render_worker_status()
-    if latest.status == "completed":
-        return {
-            "status": "recent_activity",
-            "connected": True,
-            "lastJobId": latest.id,
-            "lastStatus": latest.status,
-            "lastActivityAt": _last_job_transition_at(latest),
-        }
-    if latest.status == "failed" and "GPU worker not connected" in (latest.error_message or ""):
-        return {
-            "status": "not_connected",
-            "connected": False,
-            "lastJobId": latest.id,
-            "lastStatus": latest.status,
-            "lastActivityAt": _last_job_transition_at(latest),
-            "reason": "Latest render_clip job reached the local no-GPU fallback.",
-        }
+        return availability
     return {
-        "status": "unknown",
-        "connected": None,
+        **availability,
         "lastJobId": latest.id,
         "lastStatus": latest.status,
         "lastActivityAt": _last_job_transition_at(latest),
     }
-
-
-def _unknown_render_worker_status() -> dict[str, Any]:
-    return {"status": "unknown", "connected": None}
 
 
 def _artifact_status(
