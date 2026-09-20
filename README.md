@@ -93,6 +93,7 @@ Mac 上开发 Windows 桌面版见 [`macos_development_windows_release_v1.md`](d
 ```bash
 cd frontend && npm run lint && npm run typecheck && npm run build
 cd frontend && node lib/demo-library.test.mjs      # 每个 lib/*.test.mjs 都可直接跑
+cd frontend && npm test                             # 组件/页面测试（Vitest + Testing Library + jsdom）
 
 PYTHONPATH=backend .venv/bin/python -m unittest discover backend/tests
 .venv/bin/python -m ruff check .        # 规则与豁免理由见 ruff.toml

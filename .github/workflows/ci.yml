@@ -137,6 +137,14 @@ jobs:
           fi
           echo "All frontend test files passed."
 
+      # Component and page tests (Vitest + Testing Library on jsdom). These
+      # mount the real dashboard and demo-detail pages against a mocked API
+      # client, so the state machines the pure helper tests cannot see --
+      # polling, loading, failure verdicts -- are checked here. Pinned in
+      # frontend/package.json; configuration in frontend/vitest.config.ts.
+      - name: Component tests
+        run: npm test
+
       - name: Build
         run: npm run build
 

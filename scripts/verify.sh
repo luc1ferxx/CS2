@@ -128,6 +128,9 @@ else
   for helper_test in lib/*.test.mjs; do
     run "frontend $(basename "$helper_test")" node "$helper_test"
   done
+  # Component and page tests: Vitest + Testing Library on jsdom, mounting the
+  # real pages against a mocked API client (see frontend/vitest.config.ts).
+  run "frontend component tests" npm test
   run "frontend lint"      npm run lint
   run "frontend typecheck" npm run typecheck
   run "frontend build"     npm run build

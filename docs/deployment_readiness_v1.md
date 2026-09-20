@@ -275,6 +275,13 @@ node lib/replay-quality-fixtures.test.mjs
 node lib/map-config.test.mjs
 ```
 
+Component and page tests mount the real dashboard and demo-detail pages against a mocked API client (Vitest + Testing Library on jsdom) and cover the state machines the helper tests cannot see: library loading and empty/error states, status polling, the replay-loading window of a completed demo, failure verdicts and parse retry. Run them for any change to interactive components or page state:
+
+```bash
+cd frontend
+npm test
+```
+
 Docker checks still run separately:
 
 ```bash
