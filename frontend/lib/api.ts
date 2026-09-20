@@ -1,4 +1,4 @@
-import type { CoachingEvent } from "@/types/coaching";
+import type { CoachingEvent, CoachingFeedback, CoachingVerdict } from "@/types/coaching";
 import type { DemoStatus, DemoSummary } from "@/types/demo";
 import type { ReplayData, ReplayVideo } from "@/types/replay";
 import type {
@@ -348,6 +348,26 @@ export function getRenderJobs(demoId: string): Promise<RenderJobStatus[]> {
 
 export function getRenderWorkerStatus(): Promise<RenderWorkerStatus> {
   return requestJson<RenderWorkerStatus>("/render/worker");
+}
+
+export interface CoachingFeedbackRequest {
+  verdict: CoachingVerdict;
+  note?: string | null;
+}
+
+export function saveCoachingFeedback(
+  demoId: string,
+  eventId: string,
+  request: CoachingFeedbackRequest
+): Promise<CoachingFeedback> {
+  return requestJson<CoachingFeedback>(`/demos/${demoId}/coaching/${eventId}/feedback`, {
+    method: "PUT",
+    body: JSON.stringify(request)
+  });
+}
+
+export function clearCoachingFeedback(demoId: string, eventId: string): Promise<void> {
+  return requestNoContent(`/demos/${demoId}/coaching/${eventId}/feedback`, { method: "DELETE" });
 }
 
 export function getCoaching(demoId: string): Promise<CoachingEvent[]> {

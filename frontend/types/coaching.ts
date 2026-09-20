@@ -16,4 +16,14 @@ export interface CoachingEvent {
   structured_context_json: Record<string, unknown>;
   confidence: number;
   created_at: string;
+  // The current viewer's own verdict; null or absent when they have not rated it.
+  feedback?: CoachingFeedback | null;
+}
+
+export type CoachingVerdict = "helpful" | "irrelevant" | "unsure";
+
+export interface CoachingFeedback {
+  verdict: CoachingVerdict;
+  note: string | null;
+  updated_at: string;
 }

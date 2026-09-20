@@ -1,4 +1,4 @@
-import type { CoachingEvent, CoachingSeverity } from "@/types/coaching";
+import type { CoachingEvent, CoachingFeedback, CoachingSeverity } from "@/types/coaching";
 import type { ReplayPlayer } from "@/types/replay";
 import { bombPlantEvidenceLabel, normalizeBombSite } from "@/lib/bomb-site";
 
@@ -319,4 +319,34 @@ function humanizeIdentifier(value: string): string {
 
 function roundPercent(value: number): number {
   return Math.round(Math.max(0, Math.min(100, value)) * 100) / 100;
+}
+
+export interface FeedbackProgress {
+  total: number;
+  rated: number;
+  helpful: number;
+  irrelevant: number;
+  unsure: number;
+}
+
+// How far a player is through rating the suggestions in front of them. Counts
+// only the events passed in, so callers scope it to the reviewed player.
+export function feedbackProgress(events: CoachingEvent[]): FeedbackProgress {
+  const progress: FeedbackProgress = { total: events.length, rated: 0, helpful: 0, irrelevant: 0, unsure: 0 };
+  for (const event of events) {
+    const verdict = event.feedback?.verdict;
+    if (verdict === "helpful" || verdict === "irrelevant" || verdict === "unsure") {
+      progress.rated += 1;
+      progress[verdict] += 1;
+    }
+  }
+  return progress;
+}
+
+export function withFeedback(
+  events: CoachingEvent[],
+  eventId: string,
+  feedback: CoachingFeedback | null
+): CoachingEvent[] {
+  return events.map((event) => (event.id === eventId ? { ...event, feedback } : event));
 }

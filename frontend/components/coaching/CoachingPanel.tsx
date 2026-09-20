@@ -3,9 +3,9 @@
 import { ChevronDown, Search, SlidersHorizontal } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
-import { buildCoachingReviewModel, type RuleFilter, type SeverityFilter } from "@/lib/coaching-review";
+import { buildCoachingReviewModel, feedbackProgress, type RuleFilter, type SeverityFilter } from "@/lib/coaching-review";
 import { coachingLocation, coachingMatchesSearch, coachingRuleLabel } from "@/lib/coaching-copy";
-import type { CoachingEvent } from "@/types/coaching";
+import type { CoachingEvent, CoachingVerdict } from "@/types/coaching";
 import type { RenderJobStatus } from "@/lib/api";
 import type { ReplayPlayer, ReplayRound } from "@/types/replay";
 import { CoachingEventCard } from "./CoachingEventCard";
@@ -22,11 +22,12 @@ interface CoachingPanelProps {
   requestingEventId: string | null;
   onSeek: (tick: number) => void;
   onGenerateClip: (event: CoachingEvent) => void;
+  onFeedback: (event: CoachingEvent, verdict: CoachingVerdict | null) => void;
 }
 
 export function CoachingPanel({
   events, players, currentTick, selectedRound, rounds, tickRate, selectedPlayerName,
-  renderJobByEventId, requestingEventId, onSeek, onGenerateClip
+  renderJobByEventId, requestingEventId, onSeek, onGenerateClip, onFeedback
 }: CoachingPanelProps) {
   const [severity, setSeverity] = useState<SeverityFilter>("all");
   const [rule, setRule] = useState<RuleFilter>("all");
@@ -41,6 +42,7 @@ export function CoachingPanel({
     })).filter((group) => group.events.length > 0);
     return { ...model, roundGroups, filteredCount: roundGroups.reduce((count, group) => count + group.events.length, 0) };
   }, [events, players, rule, search, severity]);
+  const progress = useMemo(() => feedbackProgress(events), [events]);
   const activeEventIds = useMemo(() => new Set(events.filter((event) =>
     currentTick >= event.tick_start - 128 && currentTick <= event.tick_end + 128
   ).map((event) => event.id)), [currentTick, events]);
@@ -79,7 +81,7 @@ export function CoachingPanel({
       <div className="coaching-header">
         <div>
           <h2>重点建议</h2>
-          <p>{selectedPlayerName ? `${selectedPlayerName} · ${reviewModel.totalCount} 条复盘线索` : "结合比赛画面，回看每次选择"}</p>
+          <p>{selectedPlayerName ? `${selectedPlayerName} · ${reviewModel.totalCount} 条复盘线索${progress.total > 0 ? ` · 已评价 ${progress.rated}/${progress.total}` : ""}` : "结合比赛画面，回看每次选择"}</p>
         </div>
         <span className="mini-pill">第 {selectedRound} 回合</span>
       </div>
@@ -133,7 +135,7 @@ export function CoachingPanel({
                 <div id={eventsId} className="coaching-round-events">
                   {roundGroup.events.map((reviewEvent) => (
                     <CoachingEventCard key={reviewEvent.event.id} reviewEvent={reviewEvent} active={activeEventIds.has(reviewEvent.event.id)} inspected={inspectedEventId === reviewEvent.event.id} locationLabel={coachingLocation(reviewEvent.event, rounds, tickRate)} renderJob={renderJobByEventId.get(reviewEvent.event.id)} clipRequesting={requestingEventId === reviewEvent.event.id}
-                      onToggleInspect={() => setInspectedEventId((current) => current === reviewEvent.event.id ? null : reviewEvent.event.id)} onSeek={onSeek} onGenerateClip={onGenerateClip} />
+                      onToggleInspect={() => setInspectedEventId((current) => current === reviewEvent.event.id ? null : reviewEvent.event.id)} onSeek={onSeek} onGenerateClip={onGenerateClip} onFeedback={onFeedback} />
                   ))}
                 </div>
               ) : null}

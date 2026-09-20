@@ -1,5 +1,5 @@
 import type { ReviewEvent } from "@/lib/coaching-review";
-import type { CoachingEvent } from "@/types/coaching";
+import type { CoachingEvent, CoachingVerdict } from "@/types/coaching";
 import type { ReplayRound } from "@/types/replay";
 
 interface CoachingCopy {
@@ -135,3 +135,10 @@ export function coachingMatchesSearch(reviewEvent: ReviewEvent, rawSearch: strin
     ...reviewEvent.evidence.flatMap((item) => [item.label, coachingEvidenceLabel(item.label), item.value])]
     .join(" ").toLocaleLowerCase().includes(search);
 }
+
+// The three verdicts a player can give a suggestion (docs/coaching_feedback_v1.md).
+export const COACHING_VERDICT_LABELS: Record<CoachingVerdict, string> = {
+  helpful: "有帮助",
+  irrelevant: "无关",
+  unsure: "判断不足"
+};

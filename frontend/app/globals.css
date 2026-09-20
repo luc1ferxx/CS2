@@ -2557,9 +2557,16 @@ button {
 }
 
 .loading-panel {
+  display: grid;
+  justify-items: center;
+  gap: 14px;
   padding: 44px 24px;
   color: var(--muted);
   text-align: center;
+}
+
+.loading-panel p {
+  margin: 0;
 }
 
 .error-panel {
@@ -6841,4 +6848,18 @@ select:disabled {
 
 .clip-library-coordinate small {
   overflow-wrap: anywhere;
+}
+
+.coaching-feedback {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.coaching-feedback > span {
+  font-size: 12px;
+  color: var(--muted);
+  margin-right: 2px;
 }

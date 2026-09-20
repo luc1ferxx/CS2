@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { ArrowLeft, ChevronLeft, ChevronRight, Film, Map as MapIcon, Pause, Play, Scissors } from "lucide-react";
+import { ArrowLeft, Film, Map as MapIcon, RefreshCcw, Scissors } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 
@@ -14,12 +14,16 @@ import {
 } from "@/components/replay/FirstPersonReplay";
 import { RenderOperatorPanel } from "@/components/replay/RenderOperatorPanel";
 import { ClipLibrary } from "@/components/replay/ClipLibrary";
+import { DetailSummary } from "@/components/replay/DetailSummary";
+import { ReplayDiagnosticsPanel } from "@/components/replay/ReplayDiagnosticsPanel";
+import { ReviewCommandBar } from "@/components/replay/ReviewCommandBar";
 import { ReplayViewer } from "@/components/replay/ReplayViewer";
 import { PersonalReviewPanel } from "@/components/replay/PersonalReviewPanel";
 import { RoundReviewPanel } from "@/components/replay/RoundReviewPanel";
 import { Timeline } from "@/components/replay/Timeline";
 import { VideoSetupPanel } from "@/components/replay/VideoSetupPanel";
 import {
+  clearCoachingFeedback,
   createMockRenderJob,
   createRenderClipJob,
   getCoaching,
@@ -28,6 +32,9 @@ import {
   getRenderJobs,
   getRenderWorkerStatus,
   getReplay,
+  retryDemoParse,
+  retryRenderClipJob,
+  saveCoachingFeedback,
   saveVideoCalibration,
   uploadDemoVideo,
   type RenderClipRequest,
@@ -39,15 +46,16 @@ import {
   detailSummaryItems,
   friendlyErrorMessage,
   isRenderActiveStatus,
-  parseFailureReason,
-  type DetailSummaryItem
+  replayUnavailableNotice
 } from "@/lib/demo-library";
-import { buildReplayDiagnostics, type ReplayDetailDiagnostics } from "@/lib/replay-diagnostics";
+import { buildReplayDiagnostics } from "@/lib/replay-diagnostics";
 import { resolvePrivateMediaSource } from "@/lib/media-url";
 import { advanceReplayTick, videoMediaIdentity, videoPlaybackState } from "@/lib/replay-time";
 import { roundClock, savedClipAtTick, usesVideoClock } from "@/lib/review-workspace";
-import { buildEventClipRequest, buildTickClipRequest, clipIsActive, clipsForPlayer, matchingClipJob, playableClipVideo, retainSelectedClip, reviewVideo, type SelectedClip } from "@/lib/render-clips";
+import { findRoundForTick } from "@/lib/round-review";
+import { buildEventClipRequest, buildTickClipRequest, clipIsActive, clipRequestAction, clipsForPlayer, matchingClipJob, playableClipVideo, retainSelectedClip, reviewVideo, type SelectedClip } from "@/lib/render-clips";
 import { renderWorkerNotice } from "@/lib/render-worker";
+import { withFeedback } from "@/lib/coaching-review";
 import {
   DEFAULT_PLAYER_IDENTITY,
   coachingForPlayer,
@@ -57,7 +65,7 @@ import {
   readPreferredPlayer,
   savePreferredPlayer
 } from "@/lib/personal-review";
-import type { CoachingEvent } from "@/types/coaching";
+import type { CoachingEvent, CoachingFeedback, CoachingVerdict } from "@/types/coaching";
 import type { DemoStatus } from "@/types/demo";
 import type { ReplayData } from "@/types/replay";
 
@@ -86,7 +94,9 @@ function DemoDetailContent() {
   const [preferenceSaved, setPreferenceSaved] = useState(true);
   const [playerOverride, setPlayerOverride] = useState<{ demoId: string; playerId: string | null } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [replayLoadFailed, setReplayLoadFailed] = useState(false);
   const [renderRequesting, setRenderRequesting] = useState(false);
+  const [parseRetrying, setParseRetrying] = useState(false);
   const [clipRequestingEventId, setClipRequestingEventId] = useState<string | null>(null);
   const [tickClipRequesting, setTickClipRequesting] = useState(false);
   const [renderJobs, setRenderJobs] = useState<RenderJobStatus[]>([]);
@@ -152,8 +162,54 @@ function DemoDetailContent() {
       setCurrentVideoTime(initialVideo.timeOriginSeconds ?? 0);
       setDetectedVideoDuration(null);
       setError(null);
+      setReplayLoadFailed(false);
     } catch (err) {
       setError(friendlyErrorMessage(err instanceof Error ? err.message : "Failed to load replay"));
+      setReplayLoadFailed(true);
+    }
+  }, [demoId]);
+
+  const retryParse = useCallback(async () => {
+    setParseRetrying(true);
+    try {
+      await retryDemoParse(demoId);
+      // The previous fetch's verdict is void the moment a re-parse is queued;
+      // clearing it here keeps the stale failure out of the window where status
+      // flips back to "completed" while the new replay is still in flight.
+      setReplayLoadFailed(false);
+      // Refetch instead of folding the summary the retry returns into the
+      // status shape: it also puts the demo back in a non-completed state,
+      // which re-arms the poll below and loads the replay on its own.
+      await loadStatus();
+    } catch (err) {
+      setError(friendlyErrorMessage(err instanceof Error ? err.message : "Failed to retry demo parse"));
+    } finally {
+      setParseRetrying(false);
+    }
+  }, [demoId, loadStatus]);
+
+  const submitCoachingFeedback = useCallback(async (event: CoachingEvent, verdict: CoachingVerdict | null) => {
+    // The verdict is the player's own statement, so show it at once and only
+    // roll back if the server refuses it.
+    const previous = event.feedback ?? null;
+    setEvents((current) => withFeedback(
+      current, event.id, verdict ? { verdict, note: null, updated_at: new Date().toISOString() } : null
+    ));
+    // A later click may already have moved the card on; a response (or a
+    // rollback) only lands if the card still shows the verdict it was for.
+    const applyIfStillCurrent = (feedback: CoachingFeedback | null) =>
+      setEvents((current) => current.map((item) =>
+        item.id === event.id && (item.feedback?.verdict ?? null) === verdict ? { ...item, feedback } : item
+      ));
+    try {
+      if (verdict) {
+        applyIfStillCurrent(await saveCoachingFeedback(demoId, event.id, { verdict }));
+      } else {
+        await clearCoachingFeedback(demoId, event.id);
+      }
+    } catch (err) {
+      applyIfStillCurrent(previous);
+      setError(friendlyErrorMessage(err instanceof Error ? err.message : "Failed to save coaching feedback"));
     }
   }, [demoId]);
 
@@ -273,7 +329,7 @@ function DemoDetailContent() {
   );
 
   const videoStatus = loadedReplay?.video.status;
-  const parseFailureMessage = status ? parseFailureReason(status) : null;
+  const replayNotice = replayUnavailableNotice(status, replayLoadFailed);
 
   const loadRenderState = useCallback(async () => {
     try {
@@ -467,16 +523,21 @@ function DemoDetailContent() {
   async function requestOrViewClip(request: RenderClipRequest, tick: number) {
     const existing = savedClipAtTick(renderJobs, tick, request.povSteamId ?? request.playerId ?? null, replay?.video.renderJobId)
       ?? matchingClipJob(renderJobs, request);
-    if (existing && playableClipVideo(existing)) {
+    const action = clipRequestAction(existing);
+    if (existing && action === "play") {
       playSavedClip(existing, tick);
       return;
     }
-    if (clipIsActive(existing)) return;
+    if (action === "wait") return;
     if (replay?.video.status === "ready" && replay.video.url) {
       const currentVideo = replay.video;
       setSelectedClip((current) => retainSelectedClip(current, renderJobs, currentVideo, demoId));
     }
-    const response = await createRenderClipJob(demoId, request);
+    const response = existing && action === "retry"
+      // Requeue the row that failed instead of leaving it behind and starting a
+      // second one for the same clip. Both calls return the same shape.
+      ? await retryRenderClipJob(demoId, existing.job_id)
+      : await createRenderClipJob(demoId, request);
     setRenderJobs((currentJobs) => [response, ...currentJobs.filter((job) => job.job_id !== response.job_id)]);
     // The job is created either way, so surface an offline renderer now rather
     // than leaving the caller on "queued" until the next poll.
@@ -553,9 +614,18 @@ function DemoDetailContent() {
         {!replay ? (
           <>
             <div className="panel loading-panel">
-              {status?.status === "failed"
-                ? `比赛处理失败。${parseFailureMessage ?? "暂时无法加载回放，请返回比赛库重试。"}`
-                : "正在准备回放，完成后会自动显示。"}
+              <p>{replayNotice.message}</p>
+              {replayNotice.retryable ? (
+                <button
+                  className="secondary-button compact-button"
+                  type="button"
+                  onClick={() => void retryParse()}
+                  disabled={parseRetrying}
+                >
+                  <RefreshCcw size={14} />
+                  {parseRetrying ? "正在重新处理…" : "重新处理"}
+                </button>
+              ) : null}
             </div>
             {status ? <DetailSummary items={summaryItems} /> : null}
           </>
@@ -693,6 +763,7 @@ function DemoDetailContent() {
                 requestingEventId={clipRequestingEventId}
                 onSeek={seekToFinding}
                 onGenerateClip={requestRenderClipForEvent}
+                onFeedback={submitCoachingFeedback}
               />
             </div>
             <details className="review-inspector">
@@ -727,180 +798,4 @@ function DemoDetailContent() {
       </section>
     </main>
   );
-}
-
-function ReviewCommandBar({
-  mapName,
-  selectedRound,
-  currentTick,
-  roundTime,
-  currentPovName,
-  playing,
-  speed,
-  previousFinding,
-  nextFinding,
-  onTogglePlay,
-  onSpeedChange,
-  onPreviousFinding,
-  onNextFinding
-}: {
-  mapName: string;
-  selectedRound: number;
-  currentTick: number;
-  roundTime: string;
-  currentPovName: string;
-  playing: boolean;
-  speed: number;
-  previousFinding: CoachingEvent | null;
-  nextFinding: CoachingEvent | null;
-  onTogglePlay: () => void;
-  onSpeedChange: (speed: number) => void;
-  onPreviousFinding: () => void;
-  onNextFinding: () => void;
-}) {
-  return (
-    <section className="review-command-bar" aria-label="Review transport" title={`${mapName} · tick ${Math.round(currentTick)}`}>
-      <div className="review-command-coordinate">
-        <div className="review-transport-readouts">
-          <TransportReadout label="回合" value={`第 ${selectedRound} 回合`} />
-          <TransportReadout label="时间" value={roundTime} emphasis />
-          <TransportReadout label="玩家" value={currentPovName} />
-        </div>
-      </div>
-      <div className="review-command-actions">
-        <button
-          className="primary-button compact-button coordinate-play-button"
-          type="button"
-          onClick={onTogglePlay}
-          aria-label={playing ? "Pause replay" : "Play replay"}
-        >
-          {playing ? <Pause size={17} /> : <Play size={17} />}
-          <span>{playing ? "暂停" : "播放"}</span>
-        </button>
-        <label className="review-speed-control">
-          <span>倍速</span>
-          <select
-            className="speed-select"
-            value={speed}
-            onChange={(event) => onSpeedChange(Number(event.target.value))}
-            aria-label="Playback speed"
-          >
-            <option value={0.5}>0.5x</option>
-            <option value={1}>1x</option>
-            <option value={2}>2x</option>
-            <option value={4}>4x</option>
-          </select>
-        </label>
-        <div className="review-finding-navigation" aria-label="Finding navigation">
-          <button
-            className="secondary-button compact-button"
-            type="button"
-            onClick={onPreviousFinding}
-            disabled={!previousFinding}
-            title={previousFinding ? "查看上一条建议" : "已经是第一条建议"}
-          >
-            <ChevronLeft size={15} aria-hidden="true" />
-            <span>上一条</span>
-          </button>
-          <button
-            className="secondary-button compact-button"
-            type="button"
-            onClick={onNextFinding}
-            disabled={!nextFinding}
-            title={nextFinding ? "查看下一条建议" : "没有下一条建议"}
-          >
-            <span>下一条</span>
-            <ChevronRight size={15} aria-hidden="true" />
-          </button>
-        </div>
-      </div>
-    </section>
-  );
-}
-
-function TransportReadout({
-  label,
-  value,
-  emphasis = false
-}: {
-  label: string;
-  value: string;
-  emphasis?: boolean;
-}) {
-  return (
-    <span className={`review-transport-readout ${emphasis ? "emphasis" : ""}`}>
-      <small>{label}</small>
-      <strong>{value}</strong>
-    </span>
-  );
-}
-
-function DetailSummary({ items }: { items: DetailSummaryItem[] }) {
-  return (
-    <section className="detail-summary-strip" aria-label="Demo status summary">
-      {items.map((item) => (
-        <div className={`detail-summary-item ${item.tone ?? "default"}`} key={item.label}>
-          <span>{item.label}</span>
-          <strong>{item.value}</strong>
-          {item.detail ? <small>{item.detail}</small> : null}
-        </div>
-      ))}
-    </section>
-  );
-}
-
-function ReplayDiagnosticsPanel({ diagnostics }: { diagnostics: ReplayDetailDiagnostics }) {
-  return (
-    <section className="panel replay-diagnostics-panel" aria-label="Replay contract diagnostics">
-      <div className="replay-diagnostics-header">
-        <div>
-          <h2>Replay Contract</h2>
-          <p>
-            {diagnostics.normalizedLegacy
-              ? "Legacy or degraded contract normalized for review"
-              : "Contract data loaded"}
-          </p>
-        </div>
-        <span className={`mini-pill replay-contract-version ${diagnostics.normalizedLegacy ? "legacy" : "current"}`}>
-          {diagnostics.contractVersion}
-        </span>
-      </div>
-      <div className="replay-diagnostics-grid">
-        <DiagnosticMetric label="Parser events" value={diagnostics.counts.parserEvents} />
-        <DiagnosticMetric label="Coaching" value={diagnostics.counts.coachingEvents} />
-        <DiagnosticMetric label="Rounds" value={diagnostics.counts.rounds} />
-        <DiagnosticMetric label="Players" value={diagnostics.counts.players} />
-        <DiagnosticMetric label="Frames" value={diagnostics.counts.frames} />
-        <DiagnosticMetric label="Render" value={diagnostics.renderState.label} tone={diagnostics.renderState.tone} />
-      </div>
-      {diagnostics.warnings.length > 0 ? (
-        <ul className="replay-diagnostics-warnings">
-          {diagnostics.warnings.map((warning) => (
-            <li key={warning}>{warning}</li>
-          ))}
-        </ul>
-      ) : null}
-    </section>
-  );
-}
-
-function DiagnosticMetric({
-  label,
-  value,
-  tone
-}: {
-  label: string;
-  value: number | string;
-  tone?: ReplayDetailDiagnostics["renderState"]["tone"];
-}) {
-  return (
-    <div className={`diagnostic-metric ${tone ?? ""}`}>
-      <span>{label}</span>
-      <strong>{value}</strong>
-    </div>
-  );
-}
-
-function findRoundForTick(rounds: ReplayData["rounds"], tick: number) {
-  return rounds.find((round) => tick >= round.startTick && tick <= round.endTick);
 }

@@ -4,10 +4,12 @@ import { ChevronDown, Crosshair, Play, Video } from "lucide-react";
 
 import type { ReviewEvent } from "@/lib/coaching-review";
 import type { RenderJobStatus } from "@/lib/api";
-import { coachingCopy, coachingEvidenceLabel, coachingSeverityLabel } from "@/lib/coaching-copy";
+import { COACHING_VERDICT_LABELS, coachingCopy, coachingEvidenceLabel, coachingSeverityLabel } from "@/lib/coaching-copy";
 import { isRenderActiveStatus } from "@/lib/demo-library";
 import { playableClipVideo } from "@/lib/render-clips";
-import type { CoachingEvent } from "@/types/coaching";
+import type { CoachingEvent, CoachingVerdict } from "@/types/coaching";
+
+const VERDICTS: CoachingVerdict[] = ["helpful", "irrelevant", "unsure"];
 
 interface CoachingEventCardProps {
   reviewEvent: ReviewEvent;
@@ -19,13 +21,15 @@ interface CoachingEventCardProps {
   onToggleInspect: () => void;
   onSeek: (tick: number) => void;
   onGenerateClip: (event: CoachingEvent) => void;
+  onFeedback: (event: CoachingEvent, verdict: CoachingVerdict | null) => void;
 }
 
 export function CoachingEventCard({
   reviewEvent, active, inspected, locationLabel, renderJob, clipRequesting,
-  onToggleInspect, onSeek, onGenerateClip
+  onToggleInspect, onSeek, onGenerateClip, onFeedback
 }: CoachingEventCardProps) {
   const { event } = reviewEvent;
+  const currentVerdict = event.feedback?.verdict ?? null;
   const copy = coachingCopy(event);
   const clipBusy = clipRequesting || isRenderActiveStatus(renderJob?.status);
   const clipReady = Boolean(playableClipVideo(renderJob));
@@ -71,6 +75,21 @@ export function CoachingEventCard({
           {clipReady ? <Play size={14} aria-hidden="true" /> : <Video size={14} aria-hidden="true" />}
           {clipLabel}
         </button>
+      </div>
+
+      <div className="coaching-feedback" role="group" aria-label={`这条建议是否有帮助：${copy.title}`}>
+        <span>对你有帮助吗</span>
+        {VERDICTS.map((verdict) => (
+          <button
+            key={verdict}
+            className={`filter-button ${currentVerdict === verdict ? "active" : ""}`}
+            type="button"
+            aria-pressed={currentVerdict === verdict}
+            onClick={() => onFeedback(event, currentVerdict === verdict ? null : verdict)}
+          >
+            {COACHING_VERDICT_LABELS[verdict]}
+          </button>
+        ))}
       </div>
 
       <button

@@ -37,7 +37,10 @@ API 运行时的交互式文档在 `http://localhost:8000/docs`。
 ### Replay and coaching
 
 - `GET /demos/{demo_id}/replay`
-- `GET /demos/{demo_id}/coaching`
+- `GET /demos/{demo_id}/coaching`（每条事件附带当前 owner 自己的 `feedback`：`{verdict, note, updated_at}` 或 `null`）
+- `PUT /demos/{demo_id}/coaching/{event_id}/feedback`（body `{"verdict": "helpful" | "irrelevant" | "unsure", "note"?: ≤240 字符}`；事件不属于该 demo → 404）
+- `DELETE /demos/{demo_id}/coaching/{event_id}/feedback`（204，幂等）
+- `GET /coaching/feedback/summary?demo_id=`（owner 全部或指定 demo 的按规则判定汇总；见 `docs/coaching_feedback_v1.md`）
 
 ### Video and render
 

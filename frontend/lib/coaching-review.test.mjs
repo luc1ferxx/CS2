@@ -38,8 +38,10 @@ function loadTypeScriptModule(relativePath) {
 const {
   buildCoachingReviewModel,
   evidenceSummaryForEvent,
+  feedbackProgress,
   ruleIdForEvent,
-  timelineMarkersForRound
+  timelineMarkersForRound,
+  withFeedback
 } = loadTypeScriptModule("./coaching-review.ts");
 
 const players = [
@@ -281,6 +283,21 @@ const events = [
   const legacyLabelOnly = evidenceSummaryForEvent(coachingEvent({ tick_start: 1,
     structured_context_json: { bombEventLabel: "Bomb planted A" } }));
   assert.equal(legacyLabelOnly[0].value, "炸弹已安放（A 点）");
+}
+
+{
+  const stamp = { note: null, updated_at: "2026-09-18T00:00:00Z" };
+  const unrated = ["r1", "r2", "r3"].map((id, index) =>
+    coachingEvent({
+      id, round_number: 1, player_id: "p1", player_name: "entry.one", tick_start: 100 + index * 50,
+      severity: "medium", title: id, message: id, structured_context_json: { ruleId: "isolated_entry" }
+    })
+  );
+  const rated = withFeedback(withFeedback(unrated, "r1", { verdict: "helpful", ...stamp }), "r2", { verdict: "unsure", ...stamp });
+  assert.deepEqual(normalize(feedbackProgress(rated)), { total: 3, rated: 2, helpful: 1, irrelevant: 0, unsure: 1 });
+  assert.equal(unrated[0].feedback, undefined, "withFeedback must not mutate its input");
+  assert.deepEqual(normalize(feedbackProgress(withFeedback(rated, "r1", null))), { total: 3, rated: 1, helpful: 0, irrelevant: 0, unsure: 1 });
+  assert.deepEqual(normalize(feedbackProgress([])), { total: 0, rated: 0, helpful: 0, irrelevant: 0, unsure: 0 });
 }
 
 function coachingEvent(overrides) {
