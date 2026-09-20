@@ -256,6 +256,103 @@ class DemoLibraryTest(unittest.TestCase):
         self.assertFalse(item.ingestion.failure.retryable)
         self.assertEqual(item.ingestion.failure.attemptCount, 2)
 
+    def test_completed_demo_with_readable_replay_is_not_retryable(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            db = self.Session()
+            store = LocalArtifactStore(directory)
+            demo = add_completed_demo_with_source(db, store, "demo-replay-present")
+            service = DemoService(db, owner_id=settings.dev_user_id, artifact_store=store)
+            demo.replay_storage_key = service.write_replay_blob(demo.id, {"demoId": demo.id})
+            db.commit()
+
+            item = service.demo_list_item(demo)
+
+            self.assertEqual(item.ingestion.phase, "ready")
+            self.assertFalse(item.ingestion.retryable)
+            self.assertIsNone(item.ingestion.failure)
+
+    def test_completed_demo_with_missing_replay_artifact_is_retryable_with_reason(self) -> None:
+        # The incident this covers: the parse succeeded, then the replay
+        # artifact went missing from the object store. The demo still reads
+        # "completed", so before this the library offered nothing -- the page
+        # could not load the replay and every clip request answered 409.
+        with tempfile.TemporaryDirectory() as directory:
+            db = self.Session()
+            store = LocalArtifactStore(directory)
+            demo = add_completed_demo_with_source(db, store, "demo-replay-lost")
+            service = DemoService(db, owner_id=settings.dev_user_id, artifact_store=store)
+            reference = service.write_replay_blob(demo.id, {"demoId": demo.id})
+            demo.replay_storage_key = reference
+            db.commit()
+            self.assertTrue(store.delete(reference))
+
+            item = service.demo_list_item(demo)
+
+            self.assertEqual(item.ingestion.phase, "ready")
+            self.assertTrue(item.ingestion.retryable)
+            self.assertIsNotNone(item.ingestion.failure)
+            self.assertEqual(item.ingestion.failure.errorCode, "REPLAY_ARTIFACT_MISSING")
+            self.assertTrue(item.ingestion.failure.retryable)
+
+    def test_missing_replay_artifact_without_source_demo_is_not_retryable(self) -> None:
+        # Re-parsing reads the source demo. With that gone too there is nothing
+        # to offer, so the reason is reported without a retry the user cannot use.
+        with tempfile.TemporaryDirectory() as directory:
+            db = self.Session()
+            store = LocalArtifactStore(directory)
+            demo = add_completed_demo_with_source(db, store, "demo-replay-and-source-lost")
+            service = DemoService(db, owner_id=settings.dev_user_id, artifact_store=store)
+            reference = service.write_replay_blob(demo.id, {"demoId": demo.id})
+            demo.replay_storage_key = reference
+            db.commit()
+            self.assertTrue(store.delete(reference))
+            self.assertTrue(store.delete(demo.source_storage_key))
+
+            item = service.demo_list_item(demo)
+
+            self.assertFalse(item.ingestion.retryable)
+            self.assertEqual(item.ingestion.failure.errorCode, "REPLAY_ARTIFACT_MISSING")
+            self.assertFalse(item.ingestion.failure.retryable)
+
+    def test_retry_parse_job_recovers_completed_demo_with_missing_replay(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            db = self.Session()
+            store = LocalArtifactStore(directory)
+            demo = add_completed_demo_with_source(db, store, "demo-replay-recover")
+            service = DemoService(db, owner_id=settings.dev_user_id, artifact_store=store)
+            reference = service.write_replay_blob(demo.id, {"demoId": demo.id})
+            demo.replay_storage_key = reference
+            db.commit()
+            self.assertTrue(store.delete(reference))
+
+            with patch(
+                "app.services.demo_service.get_redis_client",
+                return_value=FakeRedis(),
+            ):
+                service.retry_parse_job(demo)
+
+            db.refresh(demo)
+            retry_job = (
+                db.query(DemoJob)
+                .filter(DemoJob.demo_id == demo.id, DemoJob.status == "queued")
+                .one()
+            )
+            self.assertEqual(demo.status, "queued")
+            self.assertIsNone(demo.error_message)
+            self.assertEqual(retry_job.job_type, "real_parse")
+
+    def test_retry_parse_job_still_rejects_a_healthy_completed_demo(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            db = self.Session()
+            store = LocalArtifactStore(directory)
+            demo = add_completed_demo_with_source(db, store, "demo-replay-healthy")
+            service = DemoService(db, owner_id=settings.dev_user_id, artifact_store=store)
+            demo.replay_storage_key = service.write_replay_blob(demo.id, {"demoId": demo.id})
+            db.commit()
+
+            with self.assertRaisesRegex(ValueError, "Only failed parse jobs can be retried"):
+                service.retry_parse_job(demo)
+
     def test_active_parse_snapshot_marks_stale_when_status_is_old(self) -> None:
         db = self.Session()
         old_timestamp = datetime.now(UTC) - timedelta(minutes=30)
@@ -329,6 +426,40 @@ def add_demo(
         replay_storage_key=f"local://replays/{demo_id}.json" if status == "completed" else None,
     )
     db.add(demo)
+    db.commit()
+    db.refresh(demo)
+    return demo
+
+
+def add_completed_demo_with_source(db, store, demo_id: str) -> Demo:
+    """A completed demo wired the way the real ingest path leaves one."""
+    timestamp = datetime(2026, 5, 8, tzinfo=UTC)
+    demo = add_demo(
+        db,
+        demo_id,
+        f"Completed {demo_id}",
+        f"{demo_id}.dem",
+        "de_nuke",
+        status="completed",
+        created_at=timestamp,
+        updated_at=timestamp,
+    )
+    accepted = ArtifactIntakeService(store).intake_demo(
+        owner_id=demo.owner_id,
+        demo_id=demo.id,
+        filename=demo.original_filename,
+        content_type="application/octet-stream",
+        stream=io.BytesIO(b"HL2DEMO\x00completed-demo-fixture"),
+    )
+    demo.source_storage_key = accepted.reference
+    add_parse_job(
+        db,
+        demo.id,
+        "real_parse",
+        status="completed",
+        attempts=1,
+        metadata={"phase": "ready", "sourceArtifact": accepted.as_snapshot()},
+    )
     db.commit()
     db.refresh(demo)
     return demo

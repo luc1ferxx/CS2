@@ -139,7 +139,9 @@ def find_untraded_deaths(
         if not attacker_id or attacker_id == victim_id or attacker_side not in {"T", "CT"} or attacker_side == victim_side:
             continue
         # A complete observation window is required; a round ending is not a missed trade.
-        if tick + trade_window_ticks > int(context.round_by_number[round_number]["endTick"]):
+        # An unknown round has no window at all, so it cannot supply one either.
+        round_end = _int_or_none(context.round_by_number.get(round_number, {}).get("endTick"))
+        if round_end is None or tick + trade_window_ticks > round_end:
             continue
         if _has_trade(context, death, victim_side, death_position, trade_window_ticks, config):
             continue
@@ -188,7 +190,9 @@ def find_isolated_entries(
     events: list[CoachingEventCandidate] = []
 
     for round_info in context.rounds:
-        round_number = int(round_info.get("roundNumber", 1))
+        round_number = _int_or_none(round_info.get("roundNumber"))
+        if round_number is None:
+            continue
         deaths = [
             death
             for death in context.deaths
@@ -197,7 +201,7 @@ def find_isolated_entries(
         if not deaths:
             continue
 
-        first_death = min(deaths, key=lambda item: int(item.get("tick", 0)))
+        first_death = min(deaths, key=lambda item: _int_or_none(item.get("tick")) or 0)
         tick = _int_or_none(first_death.get("tick"))
         victim_id = _optional_str(first_death.get("victimId"))
         victim_name = _optional_str(first_death.get("victimName")) or victim_id or "Unknown player"
@@ -253,7 +257,7 @@ def find_isolated_entries(
                 player_id=victim_id,
                 player_name=victim_name,
                 tick_start=tick,
-                tick_end=min(int(round_info.get("endTick", tick)), tick + int(context.tick_rate * 3)),
+                tick_end=min(_round_int(round_info, "endTick", tick), tick + int(context.tick_rate * 3)),
                 category="positioning",
                 severity="medium",
                 title="Review opening-death support distance",
@@ -291,10 +295,8 @@ def find_poor_spacing(
         round_info = context.round_by_number.get(round_number, {})
         if context.live_round_at(tick) is None:
             continue
-        # _normalize_rounds() always writes int startTick/freezeEndTick. The annotation only keeps
-        # mypy from widening dict.get() to "Any | None" when the default is itself an Any expression.
-        round_start_tick: Any = round_info.get("freezeEndTick", round_info.get("startTick", 0))
-        if tick < int(round_start_tick) + context.tick_rate * 8:
+        round_start_tick = _round_int(round_info, "freezeEndTick", _round_int(round_info, "startTick", 0))
+        if tick < round_start_tick + context.tick_rate * 8:
             continue
 
         for side in ("T", "CT"):
@@ -799,9 +801,9 @@ class ReplayContext:
             key=lambda item: _int_or_none(item.get("tick")) or 0,
         )
         self.round_by_number = {
-            int(item.get("roundNumber", 1)): item
+            number: item
             for item in self.rounds
-            if item.get("roundNumber") is not None
+            if (number := _int_or_none(item.get("roundNumber"))) is not None
         }
         self.side_by_id = {
             str(player["id"]): str(player["side"])
@@ -849,21 +851,32 @@ class ReplayContext:
 
     def round_for_tick(self, tick: int, fallback: Any = None) -> int:
         for item in self.rounds:
-            if int(item.get("startTick", 0)) <= tick <= int(item.get("endTick", 0)):
-                return int(item.get("roundNumber", 1))
+            # A round whose number is unusable never made it into
+            # round_by_number, so returning it here would hand callers a key
+            # that cannot be looked up.
+            number = _int_or_none(item.get("roundNumber"))
+            if number is None:
+                continue
+            if _round_int(item, "startTick", 0) <= tick <= _round_int(item, "endTick", 0):
+                return number
         if fallback is not None:
             parsed = _int_or_none(fallback)
             if parsed is not None and parsed > 0:
                 return parsed
-        return int(self.rounds[0].get("roundNumber", 1)) if self.rounds else 1
+        for item in self.rounds:
+            number = _int_or_none(item.get("roundNumber"))
+            if number is not None:
+                return number
+        return 1
 
     def live_round_at(self, tick: int) -> int | None:
         for item in self.rounds:
-            # Same Any-default dict.get() widening as find_poor_spacing(); rounds carry int ticks.
-            start_tick: Any = item.get("freezeEndTick", item.get("startTick", 0))
-            start = int(start_tick)
-            if start <= tick <= int(item.get("endTick", 0)):
-                return int(item.get("roundNumber", 1))
+            number = _int_or_none(item.get("roundNumber"))
+            if number is None:
+                continue
+            start = _round_int(item, "freezeEndTick", _round_int(item, "startTick", 0))
+            if start <= tick <= _round_int(item, "endTick", 0):
+                return number
         return None
 
     def frame_at(self, tick: int) -> dict[str, Any] | None:
@@ -1005,7 +1018,7 @@ def _event(
         if isinstance(map_metadata, dict) and not map_metadata.get("calibrated"):
             limitation += " Map calibration is approximate."
     round_info: dict[str, Any] = next((item for item in replay.get("rounds", []) if item.get("roundNumber") == round_number), {})
-    tick_end = min(tick_end, int(round_info.get("endTick", tick_end)))
+    tick_end = min(tick_end, _round_int(round_info, "endTick", tick_end))
     return {
         "id": str(uuid.uuid5(uuid.NAMESPACE_URL, f"{replay.get('demoId')}:{rule_id}:{player_id}:{round_number}:{tick_start}:{tick_end}")),
         "demo_id": str(replay.get("demoId") or "unknown"),
@@ -1253,6 +1266,18 @@ def _int_or_none(value: Any) -> int | None:
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def _round_int(item: dict[str, Any], key: str, default: int) -> int:
+    """Read an int off a round record, treating a null value as an absent one.
+
+    dict.get()'s default only covers a *missing* key, so int(item.get(key, 0))
+    still raises on a key that is present and None -- which a parser is free to
+    emit. Routing every round number and tick through here also keeps the three
+    places that derive a round number agreeing on which records are usable.
+    """
+    value = _int_or_none(item.get(key))
+    return default if value is None else value
 
 
 def _optional_str(value: Any) -> str | None:

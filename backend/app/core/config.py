@@ -16,6 +16,7 @@ SUPPORTED_STEAM_DEMO_PROVIDERS = {"disabled"}
 MAX_STAGE3_DEMO_UPLOAD_BYTES = 1024 * 1024 * 1024
 MAX_STAGE3_VIDEO_UPLOAD_BYTES = 2 * 1024 * 1024 * 1024
 MAX_STAGE3_REPLAY_ARTIFACT_BYTES = 128 * 1024 * 1024
+MINIMUM_PARSE_MEMORY_LIMIT_BYTES = 2 * 1024 * 1024 * 1024
 DEVELOPMENT_STEAM_CREDENTIAL_ENCRYPTION_KEY = (
     "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8="
 )
@@ -225,6 +226,60 @@ class Settings:
     max_render_clip_seconds: int = int(os.getenv("MAX_RENDER_CLIP_SECONDS", "60"))
     render_worker_token: str = os.getenv("RENDER_WORKER_TOKEN", "dev-render-worker-token")
     render_worker_mode: str = os.getenv("RENDER_WORKER_MODE", "fallback")
+    # Lets GET /render-worker/jobs/next reclaim jobs stuck on "rendering": a
+    # worker asking for work is by definition not rendering, so with a single
+    # consumer any such job is an orphan and can go back to the queue at once.
+    # render-worker/runner.py's renderer_lock only enforces one consumer per
+    # work dir, not per deployment -- set this false once more than one worker
+    # polls the same API, or worker A's live render will be reclaimed out from
+    # under it by worker B's poll. The timeout sweep runs either way.
+    render_clip_single_consumer: bool = _bool_from_env("RENDER_CLIP_SINGLE_CONSUMER", True)
+    # How long a render_clip job may sit on "queued" with nobody claiming it
+    # before it is failed. Waiting is not free: "queued" is a non-terminal state
+    # the user cannot retry out of and create_render_clip_job deduplicates
+    # against, so an unclaimed row blocks that clip indefinitely -- in this
+    # deployment's own data one waited 9.76 days. A generous window and a
+    # retryable failure beat an unbounded wait: when the renderer is online a
+    # claim lands within seconds, so anything past this really is nobody home.
+    render_clip_queue_timeout_seconds: int = int(
+        os.getenv("RENDER_CLIP_QUEUE_TIMEOUT_SECONDS", "1800")
+    )
+    # Wall-clock ceiling for one demo parse. demoparser2 runs in a child process,
+    # so this bounds a hung parse without taking the worker down with it. Set
+    # generously: a 380MB demo is a legitimate multi-minute parse, and a ceiling
+    # that is too tight turns a valid upload into a false failure.
+    parse_timeout_seconds: int = int(os.getenv("PARSE_TIMEOUT_SECONDS", "1200"))
+    # Memory cap for that child, applied via RLIMIT_DATA -- not RLIMIT_AS, which
+    # meters reserved address space and would reject a parse that only ever holds
+    # a fraction of it (see app/workers/parse_child.apply_memory_limit). POSIX
+    # only: local Windows development silently skips it, while the worker
+    # container (Linux) enforces it. 0 disables the cap entirely.
+    parse_memory_limit_bytes: int = int(
+        os.getenv("PARSE_MEMORY_LIMIT_BYTES", str(4 * 1024 * 1024 * 1024))
+    )
+    # How long a consumer's claim on an in-flight message stays valid without a
+    # renewal. Once it expires any other worker may return that consumer's
+    # in-flight messages to the queue.
+    parse_lease_ttl_seconds: int = int(os.getenv("PARSE_LEASE_TTL_SECONDS", "60"))
+    # Renewal cadence. Must stay well below the TTL so a slow tick is not
+    # mistaken for a dead worker -- at the default this tolerates 3 misses.
+    parse_lease_renew_seconds: int = int(os.getenv("PARSE_LEASE_RENEW_SECONDS", "15"))
+    # Age at which the database reconciliation pass treats a parse job stuck on
+    # "processing" as an orphan. This is the backstop for the case Redis cannot
+    # cover (it has no persistence here, so a restart drops every lease), which
+    # is why it must stay above parse_timeout_seconds: reclaiming a parse that is
+    # still legitimately running would parse the same demo twice.
+    parse_reclaim_after_seconds: int = int(os.getenv("PARSE_RECLAIM_AFTER_SECONDS", "1800"))
+    # A queued job that no worker ever picked up is just as stuck. Re-dispatching
+    # is safe at any age because claim_parse_job is a compare-and-set, so a
+    # duplicate delivery is a no-op.
+    parse_redispatch_after_seconds: int = int(
+        os.getenv("PARSE_REDISPATCH_AFTER_SECONDS", "300")
+    )
+    # A demo that crashes the parser every time would otherwise be requeued
+    # forever. After this many claims it is failed for good, which also makes the
+    # UI retry button available again.
+    parse_max_attempts: int = int(os.getenv("PARSE_MAX_ATTEMPTS", "3"))
     cors_origins_raw: str = os.getenv(
         "CORS_ORIGINS",
         "http://localhost:3000,http://127.0.0.1:3000",
@@ -371,6 +426,48 @@ class Settings:
         if self.auth_mode == "production":
             self._validate_production_render_worker_token()
         self._validate_artifact_storage_configuration()
+        self._validate_parse_queue_configuration()
+        if self.render_clip_queue_timeout_seconds <= 0:
+            raise RuntimeError("RENDER_CLIP_QUEUE_TIMEOUT_SECONDS must be a positive integer")
+
+    def _validate_parse_queue_configuration(self) -> None:
+        positive = {
+            "PARSE_TIMEOUT_SECONDS": self.parse_timeout_seconds,
+            "PARSE_LEASE_TTL_SECONDS": self.parse_lease_ttl_seconds,
+            "PARSE_LEASE_RENEW_SECONDS": self.parse_lease_renew_seconds,
+            "PARSE_RECLAIM_AFTER_SECONDS": self.parse_reclaim_after_seconds,
+            "PARSE_REDISPATCH_AFTER_SECONDS": self.parse_redispatch_after_seconds,
+            "PARSE_MAX_ATTEMPTS": self.parse_max_attempts,
+        }
+        for name, value in positive.items():
+            if value <= 0:
+                raise RuntimeError(f"{name} must be a positive integer")
+        if self.parse_memory_limit_bytes < 0:
+            raise RuntimeError("PARSE_MEMORY_LIMIT_BYTES must not be negative")
+        # 0 disables the cap. Anything above that has to leave room for the
+        # interpreter and the parser's native dependencies to even load: a
+        # 400 MB ceiling kills the child during `import` with an OpenBLAS
+        # allocation failure, which looks nothing like "this demo was too big"
+        # and turns every parse into an unexplained failure. A real 386 MB demo
+        # peaks near 1 GiB resident, so a ceiling under that cannot be meant.
+        if 0 < self.parse_memory_limit_bytes < MINIMUM_PARSE_MEMORY_LIMIT_BYTES:
+            raise RuntimeError(
+                "PARSE_MEMORY_LIMIT_BYTES must be 0 (no limit) or at least "
+                f"{MINIMUM_PARSE_MEMORY_LIMIT_BYTES} bytes"
+            )
+        if self.parse_lease_renew_seconds >= self.parse_lease_ttl_seconds:
+            raise RuntimeError(
+                "PARSE_LEASE_RENEW_SECONDS must be smaller than PARSE_LEASE_TTL_SECONDS"
+            )
+        # The one invariant that fails silently rather than loudly: a reclaim
+        # window at or below the parse timeout means the reconciliation pass can
+        # requeue a parse that is still running, and the same demo gets parsed
+        # twice. Refuse to start rather than let an environment override
+        # reintroduce that.
+        if self.parse_reclaim_after_seconds <= self.parse_timeout_seconds:
+            raise RuntimeError(
+                "PARSE_RECLAIM_AFTER_SECONDS must be greater than PARSE_TIMEOUT_SECONDS"
+            )
 
     def _validate_artifact_storage_configuration(self) -> None:
         if self.artifact_storage_backend not in SUPPORTED_ARTIFACT_STORAGE_BACKENDS:

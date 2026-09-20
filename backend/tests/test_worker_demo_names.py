@@ -54,7 +54,7 @@ class WorkerDemoNameTest(unittest.TestCase):
             job = db.query(DemoJob).filter(DemoJob.demo_id == demo_id).one()
             self.assertEqual(demo.name, "xelex-nuke.dem")
             self.assertEqual(demo.original_filename, "xelex-nuke.dem")
-            with patch("app.workers.worker.parse_demo_file", return_value=parsed_match()):
+            with patch("app.workers.worker.run_parse_subprocess", return_value=parsed_match()):
                 process_real_parse_job(db, demo, job)
             db.refresh(demo)
             self.assertEqual(demo.status, "completed")
@@ -74,7 +74,7 @@ class WorkerDemoNameTest(unittest.TestCase):
                             self.assertEqual(service.get_demo(demo_id).status, phase)
                             service.update_demo(demo_id, name=new_name)
 
-                def parse(_path):
+                def parse(_path, **_kwargs):
                     rename_if_phase("parsing")
                     return parsed_match()
 
@@ -85,7 +85,9 @@ class WorkerDemoNameTest(unittest.TestCase):
                 with self.Session() as worker_db:
                     demo = worker_db.get(Demo, demo_id)
                     job = worker_db.query(DemoJob).filter(DemoJob.demo_id == demo_id).one()
-                    with patch("app.workers.worker.parse_demo_file", side_effect=parse), patch(
+                    with patch(
+                        "app.workers.worker.run_parse_subprocess", side_effect=parse
+                    ), patch(
                         "app.workers.worker.analyze_replay", side_effect=analyze,
                     ):
                         process_real_parse_job(worker_db, demo, job)

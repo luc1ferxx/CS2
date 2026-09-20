@@ -167,12 +167,13 @@ Production 启动会 fail closed 地要求：显式 identity provider、HTTPS + 
 
 - **规则阈值的实际有效性未经真人验证。** 水平距离已统一为 world units，同一阈值在各图代表同样的真实距离；但阈值取值本身仍来自 Dust2 手调，没有人验证过这些建议是否真的有用。未支持的地图只能按单场比赛的站位范围推出尺度，approximate 地图的 bounds 也是手估的。
 - **自动 Demo 下载端到端不可用。** Valve 没有公开个人比赛 Demo 下载接口，仓库也没有正式许可 Provider，`demo_source_provider_from_settings` 只能返回 disabled provider。下载器、并发限额与 import service 的下游分支已实现并有测试，但在本 build 中无法到达。手动 `.dem` 上传是唯一可靠入口。
-- **任务恢复不完整。** worker 是裸 `brpop` 循环，没有 reaper、没有 dispatch 幂等保护；进程被 SIGKILL 时在途任务会静默丢失。Steam import 路径可在 30 秒 dispatch marker 过期后手动重排，worker CAS 可防重复执行，但自动 durable recovery、stale-processing recovery 和 terminal reconciliation 仍是 future work。
+- **解析仍是单 worker 串行；恢复是自动的，但有分钟级延迟。** 队列已从裸 `brpop` 换成 `BRPOPLPUSH` + 每消费者 processing list + 60 秒租约：worker 被 SIGKILL 后在途消息不再消失，由下一个 worker 的 reaper 推回队列并把 DB 行一并翻回 `queued`（本地实测 67 秒内自动跑到 `completed`，全程不需要手动改库）。Redis 没有持久化，所以真正的兜底是 DB 对账——超期的 `processing` 行被回收，`queued` 却没有对应消息的行被重新投递，累计 `PARSE_MAX_ATTEMPTS` 次仍失败则落 `failed` + `PARSE_ABANDONED`，此时重试按钮恢复可用。解析本身跑在子进程里（默认 20 分钟超时、4 GB `RLIMIT_DATA`），`demoparser2` 的原生崩溃只损失当前这个 demo，不再带走 worker。**但队列语义只是让多 worker 并存变得安全，compose 仍然只跑 1 个 worker、单线程逐个解析**：一个大 demo 解析期间其它任务照旧排队——横向扩容条件已具备，本轮未开启。恢复延迟的下界是租约 TTL（60 秒）；Redis 整体丢失时退化到 `PARSE_RECLAIM_AFTER_SECONDS`（默认 30 分钟）。
 - **CI 不解析真实 `.dem`。** `backend/tests/test_demo_parser.py` 在 `demoparser2` 库边界打桩；真实文件校验只在可选的 `SAMPLE_DEMO_PATH` smoke 里，不在 CI 门禁内。
 - `/health` 在 DB 和 Redis 全挂时仍返回 HTTP 200（body 为 `status: degraded`），编排器探针看不到失败。
 - Parser frame 是采样数据，不是完整 tick density；`demoparser2` 对不同 demo 的 event family 与字段可用性不稳定，bomb/utility events 是 best-effort，缺失时相关 count、quick jump 或 event-backed 规则可能为空。
 - 没有经济、装备快照、line-of-sight、utility trajectory 等高级战术上下文。
 - Render clip 只验收过本机单台 Windows worker 上的 xelex 片段；其它地图、Demo/游戏版本兼容性与生产 GPU 集群未验收。
+- **无人认领的 render clip 按挂钟超时，不看渲染机死活。** 队列上没有 worker 认领的短片任务在 `RENDER_CLIP_QUEUE_TIMEOUT_SECONDS`（默认 30 分钟）后落 `failed` + `RENDER_QUEUE_TIMED_OUT`，用户可以直接重试——在此之前它停在 `queued`，而 `queued` 既不可重试、又会被去重逻辑原样交回，是个用户无法自救的死胡同。判定只用等待时长，**不查 `render_worker` 心跳**：渲染机在线但连续 30 分钟排不上队的话，排队中的任务同样会被判死（重试即可，不丢数据）。阈值必须大于最长的一次正常渲染排队时间。
 - Ingestion snapshot、diagnostics 和 regression fixtures 是 compact QA aid，不是生产 telemetry、日志平台或 parser trace storage。
 - Steam OpenID 的真实 HTTPS callback、publisher-key 资格、Game Authentication Code 行为与限流仍需一次真实部署 smoke。
 

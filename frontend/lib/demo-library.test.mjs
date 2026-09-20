@@ -47,6 +47,7 @@ const {
   parseFailureReason,
   playbackReadiness,
   renderStatusLabel,
+  replayUnavailableNotice,
   shouldPollLibrary
 } = loadTypeScriptModule("./demo-library.ts");
 
@@ -454,6 +455,89 @@ const demos = [
 
   assert.equal(labels.Parser, "INVALID_DEMO");
   assert.equal(labels.Media, "replay unavailable");
+}
+
+{
+  // A completed demo whose replay artifact went missing must never be told it
+  // is "still preparing" -- the parse already ended, so nothing will arrive.
+  const artifactGone = demoStatus({
+    status: "completed",
+    ingestion: ingestion({
+      phase: "ready",
+      retryable: true,
+      attemptCount: 1,
+      failure: {
+        errorCode: "REPLAY_ARTIFACT_MISSING",
+        message: "Replay data for this demo is no longer readable. Re-parse the demo to rebuild it.",
+        failedAt: null,
+        updatedAt: "2026-05-08T00:04:00Z",
+        retryable: true,
+        attemptCount: 1
+      }
+    })
+  });
+  const notice = replayUnavailableNotice(artifactGone);
+  assert.equal(notice.retryable, true, "the reported reason comes with the action that fixes it");
+  assert.match(notice.message, /回放暂时无法打开。/);
+  assert.match(notice.message, /REPLAY_ARTIFACT_MISSING/);
+  assert.doesNotMatch(notice.message, /正在准备回放/);
+
+  // Same state, but the source demo is gone too: say why, offer nothing.
+  const unrecoverable = replayUnavailableNotice(demoStatus({
+    status: "completed",
+    ingestion: ingestion({
+      phase: "ready",
+      retryable: false,
+      failure: { ...artifactGone.ingestion.failure, retryable: false }
+    })
+  }));
+  assert.equal(unrecoverable.retryable, false);
+  assert.match(unrecoverable.message, /REPLAY_ARTIFACT_MISSING/);
+
+  assert.deepEqual(
+    normalize(replayUnavailableNotice(demoStatus({ status: "parsing", ingestion: ingestion({ phase: "parsing" }) }))),
+    { message: "正在准备回放，完成后会自动显示。", retryable: false },
+    "a demo still being ingested is genuinely still preparing"
+  );
+  assert.deepEqual(
+    normalize(replayUnavailableNotice(null)),
+    { message: "正在准备回放，完成后会自动显示。", retryable: false },
+    "before the first status lands there is nothing to report"
+  );
+
+  const failed = replayUnavailableNotice(demoStatus({
+    status: "failed",
+    ingestion: ingestion({
+      phase: "failed",
+      retryable: true,
+      failure: {
+        errorCode: "PARSER_FAILED",
+        message: "Parser timed out while reading demo",
+        failedAt: "2026-05-08T00:03:00Z",
+        updatedAt: "2026-05-08T00:04:00Z",
+        retryable: true,
+        attemptCount: 2
+      }
+    })
+  }));
+  assert.equal(failed.retryable, true);
+  assert.match(failed.message, /^比赛处理失败。PARSER_FAILED: /);
+
+  // A completed demo the backend reports as healthy is mid-fetch, not broken:
+  // claiming otherwise flashed a false failure on every cold page load.
+  const inFlight = normalize(replayUnavailableNotice(demoStatus({ status: "completed" })));
+  assert.deepEqual(inFlight, { message: "正在准备回放，完成后会自动显示。", retryable: false },
+    "the replay fetch has not settled yet, so nothing is known to be wrong");
+
+  const fetchFailed = normalize(replayUnavailableNotice(demoStatus({ status: "completed" }), true));
+  assert.deepEqual(fetchFailed, { message: "回放暂时无法打开，请刷新页面重试。", retryable: false },
+    "once the caller's fetch has actually failed, say so and offer the reload");
+
+  // The backend's verdict outranks the caller's: a missing artifact still names
+  // the reason and offers the re-parse, not a pointless refresh.
+  const failedFetchWithReason = replayUnavailableNotice(artifactGone, true);
+  assert.match(failedFetchWithReason.message, /REPLAY_ARTIFACT_MISSING/);
+  assert.equal(failedFetchWithReason.retryable, true);
 }
 
 function demo(overrides) {

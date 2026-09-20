@@ -550,6 +550,14 @@ class AuthOwnerBoundaryApiTest(unittest.TestCase):
                 status="completed",
             )
             completed_accepted = accept_source_artifact(db, completed)
+            # A readable replay is what makes this demo healthy, and healthy is
+            # the state under test. Without one it is a completed demo whose
+            # replay is gone -- which is now a retryable state, not a rejected one.
+            completed.replay_storage_key = DemoService(db, owner_id=OWNER_A).write_replay_blob(
+                completed.id,
+                replay_contract(completed.id),
+            )
+            db.commit()
             missing_source = add_demo(
                 db,
                 "demo-owner-a-missing-source",

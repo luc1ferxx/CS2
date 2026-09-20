@@ -202,16 +202,45 @@ class CSDMAdapterTest(unittest.TestCase):
         self.assertEqual(client.results[0]["status"], "failed")
 
     @patch("adapters.csdm.assert_game_not_running")
-    def test_stale_workspace_cannot_publish_old_mp4(self, _game):
-        output = self.root / "work" / "jobs" / "clip-1" / "output"
-        output.mkdir(parents=True)
-        (output / "sequence-1-tick-640-to-1920.mp4").write_bytes(b"old")
+    def test_retry_of_same_job_id_clears_the_previous_attempt(self, _game):
+        # A retried or reclaimed job keeps its id, so its workspace already
+        # exists. The old clip must not be published, and the leftover source
+        # must not stop the attempt before it starts.
+        workspace = self.root / "work" / "jobs" / "clip-1"
+        (workspace / "output").mkdir(parents=True)
+        (workspace / "output" / "sequence-1-tick-640-to-1920.mp4").write_bytes(b"old")
+        (workspace / "source.dem").write_bytes(b"stale source")
+        client = Client()
+
+        def command(args, log, timeout, env=None):
+            if "video" in args:
+                output = Path(args[args.index("--output") + 1]) / "csdm-video-id"
+                output.mkdir()
+                (output / "sequence-1-tick-640-to-1920.mp4").write_bytes(b"test media")
+
+        with patch("adapters.csdm.run_command", side_effect=command), patch(
+            "adapters.csdm.subprocess.run", return_value=SimpleNamespace(stdout=json.dumps(probe_report()).encode())
+        ):
+            result = self.adapter.process(manifest(), client)
+        self.assertEqual(result.action, "completed")
+        self.assertEqual(len(client.downloads), 1, "The previous attempt's source must not block the download")
+        self.assertEqual(client.downloads[0].read_bytes(), b"demo")
+        self.assertEqual(len(client.uploads), 1)
+        self.assertEqual(client.uploads[0].read_bytes(), b"test media", "The old clip must never be published")
+
+    @patch("adapters.csdm.assert_game_not_running")
+    def test_workspace_that_is_not_a_directory_is_never_cleared(self, _game):
+        # Only a directory left by a previous attempt may be removed; anything
+        # else here could lead deletion outside WORK_DIR.
+        workspace = self.root / "work" / "jobs" / "clip-1"
+        workspace.parent.mkdir(parents=True)
+        workspace.write_bytes(b"not a workspace")
         client = Client()
         result = self.adapter.process(manifest(), client)
         self.assertEqual(result.action, "failed")
         self.assertEqual(client.downloads, [])
         self.assertEqual(client.uploads, [])
-        self.assertEqual((output / "sequence-1-tick-640-to-1920.mp4").read_bytes(), b"old")
+        self.assertEqual(workspace.read_bytes(), b"not a workspace")
 
     def test_missing_configuration_does_not_claim_job(self):
         config = RunnerConfig("http://api.test", "token", self.root, 5, adapter="csdm")

@@ -1,3 +1,4 @@
+import logging
 import secrets
 from typing import Any
 
@@ -25,9 +26,16 @@ from app.schemas.demo import (
     ReplayVideoStatus,
     VideoCalibrationUpdate,
 )
-from app.services.demo_service import DemoDispatchError, DemoService
+from app.services.demo_service import (
+    RENDER_CLIP_IDLE_RECLAIM_SECONDS,
+    DemoDispatchError,
+    DemoService,
+    ReplayBlobUnavailableError,
+)
 from app.services.diagnostics import render_worker_availability, write_render_worker_heartbeat
 from app.services.upload_service import DemoUploadValidationError, store_video_artifact
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["demos"])
 
@@ -48,6 +56,28 @@ def require_render_worker_token(
         write_render_worker_heartbeat(redis_client)
     except Exception:
         pass
+
+
+def _reclaim_orphaned_render_clip_jobs(service: DemoService) -> None:
+    """Free jobs a dead render worker left on "rendering" before handing out work.
+
+    The caller of this route is a render worker asking for something to do, so
+    it is not rendering anything right now. With a single consumer that makes
+    every "rendering" row an orphan, and the request itself is the proof -- no
+    heartbeat lookup needed. RENDER_CLIP_IDLE_RECLAIM_SECONDS still protects a
+    job claimed moments ago against clock skew.
+
+    Best-effort on purpose: a reclaim that raises must not 500 the poll loop,
+    or one bad row would stall every render on the deployment.
+    """
+    if not settings.render_clip_single_consumer:
+        return
+    try:
+        service.reclaim_stale_render_clip_jobs(
+            older_than_seconds=RENDER_CLIP_IDLE_RECLAIM_SECONDS,
+        )
+    except Exception:
+        logger.exception("Failed to reclaim orphaned render_clip jobs")
 
 
 def render_worker_status_response(db: Session, redis_client: Any) -> RenderWorkerStatus:
@@ -271,9 +301,10 @@ def create_render_clip_job(
 
     try:
         job = service.create_render_clip_job(demo, request)
+    except ReplayBlobUnavailableError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except ValueError as exc:
-        status_code = 409 if "Replay blob" in str(exc) else 400
-        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     job_status = service.render_job_status(job)
     return render_job_created_response(
@@ -281,6 +312,36 @@ def create_render_clip_job(
         ReplayVideoStatus.model_validate(service.public_video_status(demo)),
         # The job is durable and stays queued either way, but the caller should
         # learn immediately that nothing will pick it up yet.
+        render_worker_status_response(db, redis_client),
+    )
+
+
+@router.post("/demos/{demo_id}/render/jobs/{job_id}/retry", response_model=RenderJobCreated)
+def retry_render_clip_job(
+    demo_id: str,
+    job_id: str,
+    db: Session = Depends(get_db),
+    redis_client: Any = Depends(get_redis_client),
+    owner_id: str = Depends(get_current_owner_id),
+) -> RenderJobCreated:
+    service = DemoService(db, owner_id=owner_id)
+    demo = service.get_demo(demo_id)
+    if demo is None:
+        raise HTTPException(status_code=404, detail="Demo not found")
+
+    try:
+        job = service.retry_render_clip_job(demo, job_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if job is None:
+        raise HTTPException(status_code=404, detail="Render job not found")
+
+    job_status = service.render_job_status(job)
+    return render_job_created_response(
+        job_status,
+        ReplayVideoStatus.model_validate(service.public_video_status(demo)),
+        # Same as creating a job: the row is durable, but the caller should
+        # learn immediately whether anything is around to pick it up.
         render_worker_status_response(db, redis_client),
     )
 
@@ -320,6 +381,7 @@ def get_next_render_worker_manifest(
     db: Session = Depends(get_db),
 ) -> RenderJobManifest | Response:
     service = DemoService.for_internal(db)
+    _reclaim_orphaned_render_clip_jobs(service)
     job = service.next_render_clip_job()
     if job is None:
         return Response(status_code=204)

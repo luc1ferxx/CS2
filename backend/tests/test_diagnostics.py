@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from fixtures.fake_redis import FakeRedis
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -18,6 +19,7 @@ from app.core.database import Base, get_db
 from app.models import Demo, DemoJob
 from app.services import diagnostics as diagnostics_service
 from app.services.demo_service import DemoService
+from app.workers.queue import ParseQueue
 
 
 class DiagnosticsEndpointTest(unittest.TestCase):
@@ -124,6 +126,8 @@ class DiagnosticsEndpointTest(unittest.TestCase):
         self.assertTrue(body["dependencies"]["storage"]["ok"])
         self.assertEqual(body["worker"]["queueName"], "cs2-demo-jobs")
         self.assertTrue(body["worker"]["heartbeat"]["alive"])
+        self.assertEqual(body["worker"]["queueLength"], 0)
+        self.assertEqual(body["worker"]["inFlight"], 0)
         self.assertEqual(body["jobs"]["counts"]["real_parse"]["failed"], 1)
         self.assertEqual(body["jobs"]["counts"]["mock_parse"]["completed"], 1)
         self.assertEqual(body["jobs"]["recentFailures"][0]["errorCode"], "INVALID_DEMO")
@@ -174,6 +178,29 @@ class DiagnosticsEndpointTest(unittest.TestCase):
         self.assertTrue(heartbeat["alive"])
         self.assertEqual(heartbeat["ageSeconds"], 10)
         self.assertEqual(heartbeat["lastSeenAt"], now.isoformat())
+
+    def test_in_flight_counts_work_a_worker_has_taken_but_not_finished(self) -> None:
+        # queueLength alone stopped telling the whole story once reserving a
+        # message moved it onto a processing list: the queue reads empty while a
+        # worker is still holding the job.
+        self.redis.lpush(settings.redis_queue_name, json.dumps({"job_id": "j-1"}))
+        queue = ParseQueue(
+            self.redis,
+            queue_name=settings.redis_queue_name,
+            consumer_id="worker-a",
+            lease_ttl_seconds=60,
+        )
+        queue.register()
+        payload = queue.reserve(timeout=1)
+
+        response = self.client.get("/diagnostics")
+
+        worker = response.json()["worker"]
+        self.assertEqual(worker["queueLength"], 0)
+        self.assertEqual(worker["inFlight"], 1)
+
+        queue.release(str(payload))
+        self.assertEqual(self.client.get("/diagnostics").json()["worker"]["inFlight"], 0)
 
     def test_render_worker_heartbeat_can_be_written_and_read(self) -> None:
         now = datetime(2026, 5, 12, 10, 0, tzinfo=UTC)
@@ -255,6 +282,24 @@ class DiagnosticsEndpointTest(unittest.TestCase):
         self.assertEqual(availability["status"], "offline")
         self.assertFalse(availability["busyRendering"])
 
+    def test_a_reclaimed_render_job_does_not_fake_worker_liveness(self) -> None:
+        now = datetime(2026, 5, 12, 10, 0, tzinfo=UTC)
+        with self.Session() as db:
+            demo = add_demo(db, "demo-reclaimed", status="completed")
+            job = add_job(db, demo.id, "render_clip", "queued")
+            # Exactly the shape reclaim_stale_render_clip_jobs leaves behind:
+            # back in the queue with the dead worker's claim stamp cleared.
+            job.started_at = None
+            db.commit()
+
+            availability = self.availability(db, now)
+
+        # Reclaiming must not invent liveness. The job is waiting for a worker,
+        # which is the opposite of proof that one is there.
+        self.assertFalse(availability["connected"])
+        self.assertFalse(availability["busyRendering"])
+        self.assertEqual(availability["status"], "never_seen")
+
     def test_render_worker_availability_is_not_required_in_fallback_mode(self) -> None:
         now = datetime(2026, 5, 12, 10, 0, tzinfo=UTC)
         original_mode = settings.render_worker_mode
@@ -320,23 +365,6 @@ class DiagnosticsEndpointTest(unittest.TestCase):
             body = main.health()
 
         self.assertEqual(body, {"status": "ok"})
-
-
-class FakeRedis:
-    def __init__(self) -> None:
-        self.values: dict[str, str] = {}
-
-    def ping(self) -> bool:
-        return True
-
-    def llen(self, _: str) -> int:
-        return 0
-
-    def get(self, key: str) -> str | None:
-        return self.values.get(key)
-
-    def setex(self, key: str, _: int, value: str) -> None:
-        self.values[key] = value
 
 
 class BrokenRedis:

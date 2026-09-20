@@ -157,7 +157,7 @@ function operatorState(
 
   return {
     label: "Mock shell active",
-    nextAction: "Generate Clip creates a render_clip job for a worker/operator to complete.",
+    nextAction: "The replay's 生成这一刻的视频 button creates a render_clip job for a worker/operator to complete.",
     tone: "idle"
   } as const;
 }

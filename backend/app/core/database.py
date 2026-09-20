@@ -227,3 +227,22 @@ def ensure_schema_backfills() -> None:
             connection.execute(
                 text("ALTER TABLE demo_jobs ADD COLUMN metadata_json TEXT DEFAULT '{}' NOT NULL")
             )
+    if "queued_at" not in job_column_names:
+        # demo_jobs is created by Base.metadata.create_all, which runs after the
+        # versioned migrations in init_db() and would not see an ALTER from one.
+        # This is the mechanism for adding a column to a create_all-managed
+        # table, as the demos backfills above already do.
+        timestamp_type = (
+            "TIMESTAMP WITH TIME ZONE"
+            if engine.dialect.name == "postgresql"
+            else "TIMESTAMP"
+        )
+        with engine.begin() as connection:
+            connection.execute(
+                text(f"ALTER TABLE demo_jobs ADD COLUMN queued_at {timestamp_type}")
+            )
+            # Nothing has requeued these rows since the column did not exist, so
+            # created_at is exactly when each of them entered the queue.
+            connection.execute(
+                text("UPDATE demo_jobs SET queued_at = created_at WHERE queued_at IS NULL")
+            )

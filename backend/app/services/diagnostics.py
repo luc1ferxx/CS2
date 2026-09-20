@@ -19,6 +19,7 @@ from app.services.storage import (
     StorageKeyError,
     artifact_store_from_settings,
 )
+from app.workers.queue import count_in_flight
 
 WORKER_HEARTBEAT_KEY = "cs2-demo-coach:worker:heartbeat"
 WORKER_HEARTBEAT_TTL_SECONDS = 120
@@ -339,6 +340,13 @@ def _worker_status(
     except Exception:
         queue_length = None
     try:
+        # queueLength keeps its "waiting to start" meaning. Since messages now
+        # move onto a per-worker processing list on their way out of the queue,
+        # that number alone no longer accounts for everything still owed.
+        in_flight = count_in_flight(redis_client, settings.redis_queue_name)
+    except Exception:
+        in_flight = None
+    try:
         heartbeat = read_worker_heartbeat(redis_client, now=now)
     except Exception:
         heartbeat = {"alive": False, "lastSeenAt": None, "ageSeconds": None}
@@ -346,6 +354,7 @@ def _worker_status(
     return {
         "queueName": settings.redis_queue_name,
         "queueLength": queue_length,
+        "inFlight": in_flight,
         "heartbeat": heartbeat,
         "lastJobActivityAt": _latest_job_transition_at(db) if database_ok else None,
     }

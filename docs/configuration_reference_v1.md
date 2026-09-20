@@ -107,6 +107,20 @@ Production credentials 绝不能进入 `NEXT_PUBLIC_*`、源码、日志、签�
 
 Docker Compose 在容器内使用 service 名（`postgres`、`redis`），面向浏览器则使用 host URL（`NEXT_PUBLIC_API_BASE_URL=http://localhost:8000`）。本地 Compose 必须显式使用 `AUTH_MODE=development`，可以使用 local adapter 以及明确标注为非生产的 Steam 加密 key。
 
+### 解析任务的超时、租约与回收
+
+| Name | Default | Used by |
+| --- | --- | --- |
+| `PARSE_TIMEOUT_SECONDS` | `1200` | worker; 单个解析子进程的挂钟上限，超时按 `PARSE_TIMED_OUT` 落 failed |
+| `PARSE_MEMORY_LIMIT_BYTES` | `4294967296` | worker; 子进程 `RLIMIT_DATA` 上限（仅 POSIX 生效）；`0` 表示不限，其余取值不得低于 2 GiB |
+| `PARSE_LEASE_TTL_SECONDS` | `60` | worker; 租约 TTL，即 worker 猝死后在途消息被其它 worker 回收前的最长等待 |
+| `PARSE_LEASE_RENEW_SECONDS` | `15` | worker; 解析期间续租与写心跳的间隔，必须小于 TTL |
+| `PARSE_RECLAIM_AFTER_SECONDS` | `1800` | worker; DB 对账回收卡住的 `processing` 行的年龄阈值，必须大于 `PARSE_TIMEOUT_SECONDS` |
+| `PARSE_REDISPATCH_AFTER_SECONDS` | `300` | worker; DB 对账重投「行是 `queued` 但队列里没有消息」的年龄阈值 |
+| `PARSE_MAX_ATTEMPTS` | `3` | worker; 回收次数达到上限后落 `failed` + `PARSE_ABANDONED`，用户可重试 |
+
+这几个值互相牵制，`validate_worker_runtime_configuration()` 在启动时强制校验，配错直接 fail closed 而不是等到解析时才暴露：续租间隔必须短于租约 TTL；回收阈值必须**大于**解析超时，否则一次合法的长解析会在跑到一半时被对账判死、同一个 demo 被解析两遍。内存上限用 `RLIMIT_DATA` 而不是 `RLIMIT_AS`——解析一个 386 MB 的 demo 常驻内存峰值约 0.95 GiB，保留地址空间却高达 10.2 GiB（Rust 分配器预留的 arena），拿地址空间当尺子会让子进程在 `import` 阶段就被打死。同理，低于 2 GiB 的上限连解释器和原生依赖都装不下，所以被启动校验拒绝。
+
 ## Artifact storage 与上传上限
 
 | Name | Default | Used by |
@@ -138,6 +152,7 @@ Docker Compose 在容器内使用 service 名（`postgres`、`redis`），面向
 | `MAX_RENDER_CLIP_SECONDS` | `60` | backend API |
 | `RENDER_WORKER_TOKEN` | `dev-render-worker-token` | API, render-worker |
 | `RENDER_WORKER_MODE` | `fallback` | API, worker; `external` 时短片任务保留在队列等待独立 worker 领取 |
+| `RENDER_CLIP_QUEUE_TIMEOUT_SECONDS` | `1800` | worker; 无人认领的 `render_clip` 任务在队列上等待的上限，超时按 `RENDER_QUEUE_TIMED_OUT` 落 failed，用户可重试 |
 | `API_BASE_URL` | `http://localhost:8000` | render-worker runner |
 | `WORK_DIR` | `.render-worker-work` | render-worker runner |
 | `POLL_INTERVAL_SECONDS` | `5` | render-worker runner |

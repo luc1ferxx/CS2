@@ -63,8 +63,22 @@ interface ParseFailureSource {
   error_message: string | null;
 }
 
+interface RetrySource {
+  ingestion: DemoIngestionStatus | null;
+}
+
+// The detail page holds a DemoStatus and the library a DemoSummary; both carry
+// everything this needs, so ask for the fields instead of one of the shapes.
+type ReplayNoticeSource = ParseFailureSource & RetrySource & { status: DemoProcessingStatus };
+
+export interface ReplayUnavailableNotice {
+  message: string;
+  retryable: boolean;
+}
+
 const STATUS_ORDER: DemoProcessingStatus[] = ["queued", "parsing", "analyzing", "completed", "failed"];
 const ACTIVE_DEMO_STATUSES = new Set<DemoProcessingStatus>(["queued", "parsing", "analyzing"]);
+const PREPARING_REPLAY_MESSAGE = "正在准备回放，完成后会自动显示。";
 const ACTIVE_RENDER_STATUSES = new Set(["queued", "processing", "rendering"]);
 const STATUS_LABELS: Record<DemoProcessingStatus, string> = {
   queued: "uploaded",
@@ -254,8 +268,38 @@ export function parseFailureReason(demo: ParseFailureSource): string | null {
   return labels.join(" / ");
 }
 
-export function canRetryParse(demo: DemoSummary): boolean {
+export function canRetryParse(demo: RetrySource): boolean {
   return Boolean(demo.ingestion?.retryable);
+}
+
+// `loadFailed` is the caller's own verdict on its last replay fetch. Status turns
+// "completed" a beat before that fetch resolves, so without it every cold load of
+// a healthy demo flashes a failure the backend never reported.
+export function replayUnavailableNotice(
+  demo: ReplayNoticeSource | null,
+  loadFailed = false
+): ReplayUnavailableNotice {
+  if (!demo || ACTIVE_DEMO_STATUSES.has(demo.status) || demo.ingestion?.active) {
+    return { message: PREPARING_REPLAY_MESSAGE, retryable: false };
+  }
+
+  const retryable = canRetryParse(demo);
+  const reason = parseFailureReason(demo);
+  if (demo.status === "failed") {
+    return { message: `比赛处理失败。${reason ?? "暂时无法加载回放。"}`, retryable };
+  }
+  if (reason) {
+    // The parse already finished, so "正在准备回放" would send the user off to
+    // wait for something that is never coming. A demo whose replay artifact
+    // went missing lands here: say what broke and offer the one fix.
+    return { message: `回放暂时无法打开。${reason}`, retryable };
+  }
+  if (loadFailed) {
+    // Nothing upstream is wrong, so there is no re-parse to offer: the fetch
+    // itself failed and a reload is the honest exit.
+    return { message: "回放暂时无法打开，请刷新页面重试。", retryable };
+  }
+  return { message: PREPARING_REPLAY_MESSAGE, retryable: false };
 }
 
 export function isRenderActiveStatus(status: string | null | undefined): boolean {

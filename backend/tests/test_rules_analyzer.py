@@ -1,7 +1,13 @@
 import unittest
 
 from app.analysis.analyzer import analyze_replay
-from app.analysis.rules import RuleConfig, find_isolated_entries, find_poor_spacing, find_untraded_deaths
+from app.analysis.rules import (
+    ReplayContext,
+    RuleConfig,
+    find_isolated_entries,
+    find_poor_spacing,
+    find_untraded_deaths,
+)
 
 
 class RulesAnalyzerTest(unittest.TestCase):
@@ -741,6 +747,82 @@ class CoachingEvidenceTest(unittest.TestCase):
         event = find_untraded_deaths(replay)[0]
         self.assertEqual(event["structured_context_json"]["relatedEventIds"], ["kill-100"])
         self.assertEqual(event["player_id"], "t-entry")
+
+
+class MalformedRoundRecordTest(unittest.TestCase):
+    """Round records carrying a null where a number or a tick belongs.
+
+    worker.py always normalizes parser output before analyzing, so these cannot
+    arrive from the parser today. What they pin is the contract the three
+    round-number lookups share: a record the index refuses is a record no
+    lookup hands back, and a null tick reads as an absent one rather than
+    reaching int().
+    """
+
+    def replay_with_rounds(self, rounds, *, tick=100):
+        return replay_fixture(
+            kills=[kill(tick, "ct-1", "CT One", "t-entry", "T Entry")],
+            frames=[frame(tick, [
+                player("t-entry", "T Entry", "T", 20, 20),
+                player("t-trade", "T Trade", "T", 60, 60),
+                player("ct-1", "CT One", "CT", 21, 21),
+            ])],
+            rounds=rounds,
+        )
+
+    def test_a_round_with_no_usable_number_is_skipped_by_every_rule(self):
+        replay = self.replay_with_rounds(
+            [{"roundNumber": None, "startTick": 0, "freezeEndTick": 0, "endTick": 640}]
+        )
+
+        context = ReplayContext(replay)
+        self.assertEqual(context.round_by_number, {})
+        self.assertIsNone(context.live_round_at(100))
+        self.assertEqual(analyze_replay(replay), [])
+
+    def test_null_round_ticks_read_as_absent_ones(self):
+        replay = self.replay_with_rounds(
+            [{"roundNumber": 1, "startTick": None, "freezeEndTick": None, "endTick": None}],
+            tick=0,
+        )
+
+        context = ReplayContext(replay)
+        # Every tick field falls back to 0, so tick 0 is the only live tick this
+        # round has -- and it still has no observation window to judge a trade in.
+        self.assertEqual(context.live_round_at(0), 1)
+        self.assertIsNone(context.live_round_at(1))
+        self.assertEqual(find_untraded_deaths(replay), [])
+        # The round number is the one usable field, so the opening-death rule
+        # still fires off it; the trade rule cannot, its window has no end.
+        rule_ids = {event["structured_context_json"]["ruleId"] for event in analyze_replay(replay)}
+        self.assertEqual(rule_ids, {"isolated_entry"})
+
+    def test_a_round_number_taken_off_a_frame_label_need_not_be_indexed(self):
+        replay = self.replay_with_rounds(
+            [{"roundNumber": 1, "startTick": 0, "freezeEndTick": 0, "endTick": 640}],
+            tick=5000,
+        )
+        replay["frames"][0]["roundNumber"] = 9
+        replay["kills"][0]["roundNumber"] = 9
+
+        context = ReplayContext(replay)
+        self.assertEqual(context.round_for_tick(5000, 9), 9)
+        self.assertNotIn(9, context.round_by_number)
+        self.assertEqual(analyze_replay(replay), [])
+
+    def test_a_round_number_a_lookup_returns_is_always_indexed(self):
+        replay = self.replay_with_rounds([
+            {"roundNumber": None, "startTick": 0, "freezeEndTick": 0, "endTick": 200},
+            {"roundNumber": "2", "startTick": 201, "freezeEndTick": 220, "endTick": 400},
+            {"roundNumber": 3, "startTick": None, "endTick": None},
+        ])
+
+        context = ReplayContext(replay)
+        for tick in range(0, 420, 20):
+            with self.subTest(tick=tick):
+                self.assertIn(context.round_for_tick(tick), context.round_by_number)
+                live_round = context.live_round_at(tick)
+                self.assertTrue(live_round is None or live_round in context.round_by_number)
 
 
 if __name__ == "__main__":

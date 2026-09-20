@@ -4,6 +4,7 @@ import json
 import math
 import os
 import re
+import shutil
 import signal
 import subprocess
 from dataclasses import dataclass
@@ -75,6 +76,21 @@ def safe_job_id(value: Any) -> str:
     if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", value):
         raise AdapterConfigError("Invalid render job identifier")
     return value
+
+
+def clear_previous_attempt(workspace: Path) -> None:
+    """Remove the workspace a previous attempt at this job left behind.
+
+    A retried or reclaimed job keeps its id, and the workspace is keyed by that
+    id, so arriving at an existing directory is normal rather than suspicious.
+    Only an ordinary directory is removed: anything else was not left here by a
+    previous attempt, and descending into it could delete files outside WORK_DIR.
+    """
+    if not workspace.exists():
+        return
+    if workspace.is_symlink() or workspace.is_junction() or not workspace.is_dir():
+        raise RenderError("Render job workspace exists but is not an ordinary directory")
+    shutil.rmtree(workspace)
 
 
 def assert_native_capture_workspace_empty(install_dir: Path | None) -> None:
@@ -232,7 +248,10 @@ class CSDMAdapter:
             validate_manifest(manifest)
             self.config.validate()
             assert_game_not_running()
-            # Fresh output avoids attaching an old clip after a failed recording.
+            # Fresh output avoids attaching an old clip after a failed recording,
+            # and lets a retry of this same job id start over instead of failing
+            # on its own leftovers.
+            clear_previous_attempt(workspace)
             workspace.mkdir(parents=True, exist_ok=False)
             created_workspace = True
             output.mkdir()

@@ -1,4 +1,3 @@
-import io
 import json
 import tempfile
 import types
@@ -7,16 +6,14 @@ from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import patch
 
+from fixtures.demo_jobs import add_demo_with_job, bind_source_artifact
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from app.core.config import settings
 from app.core.database import Base
-from app.models import Demo, DemoJob
 from app.parser.demo_parser import DemoParserError, parse_demo_file
 from app.parser.normalizer import normalize_parser_output
-from app.services.artifact_intake import ArtifactIntakeService
-from app.services.demo_service import DemoService
 from app.workers.worker import fail_job, process_mock_parse_job, process_real_parse_job
 
 
@@ -215,7 +212,7 @@ class ParserWorkerReliabilityTest(unittest.TestCase):
                 bind_source_artifact(db, failed_demo, failed_job)
 
                 with patch(
-                    "app.workers.worker.parse_demo_file",
+                    "app.workers.worker.run_parse_subprocess",
                     side_effect=ParserPanic(
                         f"parser panicked while reading {directory}/private/bad.dem\ntraceback..."
                     ),
@@ -254,7 +251,7 @@ class ParserWorkerReliabilityTest(unittest.TestCase):
                 bind_source_artifact(db, demo, job)
 
                 with patch(
-                    "app.workers.worker.parse_demo_file",
+                    "app.workers.worker.run_parse_subprocess",
                     return_value={
                         "mapName": "de_dust2",
                         "tickRate": 64,
@@ -322,60 +319,6 @@ def storage_dirs(root: Path):
         object.__setattr__(settings, "demo_upload_storage_dir", original_upload_dir)
         object.__setattr__(settings, "replay_storage_dir", original_replay_dir)
         object.__setattr__(settings, "video_storage_dir", original_video_dir)
-
-
-def add_demo_with_job(
-    db,
-    demo_id: str,
-    job_type: str,
-    *,
-    source_storage_key: str | None = None,
-) -> tuple[Demo, DemoJob]:
-    demo = Demo(
-        id=demo_id,
-        owner_id=settings.dev_user_id,
-        legacy_user_id=settings.dev_user_id,
-        name=f"Demo {demo_id}",
-        original_filename=f"{demo_id}.dem",
-        source_storage_key=source_storage_key,
-        map_name="unknown",
-        tick_rate=64,
-        round_count=0,
-        coaching_event_count=0,
-        status="queued",
-    )
-    job = DemoJob(
-        id=f"job-{demo_id}",
-        demo_id=demo_id,
-        job_type=job_type,
-        status="queued",
-        attempts=0,
-    )
-    db.add(demo)
-    db.add(job)
-    db.commit()
-    db.refresh(demo)
-    db.refresh(job)
-    return demo, job
-
-
-def bind_source_artifact(db, demo: Demo, job: DemoJob) -> None:
-    service = DemoService.for_internal(db)
-    accepted = ArtifactIntakeService(service.artifact_store).intake_demo(
-        owner_id=demo.owner_id,
-        demo_id=demo.id,
-        filename=demo.original_filename,
-        content_type="application/octet-stream",
-        stream=io.BytesIO(b"HL2DEMO\x00parser-worker-fixture"),
-    )
-    demo.source_storage_key = accepted.reference
-    job.metadata_json = json.dumps(
-        {"phase": "uploaded", "sourceArtifact": accepted.as_snapshot()},
-        separators=(",", ":"),
-    )
-    db.commit()
-    db.refresh(demo)
-    db.refresh(job)
 
 
 if __name__ == "__main__":

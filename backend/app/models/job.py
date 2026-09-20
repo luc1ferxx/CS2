@@ -23,5 +23,15 @@ class DemoJob(Base):
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    # When this row last entered "queued" -- which is NOT created_at. A requeue
+    # (reclaim, or a person clicking retry) reuses the row and leaves created_at
+    # on the original creation, so a sweep that aged a queued row by created_at
+    # would judge every retried clip by how old the clip is rather than by how
+    # long it has been waiting, and kill the retry before a worker could claim
+    # it. Every DemoJob is created "queued", so the default covers new rows and
+    # only the requeue paths have to restamp it.
+    queued_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=True
+    )
 
     demo = relationship("Demo", back_populates="jobs")

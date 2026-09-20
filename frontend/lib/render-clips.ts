@@ -69,6 +69,17 @@ export function clipIsActive(job: RenderJobStatus | null | undefined): boolean {
   return job?.status === "queued" || job?.status === "rendering" || job?.status === "processing";
 }
 
+export type ClipRequestAction = "play" | "wait" | "retry" | "create";
+
+export function clipRequestAction(existing: RenderJobStatus | null | undefined): ClipRequestAction {
+  if (playableClipVideo(existing)) return "play";
+  if (clipIsActive(existing)) return "wait";
+  // A failed row is requeued rather than left behind next to a second job for
+  // the same clip. Anything else -- no job at all, or a completed one whose
+  // output went missing -- has nothing to put back on the queue.
+  return existing?.status === "failed" ? "retry" : "create";
+}
+
 export function matchingClipJob(jobs: RenderJobStatus[], request: RenderClipRequest): RenderJobStatus | null {
   const playerId = request.povSteamId || request.playerId;
   if (!playerId) return null;

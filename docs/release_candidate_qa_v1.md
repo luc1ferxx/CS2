@@ -22,7 +22,7 @@ RC QA validates that the demo-first review flow still works:
 - No password/account-management system, provider-specific SDK, billing, or team collaboration.
 - No real CS2, Steam, OBS, ffmpeg, screen recording, or local game-client control in API/worker containers.
 - No object-storage migration or production media durability work.
-- No automatic durable queue recovery, stale-processing reconciliation, parser resource sandbox, production observability, or backup/restore implementation. Steam import has only its focused manual queued-job requeue and duplicate-execution CAS; the account schema has only its focused forward-only migration.
+- No production observability or backup/restore implementation, and no CPU/disk/network sandbox around the parser beyond its child-process isolation, wall-clock ceiling, and memory cap. Automatic durable queue recovery and stale-processing reconciliation are implemented and are bounded by the lease TTL rather than immediate; Steam import still has only its focused manual queued-job requeue and duplicate-execution CAS, and the account schema has only its focused forward-only migration.
 - No checked-in `.dem`, video, replay blob, parser dump, or generated media artifacts.
 
 ## Required Local RC Checklist
@@ -186,7 +186,7 @@ Open `/dashboard` in the target frontend and verify:
 - Tactical map syncs with timeline/replay, and map calibration/fallback is visible.
 - Timeline parser and coaching markers click-to-seek.
 - Coaching severity/rule/search filters and event cards work.
-- `Generate Clip` creates a `render_clip` job, and local no-GPU fallback appears as `GPU worker not connected for render_clip`.
+- The replay's `生成这一刻的视频` button (and a coaching card's `生成视频`) creates a `render_clip` job. In `fallback` render-worker mode a local no-GPU run appears as `GPU worker not connected for render_clip`; in `external` mode an offline renderer instead shows as `render_worker.connected=false`, with the job left `queued` until `RENDER_CLIP_QUEUE_TIMEOUT_SECONDS` (default 30 min) elapses, after which the worker's queue sweep fails it as `RENDER_QUEUE_TIMED_OUT` so the retry button becomes usable.
 - `RenderOperatorPanel` shows latest job status, tick range, output, and compact errors.
 - The private `/demos/{demo_id}/media/video` source uses the session cookie, supports seek via `206`, and never falls back to `/media/videos/...`; missing/denied media preserves the synchronized 2D/mock shell.
 - Desktop and mobile widths do not show incoherent horizontal overflow, clipped controls, or current console errors.

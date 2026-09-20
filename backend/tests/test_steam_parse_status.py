@@ -215,10 +215,10 @@ class SteamParseStatusTest(unittest.TestCase):
             service = DemoService.for_internal(db, artifact_store=self.store)
             self.assertTrue(service.claim_parse_job(demo, job))
 
-            with patch("app.workers.worker.parse_demo_file") as parse_demo:
+            with patch("app.workers.worker.run_parse_subprocess") as run_parse:
                 process_real_parse_job(db, demo, job)
 
-            parse_demo.assert_not_called()
+            run_parse.assert_not_called()
             db.refresh(job)
             db.refresh(match)
             self.assertEqual(job.status, "processing")

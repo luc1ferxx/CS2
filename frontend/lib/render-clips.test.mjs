@@ -25,7 +25,7 @@ function load(path, imports = {}) {
 }
 
 const helpers = load("./render-clips.ts");
-const { playableClipVideo, matchingClipJob, clipsForPlayer, buildEventClipRequest, buildTickClipRequest, retainSelectedClip, reviewVideo } = helpers;
+const { playableClipVideo, matchingClipJob, clipRequestAction, clipsForPlayer, buildEventClipRequest, buildTickClipRequest, retainSelectedClip, reviewVideo } = helpers;
 const xelex = "76561198998266210";
 const request = { playerId: xelex, tickStart: 5000, tickEnd: 7560, tickRate: 64, renderPreset: "event_clip_v1" };
 const ready = {
@@ -66,6 +66,21 @@ assert.equal(matchingClipJob([{
   ...ready, tick_start: null, tick_end: null, tick_rate: null, pov_steam_id: null, render_preset: null,
   metadata: { povSteamId: xelex, tickStart: 5000, tickEnd: 7560, tickRate: 64, renderPreset: "event_clip_v1" }
 }], request)?.job_id, ready.job_id, "Older jobs can use safe metadata fallback");
+
+// Which call the 生成这一刻的视频 button makes, given whatever job the request
+// already matched. A failed clip is requeued, so the history never grows a
+// second row for footage the user asked for once.
+assert.equal(clipRequestAction(failed), "retry");
+assert.equal(clipRequestAction(ready), "play");
+assert.equal(clipRequestAction(null), "create");
+for (const status of ["queued", "rendering", "processing"]) {
+  assert.equal(clipRequestAction({ ...queued, status }), "wait");
+}
+assert.equal(clipRequestAction(legacy), "create",
+  "A completed job with no usable artifact has nothing to requeue, so it renders afresh");
+assert.equal(clipRequestAction(matchingClipJob([failed], request)), "retry");
+assert.equal(clipRequestAction(matchingClipJob([failed, ready], request)), "play",
+  "A playable clip outranks an older failure for the same footage");
 
 const rounds = [{ roundNumber: 1, startTick: 4800, freezeEndTick: 4900, endTick: 10000 }];
 const replay = { tickRate: 64, video: ready.video, rounds };

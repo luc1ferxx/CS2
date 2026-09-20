@@ -335,6 +335,13 @@ export function createRenderClipJob(
   });
 }
 
+export function retryRenderClipJob(demoId: string, jobId: string): Promise<RenderJobCreated> {
+  return requestJson<RenderJobCreated>(
+    `/demos/${demoId}/render/jobs/${encodeURIComponent(jobId)}/retry`,
+    { method: "POST" }
+  );
+}
+
 export function getRenderJobs(demoId: string): Promise<RenderJobStatus[]> {
   return requestJson<RenderJobStatus[]>(`/demos/${demoId}/render/jobs`);
 }

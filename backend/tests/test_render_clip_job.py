@@ -114,6 +114,34 @@ class RenderClipJobTest(unittest.TestCase):
                 self.assertEqual(db.query(DemoJob).count(), 1)
                 self.assertEqual(len(redis_factory.return_value.payloads), 1)
 
+    def test_retrying_a_failed_clip_redispatches_it_in_fallback_mode(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            with replay_storage_dir(Path(directory)), patch(
+                "app.services.demo_service.get_redis_client", return_value=FakeRedis(),
+            ) as redis_factory:
+                db = self.Session()
+                demo = add_completed_demo(db, "demo-render-retry-dispatch")
+                service = DemoService.for_internal(db)
+                persist_replay(service, demo, replay_contract(demo.id))
+                job = service.create_render_clip_job(
+                    demo,
+                    RenderClipRequest(playerId="player-1", tickStart=640, tickEnd=1280, tickRate=64),
+                )
+                service.fail_render_clip_job(job, "boom", error_code="RENDER_FAILED")
+
+                retried = service.retry_render_clip_job(demo, job.id)
+
+                self.assertIsNotNone(retried)
+                self.assertEqual(retried.id, job.id)
+                self.assertEqual(retried.status, "queued")
+                self.assertEqual(db.query(DemoJob).count(), 1)
+                # Fallback mode is driven by the Redis list rather than by
+                # polling the table, so requeueing the row alone strands it.
+                self.assertEqual(len(redis_factory.return_value.payloads), 2)
+                dispatched = json.loads(redis_factory.return_value.payloads[-1])
+                self.assertEqual(dispatched["job_id"], job.id)
+                self.assertEqual(dispatched["job_type"], "render_clip")
+
     def test_too_long_clip_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             with replay_storage_dir(Path(directory)), patch(
@@ -134,6 +162,9 @@ class RenderClipJobTest(unittest.TestCase):
                 self.assertEqual(db.query(DemoJob).count(), 0)
 
     def test_missing_replay_blob_returns_clear_error(self) -> None:
+        # The demo is "completed", so "not ready" would send the user off to
+        # wait for a parse that already succeeded. Name the real problem and
+        # the one action that fixes it instead.
         with tempfile.TemporaryDirectory() as directory:
             with replay_storage_dir(Path(directory)), patch(
                 "app.services.demo_service.get_redis_client",
@@ -143,7 +174,7 @@ class RenderClipJobTest(unittest.TestCase):
                 demo = add_completed_demo(db, "demo-render-missing-replay")
                 service = DemoService.for_internal(db)
 
-                with self.assertRaisesRegex(ValueError, "Replay blob is not ready"):
+                with self.assertRaisesRegex(ValueError, "Re-parse the demo to rebuild it"):
                     service.create_render_clip_job(
                         demo,
                         RenderClipRequest(tickStart=0, tickEnd=128, tickRate=64),
