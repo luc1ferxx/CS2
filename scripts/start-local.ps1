@@ -43,6 +43,23 @@ function Test-DockerEngine([string]$DockerPath) {
     finally { $probe.Dispose() }
 }
 
+function Invoke-DockerSocketPreflight([switch]$ReportOnly) {
+    # Clear stale AF_UNIX sockets a previous shutdown left under %LOCALAPPDATA%
+    # (and surface the anti-cheat-minifilter cause when a socket is stuck) so
+    # Docker's secrets-engine does not crash on its startup rename. Best-effort:
+    # a failure here must never abort the launch attempt. Only ever runs while
+    # the engine is down. See evict-stale-docker-sockets.ps1 for the full story.
+    $evictScript = Join-Path $PSScriptRoot 'evict-stale-docker-sockets.ps1'
+    if (-not (Test-Path -LiteralPath $evictScript -PathType Leaf)) {
+        Write-Warning "Docker socket preflight script missing: $evictScript"
+        return
+    }
+    try {
+        if ($ReportOnly) { & $evictScript -ReportOnly } else { & $evictScript }
+    }
+    catch { Write-Warning ('Docker socket preflight error: ' + $_.Exception.Message) }
+}
+
 function Invoke-DockerStep([string]$Label, [string[]]$DockerArgs) {
     Write-Host $Label
     & $script:dockerPath @DockerArgs
@@ -90,6 +107,10 @@ try {
     if (-not (Test-DockerEngine $script:dockerPath)) {
         $dockerDesktop = Get-Process -Name 'Docker Desktop' -ErrorAction SilentlyContinue
         if (-not $dockerDesktop) {
+            # Engine down and Docker Desktop not running: clear any stale sockets
+            # from a prior shutdown before the fresh start so the secrets-engine
+            # rename cannot hit Win32 1920 and crash the backend.
+            Invoke-DockerSocketPreflight
             $desktopPath = Join-Path $env:ProgramFiles 'Docker\Docker\Docker Desktop.exe'
             Require-File $desktopPath
             Write-Host 'Starting Docker Desktop...'
@@ -102,7 +123,11 @@ try {
             $engineReady = Test-DockerEngine $script:dockerPath
         } while (-not $engineReady -and [DateTime]::UtcNow -lt $engineDeadline)
         if (-not $engineReady) {
-            throw 'Docker Desktop is open but its engine is unavailable after 120 seconds. Open Docker Desktop and resolve its startup error, then run this launcher again. Do not reset or delete its data.'
+            # Still down after the wait. Docker Desktop is running now, so any
+            # socket present may belong to its backend coming up: report what is
+            # there and the driver status, but delete nothing.
+            Invoke-DockerSocketPreflight -ReportOnly
+            throw 'Docker Desktop is open but its engine is unavailable after 120 seconds. If the preflight above reported stale anti-cheat-blocked sockets, fully quit Docker Desktop (or reboot) and run this launcher again. Do not reset or delete its data.'
         }
     }
 

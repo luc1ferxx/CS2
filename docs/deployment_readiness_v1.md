@@ -324,6 +324,21 @@ Manual first-run preview should start at `/dashboard`. Verify the empty/loading/
 - Private media always uses the API's owner-scoped `/demos/{demo_id}/media/video` route. Production frontend pages and API/auth/media paths must share one exact HTTPS origin so `__Host-` cookies and CSRF checks protect both API and native video requests.
 - The local artifact adapter writes private logical-reference objects under `/data` by default and remains development/test only. Production startup requires the private S3-compatible adapter and never exposes a bucket URL.
 
+### Windows local dev: Docker Desktop stale AF_UNIX socket startup crash (anti-cheat minifilter)
+
+On a Windows host that also runs a boot-resident kernel anti-cheat, Docker Desktop can intermittently fail to start, with its backend (`com.docker.backend.exe`) crashing before the engine becomes reachable. The signature in `%LOCALAPPDATA%\Docker\log\host\com.docker.backend.exe.log` is a Secrets Engine rename that fails with Win32 error 1920:
+
+```
+initializing Secrets Engine: listening on unix://.../docker-secrets-engine/engine.sock:
+rename ...engine.sock ...engine.sock.stale: The file cannot be accessed by the system.
+```
+
+- **Cause.** A third-party kernel filesystem minifilter — Riot Vanguard (driver `vgk`) and/or FACEIT anti-cheat (`FACEIT`, `FACEIT_IOMMU`) — refuses to open, rename, or delete any file carrying the AF_UNIX socket reparse tag while it lives under `%LOCALAPPDATA%` or `%APPDATA%` (error 1920). Plain files in the same folders are unaffected, and the `%LOCALAPPDATA%\Temp` subtree is exempt. On startup Docker clears a leftover `engine.sock` by renaming it, and that rename is what the filter blocks.
+- **Intermittent by design.** It recurs only when a stale *reparse* socket survives a previous ungraceful shutdown. A clean shutdown that empties the socket dir — or leaves only a plain, non-reparse socket — starts fine.
+- **Automatic mitigation.** `scripts/start-local.ps1` runs `scripts/evict-stale-docker-sockets.ps1` as a preflight before launching Docker Desktop, and again if the engine is still down after the wait. The preflight deletes stale plain/non-reparse sockets under `%LOCALAPPDATA%\Docker\run` and `%LOCALAPPDATA%\docker-secrets-engine`, clearing the common leftover case so the next start is clean. It only ever runs while the engine is down and refuses to touch sockets a live engine owns. Ground truth for "stuck" is that a socket still exists after the delete attempt, not its reported attributes: the filter strips the ReparsePoint bit from directory listings, so a stuck socket enumerates as an ordinary file.
+- **What it cannot do.** From an ordinary, non-elevated token a socket that is still a reparse point cannot be removed at all — `Remove-Item`, `[IO.File]::Delete`/`Move`, `cmd del`, `fsutil reparsepoint delete`, and backup-semantics `DELETE_ON_CLOSE` were each verified refused with 1920, and renaming the parent directory is refused with Access Denied even for a plain directory. Unloading or excluding the minifilter needs administrator rights, and redirecting the EFS-encrypted `docker-secrets-engine` directory elsewhere would silently drop its encryption; neither is done. In that case the preflight exits `3`, names the running anti-cheat driver(s), and prints the recovery below.
+- **Correct recovery (non-destructive).** Fully quit Docker Desktop (tray → Quit Docker Desktop) or reboot, then start again; the stale socket is cleared during a clean re-initialisation. Do **not** use "Reset to factory defaults" or delete Docker data — that destroys volumes and is not what error 1920 requires.
+
 ## Deployable Boundaries
 
 Ready at the Stage 3 application boundary:
