@@ -54,7 +54,9 @@ class ArtifactReadProtocol(Protocol):
     start: int
     end_inclusive: int
     total_size: int
-    length: int
+
+    @property
+    def length(self) -> int: ...
 
     def iter_chunks(self, chunk_size: int = 1024 * 1024) -> Iterator[bytes]: ...
 

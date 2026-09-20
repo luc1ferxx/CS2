@@ -39,7 +39,7 @@ frontend (Next.js 15 App Router)
 
 PostgreSQL 只存可索引的元数据和 backend-neutral logical reference。Replay frames、parser event contract、video metadata 都在 replay JSON artifact 里；`.dem`、replay artifact、视频始终留在 private artifact storage，**不进 PostgreSQL**。
 
-Artifact 出入口统一走 `backend/app/services/storage.py` 的 provider-neutral contract。Logical reference 绑定 lifecycle state、artifact kind、opaque owner、demo 和随机 artifact id；客户端 filename 不参与 physical object key。Development/test 用 local adapter，production 必须用 private S3-compatible adapter（`ARTIFACT_STORAGE_BACKEND=local` 在 production 直接启动失败）。生命周期、错误分类与验收合同见 [`docs/object_storage_safe_artifact_intake_v1.md`](docs/object_storage_safe_artifact_intake_v1.md)。
+Artifact 出入口统一走 `backend/app/services/storage/` 的 provider-neutral contract。Logical reference 绑定 lifecycle state、artifact kind、opaque owner、demo 和随机 artifact id；客户端 filename 不参与 physical object key。Development/test 用 local adapter，production 必须用 private S3-compatible adapter（`ARTIFACT_STORAGE_BACKEND=local` 在 production 直接启动失败）。生命周期、错误分类与验收合同见 [`docs/object_storage_safe_artifact_intake_v1.md`](docs/object_storage_safe_artifact_intake_v1.md)。
 
 ## 身份与 owner 边界
 

@@ -1,5 +1,4 @@
 from collections.abc import Iterator
-from typing import BinaryIO
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
@@ -8,7 +7,7 @@ from sqlalchemy.orm import Session
 from app.core.auth import get_current_owner_id
 from app.core.config import settings
 from app.core.database import get_db
-from app.services.demo_service import DemoService
+from app.services.demo_service import DemoService, PrivateVideoHandle
 
 router = APIRouter(tags=["media"])
 
@@ -145,7 +144,7 @@ def _parse_single_range(value: str | None, size: int) -> tuple[int, int] | None:
 
 
 def _stream_file_range(
-    handle: BinaryIO,
+    handle: PrivateVideoHandle,
     start: int,
     length: int,
 ) -> Iterator[bytes]:

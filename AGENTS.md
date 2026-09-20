@@ -5,7 +5,7 @@
 This repository is a mock MVP for a website-based CS2 demo AI coach.
 
 - `frontend/`: Next.js + TypeScript app. App Router pages live in `frontend/app/`; shared UI is in `frontend/components/`; API helpers are in `frontend/lib/`; shared frontend types are in `frontend/types/`; static assets are in `frontend/public/`.
-- `backend/`: FastAPI service and worker code. Routes are in `backend/app/api/`; SQLAlchemy models in `backend/app/models/`; Pydantic schemas in `backend/app/schemas/`; business logic and artifact storage helpers are in `backend/app/services/`; Redis worker entrypoint is in `backend/app/workers/worker.py`.
+- `backend/`: FastAPI service and worker code. Routes are in `backend/app/api/`; SQLAlchemy models in `backend/app/models/`; Pydantic schemas in `backend/app/schemas/`; business logic is in `backend/app/services/`, where `demo_service/` is a package (a thin `DemoService` facade over one-responsibility components; see its `__init__.py` docstring) and `storage/` is the artifact storage package (contract, local and S3 backends, factory); Redis worker entrypoint is in `backend/app/workers/worker.py`.
 - `render-worker/`: standalone Render Worker V1 skeleton. `runner.py` drives fake-video and manual-operator adapter flows without launching CS2, Steam, OBS, or ffmpeg; `render-worker/README.md` documents runner env, token, API, and adapter details.
 - `docker-compose.yml`: local stack for `frontend`, `api`, `worker`, `postgres`, and `redis`.
 - `.env.example`, `backend/.env.example`, `frontend/.env.example`, `render-worker/.env.example`, and `render-worker/config.example.env`: checked-in runtime config templates for Compose, API/worker, frontend public API origin, render-worker runner, and optional smoke/sample defaults; do not add real secrets.
@@ -116,7 +116,7 @@ Upload/parser observability should stay compact: ingestion snapshots, short fail
 
 Regression fixtures should be small and human-readable. Prefer compact fixtures under `backend/tests/fixtures/` and `frontend/lib/test-fixtures/` that lock down replay normalization, parser event families, coaching evidence, and degraded UI helper behavior without checking in `.dem`, media, raw parser dataframes, or huge event dumps.
 
-Artifact storage additions must go through `backend/app/services/storage.py`. The default implementation is local filesystem storage rooted at `ARTIFACT_STORAGE_ROOT=/data`, with storage keys such as `local://uploads/{demo_id}/{filename}`, `local://replays/{demo_id}.json`, and `local://videos/{demo_id}/{filename}`. Keep PostgreSQL limited to metadata and storage keys. Do not add S3/R2 credentials, cloud SDKs, or direct writes to upload/replay/video directories outside the storage service unless it is temporary parser scratch space.
+Artifact storage additions must go through the `backend/app/services/storage/` package (import from `app.services.storage`). The default implementation is local filesystem storage rooted at `ARTIFACT_STORAGE_ROOT=/data`, with storage keys such as `local://uploads/{demo_id}/{filename}`, `local://replays/{demo_id}.json`, and `local://videos/{demo_id}/{filename}`. Keep PostgreSQL limited to metadata and storage keys. Do not add S3/R2 credentials, cloud SDKs, or direct writes to upload/replay/video directories outside the storage service unless it is temporary parser scratch space.
 
 ## Commit & Pull Request Guidelines
 

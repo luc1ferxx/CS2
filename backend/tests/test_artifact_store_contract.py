@@ -535,7 +535,7 @@ class ArtifactStoreContractTest(unittest.TestCase):
                     )
                 return original_link(*args, **kwargs)
 
-            with patch("app.services.storage.os.link", side_effect=link_after_replacement):
+            with patch("os.link", side_effect=link_after_replacement):
                 with self.assertRaises(ArtifactIntegrityError):
                     store.promote(
                         quarantine,
@@ -835,7 +835,7 @@ class ArtifactStoreContractTest(unittest.TestCase):
         )
 
         with patch(
-            "app.services.storage.tempfile.SpooledTemporaryFile",
+            "tempfile.SpooledTemporaryFile",
             side_effect=AssertionError("seekable uploads must not use scratch spool"),
         ):
             written = store.write_stream(
@@ -1046,7 +1046,7 @@ class ArtifactStoreContractTest(unittest.TestCase):
         )
 
         with patch(
-            "app.services.storage.tempfile.SpooledTemporaryFile",
+            "tempfile.SpooledTemporaryFile",
             side_effect=AssertionError("promotion must stay inside object storage"),
         ):
             accepted = store.promote(

@@ -88,12 +88,16 @@ export function buildRoundReviewModel({
   };
 }
 
+export function findRoundForTick(rounds: ReplayRound[], tick: number): ReplayRound | undefined {
+  return rounds.find((round) => tick >= round.startTick && tick <= round.endTick);
+}
+
 export function findRoundNumberForTick(rounds: ReplayRound[], tick: number): number | null {
   if (rounds.length === 0) {
     return null;
   }
 
-  const exactRound = rounds.find((round) => tick >= round.startTick && tick <= round.endTick);
+  const exactRound = findRoundForTick(rounds, tick);
   if (exactRound) {
     return exactRound.roundNumber;
   }

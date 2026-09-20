@@ -114,6 +114,8 @@ Next.js frontend ──HTTP──▶ FastAPI backend
 
 `api/demos.py` 和 `worker.py` 的 17 个调用点最小改动。
 
+**状态（2026-09-18）：已实施。** `demo_service.py`（当时 3,466 行）拆为 `backend/app/services/demo_service/` 包：`__init__.py` 是薄 facade（`DemoService` 公共 API 不变，24 个调用方零改动），职责拆到 `demo_library.py`、`demo_ingest.py`、`parse_lifecycle.py`、`render_lifecycle.py`、`render_worker_media.py`、`replay_blob.py`、`video_registry.py`，共享部分在 `constants.py`、`errors.py`、`_helpers.py`、`projection.py`、`steam_match.py`（含本节要求的 `SteamMatchParseState`，六处 SteamMatch 更新块归一）。组件间调用经 `self._service.<component>.<method>` 显式暴露，拆分时统计的耦合最重的一条是 render → replay（32 处调用），即 §4.3 的问题在结构上可见了。该包不再有 mypy 豁免（原 24 个错误全部清零）。`storage.py` 同样拆为 `storage/` 包（contract / errors / local / s3 / factory / legacy），`LocalStorageService` 保留在 `legacy.py`，§4.2 的删减未做。`list_demos` 的 `limit(200)` 上限是产品行为变化，未在此实施。
+
 ### 4.2 删/简的代码（估计净减 ~650 LOC）
 
 | 目标 | 验证 LOC | 动作 |

@@ -3,6 +3,7 @@ import io
 import json
 import tempfile
 import unittest
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
@@ -18,9 +19,20 @@ from app.core.database import Base, get_db
 from app.core.redis import get_redis_client
 from app.models import DemoJob
 from app.schemas.demo import RenderClipRequest
-from app.services.demo_service import DemoService
+from app.services.demo_service import (
+    RENDER_CLIP_IDLE_RECLAIM_SECONDS,
+    RENDER_CLIP_MAX_ATTEMPTS,
+    RENDER_CLIP_STALE_AFTER_SECONDS,
+    RENDER_QUEUE_TIMED_OUT_PUBLIC_MESSAGE,
+    RENDER_TIMED_OUT_PUBLIC_MESSAGE,
+    DemoService,
+)
 from app.services.upload_service import store_video_artifact
-from app.workers.worker import process_render_clip_job
+from app.workers.worker import (
+    process_render_clip_job,
+    sweep_stale_render_clip_jobs,
+    sweep_unclaimed_render_clip_jobs,
+)
 
 XELEX_ID = "76561198998266210"
 OTHER_ID = "76561190000000001"
@@ -100,8 +112,12 @@ class ExternalRenderWorkerTest(unittest.TestCase):
             })
             return service.create_render_clip_job(service.get_demo(self.demo_id), request).id
 
-    def complete_job(self, job_id: str, payload: bytes = b"rendered-video") -> dict:
-        claimed = self.client.get(f"/render-worker/jobs/{job_id}/manifest", headers=self.headers)
+    def complete_job(self, job_id: str, payload: bytes = b"rendered-video", *, claim: bool = True) -> dict:
+        claimed = self.client.get(
+            f"/render-worker/jobs/{job_id}/manifest",
+            params={"claim": claim},
+            headers=self.headers,
+        )
         self.assertEqual(claimed.status_code, 200, claimed.text)
         manifest = claimed.json()
         upload = self.client.post(
@@ -124,6 +140,20 @@ class ExternalRenderWorkerTest(unittest.TestCase):
             "playerId": XELEX_ID, "tickStart": 640, "tickEnd": 1920,
             "tickRate": 64, **overrides,
         })
+
+    def test_unreadable_replay_artifact_answers_409_and_names_the_fix(self) -> None:
+        # The status used to be chosen by substring-matching the error message,
+        # so rewording the error silently downgraded this to 400 and the client
+        # stopped reading it as "the demo is in a state you can recover from".
+        # Pin the code and the wording separately.
+        with self.Session() as db:
+            service = DemoService(db, owner_id="dev-user")
+            demo = service.get_demo(self.demo_id)
+            self.assertEqual(demo.status, "completed")
+            service.artifact_store.delete(demo.replay_storage_key)
+        response = self.request_clip(eventId="replay-artifact-gone")
+        self.assertEqual(response.status_code, 409, response.text)
+        self.assertIn("Re-parse the demo to rebuild it", response.json()["detail"])
 
     def test_identical_active_requests_reuse_job_across_event_and_player_alias(self) -> None:
         with patch("app.services.demo_service.get_redis_client") as redis_factory:
@@ -177,7 +207,7 @@ class ExternalRenderWorkerTest(unittest.TestCase):
         video = self.complete_job(first)
         with self.Session() as db:
             service = DemoService.for_internal(db)
-            snapshot = service._job_output_artifact(db.get(DemoJob, first))
+            snapshot = service.worker_media.job_output_artifact(db.get(DemoJob, first))
             service.artifact_store.delete(snapshot.reference, expected_generation=snapshot.generation)
         self.assertEqual(self.client.get(video["url"]).status_code, 404)
         jobs = self.client.get(f"/demos/{self.demo_id}/render/jobs").json()
@@ -349,7 +379,7 @@ class ExternalRenderWorkerTest(unittest.TestCase):
         self.assertEqual(next(job for job in jobs if job["job_id"] == first)["video"], video)
         with self.Session() as db:
             service = DemoService(db, owner_id="dev-user")
-            with patch.object(service, "load_replay_blob", wraps=service.load_replay_blob) as load_replay:
+            with patch.object(service.replay, "load_replay_blob", wraps=service.replay.load_replay_blob) as load_replay:
                 self.assertEqual(len(service.list_render_clip_jobs(service.get_demo(self.demo_id))), 22)
                 self.assertLessEqual(load_replay.call_count, 2)
 
@@ -581,6 +611,522 @@ class ExternalRenderWorkerTest(unittest.TestCase):
         response = self.client.get("/render/worker")
         self.assertEqual(response.status_code, 200, response.text)
         return response.json()
+
+    # --- timeout reclamation -------------------------------------------------
+
+    def claim(self, job_id: str) -> None:
+        """Claim through the service, bypassing the endpoint's own reclaim."""
+        with self.Session() as db:
+            service = DemoService.for_internal(db)
+            service.claim_render_clip_job(service.get_render_clip_job(job_id))
+
+    def abandon(self, job_id: str, seconds: int = RENDER_CLIP_STALE_AFTER_SECONDS + 60) -> None:
+        """Rewind started_at so a claimed job looks like a dead worker's orphan."""
+        with self.Session() as db:
+            job = db.get(DemoJob, job_id)
+            job.started_at = datetime.now(UTC) - timedelta(seconds=seconds)
+            db.commit()
+
+    def reclaim(self, older_than_seconds: int = RENDER_CLIP_STALE_AFTER_SECONDS) -> list[str]:
+        with self.Session() as db:
+            return DemoService.for_internal(db).reclaim_stale_render_clip_jobs(
+                older_than_seconds=older_than_seconds,
+            )
+
+    def job_state(self, job_id: str) -> dict:
+        with self.Session() as db:
+            job = db.get(DemoJob, job_id)
+            return {
+                "status": job.status,
+                "attempts": job.attempts,
+                "started_at": job.started_at,
+                "queued_at": job.queued_at,
+                "error_message": job.error_message,
+            }
+
+    def video_state(self) -> dict:
+        with self.Session() as db:
+            service = DemoService(db, owner_id="dev-user")
+            return service.get_video_status(service.get_demo(self.demo_id))
+
+    def test_a_job_abandoned_mid_render_returns_to_the_queue_with_its_video(self) -> None:
+        job_id = self.create_job()
+        self.claim(job_id)
+        self.assertEqual(self.job_state(job_id)["status"], "rendering")
+        self.assertEqual(self.video_state()["status"], "rendering")
+
+        self.abandon(job_id)
+
+        self.assertEqual(self.reclaim(), [job_id])
+        job = self.job_state(job_id)
+        self.assertEqual(job["status"], "queued")
+        self.assertIsNone(job["started_at"])
+        # The whole point of doing this per job rather than in one bulk UPDATE:
+        # the demo's video status has to come back with it, or the page shows
+        # "generating" over a job that is plainly queued.
+        self.assertEqual(self.video_state()["status"], "queued")
+
+    def test_a_reclaimed_job_is_visible_to_the_next_poller_again(self) -> None:
+        job_id = self.create_job()
+        self.claim(job_id)
+        self.abandon(job_id)
+        self.reclaim()
+
+        claimed = self.client.get("/render-worker/jobs/next", headers=self.headers)
+
+        self.assertEqual(claimed.status_code, 200, claimed.text)
+        self.assertEqual(claimed.json()["jobId"], job_id)
+        self.assertEqual(self.job_state(job_id)["attempts"], 2)
+
+    def test_a_requeued_job_is_not_reclaimed_again_the_moment_it_restarts(self) -> None:
+        job_id = self.create_job()
+        self.claim(job_id)
+        self.abandon(job_id)
+        self.reclaim()
+
+        self.claim(job_id)
+
+        # claim_render_clip_job stamps started_at through a coalesce, so it only
+        # ever writes the first claim's time. If the requeue had kept the old
+        # value, this second claim would inherit it and be judged stale on the
+        # very next pass -- reclaimed forever, never finished.
+        self.assertEqual(self.job_state(job_id)["status"], "rendering")
+        self.assertEqual(self.reclaim(), [])
+        self.assertEqual(self.job_state(job_id)["status"], "rendering")
+
+    def test_a_job_claimed_moments_ago_is_left_alone(self) -> None:
+        job_id = self.create_job()
+        self.claim(job_id)
+
+        self.assertEqual(self.reclaim(), [])
+        self.assertEqual(self.reclaim(RENDER_CLIP_IDLE_RECLAIM_SECONDS), [])
+        self.assertEqual(self.job_state(job_id)["status"], "rendering")
+
+    def test_a_clip_that_keeps_killing_the_renderer_fails_after_the_cap(self) -> None:
+        job_id = self.create_job()
+        for attempt in range(1, RENDER_CLIP_MAX_ATTEMPTS):
+            self.claim(job_id)
+            self.abandon(job_id)
+            self.assertEqual(self.reclaim(), [job_id])
+            self.assertEqual(self.job_state(job_id)["attempts"], attempt)
+
+        self.claim(job_id)
+        self.abandon(job_id)
+
+        self.assertEqual(self.reclaim(), [job_id])
+        job = self.job_state(job_id)
+        self.assertEqual(job["status"], "failed")
+        self.assertEqual(job["attempts"], RENDER_CLIP_MAX_ATTEMPTS)
+        # Whatever the internal reason, the caller gets the vetted public text.
+        self.assertEqual(job["error_message"], RENDER_TIMED_OUT_PUBLIC_MESSAGE)
+        self.assertEqual(self.video_state()["status"], "failed")
+        self.assertEqual(self.video_state()["errorCode"], "RENDER_TIMED_OUT")
+
+        status = self.client.get(f"/demos/{self.demo_id}/render/jobs")
+        self.assertEqual(status.status_code, 200, status.text)
+        reported = next(item for item in status.json() if item["job_id"] == job_id)
+        # render_job_status can only pass error_code=None -- demo_jobs has no
+        # such column -- so asserting on the row alone would miss the page
+        # falling back to the generic "could not be produced".
+        self.assertEqual(reported["error_code"], "RENDER_TIMED_OUT")
+        self.assertEqual(reported["error_message"], RENDER_TIMED_OUT_PUBLIC_MESSAGE)
+
+    def test_the_next_poll_after_a_crash_hands_the_orphan_straight_back(self) -> None:
+        job_id = self.create_job()
+        self.claim(job_id)
+        self.abandon(job_id, RENDER_CLIP_IDLE_RECLAIM_SECONDS + 1)
+
+        # A worker asking for work is not rendering, so this request is itself
+        # the evidence that the job it is holding was orphaned.
+        claimed = self.client.get("/render-worker/jobs/next", headers=self.headers)
+
+        self.assertEqual(claimed.status_code, 200, claimed.text)
+        self.assertEqual(claimed.json()["jobId"], job_id)
+        self.assertEqual(self.job_state(job_id)["attempts"], 2)
+
+    def test_the_fast_path_is_off_when_several_workers_share_the_api(self) -> None:
+        object.__setattr__(settings, "render_clip_single_consumer", False)
+        self.addCleanup(object.__setattr__, settings, "render_clip_single_consumer", True)
+        job_id = self.create_job()
+        self.claim(job_id)
+        self.abandon(job_id, RENDER_CLIP_IDLE_RECLAIM_SECONDS + 1)
+
+        empty = self.client.get("/render-worker/jobs/next", headers=self.headers)
+
+        # Another worker may well be rendering it; only the timeout may judge.
+        self.assertEqual(empty.status_code, 204)
+        self.assertEqual(self.job_state(job_id)["status"], "rendering")
+        # The switch gates the endpoint, not the mechanism: the sweep still runs.
+        self.assertEqual(self.reclaim(RENDER_CLIP_IDLE_RECLAIM_SECONDS), [job_id])
+
+    def test_finished_jobs_are_never_reclaimed(self) -> None:
+        completed_id = self.create_job()
+        self.complete_job(completed_id)
+        failed_id = self.create_job(tickStart=1920, tickEnd=2560)
+        self.claim(failed_id)
+        with self.Session() as db:
+            service = DemoService.for_internal(db)
+            service.fail_render_clip_job(
+                service.get_render_clip_job(failed_id), "boom", error_code="RENDER_FAILED",
+            )
+        for job_id in (completed_id, failed_id):
+            self.abandon(job_id)
+
+        self.assertEqual(self.reclaim(), [])
+        self.assertEqual(self.job_state(completed_id)["status"], "completed")
+        self.assertEqual(self.job_state(failed_id)["status"], "failed")
+
+    def test_a_worker_that_finishes_during_the_sweep_keeps_its_result(self) -> None:
+        job_id = self.create_job()
+        self.claim(job_id)
+        self.abandon(job_id)
+
+        with self.Session() as db:
+            candidates = DemoService.for_internal(db).render._stale_render_clip_jobs(
+                datetime.now(UTC), limit=20,
+            )
+            self.assertEqual([job.id for job in candidates], [job_id])
+
+        # The worker was alive after all and reports in right here, between the
+        # sweep's candidate query and the update that would requeue the job.
+        self.complete_job(job_id, claim=False)
+
+        with self.Session() as db:
+            service = DemoService.for_internal(db)
+            stale = service.get_render_clip_job(job_id)
+            self.assertFalse(service.render._requeue_render_clip_job(stale))
+
+        self.assertEqual(self.job_state(job_id)["status"], "completed")
+        self.assertEqual(self.video_state()["status"], "ready")
+
+    def test_a_race_on_one_stale_job_does_not_cost_the_rest_of_the_batch(self) -> None:
+        raced_id = self.create_job()
+        self.claim(raced_id)
+        with self.Session() as db:
+            db.get(DemoJob, raced_id).attempts = RENDER_CLIP_MAX_ATTEMPTS
+            db.commit()
+        self.abandon(raced_id)
+        other_id = self.create_job(tickStart=1920, tickEnd=2560)
+        self.claim(other_id)
+        self.abandon(other_id)
+
+        # The capped job's worker reports in before the sweep gets to its row,
+        # so failing it raises -- the one candidate ahead of every other.
+        self.complete_job(raced_id, claim=False)
+
+        with self.Session() as db:
+            service = DemoService.for_internal(db)
+            candidates = [service.get_render_clip_job(raced_id), service.get_render_clip_job(other_id)]
+            with patch.object(service.render, "_stale_render_clip_jobs", return_value=candidates):
+                reclaimed = service.reclaim_stale_render_clip_jobs(
+                    older_than_seconds=RENDER_CLIP_STALE_AFTER_SECONDS,
+                )
+
+        self.assertEqual(reclaimed, [other_id])
+        self.assertEqual(self.job_state(raced_id)["status"], "completed")
+        self.assertEqual(self.job_state(other_id)["status"], "queued")
+
+    def test_the_worker_sweep_reclaims_with_no_renderer_polling_at_all(self) -> None:
+        job_id = self.create_job()
+        self.claim(job_id)
+        self.abandon(job_id)
+
+        with patch("app.workers.worker.SessionLocal", self.Session):
+            reclaimed = sweep_stale_render_clip_jobs(force=True)
+
+            self.assertEqual(reclaimed, [job_id])
+            self.assertEqual(self.job_state(job_id)["status"], "queued")
+            # Rate-limited: the idle tick runs every 5 seconds and this is a query.
+            self.claim(job_id)
+            self.abandon(job_id)
+            self.assertEqual(sweep_stale_render_clip_jobs(), [])
+
+    # --- manual retry --------------------------------------------------------
+
+    def retry(self, job_id: str, demo_id: str | None = None):
+        return self.client.post(f"/demos/{demo_id or self.demo_id}/render/jobs/{job_id}/retry")
+
+    def fail_job(self, job_id: str) -> None:
+        # Not named "fail": that is unittest.TestCase.fail, and shadowing it
+        # makes every failing assertion in this class raise UnmappedInstanceError
+        # from inside this helper instead of printing its own message.
+        with self.Session() as db:
+            service = DemoService.for_internal(db)
+            service.fail_render_clip_job(
+                service.get_render_clip_job(job_id), "capture unavailable",
+                error_code="RENDER_FAILED",
+            )
+
+    def test_retrying_a_failed_clip_requeues_the_row_instead_of_cloning_it(self) -> None:
+        job_id = self.create_job()
+        self.claim(job_id)
+        self.fail_job(job_id)
+        self.assertEqual(self.video_state()["status"], "failed")
+
+        response = self.retry(job_id)
+
+        # 200, not the create endpoint's 201: nothing new came into being.
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["job_id"], job_id)
+        job = self.job_state(job_id)
+        self.assertEqual(job["status"], "queued")
+        self.assertIsNone(job["started_at"])
+        self.assertIsNone(job["error_message"])
+        self.assertEqual(job["attempts"], 0)
+        # The page reads the demo's video status, not the job row, so it has to
+        # come back with it or the clip stays "failed" over a queued job.
+        self.assertEqual(self.video_state()["status"], "queued")
+        with self.Session() as db:
+            self.assertEqual(
+                db.query(DemoJob).filter(DemoJob.job_type == "render_clip").count(), 1,
+            )
+
+    def test_a_retried_clip_is_handed_to_the_next_poller(self) -> None:
+        job_id = self.create_job()
+        self.claim(job_id)
+        self.fail_job(job_id)
+        self.assertEqual(self.retry(job_id).status_code, 200)
+
+        claimed = self.client.get("/render-worker/jobs/next", headers=self.headers)
+
+        # External mode has no Redis dispatch to repeat, so the durable queue is
+        # the whole delivery mechanism: requeued has to mean claimable.
+        self.assertEqual(claimed.status_code, 200, claimed.text)
+        self.assertEqual(claimed.json()["jobId"], job_id)
+        self.assertEqual(self.job_state(job_id)["attempts"], 1)
+
+    def test_a_clip_that_burned_its_attempt_budget_gets_a_fresh_one(self) -> None:
+        job_id = self.create_job()
+        for _ in range(RENDER_CLIP_MAX_ATTEMPTS):
+            self.claim(job_id)
+            self.abandon(job_id)
+            self.reclaim()
+        self.assertEqual(self.job_state(job_id)["status"], "failed")
+
+        self.assertEqual(self.retry(job_id).status_code, 200)
+
+        # Without the attempts reset the next sweep would fail the job straight
+        # back, so the person who clicked retry never gets another render.
+        self.claim(job_id)
+        self.abandon(job_id)
+        self.assertEqual(self.reclaim(), [job_id])
+        self.assertEqual(self.job_state(job_id)["status"], "queued")
+
+    def test_only_a_failed_clip_can_be_retried(self) -> None:
+        job_id = self.create_job()
+        for status in ("queued", "pending", "rendering", "completed"):
+            with self.subTest(status=status):
+                with self.Session() as db:
+                    db.get(DemoJob, job_id).status = status
+                    db.commit()
+
+                response = self.retry(job_id)
+
+                self.assertEqual(response.status_code, 409, response.text)
+                self.assertEqual(
+                    response.json()["detail"], "Only failed render jobs can be retried",
+                )
+                self.assertEqual(self.job_state(job_id)["status"], status)
+
+    def test_a_retry_cannot_reach_a_job_the_demo_does_not_own(self) -> None:
+        job_id = self.create_job()
+        self.claim(job_id)
+        self.fail_job(job_id)
+        with self.Session() as db:
+            service = DemoService(db, owner_id="dev-user")
+            prepared = service.prepare_real_demo(
+                stream=io.BytesIO(b"PBDEMS2\0" + b"\1" * 64), filename="other.dem",
+                content_type="application/octet-stream",
+            )
+            service.commit_prepared_real_demo(prepared)
+            other_demo_id = prepared.demo.id
+
+        # A job id is not a capability: it only works against its own demo, and
+        # an unknown id is the same generic 404 as a known one asked for wrongly.
+        self.assertEqual(self.retry(job_id, demo_id=other_demo_id).status_code, 404)
+        self.assertEqual(self.retry("00000000-0000-0000-0000-000000000000").status_code, 404)
+        self.assertEqual(self.retry(job_id, demo_id="no-such-demo").status_code, 404)
+        self.assertEqual(self.job_state(job_id)["status"], "failed")
+
+    # --- unclaimed queue timeout ---------------------------------------------
+
+    QUEUE_TIMEOUT = 1800
+
+    def strand(self, job_id: str, seconds: int | None = None, *, created_at: int = 0) -> None:
+        """Rewind a queued job's clock so it looks like nobody ever claimed it."""
+        with self.Session() as db:
+            job = db.get(DemoJob, job_id)
+            if seconds is not None:
+                job.queued_at = datetime.now(UTC) - timedelta(seconds=seconds)
+            if created_at:
+                job.created_at = datetime.now(UTC) - timedelta(seconds=created_at)
+            db.commit()
+
+    def queue_sweep(self, older_than_seconds: int | None = None) -> list[str]:
+        with self.Session() as db:
+            return DemoService.for_internal(db).fail_unclaimed_render_clip_jobs(
+                older_than_seconds=older_than_seconds or self.QUEUE_TIMEOUT,
+            )
+
+    def test_a_clip_nobody_ever_claimed_fails_instead_of_waiting_forever(self) -> None:
+        job_id = self.create_job()
+        self.strand(job_id, self.QUEUE_TIMEOUT + 60)
+
+        self.assertEqual(self.queue_sweep(), [job_id])
+
+        job = self.job_state(job_id)
+        self.assertEqual(job["status"], "failed")
+        self.assertEqual(job["error_message"], RENDER_QUEUE_TIMED_OUT_PUBLIC_MESSAGE)
+        # The clip never ran, so it has not earned a strike against its budget.
+        self.assertEqual(job["attempts"], 0)
+        video = self.video_state()
+        self.assertEqual(video["status"], "failed")
+        self.assertEqual(video["errorCode"], "RENDER_QUEUE_TIMED_OUT")
+
+    def test_failing_an_unclaimed_clip_is_what_makes_retry_reachable(self) -> None:
+        job_id = self.create_job()
+        self.strand(job_id, self.QUEUE_TIMEOUT + 60)
+
+        # Before the sweep the row is "queued", and that is the dead end: the
+        # one action the page offers is refused outright.
+        refused = self.retry(job_id)
+        self.assertEqual(refused.status_code, 409, refused.text)
+
+        self.assertEqual(self.queue_sweep(), [job_id])
+        response = self.retry(job_id)
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(self.job_state(job_id)["status"], "queued")
+        self.assertEqual(self.video_state()["status"], "queued")
+
+    def test_a_retried_clip_is_judged_by_its_wait_not_by_the_clips_age(self) -> None:
+        job_id = self.create_job()
+        # The state this deployment actually produced: a clip created days ago
+        # that has been sitting on the queue ever since.
+        self.strand(job_id, 9 * 86400, created_at=9 * 86400)
+        self.assertEqual(self.queue_sweep(), [job_id])
+        self.assertEqual(self.retry(job_id).status_code, 200)
+
+        # created_at is still nine days old. Aging the row by it -- the obvious
+        # implementation, since created_at is the only timestamp a queued row
+        # used to have -- would fail the retry before any worker could claim it,
+        # making the button that just became available useless.
+        self.assertEqual(self.queue_sweep(), [])
+        self.assertEqual(self.job_state(job_id)["status"], "queued")
+
+        claimed = self.client.get("/render-worker/jobs/next", headers=self.headers)
+        self.assertEqual(claimed.status_code, 200, claimed.text)
+        self.assertEqual(claimed.json()["jobId"], job_id)
+
+    def test_a_clip_still_inside_the_window_is_left_on_the_queue(self) -> None:
+        job_id = self.create_job()
+
+        self.assertEqual(self.queue_sweep(), [])
+
+        self.strand(job_id, self.QUEUE_TIMEOUT - 60)
+        self.assertEqual(self.queue_sweep(), [])
+        self.assertEqual(self.job_state(job_id)["status"], "queued")
+
+    def test_a_clip_the_rendering_sweep_requeued_gets_a_fresh_wait(self) -> None:
+        job_id = self.create_job()
+        # Old enough that its original queue wait is long spent -- which is the
+        # normal case for a render that ran for a while before its worker died.
+        self.strand(job_id, 9 * 86400, created_at=9 * 86400)
+        self.claim(job_id)
+        self.abandon(job_id)
+
+        self.assertEqual(self.reclaim(), [job_id])
+
+        # The two sweeps share the "queued" state and would otherwise fight over
+        # it: the rendering sweep puts the job back on the queue, and the queue
+        # sweep would take it straight off again by a clock the requeue never
+        # touched, so a dead worker would look like an absent one.
+        self.assertEqual(self.queue_sweep(), [])
+        self.assertEqual(self.job_state(job_id)["status"], "queued")
+
+    def test_a_row_written_before_queued_at_existed_ages_by_created_at(self) -> None:
+        job_id = self.create_job()
+        with self.Session() as db:
+            job = db.get(DemoJob, job_id)
+            # What ensure_schema_backfills' UPDATE would have missed, and what a
+            # row inserted by older code looks like.
+            job.queued_at = None
+            job.created_at = datetime.now(UTC) - timedelta(seconds=self.QUEUE_TIMEOUT + 60)
+            db.commit()
+
+        self.assertEqual(self.queue_sweep(), [job_id])
+        self.assertEqual(self.job_state(job_id)["status"], "failed")
+
+    def test_the_queue_sweep_leaves_rendering_and_finished_jobs_alone(self) -> None:
+        rendering_id = self.create_job()
+        self.claim(rendering_id)
+        completed_id = self.create_job(tickStart=1920, tickEnd=2560)
+        self.complete_job(completed_id)
+        failed_id = self.create_job(tickStart=2560, tickEnd=3200)
+        self.claim(failed_id)
+        self.fail_job(failed_id)
+        for job_id in (rendering_id, completed_id, failed_id):
+            self.strand(job_id, 9 * 86400)
+
+        # A rendering job belongs to the other sweep, which judges it by
+        # started_at and hands it back to the queue rather than failing it.
+        self.assertEqual(self.queue_sweep(), [])
+        self.assertEqual(self.job_state(rendering_id)["status"], "rendering")
+        self.assertEqual(self.job_state(completed_id)["status"], "completed")
+        self.assertEqual(self.job_state(failed_id)["status"], "failed")
+
+    def test_a_worker_that_claims_during_the_queue_sweep_keeps_the_job(self) -> None:
+        raced_id = self.create_job()
+        other_id = self.create_job(tickStart=1920, tickEnd=2560)
+        self.strand(raced_id, 9 * 86400)
+        self.strand(other_id, 9 * 86400)
+
+        with self.Session() as db:
+            service = DemoService.for_internal(db)
+            candidates = [
+                service.get_render_clip_job(raced_id),
+                service.get_render_clip_job(other_id),
+            ]
+            # A renderer came online and claimed the first candidate between the
+            # sweep's query and the failure it was about to write. Nothing in
+            # fail_render_clip_job refuses a "rendering" row -- it is a perfectly
+            # normal thing to fail -- so only the sweep's own re-read under a row
+            # lock stands between this claim and a killed live render.
+            self.claim(raced_id)
+            with patch.object(service.render, "_unclaimed_render_clip_jobs", return_value=candidates):
+                failed = service.fail_unclaimed_render_clip_jobs(
+                    older_than_seconds=self.QUEUE_TIMEOUT,
+                )
+
+        self.assertEqual(failed, [other_id])
+        self.assertEqual(self.job_state(raced_id)["status"], "rendering")
+        self.assertEqual(self.job_state(other_id)["status"], "failed")
+
+    def test_a_failed_clip_is_no_longer_handed_back_by_a_fresh_request(self) -> None:
+        job_id = self.create_job()
+        # Deduplication is the other half of the dead end: while the corpse is
+        # "queued", asking for the same clip again returns that same row, so the
+        # user cannot even route around it by clicking generate a second time.
+        self.assertEqual(self.create_job(), job_id)
+
+        self.strand(job_id, self.QUEUE_TIMEOUT + 60)
+        self.assertEqual(self.queue_sweep(), [job_id])
+
+        replacement_id = self.create_job()
+        self.assertNotEqual(replacement_id, job_id)
+        self.assertEqual(self.job_state(replacement_id)["status"], "queued")
+
+    def test_the_worker_sweep_fails_unclaimed_clips_with_nothing_polling(self) -> None:
+        job_id = self.create_job()
+        self.strand(job_id, self.QUEUE_TIMEOUT + 60)
+
+        with patch("app.workers.worker.SessionLocal", self.Session):
+            self.assertEqual(sweep_unclaimed_render_clip_jobs(force=True), [job_id])
+            self.assertEqual(self.job_state(job_id)["status"], "failed")
+            # Rate-limited: the idle tick runs every 5 seconds and this is a query.
+            stranded_id = self.create_job(tickStart=1920, tickEnd=2560)
+            self.strand(stranded_id, self.QUEUE_TIMEOUT + 60)
+            self.assertEqual(sweep_unclaimed_render_clip_jobs(), [])
 
 
 class FakeRedis:
