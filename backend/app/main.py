@@ -1,4 +1,6 @@
 import logging
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -20,8 +22,44 @@ from app.core.request_limits import (
 from app.services.artifact_intake import ArtifactIntakeError, ArtifactIntakePolicy, ArtifactIntakeService
 from app.services.storage import artifact_store_from_settings
 
-app = FastAPI(title="CS2 Demo AI Coach Mock API", version="0.1.0")
 logger = logging.getLogger(__name__)
+
+
+def on_startup() -> None:
+    settings.validate_runtime_configuration()
+    init_db()
+    store = artifact_store_from_settings()
+    try:
+        ArtifactIntakeService(
+            store,
+            policy=ArtifactIntakePolicy(
+                max_source_bytes=settings.max_demo_upload_bytes,
+                stream_chunk_bytes=settings.upload_chunk_bytes,
+                quarantine_ttl_seconds=settings.artifact_quarantine_ttl_seconds,
+            ),
+        ).cleanup_abandoned()
+    except ArtifactIntakeError:
+        logger.warning("Artifact quarantine cleanup was unavailable during startup")
+    if settings.artifact_storage_backend == "local":
+        for storage_dir in (
+            settings.replay_storage_dir,
+            settings.demo_upload_storage_dir,
+            settings.video_storage_dir,
+            settings.summary_storage_dir,
+        ):
+            storage_dir.mkdir(parents=True, exist_ok=True)
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    # Once per process, before the first request. This is the lifespan form
+    # of the deprecated @app.on_event("startup") hook; the tasks themselves
+    # stay in on_startup() so they remain a plain function to call and patch.
+    on_startup()
+    yield
+
+
+app = FastAPI(title="CS2 Demo AI Coach Mock API", version="0.1.0", lifespan=lifespan)
 install_auth_callback_access_log_redaction()
 suppress_outbound_http_request_logging()
 
@@ -54,32 +92,6 @@ app.include_router(coaching.router)
 app.include_router(diagnostics.router)
 app.include_router(private_media.router)
 app.include_router(steam.router)
-
-
-@app.on_event("startup")
-def on_startup() -> None:
-    settings.validate_runtime_configuration()
-    init_db()
-    store = artifact_store_from_settings()
-    try:
-        ArtifactIntakeService(
-            store,
-            policy=ArtifactIntakePolicy(
-                max_source_bytes=settings.max_demo_upload_bytes,
-                stream_chunk_bytes=settings.upload_chunk_bytes,
-                quarantine_ttl_seconds=settings.artifact_quarantine_ttl_seconds,
-            ),
-        ).cleanup_abandoned()
-    except ArtifactIntakeError:
-        logger.warning("Artifact quarantine cleanup was unavailable during startup")
-    if settings.artifact_storage_backend == "local":
-        for storage_dir in (
-            settings.replay_storage_dir,
-            settings.demo_upload_storage_dir,
-            settings.video_storage_dir,
-            settings.summary_storage_dir,
-        ):
-            storage_dir.mkdir(parents=True, exist_ok=True)
 
 
 @app.get("/health")
