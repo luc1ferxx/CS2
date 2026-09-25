@@ -51,13 +51,16 @@ def create_demo_upload(
         try:
             with parse_admission(db):
                 quota.check_new_upload(owner_id)
-                service.commit_prepared_real_demo(prepared)
+                # Only the commit: the reload and a failed commit's cleanup
+                # need another pooled connection, so they run after the lock.
+                service.commit_prepared_real_demo_rows()
             committed = True
         except UploadQuotaExceeded as exc:
             return exc.to_response()
         finally:
             if not committed:
                 service.discard_prepared_real_demo(prepared)
+        service.reload_prepared_real_demo(prepared)
         service.dispatch_prepared_real_demo(prepared)
         return service.demo_list_item(prepared.demo)
     except ArtifactIntakeError as exc:

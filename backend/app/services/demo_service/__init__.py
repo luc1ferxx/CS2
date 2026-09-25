@@ -234,6 +234,12 @@ class DemoService:
     def commit_prepared_real_demo(self, prepared: PreparedRealDemo) -> None:
         return self.ingest.commit_prepared_real_demo(prepared)
 
+    def commit_prepared_real_demo_rows(self) -> None:
+        return self.ingest.commit_prepared_real_demo_rows()
+
+    def reload_prepared_real_demo(self, prepared: PreparedRealDemo) -> None:
+        return self.ingest.reload_prepared_real_demo(prepared)
+
     def discard_prepared_real_demo(self, prepared: PreparedRealDemo) -> None:
         return self.ingest.discard_prepared_real_demo(prepared)
 

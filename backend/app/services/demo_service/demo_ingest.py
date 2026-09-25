@@ -163,20 +163,29 @@ class DemoIngest(ServiceComponent):
 
     def commit_prepared_real_demo(self, prepared: PreparedRealDemo) -> None:
         try:
+            self.commit_prepared_real_demo_rows()
+        except BaseException:
+            self.discard_prepared_real_demo(prepared)
+            raise
+        self.reload_prepared_real_demo(prepared)
+
+    def commit_prepared_real_demo_rows(self) -> None:
+        """Commit the prepared demo and job, and nothing else.
+
+        For a caller inside `parse_admission`: after this commit releases the
+        session's connection, a reload or cleanup query would need a fresh
+        checkout while holding the lock. That caller discards the prepared
+        demo on failure and reloads it once the admission has ended.
+        """
+        try:
             self.db.commit()
         except BaseException as exc:
             self.db.rollback()
-            if not self._source_reference_is_bound(
-                prepared.demo.id,
-                prepared.accepted.reference,
-            ):
-                self._service.delete_artifact_safely(
-                    prepared.accepted.reference,
-                    expected_generation=prepared.accepted.generation,
-                )
             if isinstance(exc, (KeyboardInterrupt, SystemExit)):
                 raise
             raise DemoArtifactBindError("Demo intake could not be completed") from None
+
+    def reload_prepared_real_demo(self, prepared: PreparedRealDemo) -> None:
         self.db.refresh(prepared.demo)
 
     def discard_prepared_real_demo(self, prepared: PreparedRealDemo) -> None:

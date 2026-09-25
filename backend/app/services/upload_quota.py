@@ -146,22 +146,37 @@ class UploadQuotaService:
 
 
 @contextmanager
-def parse_admission(db: Session, runtime_settings: Settings = settings) -> Iterator[None]:
+def parse_admission(
+    db: Session,
+    runtime_settings: Settings = settings,
+    *,
+    serialize_without_limits: bool = False,
+) -> Iterator[None]:
     """Serialize a parse-capacity count with the commit that makes a demo active.
 
     Wrap the authoritative quota check and that commit, and nothing that can
-    wait on the network (artifact checks, queue dispatch): every other upload
-    and retry in the process waits on this lock meanwhile. A process-wide lock
-    covers this API process; on PostgreSQL a transaction-scoped advisory lock
-    taken in `db` also covers other API processes until the commit (or the
-    rollback on failure) ends the transaction. That relies on READ COMMITTED,
-    the default, so the count sees every demo admitted before the lock. The
-    block must end its transaction before it exits. Quotas are production-only,
-    so elsewhere this takes no lock at all.
+    wait on the network (artifact checks, queue dispatch) or need another
+    pooled connection once the commit has released this one (a reload, a
+    cleanup query): every other upload and retry in the process waits on this
+    lock meanwhile. A process-wide lock covers this API process; on PostgreSQL
+    a transaction-scoped advisory lock taken in `db` also covers other API
+    processes until the commit (or the rollback on failure) ends the
+    transaction. That relies on READ COMMITTED, the default, so the count sees
+    every demo admitted before the lock. The block must end its transaction
+    before it exits. Quotas are production-only, so elsewhere this takes no
+    lock at all, and with every limit off there is no count to serialize
+    unless the caller asks (`serialize_without_limits`).
     """
     if runtime_settings.auth_mode != "production":
         yield
         return
+    if not serialize_without_limits and not _any_parse_limit(runtime_settings):
+        yield
+        return
+    # Check out this session's connection before waiting: the requests queued
+    # on the lock hold theirs, so a holder that needed a checkout (the advisory
+    # lock, the count, the commit's flush) could wait out the pool behind them.
+    db.connection()
     with _parse_admission_lock:
         try:
             if db.get_bind().dialect.name == "postgresql":
@@ -184,9 +199,11 @@ def retry_admission(
     """The admission a parse retry commits under: the in-flight caps, checked inside it.
 
     A refusal raises UploadQuotaExceeded on entry, before the retry has changed
-    anything, and `parse_admission` rolls the transaction back.
+    anything, and `parse_admission` rolls the transaction back. The lock is
+    taken even with every limit off: the retry's active-job re-read relies on
+    it to queue a demo once when the same retry arrives twice.
     """
-    with parse_admission(db, runtime_settings):
+    with parse_admission(db, runtime_settings, serialize_without_limits=True):
         UploadQuotaService(db, runtime_settings).check_parse_retry(owner_id)
         yield
 
@@ -208,6 +225,14 @@ def upload_quota_precheck(
         return None
 
     return precheck
+
+
+def _any_parse_limit(runtime_settings: Settings) -> bool:
+    return bool(
+        runtime_settings.demo_upload_daily_limit
+        or runtime_settings.demo_active_parse_limit
+        or runtime_settings.parse_queue_global_limit
+    )
 
 
 def _as_utc(value: datetime) -> datetime:

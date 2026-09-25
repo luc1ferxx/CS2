@@ -17,9 +17,10 @@ from unittest.mock import MagicMock, patch
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import NullPool, StaticPool
+from sqlalchemy import create_engine, event
+from sqlalchemy.exc import OperationalError
+from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.pool import NullPool, QueuePool, StaticPool
 
 from app.api import demos, uploads
 from app.core.auth import SessionCsrfMiddleware
@@ -35,6 +36,7 @@ from app.services.upload_quota import (
     UploadQuotaService,
     _parse_admission_lock,
     parse_admission,
+    retry_admission,
     upload_quota_precheck,
 )
 
@@ -46,6 +48,8 @@ SESSION_TOKEN = "quota-owner-session"
 VALID_DEMO = b"HL2DEMO\x00upload-quota-fixture"
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 QUOTA_FIELDS = ("demo_upload_daily_limit", "demo_active_parse_limit", "parse_queue_global_limit")
+# A pool the admission's waiters can exhaust, failing fast when something waits on it.
+SMALL_POOL: dict[str, Any] = {"poolclass": QueuePool, "pool_size": 2, "max_overflow": 0, "pool_timeout": 1}
 
 
 class UploadQuotaConfigurationTest(unittest.TestCase):
@@ -446,6 +450,43 @@ class ParseAdmissionTest(unittest.TestCase):
         db.rollback.assert_called_once_with()
         self.assertFalse(_parse_admission_lock.locked())
 
+    def test_the_session_connection_is_checked_out_before_waiting_on_the_lock(self) -> None:
+        for dialect, advisory in (("postgresql", ["advisory lock"]), ("sqlite", [])):
+            with self.subTest(dialect=dialect):
+                db = self.session(dialect)
+                steps: list[str] = []
+                db.connection.side_effect = lambda steps=steps: steps.append(
+                    f"connection (lock held: {_parse_admission_lock.locked()})"
+                )
+                db.execute.side_effect = lambda *_args, steps=steps: steps.append("advisory lock")
+
+                with parse_admission(db, Settings(auth_mode="production")):
+                    steps.append("admitted")
+
+                self.assertEqual(
+                    steps, ["connection (lock held: False)", *advisory, "admitted"]
+                )
+
+    def test_with_every_limit_off_only_a_retry_takes_the_lock(self) -> None:
+        limits_off: dict[str, Any] = {"auth_mode": "production", **dict.fromkeys(QUOTA_FIELDS, 0)}
+        off = Settings(**limits_off)
+        db = self.session("postgresql")
+
+        with parse_admission(db, off):
+            self.assertFalse(_parse_admission_lock.locked())
+
+        db.connection.assert_not_called()
+        db.execute.assert_not_called()
+        # Any one limit left on is a count to serialize.
+        for field in QUOTA_FIELDS:
+            with self.subTest(field=field):
+                with parse_admission(self.session("sqlite"), Settings(**{**limits_off, field: 1})):
+                    self.assertTrue(_parse_admission_lock.locked())
+        # A retry's active-job re-read still needs it to queue a demo once.
+        with retry_admission(self.session("sqlite"), OWNER, off):
+            self.assertTrue(_parse_admission_lock.locked())
+        self.assertFalse(_parse_admission_lock.locked())
+
 
 class ProductionUploadQuotaApiTest(unittest.TestCase):
     def setUp(self) -> None:
@@ -555,7 +596,7 @@ class ProductionUploadQuotaApiTest(unittest.TestCase):
         with self.Session() as db:
             return {demo.id for demo in db.query(Demo).all()}
 
-    def use_file_database(self) -> None:
+    def use_file_database(self, **pool: Any) -> None:
         # Racing requests need a connection each; StaticPool shares one.
         self.engine.dispose()
         db_dir = tempfile.TemporaryDirectory()
@@ -563,7 +604,7 @@ class ProductionUploadQuotaApiTest(unittest.TestCase):
         self.engine = create_engine(
             f"sqlite:///{Path(db_dir.name, 'quota.sqlite').as_posix()}",
             connect_args={"check_same_thread": False, "timeout": 30},
-            poolclass=NullPool,
+            **(pool or {"poolclass": NullPool}),
         )
         Base.metadata.create_all(bind=self.engine)
         self.Session = sessionmaker(bind=self.engine, autocommit=False, autoflush=False)
@@ -586,6 +627,9 @@ class ProductionUploadQuotaApiTest(unittest.TestCase):
             db.commit()
         self.redis.payloads.clear()
         return ids
+
+    def stored_files(self) -> list[Path]:
+        return sorted(path for path in Path(self.temp_dir.name).rglob("*") if path.is_file())
 
     def active_demo_count(self) -> int:
         with self.Session() as db:
@@ -872,6 +916,139 @@ class ProductionUploadQuotaApiTest(unittest.TestCase):
         # A refused upload leaves no row behind.
         self.assertEqual(len(self.demo_ids() - before), statuses.count(201))
 
+    def test_nothing_checks_out_a_connection_or_deletes_an_artifact_inside_the_admission(
+        self,
+    ) -> None:
+        # Every request waiting on the admission may hold a pooled connection,
+        # so its holder must never need another one, nor wait on storage.
+        self.use_file_database()
+        (failed_id,) = self.upload_failed_demos(1)
+        object.__setattr__(settings, "demo_active_parse_limit", 10)
+        object.__setattr__(settings, "parse_queue_global_limit", 50)
+        steps: list[tuple[str, bool]] = []
+        event.listen(
+            self.engine,
+            "checkout",
+            lambda *_args: steps.append(("checkout", _parse_admission_lock.locked())),
+        )
+        delete = DemoService.delete_artifact_safely
+
+        def recording_delete(service: DemoService, *args: Any, **kwargs: Any) -> Any:
+            steps.append(("delete", _parse_admission_lock.locked()))
+            return delete(service, *args, **kwargs)
+
+        client = self.client()
+        with patch.object(DemoService, "delete_artifact_safely", recording_delete):
+            admitted = self.upload(client)
+            retried = client.post(f"/demos/{failed_id}/parse/retry")
+            files = self.stored_files()
+            with patch.object(
+                Session,
+                "commit",
+                side_effect=OperationalError("COMMIT", {}, Exception("disk I/O error")),
+            ):
+                refused = self.upload(client)
+
+        self.assertEqual(admitted.status_code, 201, admitted.text)
+        self.assertEqual(retried.status_code, 200, retried.text)
+        self.assertEqual(refused.status_code, 503, refused.text)
+        self.assertEqual(refused.json()["errorCode"], "INTAKE_UNAVAILABLE")
+        # The refused upload's artifact is removed, after the admission.
+        self.assertEqual(self.stored_files(), files)
+        self.assertIn(("delete", False), steps)
+        self.assertIn(("checkout", False), steps)
+        self.assertEqual({step for step in steps if step[1]}, set())
+
+    def test_waiters_holding_every_pooled_connection_cannot_stall_uploads_or_retries(self) -> None:
+        self.use_file_database(**SMALL_POOL)
+        failed_ids = self.upload_failed_demos(2)  # leaves every limit off
+        lock = QueuedLock()
+        clients = {name: self.client() for name in ("upload", "retry-0", "retry-1")}
+        statuses: dict[str, int] = {}
+        threads: list[threading.Thread] = []
+
+        def start(name: str, request: Callable[[TestClient], Any]) -> None:
+            def run() -> None:
+                statuses[name] = request(clients[name]).status_code
+
+            threads.append(threading.Thread(target=run))
+            threads[-1].start()
+
+        with patch("app.services.upload_quota._parse_admission_lock", lock):
+            lock.acquire()
+            try:
+                start("upload", self.upload)
+                self.assertTrue(wait_until(lambda: "upload" in statuses or lock.waiting() == 1))
+                for index, demo_id in enumerate(failed_ids):
+                    start(
+                        f"retry-{index}",
+                        lambda client, demo_id=demo_id: client.post(f"/demos/{demo_id}/parse/retry"),
+                    )
+                # Both retries now wait on the admission holding the whole pool.
+                self.assertTrue(
+                    wait_until(
+                        lambda: lock.waiting() == 2 + ("upload" not in statuses)
+                        and self.engine.pool.checkedout() == 2
+                    )
+                )
+            finally:
+                lock.release()
+            for thread in threads:
+                thread.join(timeout=30)
+
+        self.assertEqual(statuses, {"upload": 201, "retry-0": 200, "retry-1": 200})
+        self.assertEqual(self.active_demo_count(), 3)
+        self.assertEqual(len(self.redis.payloads), 3)
+
+    def test_an_admission_entered_without_a_connection_does_not_wait_on_the_pool(self) -> None:
+        self.use_file_database(**SMALL_POOL)
+        runtime = Settings(auth_mode="production", demo_active_parse_limit=10)
+        lock = QueuedLock()
+        outcomes: dict[str, str] = {}
+
+        def admit(name: str, *, connected: bool) -> None:
+            db = self.Session()
+            try:
+                if connected:
+                    db.connection()
+                with parse_admission(db, runtime):
+                    UploadQuotaService(db, runtime).check_new_upload(OWNER)
+                    db.add(make_demo(OWNER, status="queued", created_at=datetime.now(UTC)))
+                    db.commit()
+                outcomes[name] = "admitted"
+            except Exception as exc:
+                outcomes[name] = type(exc).__name__
+            finally:
+                db.close()
+
+        threads = [
+            threading.Thread(target=admit, args=("fresh",), kwargs={"connected": False}),
+            *(
+                threading.Thread(target=admit, args=(f"holding-{index}",), kwargs={"connected": True})
+                for index in range(2)
+            ),
+        ]
+        with patch("app.services.upload_quota._parse_admission_lock", lock):
+            lock.acquire()
+            try:
+                # First in line, then two holding connections queue behind it.
+                threads[0].start()
+                self.assertTrue(wait_until(lambda: lock.waiting() == 1))
+                threads[1].start()
+                self.assertTrue(wait_until(lambda: lock.waiting() == 2))
+                threads[2].start()
+                # With the fix the last one waits on the pool, not the lock.
+                wait_until(lambda: lock.waiting() == 3, timeout=0.3)
+            finally:
+                lock.release()
+            for thread in threads:
+                thread.join(timeout=30)
+
+        self.assertEqual(
+            outcomes, {"fresh": "admitted", "holding-0": "admitted", "holding-1": "admitted"}
+        )
+        self.assertEqual(self.active_demo_count(), 3)
+
     def test_an_upload_refused_by_the_final_check_leaves_no_demo_dispatch_or_artifact(self) -> None:
         object.__setattr__(settings, "demo_active_parse_limit", 1)
         client = self.client()
@@ -982,6 +1159,55 @@ class DevelopmentUploadQuotaApiTest(unittest.TestCase):
                 self.assertEqual(upload.status_code, 201, upload.text)
                 self.assertEqual(retry.status_code, 409)
                 self.assertNotIn("retry-after", retry.headers)
+
+
+class QueuedLock:
+    """A first-come, first-served stand-in for the admission lock that counts its waiters."""
+
+    def __init__(self) -> None:
+        self._condition = threading.Condition()
+        self._queue: list[object] = []
+        self._held = False
+
+    def acquire(self, blocking: bool = True) -> bool:
+        ticket = object()
+        with self._condition:
+            self._queue.append(ticket)
+            while self._held or self._queue[0] is not ticket:
+                if not blocking:
+                    self._queue.remove(ticket)
+                    return False
+                self._condition.wait()
+            self._queue.pop(0)
+            self._held = True
+            return True
+
+    def release(self) -> None:
+        with self._condition:
+            self._held = False
+            self._condition.notify_all()
+
+    def locked(self) -> bool:
+        return self._held
+
+    def waiting(self) -> int:
+        with self._condition:
+            return len(self._queue)
+
+    def __enter__(self) -> bool:
+        return self.acquire()
+
+    def __exit__(self, *_exc: object) -> None:
+        self.release()
+
+
+def wait_until(predicate: Callable[[], bool], timeout: float = 10.0) -> bool:
+    deadline = time.monotonic() + timeout
+    while not predicate():
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.01)
+    return True
 
 
 class FakeRedis:
