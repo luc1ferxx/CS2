@@ -5,30 +5,36 @@ import os
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 import uuid
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
+from sqlalchemy.pool import NullPool, StaticPool
 
 from app.api import demos, uploads
 from app.core.auth import SessionCsrfMiddleware
 from app.core.config import Settings, settings
-from app.core.database import Base, get_db
+from app.core.database import SCHEMA_UPGRADE_LOCK_ID, Base, get_db
 from app.core.request_limits import MultipartRequestLimitMiddleware
 from app.models import Demo, DemoJob
 from app.services.auth_service import AuthService, get_auth_service
+from app.services.demo_service import ACTIVE_DEMO_STATUSES, DemoService, demo_ingest
 from app.services.upload_quota import (
+    PARSE_ADMISSION_LOCK_ID,
     UploadQuotaExceeded,
     UploadQuotaService,
+    _parse_admission_lock,
+    parse_admission,
     upload_quota_precheck,
 )
 
@@ -385,6 +391,62 @@ class UploadQuotaServiceTest(unittest.TestCase):
             self.assertFalse(session.in_transaction())
 
 
+class ParseAdmissionTest(unittest.TestCase):
+    def session(self, dialect: str) -> MagicMock:
+        db = MagicMock()
+        db.get_bind.return_value.dialect.name = dialect
+        return db
+
+    def test_postgres_takes_a_transaction_advisory_lock_inside_the_process_lock(self) -> None:
+        db = self.session("postgresql")
+
+        with parse_admission(db, Settings(auth_mode="production")):
+            self.assertTrue(_parse_admission_lock.locked())
+            db.execute.assert_called_once()
+            statement, params = db.execute.call_args.args
+            self.assertEqual(str(statement), "SELECT pg_advisory_xact_lock(:lock_id)")
+            self.assertEqual(params, {"lock_id": PARSE_ADMISSION_LOCK_ID})
+
+        self.assertFalse(_parse_admission_lock.locked())
+        db.rollback.assert_not_called()
+        # A signed bigint, distinct from the schema upgrade lock.
+        self.assertLess(PARSE_ADMISSION_LOCK_ID, 2**63)
+        self.assertNotEqual(PARSE_ADMISSION_LOCK_ID, SCHEMA_UPGRADE_LOCK_ID)
+
+    def test_other_dialects_take_only_the_process_lock(self) -> None:
+        db = self.session("sqlite")
+
+        with parse_admission(db, Settings(auth_mode="production")):
+            self.assertTrue(_parse_admission_lock.locked())
+
+        db.execute.assert_not_called()
+        self.assertFalse(_parse_admission_lock.locked())
+
+    def test_no_lock_is_taken_outside_production(self) -> None:
+        for auth_mode in ("development", "test"):
+            with self.subTest(auth_mode=auth_mode):
+                db = self.session("postgresql")
+
+                with parse_admission(db, Settings(auth_mode=auth_mode)):
+                    self.assertFalse(_parse_admission_lock.locked())
+
+                db.get_bind.assert_not_called()
+                db.execute.assert_not_called()
+
+    def test_a_failure_inside_rolls_back_and_releases_the_lock(self) -> None:
+        db = self.session("postgresql")
+
+        with (
+            self.assertRaises(UploadQuotaExceeded),
+            parse_admission(db, Settings(auth_mode="production")),
+        ):
+            raise UploadQuotaExceeded(429, "active_parse_limit", "busy", 60)
+
+        # The rollback ends the transaction, which frees the advisory lock too.
+        db.rollback.assert_called_once_with()
+        self.assertFalse(_parse_admission_lock.locked())
+
+
 class ProductionUploadQuotaApiTest(unittest.TestCase):
     def setUp(self) -> None:
         self.engine = create_engine(
@@ -492,6 +554,61 @@ class ProductionUploadQuotaApiTest(unittest.TestCase):
     def demo_ids(self) -> set[str]:
         with self.Session() as db:
             return {demo.id for demo in db.query(Demo).all()}
+
+    def use_file_database(self) -> None:
+        # Racing requests need a connection each; StaticPool shares one.
+        self.engine.dispose()
+        db_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(db_dir.cleanup)
+        self.engine = create_engine(
+            f"sqlite:///{Path(db_dir.name, 'quota.sqlite').as_posix()}",
+            connect_args={"check_same_thread": False, "timeout": 30},
+            poolclass=NullPool,
+        )
+        Base.metadata.create_all(bind=self.engine)
+        self.Session = sessionmaker(bind=self.engine, autocommit=False, autoflush=False)
+
+    def upload_failed_demos(self, count: int) -> list[str]:
+        """Upload retryable demos with every limit off, then fail their parses."""
+        for name in QUOTA_FIELDS:
+            object.__setattr__(settings, name, 0)
+        client = self.client()
+        ids = []
+        for _ in range(count):
+            response = self.upload(client)
+            self.assertEqual(response.status_code, 201, response.text)
+            ids.append(response.json()["id"])
+        with self.Session() as db:
+            for demo in db.query(Demo).all():
+                demo.status = "failed"
+            for job in db.query(DemoJob).all():
+                job.status = "failed"
+            db.commit()
+        self.redis.payloads.clear()
+        return ids
+
+    def active_demo_count(self) -> int:
+        with self.Session() as db:
+            return db.query(Demo).filter(Demo.status.in_(ACTIVE_DEMO_STATUSES)).count()
+
+    def race(self, requests: list[Callable[[TestClient], Any]]) -> list[int]:
+        clients = [self.client() for _ in requests]
+        barrier = threading.Barrier(len(requests))
+        statuses: list[int] = []
+
+        def fire(client: TestClient, request: Callable[[TestClient], Any]) -> None:
+            barrier.wait()
+            statuses.append(request(client).status_code)
+
+        threads = [
+            threading.Thread(target=fire, args=(client, request))
+            for client, request in zip(clients, requests, strict=True)
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=60)
+        return sorted(statuses)
 
     def upload(self, client: TestClient) -> Any:
         return client.post(
@@ -624,6 +741,85 @@ class ProductionUploadQuotaApiTest(unittest.TestCase):
         response = self.client().post(f"/demos/{other_failed}/parse/retry")
 
         self.assertEqual(response.status_code, 404)
+
+    def test_concurrent_parse_retries_admit_at_most_the_active_limit(self) -> None:
+        self.use_file_database()
+        failed_ids = self.upload_failed_demos(6)
+        object.__setattr__(settings, "demo_active_parse_limit", 2)
+        object.__setattr__(settings, "parse_queue_global_limit", 50)
+        verify = demo_ingest.verify_accepted_artifact
+
+        def slow_verify(*args: Any, **kwargs: Any) -> Any:
+            # Holds each retry between its count and its commit, like an S3 HEAD.
+            time.sleep(0.05)
+            return verify(*args, **kwargs)
+
+        with patch.object(demo_ingest, "verify_accepted_artifact", slow_verify):
+            statuses = self.race(
+                [
+                    lambda client, demo_id=demo_id: client.post(f"/demos/{demo_id}/parse/retry")
+                    for demo_id in failed_ids
+                ]
+            )
+
+        self.assertEqual(statuses, [200, 200, 429, 429, 429, 429])
+        self.assertEqual(self.active_demo_count(), 2)
+        self.assertEqual(len(self.redis.payloads), 2)
+
+    def test_uploads_racing_parse_retries_share_the_active_limit(self) -> None:
+        self.use_file_database()
+        failed_ids = self.upload_failed_demos(4)
+        object.__setattr__(settings, "demo_active_parse_limit", 2)
+        before = self.demo_ids()
+
+        statuses = self.race(
+            [
+                *(
+                    lambda client, demo_id=demo_id: client.post(f"/demos/{demo_id}/parse/retry")
+                    for demo_id in failed_ids
+                ),
+                self.upload,
+                self.upload,
+            ]
+        )
+
+        admitted = [status for status in statuses if status in {200, 201}]
+        self.assertEqual(len(statuses), 6)
+        self.assertEqual(len(admitted), 2, statuses)
+        self.assertEqual(set(statuses) - {200, 201}, {429})
+        self.assertEqual(self.active_demo_count(), 2)
+        self.assertEqual(len(self.redis.payloads), 2)
+        # A refused upload leaves no row behind.
+        self.assertEqual(len(self.demo_ids() - before), statuses.count(201))
+
+    def test_an_upload_refused_by_the_final_check_leaves_no_demo_dispatch_or_artifact(self) -> None:
+        object.__setattr__(settings, "demo_active_parse_limit", 1)
+        client = self.client()
+        before = self.demo_ids()
+        landed: list[str] = []
+        promoted: list[Path] = []
+        prepare = DemoService.prepare_real_demo
+
+        def prepare_while_another_upload_lands(service: DemoService, **kwargs: Any) -> Any:
+            prepared = prepare(service, **kwargs)
+            promoted.extend(path for path in Path(self.temp_dir.name).rglob("*") if path.is_file())
+            # Another upload is admitted while this body was streaming.
+            landed.extend(self.seed(OWNER, status="queued", age=timedelta(0)))
+            return prepared
+
+        with patch.object(DemoService, "prepare_real_demo", prepare_while_another_upload_lands):
+            response = self.upload(client)
+
+        self.assert_quota_response(response, status_code=429, code="active_parse_limit")
+        self.assertTrue(promoted)
+        self.assertEqual(self.demo_ids(), before | set(landed))
+        with self.Session() as db:
+            self.assertEqual(db.query(DemoJob).count(), 0)
+        self.assertEqual(self.redis.payloads, [])
+        self.assertEqual(
+            [path for path in Path(self.temp_dir.name).rglob("*") if path.is_file()],
+            [],
+        )
 
 
 class DevelopmentUploadQuotaApiTest(unittest.TestCase):

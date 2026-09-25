@@ -3,15 +3,19 @@
 Counts come from the demos table. It is authoritative where the Redis queue is
 not: that queue also carries render jobs and deliberate re-sends, and Redis has
 no persistence here. Every check is a no-op outside AUTH_MODE=production, and a
-limit of 0 turns that limit off.
+limit of 0 turns that limit off. Callers that queue a demo run the authoritative
+check and their commit inside `parse_admission`, so concurrent requests cannot
+all pass on the same count.
 """
 
 import math
-from collections.abc import Callable
+import threading
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import func
+from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 from starlette.responses import JSONResponse
 
@@ -21,6 +25,9 @@ from app.services.demo_service.constants import ACTIVE_DEMO_STATUSES
 
 UPLOAD_QUOTA_WINDOW = timedelta(hours=24)
 PARSE_CAPACITY_RETRY_AFTER_SECONDS = 60
+PARSE_ADMISSION_LOCK_ID = 7_302_202_609_250_001
+
+_parse_admission_lock = threading.Lock()
 
 
 class UploadQuotaExceeded(Exception):
@@ -70,8 +77,11 @@ class UploadQuotaService:
     def check_new_upload(self, owner_id: str) -> None:
         if self.settings.auth_mode != "production":
             return
-        self._check_parse_capacity(owner_id)
-        self._check_daily_uploads(owner_id)
+        # The upload route re-checks with its prepared demo pending in this
+        # session; that demo must not count against its own admission.
+        with self.db.no_autoflush:
+            self._check_parse_capacity(owner_id)
+            self._check_daily_uploads(owner_id)
 
     def check_parse_retry(self, owner_id: str) -> None:
         # A retry reuses its demo row, so only the in-flight caps apply.
@@ -133,6 +143,34 @@ class UploadQuotaService:
         if owner_id is not None:
             query = query.filter(Demo.owner_id == owner_id)
         return int(query.scalar() or 0)
+
+
+@contextmanager
+def parse_admission(db: Session, runtime_settings: Settings = settings) -> Iterator[None]:
+    """Serialize a parse-capacity count with the commit that makes a demo active.
+
+    Wrap the authoritative quota check and that commit. A process-wide lock
+    covers this API process; on PostgreSQL a transaction-scoped advisory lock
+    taken in `db` also covers other API processes until the commit (or the
+    rollback on failure) ends the transaction. That relies on READ COMMITTED,
+    the default, so the count sees every demo admitted before the lock. The
+    block must end its transaction before it exits. Quotas are production-only,
+    so elsewhere this takes no lock at all.
+    """
+    if runtime_settings.auth_mode != "production":
+        yield
+        return
+    with _parse_admission_lock:
+        try:
+            if db.get_bind().dialect.name == "postgresql":
+                db.execute(
+                    text("SELECT pg_advisory_xact_lock(:lock_id)"),
+                    {"lock_id": PARSE_ADMISSION_LOCK_ID},
+                )
+            yield
+        except BaseException:
+            db.rollback()
+            raise
 
 
 def upload_quota_precheck(
