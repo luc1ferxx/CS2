@@ -23,9 +23,19 @@ import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } fro
 
 import { DemoUploader } from "@/components/upload/DemoUploader";
 import { AuthBoundary } from "@/components/auth/AuthBoundary";
+import { useAuth } from "@/components/auth/AuthProvider";
 import { SessionControls } from "@/components/auth/SessionControls";
 import { RecentSteamMatches } from "@/components/steam/RecentSteamMatches";
-import { archiveDemo, createDemoUpload, createMockUpload, listDemos, retryDemoParse, updateDemo } from "@/lib/api";
+import {
+  archiveDemo,
+  createDemoUpload,
+  createMockUpload,
+  isApiError,
+  listDemos,
+  retryDemoParse,
+  updateDemo
+} from "@/lib/api";
+import { NO_CAPABILITIES } from "@/lib/auth";
 import {
   canRetryParse,
   demoLibraryFilterOptions,
@@ -37,6 +47,7 @@ import {
   type DemoLibraryFilters,
   type LibraryEmptyState
 } from "@/lib/demo-library";
+import { uploadLimitMessage } from "@/lib/upload-limits";
 import type { DemoProcessingStatus, DemoSummary } from "@/types/demo";
 
 const DEFAULT_FILTERS: DemoLibraryFilters = {
@@ -62,6 +73,8 @@ export default function DashboardPage() {
 }
 
 function DashboardContent() {
+  const { state: authState } = useAuth();
+  const { devTools } = authState.capabilities ?? NO_CAPABILITIES;
   const [demos, setDemos] = useState<DemoSummary[]>([]);
   const [filters, setFilters] = useState<DemoLibraryFilters>(DEFAULT_FILTERS);
   const [loading, setLoading] = useState(true);
@@ -70,6 +83,9 @@ function DashboardContent() {
   const [renamingDemoId, setRenamingDemoId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
   const [error, setError] = useState<string | null>(null);
+  // Library polling clears `error` on every successful fetch; a quota rejection
+  // must outlive that, so upload failures stay here until the next attempt.
+  const [uploadError, setUploadError] = useState<string | null>(null);
   const [notice, setNotice] = useState<LibraryNotice | null>(null);
   const [importOptionsLoaded, setImportOptionsLoaded] = useState(false);
   const loadRequestIdRef = useRef(0);
@@ -157,6 +173,7 @@ function DashboardContent() {
 
   async function handleDemoUpload(file: File) {
     setCreating(true);
+    setUploadError(null);
     try {
       const demo = await createDemoUpload(file);
       setNotice({
@@ -166,7 +183,7 @@ function DashboardContent() {
       setError(null);
       await loadDemos();
     } catch (err) {
-      setError(libraryRequestError(err, "上传比赛失败，请检查文件后重试。"));
+      setUploadError(libraryRequestError(err, "上传比赛失败，请检查文件后重试。"));
     } finally {
       setCreating(false);
     }
@@ -260,9 +277,14 @@ function DashboardContent() {
               选择比赛，找到值得复盘的一刻。
             </p>
           </div>
-          <DemoUploader disabled={creating} onMockUpload={handleMockUpload} onDemoUpload={handleDemoUpload} />
+          <DemoUploader
+            disabled={creating}
+            onMockUpload={devTools ? handleMockUpload : undefined}
+            onDemoUpload={handleDemoUpload}
+          />
         </div>
 
+        {uploadError ? <div className="error-panel" role="alert">{uploadError}</div> : null}
         {error ? <div className="error-panel" role="alert">{error}</div> : null}
         {notice ? (
           <div className="library-notice" aria-live="polite">
@@ -411,7 +433,7 @@ function DashboardContent() {
               state={emptyState}
               creating={creating}
               onClearFilters={() => setFilters(DEFAULT_FILTERS)}
-              onMockUpload={() => void handleMockUpload()}
+              onMockUpload={devTools ? () => void handleMockUpload() : undefined}
               onUpload={() => document.getElementById("demo-upload-input")?.click()}
               onRefresh={() => void loadDemos()}
               onShowArchived={() =>
@@ -602,17 +624,18 @@ function LibraryEmptyStateRow({
   state: LibraryEmptyState;
   creating: boolean;
   onClearFilters: () => void;
-  onMockUpload: () => void;
+  onMockUpload?: () => void;
   onUpload: () => void;
   onRefresh: () => void;
   onShowArchived: () => void;
 }) {
   const copy = EMPTY_STATE_COPY[state.kind];
+  const showMockAction = state.showMockAction && onMockUpload !== undefined;
   return (
     <div className={`library-empty-state ${state.kind}`} aria-busy={state.kind === "loading"}>
       <div>
         <strong>{copy.title}</strong>
-        <p>{copy.message}</p>
+        <p>{state.kind === "empty" && showMockAction ? `${copy.message}${MOCK_DEMO_HINT}` : copy.message}</p>
       </div>
       <div className="library-empty-actions">
         {state.showUploadAction ? (
@@ -626,7 +649,7 @@ function LibraryEmptyStateRow({
             上传比赛 .dem
           </button>
         ) : null}
-        {state.showMockAction ? (
+        {showMockAction ? (
           <button
             className="secondary-button compact-button"
             type="button"
@@ -701,11 +724,13 @@ function formatDate(value: string) {
 const EMPTY_STATE_COPY: Record<LibraryEmptyState["kind"], { title: string; message: string }> = {
   loading: { title: "正在加载比赛", message: "比赛准备好后，会显示在这里。" },
   error: { title: "暂时无法加载比赛", message: "请刷新重试。已上传的比赛会保留。" },
-  empty: { title: "开始你的第一场复盘", message: "上传 .dem 比赛文件，即可查看战术回放和复盘建议。也可以先用模拟比赛体验。" },
+  empty: { title: "开始你的第一场复盘", message: "上传 .dem 比赛文件，即可查看战术回放和复盘建议。" },
   archived: { title: "比赛已归档", message: "显示已归档比赛，即可继续复盘或恢复到比赛库。" },
   search: { title: "没有找到这场比赛", message: "试试其他比赛名称或地图，也可以清除筛选查看全部比赛。" },
   filtered: { title: "没有符合条件的比赛", message: "调整地图、状态或归档筛选，查看其他比赛。" }
 };
+
+const MOCK_DEMO_HINT = "也可以先用模拟比赛体验。";
 
 function statusLabel(status: DemoProcessingStatus): string {
   return {
@@ -739,6 +764,13 @@ function closeRecordMenu(button: HTMLButtonElement) {
 }
 
 function libraryRequestError(error: unknown, fallback: string): string {
+  // Quota codes first: their English messages must not reach the file-validation regexes below.
+  const limitMessage = isApiError(error)
+    ? uploadLimitMessage(error.status, error.detailCode, error.retryAfterSeconds)
+    : null;
+  if (limitMessage) {
+    return limitMessage;
+  }
   const message = error instanceof Error ? error.message : "";
   if (/failed to fetch|networkerror|load failed|err_connection|econnrefused/i.test(message)) {
     return "暂时无法连接服务，请确认应用已启动，然后刷新重试。";

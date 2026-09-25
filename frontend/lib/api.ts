@@ -7,7 +7,7 @@ import type {
   SteamMatch,
   SteamSyncResult
 } from "@/types/steam";
-import type { AuthAccount } from "@/lib/auth";
+import type { AuthAccount, AuthCapabilities } from "@/lib/auth";
 
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
@@ -23,13 +23,20 @@ export class ApiError extends Error {
   readonly status: number;
   readonly code: ApiErrorCode;
   readonly detailCode: string | null;
+  readonly retryAfterSeconds: number | null;
 
-  constructor(status: number, message: string, detailCode: string | null = null) {
+  constructor(
+    status: number,
+    message: string,
+    detailCode: string | null = null,
+    retryAfterSeconds: number | null = null
+  ) {
     super(message);
     this.name = "ApiError";
     this.status = status;
     this.code = status === 401 ? "unauthenticated" : "request_failed";
     this.detailCode = detailCode;
+    this.retryAfterSeconds = retryAfterSeconds;
   }
 }
 
@@ -136,6 +143,8 @@ export interface DemoUpdateRequest {
 export interface AuthMe {
   authenticated: true;
   account: AuthAccount;
+  // Optional so an older API still parses; the auth reducer treats it as all off.
+  capabilities?: AuthCapabilities;
 }
 
 async function requestJson<T>(
@@ -377,30 +386,32 @@ export function getCoaching(demoId: string): Promise<CoachingEvent[]> {
 interface ResponseErrorDetails {
   message: string;
   detailCode: string | null;
+  retryAfterSeconds: number | null;
 }
 
 async function responseErrorDetails(response: Response): Promise<ResponseErrorDetails> {
   const body = await response.text();
   if (!body) {
-    return { message: "", detailCode: null };
+    return { message: "", detailCode: null, retryAfterSeconds: null };
   }
 
   try {
     const parsed = JSON.parse(body) as { detail?: unknown };
     if (typeof parsed.detail === "string") {
-      return { message: parsed.detail, detailCode: null };
+      return { message: parsed.detail, detailCode: null, retryAfterSeconds: null };
     }
     if (isStructuredApiDetail(parsed.detail)) {
       return {
         message: parsed.detail.message,
-        detailCode: parsed.detail.code
+        detailCode: parsed.detail.code,
+        retryAfterSeconds: positiveSeconds(parsed.detail.retryAfterSeconds)
       };
     }
   } catch {
-    return { message: body, detailCode: null };
+    return { message: body, detailCode: null, retryAfterSeconds: null };
   }
 
-  return { message: body, detailCode: null };
+  return { message: body, detailCode: null, retryAfterSeconds: null };
 }
 
 async function throwResponseError(response: Response): Promise<never> {
@@ -413,16 +424,30 @@ async function throwResponseError(response: Response): Promise<never> {
   throw new ApiError(
     response.status,
     detail.message || `Request failed with ${response.status}`,
-    detail.detailCode
+    detail.detailCode,
+    // The body is read first: a cross-origin dev setup may not expose the header.
+    detail.retryAfterSeconds ?? retryAfterHeaderSeconds(response.headers.get("Retry-After"))
   );
 }
 
 function isStructuredApiDetail(
   value: unknown
-): value is { code: string; message: string } {
+): value is { code: string; message: string; retryAfterSeconds?: unknown } {
   if (typeof value !== "object" || value === null) {
     return false;
   }
   const detail = value as { code?: unknown; message?: unknown };
   return typeof detail.code === "string" && typeof detail.message === "string";
+}
+
+function positiveSeconds(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) && value > 0
+    ? Math.ceil(value)
+    : null;
+}
+
+// Only the delay-seconds form; the HTTP-date form is not sent by this API.
+function retryAfterHeaderSeconds(value: string | null): number | null {
+  const trimmed = value?.trim() ?? "";
+  return /^\d+$/.test(trimmed) ? positiveSeconds(Number(trimmed)) : null;
 }

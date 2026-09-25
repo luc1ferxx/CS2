@@ -3,13 +3,16 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import DemoDetailPage from "@/app/demos/[demoId]/page";
+import { useAuth } from "@/components/auth/AuthProvider";
 import * as api from "@/lib/api";
+import type { AuthCapabilities } from "@/lib/auth";
 import {
   T_ENTRY_ID,
   coachingEvent,
   demoStatus,
   demoSummary,
   ingestion,
+  renderJob,
   renderWorkerStatus,
   replayData,
   replayVideo
@@ -21,18 +24,21 @@ vi.mock("next/navigation", () => ({
   useParams: () => ({ demoId: "demo-1" })
 }));
 
-vi.mock("@/components/auth/AuthProvider", () => ({
-  useAuth: () => ({
+vi.mock("@/components/auth/AuthProvider", () => ({ useAuth: vi.fn() }));
+
+function mockAuth(capabilities: AuthCapabilities) {
+  vi.mocked(useAuth).mockReturnValue({
     state: {
       status: "authenticated",
-      account: { displayName: "Local development", avatarUrl: null, provider: "development" }
+      account: { displayName: "Local development", avatarUrl: null, provider: "development" },
+      capabilities
     },
     provider: "steam",
     refreshSession: vi.fn(async () => true),
     signIn: vi.fn(),
     signOut: vi.fn(async () => {})
-  })
-}));
+  });
+}
 
 vi.mock("@/lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/api")>();
@@ -82,8 +88,37 @@ function parsingStatus() {
   });
 }
 
+// A finished clip for the reviewed player, saved before render clips were turned off.
+function savedClipJob() {
+  return renderJob({
+    status: "completed",
+    video_status: "ready",
+    video: replayVideo({
+      status: "ready",
+      source: "rendered",
+      url: "/demos/demo-1/render/jobs/job-render-1/media/video",
+      durationSeconds: 10,
+      tickStart: 400,
+      tickEnd: 1040,
+      povSteamId: T_ENTRY_ID,
+      renderJobId: "job-render-1"
+    }),
+    finished_at: "2026-09-18T12:01:00Z"
+  });
+}
+
+async function openReviewFor(playerId: string) {
+  const user = userEvent.setup();
+  render(<DemoDetailPage />);
+  await screen.findByRole("region", { name: "Review transport" });
+  await user.selectOptions(screen.getByRole("combobox", { name: "Player to review" }), playerId);
+  await screen.findByRole("group", { name: /这条建议是否有帮助/ });
+  return user;
+}
+
 describe("DemoDetailPage", () => {
   beforeEach(() => {
+    mockAuth({ devTools: true, renderClips: true });
     vi.mocked(api.getCoaching).mockResolvedValue([coachingEvent()]);
     vi.mocked(api.getRenderJobs).mockResolvedValue([]);
     vi.mocked(api.getDemoVideo).mockResolvedValue(replayVideo());
@@ -256,5 +291,80 @@ describe("DemoDetailPage", () => {
     expect(screen.getByText(/^比赛处理失败。/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "重新处理" })).toBeEnabled();
     expect(api.getReplay).not.toHaveBeenCalled();
+  });
+
+  it("reports a parse retry refused by the owner's in-flight limit", async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.getDemoStatus).mockResolvedValue(
+      demoStatus({
+        status: "failed",
+        completed_at: null,
+        ingestion: ingestion({ phase: "failed", jobStatus: "failed", retryable: true })
+      })
+    );
+    vi.mocked(api.retryDemoParse).mockRejectedValue(
+      new api.ApiError(429, "Too many demos are processing.", "active_parse_limit", 60)
+    );
+
+    render(<DemoDetailPage />);
+    await user.click(await screen.findByRole("button", { name: "重新处理" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("已有比赛正在处理，请等当前比赛处理完成后再上传。");
+  });
+
+  it("offers clip generation and the dev tools when the API serves them", async () => {
+    vi.mocked(api.getDemoStatus).mockResolvedValue(demoStatus());
+    vi.mocked(api.getReplay).mockResolvedValue(replayData());
+
+    await openReviewFor(T_ENTRY_ID);
+
+    expect(screen.getByRole("button", { name: "生成此刻视频" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "生成视频" })).toBeInTheDocument();
+    expect(screen.getByText("Render Operator")).toBeInTheDocument();
+    expect(screen.getByText("Video Setup / Sync Calibration")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "创建模拟视频任务（开发测试）", hidden: true })).toBeInTheDocument();
+  });
+
+  it("keeps render clips but drops the dev tools when only render clips are enabled", async () => {
+    mockAuth({ devTools: false, renderClips: true });
+    vi.mocked(api.getDemoStatus).mockResolvedValue(demoStatus());
+    vi.mocked(api.getReplay).mockResolvedValue(replayData());
+
+    await openReviewFor(T_ENTRY_ID);
+
+    expect(screen.getByRole("button", { name: "生成此刻视频" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "生成视频" })).toBeInTheDocument();
+    expect(screen.getByText("Render Operator")).toBeInTheDocument();
+    expect(screen.queryByText("Video Setup / Sync Calibration")).not.toBeInTheDocument();
+    expect(screen.queryByText("创建模拟视频任务（开发测试）")).not.toBeInTheDocument();
+  });
+
+  it("hides clip generation when render clips are off but still plays saved clips", async () => {
+    mockAuth({ devTools: false, renderClips: false });
+    vi.mocked(api.getDemoStatus).mockResolvedValue(demoStatus());
+    vi.mocked(api.getReplay).mockResolvedValue(replayData());
+    vi.mocked(api.getRenderJobs).mockResolvedValue([savedClipJob()]);
+
+    const user = await openReviewFor(T_ENTRY_ID);
+
+    expect(screen.queryByRole("button", { name: /此刻视频/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /生成视频|观看视频|重试|等待生成|生成中/, hidden: true })).toBeNull();
+    expect(document.querySelector(".generate-clip-button")).toBeNull();
+    expect(screen.queryByText("Render Operator")).not.toBeInTheDocument();
+    expect(screen.queryByText("Video Setup / Sync Calibration")).not.toBeInTheDocument();
+    expect(screen.queryByText("创建模拟视频任务（开发测试）")).not.toBeInTheDocument();
+    expect(screen.queryByText(/可按需生成第一人称视频/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/视频校准/)).not.toBeInTheDocument();
+    expect(api.getRenderJobs).toHaveBeenCalledWith("demo-1");
+
+    const play = screen.getByRole("button", { name: "Play T Entry clip at tick 400", hidden: true });
+    expect(play).toHaveAttribute("aria-pressed", "false");
+    await user.click(play);
+
+    expect(await screen.findByRole("button", { name: "Play T Entry clip at tick 400", hidden: true }))
+      .toHaveAttribute("aria-pressed", "true");
+    expect(document.querySelector("video.first-person-video")).not.toBeNull();
+    expect(api.createRenderClipJob).not.toHaveBeenCalled();
+    expect(api.retryRenderClipJob).not.toHaveBeenCalled();
   });
 });

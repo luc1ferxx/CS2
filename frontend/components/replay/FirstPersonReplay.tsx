@@ -34,7 +34,8 @@ interface FirstPersonReplayProps {
   compact?: boolean;
   showDevActions?: boolean;
   onRequestMockRender: () => void;
-  onRequestRenderClip: () => void;
+  // Omitted when render clips are off, which hides the clip button.
+  onRequestRenderClip?: () => void;
   onVideoTickChange: (tick: number) => void;
   onVideoUnavailable: (identity: string) => void;
   onViewVideoClip: () => void;
@@ -248,7 +249,7 @@ export const FirstPersonReplay = forwardRef<FirstPersonReplayHandle, FirstPerson
               {statusLabel(latestRenderClipJob.status)}
             </span>
           ) : null}
-          <button
+          {onRequestRenderClip ? <button
             className="secondary-button compact-button"
             type="button"
             onClick={onRequestRenderClip}
@@ -257,7 +258,7 @@ export const FirstPersonReplay = forwardRef<FirstPersonReplayHandle, FirstPerson
           >
             <Scissors size={14} />
             {renderClipRequesting ? "正在提交…" : tickClipReady ? "观看这一刻" : clipWorkerNotice ? clipWorkerNotice.label : isRenderActiveStatus(currentTickClipJob?.status) ? statusLabel(currentTickClipJob?.status ?? "queued") : "生成这一刻的视频"}
-          </button>
+          </button> : null}
           {showDevActions ? <button
             className="secondary-button compact-button"
             type="button"

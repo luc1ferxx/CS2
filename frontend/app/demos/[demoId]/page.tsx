@@ -7,6 +7,7 @@ import { useParams } from "next/navigation";
 
 import { CoachingPanel } from "@/components/coaching/CoachingPanel";
 import { AuthBoundary } from "@/components/auth/AuthBoundary";
+import { useAuth } from "@/components/auth/AuthProvider";
 import { SessionControls } from "@/components/auth/SessionControls";
 import {
   FirstPersonReplay,
@@ -32,6 +33,7 @@ import {
   getRenderJobs,
   getRenderWorkerStatus,
   getReplay,
+  isApiError,
   retryDemoParse,
   retryRenderClipJob,
   saveCoachingFeedback,
@@ -42,6 +44,7 @@ import {
   type RenderWorkerStatus,
   type VideoCalibrationUpdate
 } from "@/lib/api";
+import { NO_CAPABILITIES } from "@/lib/auth";
 import {
   detailSummaryItems,
   friendlyErrorMessage,
@@ -55,6 +58,7 @@ import { roundClock, savedClipAtTick, usesVideoClock } from "@/lib/review-worksp
 import { findRoundForTick } from "@/lib/round-review";
 import { buildEventClipRequest, buildTickClipRequest, clipIsActive, clipRequestAction, clipsForPlayer, matchingClipJob, playableClipVideo, retainSelectedClip, reviewVideo, type SelectedClip } from "@/lib/render-clips";
 import { renderWorkerNotice } from "@/lib/render-worker";
+import { uploadLimitMessage } from "@/lib/upload-limits";
 import { withFeedback } from "@/lib/coaching-review";
 import {
   DEFAULT_PLAYER_IDENTITY,
@@ -80,6 +84,8 @@ export default function DemoDetailPage() {
 function DemoDetailContent() {
   const params = useParams<{ demoId: string }>();
   const demoId = params.demoId;
+  const { state: authState } = useAuth();
+  const { devTools, renderClips } = authState.capabilities ?? NO_CAPABILITIES;
 
   const [status, setStatus] = useState<DemoStatus | null>(null);
   const [loadedReplay, setReplay] = useState<ReplayData | null>(null);
@@ -182,7 +188,10 @@ function DemoDetailContent() {
       // which re-arms the poll below and loads the replay on its own.
       await loadStatus();
     } catch (err) {
-      setError(friendlyErrorMessage(err instanceof Error ? err.message : "Failed to retry demo parse"));
+      const limitMessage = isApiError(err)
+        ? uploadLimitMessage(err.status, err.detailCode, err.retryAfterSeconds)
+        : null;
+      setError(limitMessage ?? friendlyErrorMessage(err instanceof Error ? err.message : "Failed to retry demo parse"));
     } finally {
       setParseRetrying(false);
     }
@@ -661,13 +670,13 @@ function DemoDetailContent() {
                     <Film size={16} aria-hidden="true" /> 第一人称
                   </button>
                 </div>
-                <button className="secondary-button compact-button" type="button"
+                {renderClips ? <button className="secondary-button compact-button" type="button"
                   disabled={tickClipRequesting || clipIsActive(currentTickClipJob) || !selectedPlayerId}
                   title={tickClipWorkerNotice?.detail}
                   onClick={() => void requestRenderClipAtCurrentTick()}>
                   <Scissors size={15} aria-hidden="true" />
                   {tickClipRequesting ? "正在提交" : tickClipWorkerNotice ? tickClipWorkerNotice.label : clipIsActive(currentTickClipJob) ? "视频生成中" : playableClipVideo(currentTickClipJob) ? "观看此刻视频" : "生成此刻视频"}
-                </button>
+                </button> : null}
               </div>
               <div className={`review-main-canvas ${videoDrivesClock ? "showing-video" : "showing-map"}`}>
               {videoDrivesClock ? (
@@ -687,7 +696,7 @@ function DemoDetailContent() {
                 renderClipPlayerSelected={Boolean(selectedPlayerId)}
                 renderWorker={renderWorker}
                 onRequestMockRender={requestMockRender}
-                onRequestRenderClip={requestRenderClipAtCurrentTick}
+                onRequestRenderClip={renderClips ? requestRenderClipAtCurrentTick : undefined}
                 onVideoTickChange={updateCoordinateFromTick}
                 onVideoUnavailable={setUnavailableVideoIdentity}
                 onViewVideoClip={viewVideoClip}
@@ -728,7 +737,7 @@ function DemoDetailContent() {
             </section>
             {videoPlayback !== "active" ? (
               <div className="review-media-note" role="status">
-                <span>{videoUnavailable ? "视频暂时无法播放，已切换到战术回放。" : "当前时刻使用战术回放，可按需生成第一人称视频。"}</span>
+                <span>{videoUnavailable ? "视频暂时无法播放，已切换到战术回放。" : renderClips ? "当前时刻使用战术回放，可按需生成第一人称视频。" : "当前时刻使用战术回放。"}</span>
                 {replay.video.url && !videoUnavailable ? <button type="button" className="text-button" onClick={viewVideoClip}>打开已保存的视频</button> : null}
               </div>
             ) : null}
@@ -762,33 +771,33 @@ function DemoDetailContent() {
                 renderJobByEventId={renderJobByEventId}
                 requestingEventId={clipRequestingEventId}
                 onSeek={seekToFinding}
-                onGenerateClip={requestRenderClipForEvent}
+                onGenerateClip={renderClips ? requestRenderClipForEvent : undefined}
                 onFeedback={submitCoachingFeedback}
               />
             </div>
             <details className="review-inspector">
-              <summary><span>高级工具</span><small>视频校准、生成记录与技术详情</small></summary>
+              <summary><span>高级工具</span><small>{devTools || renderClips ? "视频校准、生成记录与技术详情" : "技术详情"}</small></summary>
               <div className="review-inspector-content">
-              <button className="secondary-button compact-button" type="button" disabled={renderRequesting}
-                onClick={() => void requestMockRender()}>{renderRequesting ? "提交中" : "创建模拟视频任务（开发测试）"}</button>
-            <section className="review-support-bay" aria-label="Render and calibration support">
-              <RenderOperatorPanel
+              {devTools ? <button className="secondary-button compact-button" type="button" disabled={renderRequesting}
+                onClick={() => void requestMockRender()}>{renderRequesting ? "提交中" : "创建模拟视频任务（开发测试）"}</button> : null}
+            {renderClips || devTools ? <section className="review-support-bay" aria-label="Render and calibration support">
+              {renderClips ? <RenderOperatorPanel
                 video={replay.video}
                 latestJob={latestRenderClipJob}
                 renderWorker={renderWorker}
                 jobCount={renderJobs.length}
                 refreshing={renderJobsRefreshing}
                 onRefresh={() => void refreshRenderOperatorState()}
-              />
-              <VideoSetupPanel
+              /> : null}
+              {devTools ? <VideoSetupPanel
                 currentVideoTime={currentVideoTime}
                 detectedDurationSeconds={detectedVideoDuration}
                 video={replay.video}
                 calibrationDisabled={Boolean(replay.video.renderJobId)}
                 onSaveCalibration={saveManualVideoCalibration}
                 onUploadVideo={uploadManualVideo}
-              />
-            </section>
+              /> : null}
+            </section> : null}
                 {status ? <DetailSummary items={summaryItems} /> : null}
                 {detailDiagnostics ? <ReplayDiagnosticsPanel diagnostics={detailDiagnostics} /> : null}
               </div>

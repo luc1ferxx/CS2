@@ -5230,6 +5230,11 @@ select:disabled {
   border-right: 0;
 }
 
+/* Production can show just one of the two panels. */
+.review-support-bay > *:only-child {
+  grid-column: 1 / -1;
+}
+
 .review-support-bay h2 {
   font-size: 14px;
 }

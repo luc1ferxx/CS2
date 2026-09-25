@@ -167,23 +167,10 @@ function loadTypeScriptModule(relativePath, overrides = {}) {
 
 {
   const auth = loadTypeScriptModule("./auth.ts");
-
-  assert.deepEqual(
+  const state = auth.reduceAuthState(
+    { status: "checking" },
     {
-      ...auth.reduceAuthState(
-        { status: "checking" },
-        {
-          type: "sessionAuthenticated",
-          account: {
-            displayName: "Reviewer",
-            avatarUrl: null,
-            provider: "steam"
-          }
-        }
-      )
-    },
-    {
-      status: "authenticated",
+      type: "sessionAuthenticated",
       account: {
         displayName: "Reviewer",
         avatarUrl: null,
@@ -191,6 +178,44 @@ function loadTypeScriptModule(relativePath, overrides = {}) {
       }
     }
   );
+
+  // An API without capabilities offers neither dev tools nor render clips.
+  assert.deepEqual(
+    { ...state, capabilities: { ...state.capabilities } },
+    {
+      status: "authenticated",
+      account: {
+        displayName: "Reviewer",
+        avatarUrl: null,
+        provider: "steam"
+      },
+      capabilities: { devTools: false, renderClips: false }
+    }
+  );
+}
+
+{
+  const auth = loadTypeScriptModule("./auth.ts");
+  const account = { displayName: "Local development", avatarUrl: null, provider: "development" };
+  const capabilitiesAfter = (capabilities) => ({
+    ...auth.reduceAuthState({ status: "checking" }, { type: "sessionAuthenticated", account, capabilities })
+      .capabilities
+  });
+
+  assert.deepEqual(capabilitiesAfter({ devTools: true, renderClips: true }), {
+    devTools: true,
+    renderClips: true
+  });
+  assert.deepEqual(capabilitiesAfter({ devTools: false, renderClips: true }), {
+    devTools: false,
+    renderClips: true
+  });
+  for (const unknown of [null, "all", [], {}, { devTools: "true", renderClips: 1 }]) {
+    assert.deepEqual(capabilitiesAfter(unknown), { devTools: false, renderClips: false });
+  }
+  // The shared default is never handed out for mutation.
+  assert.notEqual(auth.authCapabilities(undefined), auth.NO_CAPABILITIES);
+  assert.deepEqual({ ...auth.NO_CAPABILITIES }, { devTools: false, renderClips: false });
 }
 
 {
@@ -243,7 +268,8 @@ function loadTypeScriptModule(relativePath, overrides = {}) {
           displayName: "Reviewer",
           avatarUrl: null,
           provider: "steam"
-        }
+        },
+        capabilities: { devTools: false, renderClips: true }
       }), {
         status: 200,
         headers: { "Content-Type": "application/json" }
@@ -256,6 +282,7 @@ function loadTypeScriptModule(relativePath, overrides = {}) {
 
   assert.equal(session.authenticated, true);
   assert.equal(session.account.displayName, "Reviewer");
+  assert.deepEqual({ ...session.capabilities }, { devTools: false, renderClips: true });
   assert.equal(requests[0].url, "http://localhost:8000/auth/me");
   assert.equal(requests[0].init.credentials, "include");
 }
@@ -323,4 +350,108 @@ function loadTypeScriptModule(relativePath, overrides = {}) {
   );
 
   assert.equal(unauthorizedCount, 1);
+}
+
+function errorResponseApi(body, init) {
+  return loadTypeScriptModule("./api.ts", {
+    fetch: async () =>
+      new Response(typeof body === "string" ? body : JSON.stringify(body), {
+        headers: { "Content-Type": "application/json", ...(init.headers ?? {}) },
+        status: init.status
+      }),
+    File,
+    FormData,
+    Response
+  });
+}
+
+async function rejectedError(api, request) {
+  let caught = null;
+  try {
+    await request(api);
+  } catch (error) {
+    caught = error;
+  }
+  assert.ok(api.isApiError(caught), "expected an ApiError");
+  return caught;
+}
+
+{
+  // The structured quota body carries its own wait and wins over the header.
+  const api = errorResponseApi(
+    {
+      detail: {
+        code: "upload_daily_limit",
+        message: "Daily upload limit reached.",
+        retryAfterSeconds: 5400
+      }
+    },
+    { status: 429, headers: { "Retry-After": "30" } }
+  );
+  const error = await rejectedError(api, (client) =>
+    client.createDemoUpload(new File(["demo"], "sample.dem"))
+  );
+
+  assert.equal(error.status, 429);
+  assert.equal(error.code, "request_failed");
+  assert.equal(error.detailCode, "upload_daily_limit");
+  assert.equal(error.message, "Daily upload limit reached.");
+  assert.equal(error.retryAfterSeconds, 5400);
+}
+
+{
+  // Without a usable body value the Retry-After header is the fallback.
+  for (const retryAfterSeconds of [undefined, 0, -10, "60", null]) {
+    const api = errorResponseApi(
+      { detail: { code: "parse_queue_full", message: "Parse queue is full.", retryAfterSeconds } },
+      { status: 503, headers: { "Retry-After": "60" } }
+    );
+    const error = await rejectedError(api, (client) => client.retryDemoParse("demo-1"));
+
+    assert.equal(error.detailCode, "parse_queue_full");
+    assert.equal(error.retryAfterSeconds, 60);
+  }
+}
+
+{
+  // A string detail still picks up the header; a fractional body value rounds up.
+  const stringDetail = await rejectedError(
+    errorResponseApi({ detail: "Too many requests" }, { status: 429, headers: { "Retry-After": " 45 " } }),
+    (client) => client.listDemos()
+  );
+  assert.equal(stringDetail.detailCode, null);
+  assert.equal(stringDetail.retryAfterSeconds, 45);
+
+  const fractional = await rejectedError(
+    errorResponseApi(
+      { detail: { code: "active_parse_limit", message: "Busy.", retryAfterSeconds: 59.2 } },
+      { status: 429 }
+    ),
+    (client) => client.listDemos()
+  );
+  assert.equal(fractional.retryAfterSeconds, 60);
+}
+
+{
+  // Only whole positive delay-seconds count; anything else leaves the wait unknown.
+  for (const header of ["0", "-5", "1.5", "soon", "Wed, 21 Oct 2026 07:28:00 GMT", ""]) {
+    const error = await rejectedError(
+      errorResponseApi(
+        { detail: { code: "active_parse_limit", message: "Busy." } },
+        { status: 429, headers: { "Retry-After": header } }
+      ),
+      (client) => client.listDemos()
+    );
+    assert.equal(error.retryAfterSeconds, null, `Retry-After ${JSON.stringify(header)}`);
+  }
+
+  const noHeader = await rejectedError(
+    errorResponseApi({ detail: "Upload too large" }, { status: 413 }),
+    (client) => client.listDemos()
+  );
+  assert.equal(noHeader.retryAfterSeconds, null);
+  assert.equal(noHeader.message, "Upload too large");
+
+  const api = loadTypeScriptModule("./api.ts");
+  assert.equal(new api.ApiError(429, "Busy").retryAfterSeconds, null);
 }

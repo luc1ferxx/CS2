@@ -68,4 +68,12 @@ describe("CoachingEventCard", () => {
     await user.click(screen.getByRole("button", { name: "生成视频" }));
     expect(props.onGenerateClip).toHaveBeenCalledWith(event);
   });
+
+  it("drops the clip button when no clip handler is given, keeping locate and verdicts", () => {
+    renderCard(coachingEvent(), { onGenerateClip: undefined });
+
+    expect(screen.queryByRole("button", { name: "生成视频" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^查看这一刻：/ })).toBeInTheDocument();
+    expect(within(verdictGroup()).getAllByRole("button")).toHaveLength(3);
+  });
 });

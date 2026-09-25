@@ -220,6 +220,10 @@ function loadTypeScriptModule(relativePath, runtimeImports = {}) {
   assert.match(replayOnlyMarkup, /生成这一刻的视频/);
   assert.doesNotMatch(replayOnlyMarkup, /模拟视频任务/);
   assert.match(playerMarkup({}, {}, 100, null, { showDevActions: true }), /模拟视频任务/);
+  // Without a clip handler (render clips off) the player offers no clip button at all.
+  const noClipMarkup = playerMarkup({}, {}, 100, null, { onRequestRenderClip: undefined });
+  assert.doesNotMatch(noClipMarkup, /生成这一刻的视频|观看这一刻/);
+  assert.match(noClipMarkup, /战术回放已就绪/);
 
   // A queued clip with nothing to claim it used to sit on "等待生成" forever.
   const queuedClipJob = { job_id: "queued-job", status: "queued" };

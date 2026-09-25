@@ -21,7 +21,8 @@ interface CoachingPanelProps {
   renderJobByEventId: Map<string, RenderJobStatus>;
   requestingEventId: string | null;
   onSeek: (tick: number) => void;
-  onGenerateClip: (event: CoachingEvent) => void;
+  // Omitted when render clips are off; the cards then drop their clip button.
+  onGenerateClip?: (event: CoachingEvent) => void;
   onFeedback: (event: CoachingEvent, verdict: CoachingVerdict | null) => void;
 }
 

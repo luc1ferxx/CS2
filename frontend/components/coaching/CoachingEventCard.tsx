@@ -20,7 +20,7 @@ interface CoachingEventCardProps {
   clipRequesting: boolean;
   onToggleInspect: () => void;
   onSeek: (tick: number) => void;
-  onGenerateClip: (event: CoachingEvent) => void;
+  onGenerateClip?: (event: CoachingEvent) => void;
   onFeedback: (event: CoachingEvent, verdict: CoachingVerdict | null) => void;
 }
 
@@ -65,16 +65,18 @@ export function CoachingEventCard({
           <Crosshair size={14} aria-hidden="true" />
           查看这一刻
         </button>
-        <button
-          className="secondary-button compact-button generate-clip-button"
-          type="button"
-          onClick={() => onGenerateClip(event)}
-          disabled={clipBusy}
-          title={clipReady ? "播放已保存的视频" : clipFailed ? "重新生成这段视频" : "首次生成后保存，之后可以直接重播"}
-        >
-          {clipReady ? <Play size={14} aria-hidden="true" /> : <Video size={14} aria-hidden="true" />}
-          {clipLabel}
-        </button>
+        {onGenerateClip ? (
+          <button
+            className="secondary-button compact-button generate-clip-button"
+            type="button"
+            onClick={() => onGenerateClip(event)}
+            disabled={clipBusy}
+            title={clipReady ? "播放已保存的视频" : clipFailed ? "重新生成这段视频" : "首次生成后保存，之后可以直接重播"}
+          >
+            {clipReady ? <Play size={14} aria-hidden="true" /> : <Video size={14} aria-hidden="true" />}
+            {clipLabel}
+          </button>
+        ) : null}
       </div>
 
       <div className="coaching-feedback" role="group" aria-label={`这条建议是否有帮助：${copy.title}`}>

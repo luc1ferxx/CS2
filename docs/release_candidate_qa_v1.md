@@ -176,7 +176,7 @@ Open `/dashboard` in the target frontend and verify:
 - Keep live credentials out of evidence; rely on the automated Stage 2 regressions for the 3/owner/minute and 30/global/minute Redis limits, shared 429 breaker, concurrent lease claim, and oversized response/body rejection.
 - Dashboard loads with no current console errors.
 - Empty, loading, fetch-failed, archived-only, and search/filter no-result states are clear when practical to exercise.
-- Mock upload creates a demo and the post-create notice/table action opens it.
+- Mock upload creates a demo and the post-create notice/table action opens it. Production hides both `示例比赛` buttons and the Demo Detail mock-render/manual video tools because `/auth/me` reports `capabilities.devTools=false`.
 - Real/sample `.dem` upload parses and opens when `SAMPLE_DEMO_PATH` or another approved local sample is available.
 - Corrupt `.dem` failure shows compact parser metadata such as `INVALID_DEMO` without stack traces or local paths.
 - Demo Library search, status/map filters, sort order, rename, archive, and show archived work.
@@ -187,7 +187,8 @@ Open `/dashboard` in the target frontend and verify:
 - Timeline parser and coaching markers click-to-seek.
 - Coaching severity/rule/search filters and event cards work.
 - The replay's `生成这一刻的视频` button (and a coaching card's `生成视频`) creates a `render_clip` job. In `fallback` render-worker mode a local no-GPU run appears as `GPU worker not connected for render_clip`; in `external` mode an offline renderer instead shows as `render_worker.connected=false`, with the job left `queued` until `RENDER_CLIP_QUEUE_TIMEOUT_SECONDS` (default 30 min) elapses, after which the worker's queue sweep fails it as `RENDER_QUEUE_TIMED_OUT` so the retry button becomes usable.
-- `RenderOperatorPanel` shows latest job status, tick range, output, and compact errors.
+- `RenderOperatorPanel` shows latest job status, tick range, output, and compact errors. With `capabilities.renderClips=false` (production without `RENDER_CLIPS_ENABLED=1`) the clip buttons and this panel are hidden, and saved clips still play from `已保存的视频`.
+- Production beta: an uninvited Steam account lands on `/auth/callback?error=not_invited` showing `暂未开放` with a link back to `/` and no sign-in retry; an upload refused by a quota shows the Chinese limit copy (the daily limit includes the wait), which stays visible while the library polls.
 - The private `/demos/{demo_id}/media/video` source uses the session cookie, supports seek via `206`, and never falls back to `/media/videos/...`; missing/denied media preserves the synchronized 2D/mock shell.
 - Desktop and mobile widths do not show incoherent horizontal overflow, clipped controls, or current console errors.
 

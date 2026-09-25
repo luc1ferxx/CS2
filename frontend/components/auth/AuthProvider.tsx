@@ -41,7 +41,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const refreshSession = useCallback(async () => {
     try {
       const session = await getAuthMe();
-      dispatch({ type: "sessionAuthenticated", account: session.account });
+      dispatch({
+        type: "sessionAuthenticated",
+        account: session.account,
+        capabilities: session.capabilities
+      });
       return true;
     } catch (error) {
       if (isApiError(error) && error.status === 401) {

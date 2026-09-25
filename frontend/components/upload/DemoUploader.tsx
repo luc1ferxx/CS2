@@ -6,7 +6,8 @@ import { useRef } from "react";
 interface DemoUploaderProps {
   disabled: boolean;
   inputId?: string;
-  onMockUpload: () => void;
+  // Omitted when the API does not serve mock demos (production).
+  onMockUpload?: () => void;
   onDemoUpload: (file: File) => void;
 }
 
@@ -49,19 +50,21 @@ export function DemoUploader({
         </button>
         <span>.dem 比赛文件</span>
       </div>
-      <div className="upload-action-stack upload-mock-action">
-        <button
-          className="secondary-button"
-          type="button"
-          onClick={onMockUpload}
-          disabled={disabled}
-          title="创建一场模拟比赛，体验复盘功能"
-        >
-          <UploadCloud size={17} strokeWidth={2.2} />
-          示例比赛
-        </button>
-        <span>模拟数据</span>
-      </div>
+      {onMockUpload ? (
+        <div className="upload-action-stack upload-mock-action">
+          <button
+            className="secondary-button"
+            type="button"
+            onClick={onMockUpload}
+            disabled={disabled}
+            title="创建一场模拟比赛，体验复盘功能"
+          >
+            <UploadCloud size={17} strokeWidth={2.2} />
+            示例比赛
+          </button>
+          <span>模拟数据</span>
+        </div>
+      ) : null}
     </div>
   );
 }

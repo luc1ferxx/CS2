@@ -114,7 +114,7 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
-      # The 18 files in lib/*.test.mjs are plain node scripts that assert with
+      # The 19 files in lib/*.test.mjs are plain node scripts that assert with
       # node:assert -- there is no test runner to aggregate them. Looping with
       # `set -e` would stop at the first failure, so instead every file runs and
       # the failures are reported together.
