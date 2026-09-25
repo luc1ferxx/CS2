@@ -1,24 +1,27 @@
 import type { Metadata } from "next";
-import { Chakra_Petch, Inter } from "next/font/google";
+import { Barlow, Barlow_Semi_Condensed } from "next/font/google";
 import { AuthProvider } from "@/components/auth/AuthProvider";
 import "./globals.css";
 import "./product.css";
 
-const inter = Inter({
+// Latin and numerals only; Chinese falls through to the system CJK stack in globals.css.
+const barlow = Barlow({
   subsets: ["latin"],
+  weight: ["400", "500", "600"],
   display: "swap",
-  variable: "--font-body"
+  variable: "--font-barlow"
 });
 
-const chakraPetch = Chakra_Petch({
+const barlowSemiCondensed = Barlow_Semi_Condensed({
   subsets: ["latin"],
-  weight: ["400", "500", "600", "700"],
+  weight: ["600", "700"],
   display: "swap",
-  variable: "--font-display"
+  variable: "--font-barlow-condensed"
 });
 
 export const metadata: Metadata = {
-  title: "CS2 Demo Coach",
+  // Pages name themselves ("我的比赛 · CS2 Demo Coach"), so open tabs stay tellable apart.
+  title: { default: "CS2 Demo Coach", template: "%s · CS2 Demo Coach" },
   description: "上传 CS2 比赛录像，结合战术回放、第一人称视频和重点建议复盘。",
   icons: {
     icon: "/favicon.svg"
@@ -31,7 +34,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="zh-CN" className={`${inter.variable} ${chakraPetch.variable}`}>
+    <html lang="zh-CN" className={`${barlow.variable} ${barlowSemiCondensed.variable}`}>
       <body>
         <AuthProvider>{children}</AuthProvider>
       </body>
