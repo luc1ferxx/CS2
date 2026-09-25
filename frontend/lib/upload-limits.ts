@@ -12,7 +12,7 @@ export function uploadLimitMessage(
       : "今天的上传次数已用完，请稍后再继续上传。";
   }
   if (status === 429 && detailCode === "active_parse_limit") {
-    return "已有比赛正在处理，请等当前比赛处理完成后再上传。";
+    return "已有比赛正在处理，请等当前比赛处理完成后再试。";
   }
   if (status === 503 && detailCode === "parse_queue_full") {
     return "服务繁忙，处理队列已满，请稍后再试。";

@@ -56,6 +56,7 @@ function parsingDemo() {
 }
 
 const DAILY_LIMIT = "今天的上传次数已用完，约 1 小时 30 分钟 后可以继续上传。";
+const ACTIVE_LIMIT = "已有比赛正在处理，请等当前比赛处理完成后再试。";
 
 async function flush() {
   await act(async () => {
@@ -240,5 +241,40 @@ describe("DashboardPage", () => {
     await user.click(await screen.findByRole("button", { name: "重新处理" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent("服务繁忙，处理队列已满，请稍后再试。");
+  });
+
+  it("keeps a parse retry refused by the in-flight limit on screen through polling until the next retry", async () => {
+    vi.useFakeTimers();
+    const failed = demoSummary({
+      status: "failed",
+      completed_at: null,
+      ingestion: ingestion({ phase: "failed", jobStatus: "failed", retryable: true })
+    });
+    vi.mocked(api.listDemos).mockResolvedValue([failed, parsingDemo()]);
+    vi.mocked(api.retryDemoParse).mockRejectedValueOnce(
+      new api.ApiError(429, "Too many demos are processing.", "active_parse_limit", 60)
+    );
+
+    render(<DashboardPage />);
+    await flush();
+
+    fireEvent.click(within(rowFor("Mock Match demo-1")).getByRole("button", { name: "重新处理" }));
+    await flush();
+    expect(screen.getByRole("alert")).toHaveTextContent(ACTIVE_LIMIT);
+    const loadsBefore = vi.mocked(api.listDemos).mock.calls.length;
+
+    // The parsing demo that tripped the limit keeps the library polling.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1800 * 2);
+    });
+    expect(vi.mocked(api.listDemos).mock.calls.length).toBeGreaterThanOrEqual(loadsBefore + 2);
+    expect(screen.getByRole("alert")).toHaveTextContent(ACTIVE_LIMIT);
+
+    vi.mocked(api.retryDemoParse).mockResolvedValueOnce(demoSummary({ status: "queued", completed_at: null }));
+    fireEvent.click(within(rowFor("Mock Match demo-1")).getByRole("button", { name: "重新处理" }));
+    await flush();
+
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByText("正在重新处理「Mock Match demo-1」")).toBeInTheDocument();
   });
 });

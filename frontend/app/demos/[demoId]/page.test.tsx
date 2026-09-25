@@ -1,4 +1,4 @@
-import { act, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -63,6 +63,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
 
 const PREPARING = "正在准备回放，完成后会自动显示。";
 const REPLAY_FETCH_FAILED = "回放暂时无法打开，请刷新页面重试。";
+const GENERATE_HINT = "从建议或当前时刻生成视频，完成后会保存在这里，随时重播。";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -293,8 +294,8 @@ describe("DemoDetailPage", () => {
     expect(api.getReplay).not.toHaveBeenCalled();
   });
 
-  it("reports a parse retry refused by the owner's in-flight limit", async () => {
-    const user = userEvent.setup();
+  it("keeps a parse retry refused by the owner's in-flight limit through polling until the demo leaves failed", async () => {
+    vi.useFakeTimers();
     vi.mocked(api.getDemoStatus).mockResolvedValue(
       demoStatus({
         status: "failed",
@@ -305,11 +306,29 @@ describe("DemoDetailPage", () => {
     vi.mocked(api.retryDemoParse).mockRejectedValue(
       new api.ApiError(429, "Too many demos are processing.", "active_parse_limit", 60)
     );
+    const limit = "已有比赛正在处理，请等当前比赛处理完成后再试。";
 
     render(<DemoDetailPage />);
-    await user.click(await screen.findByRole("button", { name: "重新处理" }));
+    await flush();
+    fireEvent.click(screen.getByRole("button", { name: "重新处理" }));
+    await flush();
+    expect(screen.getByRole("alert")).toHaveTextContent(limit);
+    const pollsBefore = vi.mocked(api.getDemoStatus).mock.calls.length;
 
-    expect(await screen.findByRole("alert")).toHaveTextContent("已有比赛正在处理，请等当前比赛处理完成后再上传。");
+    // A failed demo keeps the status poll running; each successful poll used to wipe the message.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1800 * 2);
+    });
+    expect(vi.mocked(api.getDemoStatus).mock.calls.length).toBeGreaterThanOrEqual(pollsBefore + 2);
+    expect(screen.getByRole("alert")).toHaveTextContent(limit);
+
+    // Once the demo is being processed again the refusal no longer applies.
+    vi.mocked(api.getDemoStatus).mockResolvedValue(parsingStatus());
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1800);
+    });
+    expect(screen.getByText(PREPARING)).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
   it("offers clip generation and the dev tools when the API serves them", async () => {
@@ -323,6 +342,7 @@ describe("DemoDetailPage", () => {
     expect(screen.getByText("Render Operator")).toBeInTheDocument();
     expect(screen.getByText("Video Setup / Sync Calibration")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "创建模拟视频任务（开发测试）", hidden: true })).toBeInTheDocument();
+    expect(screen.getByText(GENERATE_HINT)).toBeInTheDocument();
   });
 
   it("keeps render clips but drops the dev tools when only render clips are enabled", async () => {
@@ -366,5 +386,18 @@ describe("DemoDetailPage", () => {
     expect(document.querySelector("video.first-person-video")).not.toBeNull();
     expect(api.createRenderClipJob).not.toHaveBeenCalled();
     expect(api.retryRenderClipJob).not.toHaveBeenCalled();
+  });
+
+  it("does not point at hidden generate controls when render clips are off and nothing is saved", async () => {
+    mockAuth({ devTools: false, renderClips: false });
+    vi.mocked(api.getDemoStatus).mockResolvedValue(demoStatus());
+    vi.mocked(api.getReplay).mockResolvedValue(replayData());
+
+    await openReviewFor(T_ENTRY_ID);
+
+    expect(screen.getByText("0 段可播放")).toBeInTheDocument();
+    expect(screen.getByText("暂无已保存的视频。")).toBeInTheDocument();
+    expect(screen.queryByText(GENERATE_HINT)).not.toBeInTheDocument();
+    expect(screen.queryByText(/生成视频/)).not.toBeInTheDocument();
   });
 });

@@ -60,7 +60,7 @@ const { uploadLimitMessage } = loadTypeScriptModule("./upload-limits.ts");
 {
   assert.equal(
     uploadLimitMessage(429, "active_parse_limit", 60),
-    "已有比赛正在处理，请等当前比赛处理完成后再上传。"
+    "已有比赛正在处理，请等当前比赛处理完成后再试。"
   );
   assert.equal(
     uploadLimitMessage(503, "parse_queue_full", 60),

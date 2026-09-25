@@ -139,7 +139,9 @@ export function CoachingEventCard({
               ))}
             </dl>
           ) : null}
-          {clipFailed ? <p className="coaching-clip-error">视频生成失败，可以点击重试。</p> : null}
+          {clipFailed ? (
+            <p className="coaching-clip-error">{onGenerateClip ? "视频生成失败，可以点击重试。" : "视频生成失败。"}</p>
+          ) : null}
         </div>
       ) : null}
     </article>

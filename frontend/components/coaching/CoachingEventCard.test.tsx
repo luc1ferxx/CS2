@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { CoachingEventCard } from "@/components/coaching/CoachingEventCard";
 import { reviewEventForEvent } from "@/lib/coaching-review";
-import { coachingEvent } from "@/lib/test-fixtures/review";
+import { coachingEvent, renderJob } from "@/lib/test-fixtures/review";
 import type { CoachingEvent } from "@/types/coaching";
 
 type CardProps = Parameters<typeof CoachingEventCard>[0];
@@ -75,5 +75,19 @@ describe("CoachingEventCard", () => {
     expect(screen.queryByRole("button", { name: "生成视频" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^查看这一刻：/ })).toBeInTheDocument();
     expect(within(verdictGroup()).getAllByRole("button")).toHaveLength(3);
+  });
+
+  it("offers a retry for a failed clip only when a clip handler is given", () => {
+    const failed = renderJob({ status: "failed", video_status: "failed" });
+    renderCard(coachingEvent(), { inspected: true, renderJob: failed });
+    expect(screen.getByText("视频生成失败，可以点击重试。")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "重试" })).toBeInTheDocument();
+  });
+
+  it("reports a failed clip without retry wording when clips cannot be generated", () => {
+    const failed = renderJob({ status: "failed", video_status: "failed" });
+    renderCard(coachingEvent(), { inspected: true, renderJob: failed, onGenerateClip: undefined });
+    expect(screen.getByText("视频生成失败。")).toBeInTheDocument();
+    expect(screen.queryByText(/重试/)).not.toBeInTheDocument();
   });
 });

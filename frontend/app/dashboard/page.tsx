@@ -86,6 +86,8 @@ function DashboardContent() {
   // Library polling clears `error` on every successful fetch; a quota rejection
   // must outlive that, so upload failures stay here until the next attempt.
   const [uploadError, setUploadError] = useState<string | null>(null);
+  // Same for a refused parse retry: the in-flight demos behind the limit keep polling on.
+  const [retryError, setRetryError] = useState<string | null>(null);
   const [notice, setNotice] = useState<LibraryNotice | null>(null);
   const [importOptionsLoaded, setImportOptionsLoaded] = useState(false);
   const loadRequestIdRef = useRef(0);
@@ -174,6 +176,7 @@ function DashboardContent() {
   async function handleDemoUpload(file: File) {
     setCreating(true);
     setUploadError(null);
+    setRetryError(null);
     try {
       const demo = await createDemoUpload(file);
       setNotice({
@@ -243,6 +246,7 @@ function DashboardContent() {
 
   async function handleRetryParse(demo: DemoSummary) {
     setBusyDemoId(demo.id);
+    setRetryError(null);
     invalidateLibraryLoads();
     try {
       const updated = await retryDemoParse(demo.id);
@@ -251,7 +255,7 @@ function DashboardContent() {
       setNotice({ message: `正在重新处理「${updated.name}」`, demoId: updated.id });
       setError(null);
     } catch (err) {
-      setError(libraryRequestError(err, "重新处理失败，请重试。"));
+      setRetryError(libraryRequestError(err, "重新处理失败，请重试。"));
     } finally {
       setBusyDemoId(null);
     }
@@ -285,6 +289,7 @@ function DashboardContent() {
         </div>
 
         {uploadError ? <div className="error-panel" role="alert">{uploadError}</div> : null}
+        {retryError ? <div className="error-panel" role="alert">{retryError}</div> : null}
         {error ? <div className="error-panel" role="alert">{error}</div> : null}
         {notice ? (
           <div className="library-notice" aria-live="polite">

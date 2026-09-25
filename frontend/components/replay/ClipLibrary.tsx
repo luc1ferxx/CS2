@@ -11,11 +11,13 @@ interface ClipLibraryProps {
   jobs: RenderJobStatus[];
   playerName: string | null;
   rounds: ReplayRound[];
+  // False when clip generation is switched off: the empty state must not point at hidden controls.
+  canGenerate: boolean;
   selectedJobId: string | null;
   onPlay: (job: RenderJobStatus) => void;
 }
 
-export function ClipLibrary({ jobs, playerName, rounds, selectedJobId, onPlay }: ClipLibraryProps) {
+export function ClipLibrary({ jobs, playerName, rounds, canGenerate, selectedJobId, onPlay }: ClipLibraryProps) {
   const readyCount = jobs.filter((job) => playableClipVideo(job)).length;
   const currentJobs = jobs.filter((job) => job.status !== "failed" && (job.status !== "completed" || playableClipVideo(job)));
   const historyJobs = jobs.filter((job) => !currentJobs.includes(job));
@@ -61,7 +63,8 @@ export function ClipLibrary({ jobs, playerName, rounds, selectedJobId, onPlay }:
       </div>
       {jobs.length === 0 ? (
         <p className="clip-library-empty">
-          {playerName ? "从建议或当前时刻生成视频，完成后会保存在这里，随时重播。" : "选择复盘玩家后，查看已保存的片段。"}
+          {!playerName ? "选择复盘玩家后，查看已保存的片段。"
+            : canGenerate ? "从建议或当前时刻生成视频，完成后会保存在这里，随时重播。" : "暂无已保存的视频。"}
         </p>
       ) : (
         <>

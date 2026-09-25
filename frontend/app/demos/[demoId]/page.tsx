@@ -103,6 +103,9 @@ function DemoDetailContent() {
   const [replayLoadFailed, setReplayLoadFailed] = useState(false);
   const [renderRequesting, setRenderRequesting] = useState(false);
   const [parseRetrying, setParseRetrying] = useState(false);
+  // The status poll clears `error` on every success, which would wipe a refused
+  // retry within one tick; this one lasts until the next attempt or the demo leaves "failed".
+  const [parseRetryError, setParseRetryError] = useState<string | null>(null);
   const [clipRequestingEventId, setClipRequestingEventId] = useState<string | null>(null);
   const [tickClipRequesting, setTickClipRequesting] = useState(false);
   const [renderJobs, setRenderJobs] = useState<RenderJobStatus[]>([]);
@@ -139,6 +142,9 @@ function DemoDetailContent() {
       const nextStatus = await getDemoStatus(demoId);
       setStatus(nextStatus);
       setError(null);
+      if (nextStatus.status !== "failed") {
+        setParseRetryError(null);
+      }
       return nextStatus;
     } catch (err) {
       setError(friendlyErrorMessage(err instanceof Error ? err.message : "Failed to load demo status"));
@@ -177,6 +183,7 @@ function DemoDetailContent() {
 
   const retryParse = useCallback(async () => {
     setParseRetrying(true);
+    setParseRetryError(null);
     try {
       await retryDemoParse(demoId);
       // The previous fetch's verdict is void the moment a re-parse is queued;
@@ -191,7 +198,7 @@ function DemoDetailContent() {
       const limitMessage = isApiError(err)
         ? uploadLimitMessage(err.status, err.detailCode, err.retryAfterSeconds)
         : null;
-      setError(limitMessage ?? friendlyErrorMessage(err instanceof Error ? err.message : "Failed to retry demo parse"));
+      setParseRetryError(limitMessage ?? friendlyErrorMessage(err instanceof Error ? err.message : "Failed to retry demo parse"));
     } finally {
       setParseRetrying(false);
     }
@@ -619,6 +626,7 @@ function DemoDetailContent() {
         </div>
 
         {error ? <div className="error-panel" role="alert">{error}</div> : null}
+        {parseRetryError ? <div className="error-panel" role="alert">{parseRetryError}</div> : null}
 
         {!replay ? (
           <>
@@ -756,7 +764,7 @@ function DemoDetailContent() {
                 {hasActiveRenderClipJob ? <span role="status">有视频正在生成</span> : null}
               </summary>
               <ClipLibrary jobs={personalClips} playerName={selectedPlayer?.name ?? null} rounds={replay.rounds}
-                selectedJobId={replay.video.renderJobId ?? null} onPlay={playSavedClip} />
+                canGenerate={renderClips} selectedJobId={replay.video.renderJobId ?? null} onPlay={playSavedClip} />
             </details>
             </div>
               <CoachingPanel
