@@ -107,6 +107,10 @@ class Settings:
         os.getenv("STEAM_OPENID_NONCE_TTL_SECONDS", "600")
     )
     steam_web_api_key: str = os.getenv("STEAM_WEB_API_KEY", "").strip()
+    # Invite-only beta gate for Steam sign-in: comma-separated Steam ID64s, or
+    # "*" to admit every Steam account. Required with AUTH_PROVIDER=steam in
+    # production; development/test never consult it.
+    steam_login_allowlist_raw: str = os.getenv("STEAM_LOGIN_ALLOWLIST", "").strip()
     steam_credential_encryption_key: str = os.getenv(
         "STEAM_CREDENTIAL_ENCRYPTION_KEY",
         DEVELOPMENT_STEAM_CREDENTIAL_ENCRYPTION_KEY,
@@ -326,6 +330,21 @@ class Settings:
         )
 
     @property
+    def steam_login_allowlist(self) -> frozenset[str] | None:
+        # None means open to every Steam account; an empty set admits nobody.
+        if self.steam_login_allowlist_raw == "*":
+            return None
+        return frozenset(
+            steam_id.strip()
+            for steam_id in self.steam_login_allowlist_raw.split(",")
+            if steam_id.strip()
+        )
+
+    def steam_login_allowed(self, steam_id: str) -> bool:
+        allowlist = self.steam_login_allowlist
+        return allowlist is None or steam_id in allowlist
+
+    @property
     def steam_openid_realm(self) -> str:
         return f"{self.backend_public_url}/"
 
@@ -342,6 +361,7 @@ class Settings:
             self._validate_steam_sync_configuration()
             self._validate_steam_demo_import_configuration()
             self._validate_artifact_storage_configuration()
+            self._validate_beta_access_configuration()
             return
 
         if self.auth_provider == "oidc":
@@ -426,6 +446,7 @@ class Settings:
         self._validate_artifact_storage_configuration()
         self._validate_steam_sync_configuration()
         self._validate_steam_demo_import_configuration()
+        self._validate_beta_access_configuration()
 
     def validate_worker_runtime_configuration(self) -> None:
         if self.render_worker_mode not in {"fallback", "external"}:
@@ -703,6 +724,32 @@ class Settings:
                 "timeout and be at most 3600"
             )
 
+    def _validate_beta_access_configuration(self) -> None:
+        raw_allowlist = self.steam_login_allowlist_raw
+        allowlist = self.steam_login_allowlist
+        if raw_allowlist and allowlist is not None and (
+            len(raw_allowlist) > 20_000
+            or len(allowlist) > 1_000
+            or len(raw_allowlist.split(",")) != len(allowlist)
+            or any(not _is_individual_steam_id(steam_id) for steam_id in allowlist)
+        ):
+            raise RuntimeError(
+                "STEAM_LOGIN_ALLOWLIST must be * or at most 1000 unique comma-separated "
+                "individual Steam ID64 values"
+            )
+        if self.auth_mode != "production":
+            return
+        if self.auth_provider == "steam" and not raw_allowlist:
+            raise RuntimeError(
+                "STEAM_LOGIN_ALLOWLIST is required when AUTH_PROVIDER=steam in "
+                "production; set invited Steam ID64s or * to allow every Steam account"
+            )
+        if self.auth_provider == "oidc" and allowlist is not None and raw_allowlist:
+            raise RuntimeError(
+                "STEAM_LOGIN_ALLOWLIST applies only to AUTH_PROVIDER=steam; leave it "
+                "empty or * with AUTH_PROVIDER=oidc"
+            )
+
     def _validate_production_oidc_configuration(self) -> None:
         required = (
             ("OIDC_ISSUER", self.oidc_issuer),
@@ -789,6 +836,22 @@ def _valid_exact_download_host(value: str) -> bool:
             for label in labels
         )
     )
+
+
+def _is_individual_steam_id(value: str) -> bool:
+    # Shared with the Steam OpenID callback so the allowlist accepts exactly the
+    # IDs a login can produce.
+    try:
+        steam_id = int(value)
+    except ValueError:
+        return False
+    if str(steam_id) != value or not 0 < steam_id <= (2**64 - 1):
+        return False
+    account_id = steam_id & 0xFFFFFFFF
+    instance = (steam_id >> 32) & 0xFFFFF
+    account_type = (steam_id >> 52) & 0xF
+    universe = (steam_id >> 56) & 0xFF
+    return universe == 1 and account_type == 1 and instance == 1 and account_id > 0
 
 
 settings = Settings()

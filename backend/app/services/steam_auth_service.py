@@ -13,7 +13,7 @@ from urllib.parse import urlencode, urlparse
 
 import httpx
 
-from app.core.config import Settings, settings
+from app.core.config import Settings, _is_individual_steam_id, settings
 from app.core.redis import get_redis_client
 from app.services.auth_service import (
     AuthenticationError,
@@ -485,17 +485,3 @@ def _safe_avatar_url(value: object) -> str | None:
     ):
         return None
     return value
-
-
-def _is_individual_steam_id(value: str) -> bool:
-    try:
-        steam_id = int(value)
-    except ValueError:
-        return False
-    if str(steam_id) != value or not 0 < steam_id <= (2**64 - 1):
-        return False
-    account_id = steam_id & 0xFFFFFFFF
-    instance = (steam_id >> 32) & 0xFFFFF
-    account_type = (steam_id >> 52) & 0xF
-    universe = (steam_id >> 56) & 0xFF
-    return universe == 1 and account_type == 1 and instance == 1 and account_id > 0

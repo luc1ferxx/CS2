@@ -18,6 +18,7 @@ Production 必须显式提供下列各项，否则 startup validation 失败关�
 - 一个受支持的 identity provider（`AUTH_PROVIDER=steam`，或显式选择的兼容 `oidc`）
 - 完整的 HTTPS / `__Host-` cookie / single-origin / CORS 合同
 - 真实的 server-only Steam Web API key
+- `AUTH_PROVIDER=steam` 时显式的 `STEAM_LOGIN_ALLOWLIST`（受邀 Steam ID64 列表，或 `*` 明确开放给所有 Steam 账号）
 - 随机的非开发用 Steam credential encryption key
 - `STEAM_DEMO_PROVIDER=disabled`，且 experimental CDN 开关为关闭
 - 非默认的 render-worker credential
@@ -59,6 +60,7 @@ Production credentials 绝不能进入 `NEXT_PUBLIC_*`、源码、日志、签�
 | `STEAM_AUTH_STATE_COOKIE_NAME` | `__Host-cs2_steam_state` | short-lived Steam state cookie name |
 | `STEAM_OPENID_NONCE_TTL_SECONDS` | `600` | Steam assertion freshness/replay reservation window |
 | `STEAM_WEB_API_KEY` | unset | server-only GetPlayerSummaries + match-history publisher key; required in production, never frontend/worker-visible |
+| `STEAM_LOGIN_ALLOWLIST` | unset | API-only invite gate: comma-separated individual Steam ID64s (at most 1000, unique), or `*` for every Steam account. Required when `AUTH_MODE=production` and `AUTH_PROVIDER=steam`; with `AUTH_PROVIDER=oidc` only empty or `*` is accepted. An uninvited callback redirects to `/auth/callback?error=not_invited` before any account is created, and removing an ID ends that user's live sessions (sessions without a recorded Steam ID fail closed and sign in again). Needs an API restart to change. Development/test validate the format but never enforce it |
 
 ### OIDC 兼容路径
 

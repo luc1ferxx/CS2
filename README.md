@@ -141,7 +141,7 @@ Radar 资源来自 [rabume/cs2-dma-radar](https://github.com/rabume/cs2-dma-rada
 
 ## 配置
 
-完整表格（77 项）见 [Configuration Reference](docs/configuration_reference_v1.md)。最常用的：
+完整表格（78 项）见 [Configuration Reference](docs/configuration_reference_v1.md)。最常用的：
 
 | Name | Default | Used by |
 | --- | --- | --- |
@@ -153,6 +153,7 @@ Radar 资源来自 [rabume/cs2-dma-radar](https://github.com/rabume/cs2-dma-rada
 | `ARTIFACT_STORAGE_BACKEND` | `local` | production 必须 `s3` |
 | `OBJECT_STORAGE_BUCKET` | 未设置 | production 必填,private bucket |
 | `STEAM_WEB_API_KEY` | 未设置 | server-only,production 必填,绝不暴露给前端/worker |
+| `STEAM_LOGIN_ALLOWLIST` | 未设置 | 内测邀请名单：逗号分隔的 Steam ID64，或 `*` 开放给所有 Steam 账号；production + `AUTH_PROVIDER=steam` 必填 |
 | `STEAM_CREDENTIAL_ENCRYPTION_KEY` | 签入的开发 key（非生产用） | 32 随机字节的 URL-safe base64；每次启动都校验,production 仍用开发 key 会 fail closed |
 | `STEAM_DEMO_PROVIDER` | `disabled` | 本 build 拒绝除 `disabled` 外的一切取值 |
 | `RENDER_WORKER_MODE` | `fallback` | `fallback` / `external` |
@@ -161,7 +162,7 @@ Radar 资源来自 [rabume/cs2-dma-radar](https://github.com/rabume/cs2-dma-rada
 | `MAX_DEMO_UPLOAD_BYTES` | `1073741824` | 实际流式字节上限 |
 | `DEV_USER_ID` | `dev-user` | 仅 development/test |
 
-Production 启动会 fail closed 地要求：显式 identity provider、HTTPS + `__Host-` cookie + 单一 origin + 精确 CORS、真实 server-only Steam Web API key、非开发用的随机加密 key、非默认 render token、private S3-compatible 存储。Demo source/download 配置只属于 API——parser/render worker 永远拿不到 Steam/OIDC 浏览器密钥或 provider secret。
+Production 启动会 fail closed 地要求：显式 identity provider、HTTPS + `__Host-` cookie + 单一 origin + 精确 CORS、真实 server-only Steam Web API key、Steam 登录时显式的 `STEAM_LOGIN_ALLOWLIST`、非开发用的随机加密 key、非默认 render token、private S3-compatible 存储。Demo source/download 配置只属于 API——parser/render worker 永远拿不到 Steam/OIDC 浏览器密钥或 provider secret。
 
 **production 凭证绝不能进入 `NEXT_PUBLIC_*`、源码、日志、提交的 env 文件或浏览器响应。** 真实 `.dem`、demo 归档、视频、replay cache、本地 `.env`、安装的工具和 QA cache 必须留在 git-ignored 目录；把真实对局 demo 当作不可信且可能涉及隐私的数据，只使用你有权本地保存的样本，不要提交。
 

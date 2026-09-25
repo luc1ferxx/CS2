@@ -1,6 +1,8 @@
 import base64
+import hashlib
 import json
 import logging
+import secrets
 import time
 import unittest
 from datetime import UTC, datetime
@@ -34,6 +36,9 @@ from app.services.steam_auth_service import (
 # not collected from a user or copied from a Steam profile.
 STEAM_ID_A = "76561202255233022"
 STEAM_ID_B = "76561202255233021"
+# Valid individual account that steam_production_settings() does not invite.
+STEAM_ID_C = "76561202255233020"
+INDIVIDUAL_STEAM_ID_BASE = 76561197960265728
 
 
 class SteamAuthConfigurationTest(unittest.TestCase):
@@ -78,6 +83,7 @@ class SteamAuthConfigurationTest(unittest.TestCase):
                 "auth_clock_skew_seconds": 30,
                 "steam_openid_nonce_ttl_seconds": 1,
                 "steam_web_api_key": "b" * 32,
+                "steam_login_allowlist_raw": "",
                 "oidc_issuer": "https://issuer.example.test",
                 "oidc_client_id": "cs2-coach",
                 "oidc_authorization_endpoint": "https://issuer.example.test/authorize",
@@ -100,6 +106,82 @@ class SteamAuthConfigurationTest(unittest.TestCase):
                 values["backend_public_url"] = origin
                 with self.assertRaisesRegex(RuntimeError, "BACKEND_PUBLIC_URL"):
                     Settings(**values).validate_runtime_configuration()
+
+    def test_steam_login_allowlist_is_required_in_production_and_star_opens_it(self) -> None:
+        values = steam_production_settings()
+        values["steam_login_allowlist_raw"] = ""
+        with self.assertRaisesRegex(RuntimeError, "STEAM_LOGIN_ALLOWLIST"):
+            Settings(**values).validate_runtime_configuration()
+
+        invited = Settings(**steam_production_settings())
+        invited.validate_runtime_configuration()
+        self.assertEqual(invited.steam_login_allowlist, frozenset({STEAM_ID_A, STEAM_ID_B}))
+        self.assertTrue(invited.steam_login_allowed(STEAM_ID_A))
+        self.assertFalse(invited.steam_login_allowed(STEAM_ID_C))
+
+        values["steam_login_allowlist_raw"] = "*"
+        open_beta = Settings(**values)
+        open_beta.validate_runtime_configuration()
+        self.assertIsNone(open_beta.steam_login_allowlist)
+        self.assertTrue(open_beta.steam_login_allowed(STEAM_ID_C))
+
+    def test_steam_login_allowlist_accepts_only_unique_individual_steam_ids(self) -> None:
+        many = [str(INDIVIDUAL_STEAM_ID_BASE + offset) for offset in range(1, 1_002)]
+        values = steam_production_settings()
+        values["steam_login_allowlist_raw"] = f" {STEAM_ID_A} , {STEAM_ID_B}"
+        Settings(**values).validate_runtime_configuration()
+        values["steam_login_allowlist_raw"] = ",".join(many[:1_000])
+        Settings(**values).validate_runtime_configuration()
+
+        invalid_allowlists = (
+            "7656119796027807",
+            f"{STEAM_ID_A}x",
+            f"0{STEAM_ID_A}",
+            "103582791429521412",
+            str(INDIVIDUAL_STEAM_ID_BASE),
+            f"*,{STEAM_ID_A}",
+            f"{STEAM_ID_A},{STEAM_ID_A}",
+            f"{STEAM_ID_A},,{STEAM_ID_B}",
+            f"{STEAM_ID_A},",
+            ",".join(many),
+            STEAM_ID_A + " " * 20_000,
+        )
+        for allowlist in invalid_allowlists:
+            for auth_mode in ("production", "development"):
+                with self.subTest(allowlist=allowlist[:40], auth_mode=auth_mode):
+                    values = steam_production_settings()
+                    values["auth_mode"] = auth_mode
+                    values["steam_login_allowlist_raw"] = allowlist
+                    with self.assertRaisesRegex(RuntimeError, "STEAM_LOGIN_ALLOWLIST"):
+                        Settings(**values).validate_runtime_configuration()
+
+    def test_steam_login_allowlist_is_rejected_with_oidc_and_ignored_in_development(self) -> None:
+        values = steam_production_settings()
+        values.update(
+            {
+                "auth_provider": "oidc",
+                "oidc_issuer": "https://issuer.example.test",
+                "oidc_client_id": "cs2-coach",
+                "oidc_authorization_endpoint": "https://issuer.example.test/authorize",
+                "oidc_token_endpoint": "https://issuer.example.test/token",
+                "oidc_jwks_url": "https://issuer.example.test/jwks",
+                "oidc_redirect_uri": "https://coach.example.test/auth/oidc/callback",
+            }
+        )
+        with self.assertRaisesRegex(RuntimeError, "STEAM_LOGIN_ALLOWLIST"):
+            Settings(**values).validate_runtime_configuration()
+        for allowlist in ("", "*"):
+            with self.subTest(allowlist=allowlist):
+                values["steam_login_allowlist_raw"] = allowlist
+                Settings(**values).validate_runtime_configuration()
+
+        for auth_mode in ("development", "test"):
+            with self.subTest(auth_mode=auth_mode):
+                Settings(
+                    auth_mode=auth_mode,
+                    auth_provider="steam",
+                    steam_login_allowlist_raw="",
+                ).validate_runtime_configuration()
 
 
 class AuthenticationAccessLogTest(unittest.TestCase):
@@ -427,6 +509,113 @@ class SteamOpenIdBrowserTest(unittest.TestCase):
             404,
         )
 
+    def test_invited_login_records_the_steam_id_in_the_session(self) -> None:
+        self.assertEqual(complete_steam_login(self.client, STEAM_ID_A).status_code, 303)
+
+        self.assertEqual(
+            [record["steamId"] for record in session_records(self.redis)],
+            [STEAM_ID_A],
+        )
+
+    def test_uninvited_steam_id_is_redirected_without_account_or_session(self) -> None:
+        response = complete_steam_login(self.client, STEAM_ID_C)
+
+        self.assertEqual(response.status_code, 303)
+        self.assertEqual(
+            response.headers["location"],
+            "https://coach.example.test/auth/callback?error=not_invited",
+        )
+        self.assertEqual(response.headers["referrer-policy"], "no-referrer")
+        cookies = response.headers.get_list("set-cookie")
+        for name in ("__Host-cs2_session=", "__Host-cs2_steam_state="):
+            deleted = [cookie for cookie in cookies if cookie.startswith(name)]
+            self.assertEqual(len(deleted), 1, name)
+            self.assertIn("Max-Age=0", deleted[0])
+        self.assertNotIn(STEAM_ID_C, response.text + " ".join(cookies))
+        self.assertIsNone(self.client.cookies.get("__Host-cs2_session"))
+        self.assertEqual(session_records(self.redis), [])
+        with self.Session() as db:
+            self.assertEqual(db.query(Account).count(), 0)
+            self.assertEqual(db.query(ExternalIdentity).count(), 0)
+        self.assertEqual(self.client.get("/auth/me").status_code, 401)
+
+    def test_uninvited_login_revokes_the_browser_existing_session(self) -> None:
+        self.assertEqual(complete_steam_login(self.client, STEAM_ID_A).status_code, 303)
+        self.assertEqual(self.client.get("/auth/me").status_code, 200)
+
+        refused = complete_steam_login(self.client, STEAM_ID_C)
+
+        self.assertEqual(refused.status_code, 303)
+        self.assertTrue(refused.headers["location"].endswith("?error=not_invited"))
+        self.assertEqual(session_records(self.redis), [])
+        self.assertEqual(self.client.get("/auth/me").status_code, 401)
+        with self.Session() as db:
+            self.assertEqual(
+                [identity.subject for identity in db.query(ExternalIdentity).all()],
+                [STEAM_ID_A],
+            )
+
+    def test_removing_a_steam_id_from_the_allowlist_ends_its_live_session(self) -> None:
+        self.assertEqual(complete_steam_login(self.client, STEAM_ID_A).status_code, 303)
+        token = self.client.cookies.get("__Host-cs2_session")
+        self.assertIsNotNone(self.auth_service.resolve_session(token))
+
+        narrowed = AuthService(settings_with_allowlist(STEAM_ID_B), self.redis)
+
+        self.assertIsNone(narrowed.resolve_session(token))
+        self.assertEqual(session_records(self.redis), [])
+        self.assertEqual(self.client.get("/auth/me").status_code, 401)
+
+    def test_star_allowlist_admits_any_individual_steam_account(self) -> None:
+        open_settings = settings_with_allowlist("*")
+        open_app = build_app(
+            open_settings,
+            AuthService(open_settings, self.redis),
+            SteamAuthService(open_settings, self.redis, http_client=self.http),
+            self.Session,
+        )
+        client = TestClient(open_app, base_url="https://coach.example.test")
+
+        response = complete_steam_login(client, STEAM_ID_C)
+
+        self.assertEqual(response.status_code, 303)
+        self.assertEqual(
+            response.headers["location"],
+            "https://coach.example.test/auth/callback?return_to=%2Fdashboard",
+        )
+        self.assertEqual(client.get("/auth/me").status_code, 200)
+        self.assertEqual(
+            [record["steamId"] for record in session_records(self.redis)],
+            [STEAM_ID_C],
+        )
+
+    def test_session_without_steam_id_fails_closed_only_for_a_restrictive_allowlist(
+        self,
+    ) -> None:
+        owner_id = "owner_v1_" + ("a" * 43)
+        open_service = AuthService(settings_with_allowlist("*"), self.redis)
+        local_service = AuthService(
+            Settings(
+                auth_mode="test",
+                auth_provider="steam",
+                steam_login_allowlist_raw=STEAM_ID_B,
+            ),
+            self.redis,
+        )
+        for service, expected_owner in (
+            (open_service, owner_id),
+            (local_service, owner_id),
+            (self.auth_service, None),
+        ):
+            with self.subTest(allowlist=service.settings.steam_login_allowlist_raw):
+                token = seed_session(self.redis, {"ownerId": owner_id})
+                self.assertEqual(service.resolve_session(token), expected_owner)
+                self.assertEqual(len(session_records(self.redis)), int(bool(expected_owner)))
+                self.redis.values.clear()
+
+        token = seed_session(self.redis, {"ownerId": owner_id, "steamId": int(STEAM_ID_A)})
+        self.assertIsNone(self.auth_service.resolve_session(token))
+
 
 class AccountIdentityConflictTest(unittest.TestCase):
     def setUp(self) -> None:
@@ -646,11 +835,36 @@ def steam_production_settings() -> dict[str, object]:
         "object_storage_bucket": "private-cs2-artifacts",
         "object_storage_prefix": "cs2-artifacts-v1",
         "steam_web_api_key": "a" * 32,
+        "steam_login_allowlist_raw": f"{STEAM_ID_A},{STEAM_ID_B}",
         "steam_credential_encryption_key": base64.urlsafe_b64encode(
             b"p" * 32
         ).decode("ascii"),
         "steam_credential_encryption_key_version": "test-v1",
     }
+
+
+def settings_with_allowlist(allowlist: str) -> Settings:
+    values = steam_production_settings()
+    values["steam_login_allowlist_raw"] = allowlist
+    return Settings(**values)
+
+
+def session_records(redis: FakeRedis) -> list[dict[str, object]]:
+    return [
+        json.loads(value)
+        for key, value in redis.values.items()
+        if key.startswith("auth:session:")
+    ]
+
+
+def seed_session(redis: FakeRedis, record: dict[str, object]) -> str:
+    token = secrets.token_urlsafe(32)
+    redis.setex(
+        "auth:session:" + hashlib.sha256(token.encode("ascii")).hexdigest(),
+        300,
+        json.dumps({**record, "expiresAt": int(time.time()) + 300}),
+    )
+    return token
 
 
 def build_app(

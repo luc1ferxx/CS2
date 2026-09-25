@@ -853,6 +853,7 @@ class SteamMatchSyncTest(unittest.TestCase):
             auth_session_cookie_name="__Host-cs2_session",
             frontend_public_url="https://coach.example.test",
             cors_origins_raw="https://coach.example.test",
+            steam_login_allowlist_raw=f"{STEAM_A},{STEAM_B}",
         )
         auth_service = MissingSessionAuthService(runtime_settings)
         app = FastAPI()

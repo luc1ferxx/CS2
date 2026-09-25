@@ -8,6 +8,8 @@ API 运行时的交互式文档在 `http://localhost:8000/docs`（仅 developmen
 
 Production 隐藏 dev/QA 路由：`POST /uploads/mock`、`POST /demos/{demo_id}/video/upload`、`POST /demos/{demo_id}/video/calibration`、`POST /demos/{demo_id}/render/mock` 返回 `404`（manual video upload 在读取 body 之前就返回 `404`）。`POST /demos/{demo_id}/render/clip` 和 `POST /demos/{demo_id}/render/jobs/{job_id}/retry` 在 production 下也返回 `404`，除非设置 `RENDER_CLIPS_ENABLED=1`。未登录的 production 写请求仍先得到 `401`。`GET /auth/me` 返回 `capabilities: {devTools, renderClips}`，前端据此隐藏对应入口。
 
+Production 的 Steam 登录受 `STEAM_LOGIN_ALLOWLIST` 限制（逗号分隔的 Steam ID64，或 `*`）。Session 记录登录时的 Steam ID；名单不是 `*` 时，每次解析 session 都会重新核对名单：被移出名单的用户、以及没有记录 Steam ID 的旧 session，在所有需要登录的路由上都会得到 `401`。
+
 ## 用户 API
 
 所有 demo/upload/replay/coaching/library/render/private-media 路由都从可信 session 派生 `owner_id`，并复用各自已有的 owner-scoped 查询。
@@ -17,7 +19,7 @@ Production 隐藏 dev/QA 路由：`POST /uploads/mock`、`POST /demos/{demo_id}/
 - `GET /health`
 - `GET /diagnostics`（仅 development/test；production 返回 `404`）
 - `GET /auth/steam/login`
-- `GET /auth/steam/callback`
+- `GET /auth/steam/callback`（不在 `STEAM_LOGIN_ALLOWLIST` 中的 Steam ID 会 `303` 到 `/auth/callback?error=not_invited`，不创建账号、不发 session，并撤销浏览器已有的 session）
 - `GET /auth/me`
 - `POST /auth/logout`
 - `GET /auth/login`、`GET /auth/oidc/callback`、`GET /auth/session`（`AUTH_PROVIDER=oidc` / legacy frontend 兼容）

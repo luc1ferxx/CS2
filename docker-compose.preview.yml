@@ -12,6 +12,7 @@ services:
       STEAM_AUTH_STATE_COOKIE_NAME: ${STEAM_AUTH_STATE_COOKIE_NAME:-__Host-cs2_steam_state}
       STEAM_OPENID_NONCE_TTL_SECONDS: ${STEAM_OPENID_NONCE_TTL_SECONDS:-600}
       STEAM_WEB_API_KEY: ${STEAM_WEB_API_KEY:?Set the server-only Steam Web API key}
+      STEAM_LOGIN_ALLOWLIST: ${STEAM_LOGIN_ALLOWLIST:?Set invited Steam ID64s (comma separated) or * to allow every Steam account}
       STEAM_CREDENTIAL_ENCRYPTION_KEY: ${STEAM_CREDENTIAL_ENCRYPTION_KEY:?Set a non-development 32-byte URL-safe base64 key}
       STEAM_CREDENTIAL_ENCRYPTION_KEY_VERSION: ${STEAM_CREDENTIAL_ENCRYPTION_KEY_VERSION:?Set the Steam credential key version}
       STEAM_SYNC_MAX_MATCHES: ${STEAM_SYNC_MAX_MATCHES:-20}

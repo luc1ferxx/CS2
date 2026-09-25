@@ -176,6 +176,12 @@ def steam_callback(
             request.query_params.multi_items(),
             request.cookies.get(steam_service.settings.steam_auth_state_cookie_name),
         )
+        # Invite-only beta: refuse before any Account/ExternalIdentity row exists.
+        if not auth_service.settings.steam_login_allowed(verified.steam_id):
+            auth_service.revoke_session(
+                request.cookies.get(auth_service.settings.auth_session_cookie_name)
+            )
+            return _steam_not_invited_response(steam_service, auth_service)
         account = AccountService(db).resolve_or_create_identity(
             provider="steam",
             subject=verified.steam_id,
@@ -189,6 +195,7 @@ def steam_callback(
             account.owner_id,
             max_age=verified.max_age,
             return_to=verified.return_to,
+            steam_id=verified.steam_id,
         )
     except AuthenticationRateLimitError as exc:
         raise HTTPException(
@@ -301,6 +308,33 @@ def logout(
         service.settings.auth_session_cookie_name,
         path="/",
         secure=service.settings.auth_cookie_secure,
+        httponly=True,
+        samesite="lax",
+    )
+    return response
+
+
+def _steam_not_invited_response(
+    steam_service: SteamAuthService,
+    auth_service: AuthService,
+) -> RedirectResponse:
+    response = RedirectResponse(
+        f"{steam_service.settings.frontend_public_url}/auth/callback?"
+        f"{urlencode({'error': 'not_invited'})}",
+        status_code=303,
+        headers=NO_REFERRER_HEADERS,
+    )
+    response.delete_cookie(
+        steam_service.settings.steam_auth_state_cookie_name,
+        path="/",
+        secure=steam_service.settings.auth_cookie_secure,
+        httponly=True,
+        samesite="lax",
+    )
+    response.delete_cookie(
+        auth_service.settings.auth_session_cookie_name,
+        path="/",
+        secure=auth_service.settings.auth_cookie_secure,
         httponly=True,
         samesite="lax",
     )

@@ -173,6 +173,7 @@ class AuthService:
         *,
         max_age: int | None = None,
         return_to: str = "/dashboard",
+        steam_id: str | None = None,
     ) -> SessionGrant:
         if not owner_id.startswith("owner_v1_") or len(owner_id) > 64:
             raise AuthenticationError("Verified account owner is invalid")
@@ -184,13 +185,16 @@ class AuthService:
             raise AuthenticationError("Verified session lifetime is invalid")
         now = int(time.time())
         session_token = secrets.token_urlsafe(32)
+        record: dict[str, str | int] = {
+            "ownerId": owner_id,
+            "expiresAt": now + bounded_max_age,
+        }
+        if steam_id is not None:
+            record["steamId"] = steam_id
         self.redis.setex(
             _hashed_key("auth:session", session_token),
             bounded_max_age,
-            json.dumps(
-                {"ownerId": owner_id, "expiresAt": now + bounded_max_age},
-                separators=(",", ":"),
-            ),
+            json.dumps(record, separators=(",", ":")),
         )
         return SessionGrant(
             session_token=session_token,
@@ -210,7 +214,11 @@ class AuthService:
             expires_at = int(session["expiresAt"])
         except (KeyError, TypeError, ValueError, json.JSONDecodeError):
             return None
-        if expires_at <= int(time.time()) or not owner_id.startswith("owner_v1_"):
+        if (
+            expires_at <= int(time.time())
+            or not owner_id.startswith("owner_v1_")
+            or not self._steam_session_still_invited(session.get("steamId"))
+        ):
             self.revoke_session(session_token)
             return None
         return owner_id
@@ -218,6 +226,18 @@ class AuthService:
     def revoke_session(self, session_token: str | None) -> None:
         if _is_valid_opaque_value(session_token):
             self.redis.delete(_hashed_key("auth:session", session_token))
+
+    def _steam_session_still_invited(self, steam_id: object) -> bool:
+        # Re-checked on every resolution so removing a Steam ID from
+        # STEAM_LOGIN_ALLOWLIST ends its live sessions. Records without a
+        # steamId (created before the allowlist) fail closed.
+        if (
+            self.settings.auth_mode != "production"
+            or self.settings.auth_provider != "steam"
+            or self.settings.steam_login_allowlist is None
+        ):
+            return True
+        return isinstance(steam_id, str) and self.settings.steam_login_allowed(steam_id)
 
     def _verified_claims(
         self,
