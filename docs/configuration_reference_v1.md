@@ -153,6 +153,7 @@ Docker Compose 在容器内使用 service 名（`postgres`、`redis`），面向
 | `RENDER_WORKER_TOKEN` | `dev-render-worker-token` | API, render-worker |
 | `RENDER_WORKER_MODE` | `fallback` | API, worker; `external` 时短片任务保留在队列等待独立 worker 领取 |
 | `RENDER_CLIP_QUEUE_TIMEOUT_SECONDS` | `1800` | worker; 无人认领的 `render_clip` 任务在队列上等待的上限，超时按 `RENDER_QUEUE_TIMED_OUT` 落 failed，用户可重试 |
+| `RENDER_CLIPS_ENABLED` | `0` | API; 仅 production 生效：为 `1` 时才开放 `POST /demos/{demo_id}/render/clip` 与 `.../render/jobs/{job_id}/retry`，否则返回 `404`，`/auth/me` 的 `capabilities.renderClips` 为 false。development/test 始终开放。没有部署外部 GPU worker（`RENDER_WORKER_MODE=external`）时保持 `0` |
 | `API_BASE_URL` | `http://localhost:8000` | render-worker runner |
 | `WORK_DIR` | `.render-worker-work` | render-worker runner |
 | `POLL_INTERVAL_SECONDS` | `5` | render-worker runner |

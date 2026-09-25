@@ -91,6 +91,7 @@ services:
       MAX_RENDER_CLIP_SECONDS: ${MAX_RENDER_CLIP_SECONDS:-60}
       RENDER_WORKER_MODE: ${RENDER_WORKER_MODE:-fallback}
       RENDER_WORKER_TOKEN: ${RENDER_WORKER_TOKEN:-dev-render-worker-token}
+      RENDER_CLIPS_ENABLED: ${RENDER_CLIPS_ENABLED:-0}
     ports:
       - "8000:8000"
     volumes:

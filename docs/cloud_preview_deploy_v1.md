@@ -96,6 +96,7 @@ Required preview values:
 | `DEV_USER_ID` | API | Development/test owner harness only; `X-Dev-User-Id` is not a production identity source. |
 | `MAX_RENDER_CLIP_SECONDS` | API, worker | Render clip duration guard. |
 | `RENDER_WORKER_TOKEN` | API, render-worker | Separate worker service credential. Production rejects the development default. |
+| `RENDER_CLIPS_ENABLED` | API | Production-only opt-in (default `0`) for user-facing `render/clip` creation and retry; while off those routes return `404` and `/auth/me` reports `capabilities.renderClips=false`. Keep `0` unless an external GPU worker (`RENDER_WORKER_MODE=external`) is deployed. Development/test always allow clips. |
 | `API_BASE_URL` | render-worker | Public API origin used by `render-worker/runner.py`. |
 | `DEV_FAKE_VIDEO_PATH` | render-worker | Optional MP4 for fake adapter callback validation. |
 | `CS2_INSTALL_DIR`, `STEAM_USER_DATA_DIR`, `CS2_MANUAL_OUTPUT_FILENAME` | render-worker | Manual adapter instruction metadata only. |
@@ -139,13 +140,13 @@ Manual browser smoke:
 
 1. Open the public dashboard URL. A production candidate must show the shared auth boundary, complete Steam OpenID sign-in, return through the frontend callback, show only compact account metadata, and leave no assertion/session token in the URL or browser storage.
 2. On a clean or filtered library, confirm empty/loading/no-result states show direct actions for create mock, upload `.dem`, refresh, clear filters, or show archived.
-3. Create a mock upload and wait until it completes.
+3. Create a mock upload and wait until it completes. Production has no mock path (`POST /uploads/mock` returns `404`); upload a real `.dem` instead.
 4. Open the demo detail page from the post-create notice or table action.
 5. Confirm the compact detail summary shows file, map, calibration/fallback, rounds, coaching count, parser status, media status, and latest render status.
 6. Verify play/pause, seek, speed, round selection, coaching card click-to-seek, tactical map sync, parser markers, replay diagnostics, and degraded states.
-7. Click `Generate Clip`.
+7. Click `Generate Clip`. Production offers it only with `RENDER_CLIPS_ENABLED=1`.
 8. Confirm the render job appears in the UI and `GET /demos/{demo_id}/render/jobs`; without an external GPU worker, the expected failure text is `GPU worker not connected for render_clip`.
-9. In development/test, check `GET /diagnostics` for safe worker heartbeat, job counts, and recent failure summaries. In production, confirm that system endpoint returns `404` while demo diagnostics remain authenticated and owner-scoped.
+9. In development/test, check `GET /diagnostics` for safe worker heartbeat, job counts, and recent failure summaries. In production, confirm that system endpoint returns `404` while demo diagnostics remain authenticated and owner-scoped, and that the dev/QA routes (`/uploads/mock`, manual video upload/calibration, `/render/mock`) and `/docs`, `/redoc`, `/openapi.json` also return `404`.
 10. If video exists, check credentialed `/demos/{demo_id}/media/video` with GET, HEAD, and a byte range. A copied URL in owner B or anonymous context must return no bytes; if media is missing, denied, or the session expires, the UI must keep the synced 2D/mock shell usable.
 11. Sign out and prove the old session no longer loads library data or media. Run the owner A/B/anonymous/expired/revoked matrix in `docs/production_auth_owner_private_media_v1.md`.
 12. If a sample `.dem` exists, upload it or run smoke with `SAMPLE_DEMO_PATH`, then confirm the same detail-page sync behavior and compact parser failure copy if the sample is invalid.

@@ -32,6 +32,7 @@ class MultipartRequestLimitMiddleware:
         worker_result_envelope_limit_bytes: int = WORKER_RESULT_ENVELOPE_LIMIT_BYTES,
         render_worker_token: str | None = None,
         max_concurrent_uploads: int = 1,
+        manual_video_upload_enabled: bool = True,
     ) -> None:
         if max_concurrent_uploads <= 0:
             raise ValueError("max_concurrent_uploads must be positive")
@@ -42,6 +43,7 @@ class MultipartRequestLimitMiddleware:
         self.worker_result_envelope_limit_bytes = worker_result_envelope_limit_bytes
         self.render_worker_token = render_worker_token
         self.max_concurrent_uploads = max_concurrent_uploads
+        self.manual_video_upload_enabled = manual_video_upload_enabled
         self._active_uploads = 0
 
     async def __call__(
@@ -54,6 +56,13 @@ class MultipartRequestLimitMiddleware:
             scope.get("headers", ())
         ):
             await _send_invalid_worker_token(scope, receive, send)
+            return
+
+        # FastAPI parses a multipart body before any route dependency runs, so
+        # the route's own 404 would come only after streaming the whole video
+        # while holding the shared upload slot.
+        if not self.manual_video_upload_enabled and self._is_manual_video_upload_scope(scope):
+            await _send_not_found(scope, receive, send)
             return
 
         limit = self._limit_for_scope(scope)
@@ -105,6 +114,14 @@ class MultipartRequestLimitMiddleware:
         if _WORKER_RESULT_PATH.fullmatch(path):
             return self.worker_result_envelope_limit_bytes
         return None
+
+    @staticmethod
+    def _is_manual_video_upload_scope(scope: Scope) -> bool:
+        return (
+            scope.get("type") == "http"
+            and scope.get("method", "").upper() == "POST"
+            and _VIDEO_UPLOAD_PATH.fullmatch(scope.get("path", "")) is not None
+        )
 
     @staticmethod
     def _is_worker_post_scope(scope: Scope) -> bool:
@@ -223,6 +240,19 @@ async def _send_invalid_worker_token(
     response = JSONResponse(
         status_code=401,
         content={"detail": "Invalid render worker token"},
+        headers={"Cache-Control": "private, no-store"},
+    )
+    await response(scope, receive, send)
+
+
+async def _send_not_found(
+    scope: Scope,
+    receive: Receive,
+    send: Send,
+) -> None:
+    response = JSONResponse(
+        status_code=404,
+        content={"detail": "Not found"},
         headers={"Cache-Control": "private, no-store"},
     )
     await response(scope, receive, send)

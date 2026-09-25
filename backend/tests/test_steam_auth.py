@@ -249,6 +249,7 @@ class SteamOpenIdBrowserTest(unittest.TestCase):
                     "avatarUrl": "https://avatars.steamstatic.com/avatar_full.jpg",
                     "provider": "steam",
                 },
+                "capabilities": {"devTools": False, "renderClips": False},
             },
         )
         self.assertNotIn("owner", me.text.lower())

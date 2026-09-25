@@ -583,6 +583,7 @@ class OidcBrowserSessionTest(unittest.TestCase):
                     "avatarUrl": None,
                     "provider": "oidc",
                 },
+                "capabilities": {"devTools": False, "renderClips": False},
             },
         )
         session_token = client.cookies.get("__Host-cs2_session")

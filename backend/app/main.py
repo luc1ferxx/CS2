@@ -14,6 +14,7 @@ from app.core.access_log import (
 from app.core.auth import SessionCsrfMiddleware
 from app.core.config import settings
 from app.core.database import SessionLocal, init_db
+from app.core.features import api_docs_kwargs
 from app.core.redis import get_redis_client
 from app.core.request_limits import (
     MultipartRequestLimitMiddleware,
@@ -59,7 +60,12 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     yield
 
 
-app = FastAPI(title="CS2 Demo AI Coach Mock API", version="0.1.0", lifespan=lifespan)
+app = FastAPI(
+    title="CS2 Demo AI Coach Mock API",
+    version="0.1.0",
+    lifespan=lifespan,
+    **api_docs_kwargs(settings),
+)
 install_auth_callback_access_log_redaction()
 suppress_outbound_http_request_logging()
 
@@ -73,6 +79,7 @@ app.add_middleware(
     worker_result_envelope_limit_bytes=64 * 1024,
     render_worker_token=settings.render_worker_token,
     max_concurrent_uploads=1,
+    manual_video_upload_enabled=settings.auth_mode != "production",
 )
 app.add_middleware(SensitiveJsonRequestLimitMiddleware)
 app.add_middleware(SessionCsrfMiddleware)

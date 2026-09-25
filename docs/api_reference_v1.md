@@ -4,7 +4,9 @@
 
 接口的行为约束（owner 隔离、fail-closed、private media）由 `production_auth_owner_private_media_v1.md` 定义，本文件不重复。
 
-API 运行时的交互式文档在 `http://localhost:8000/docs`。
+API 运行时的交互式文档在 `http://localhost:8000/docs`（仅 development/test；production 不提供 `/docs`、`/redoc`、`/openapi.json`）。
+
+Production 隐藏 dev/QA 路由：`POST /uploads/mock`、`POST /demos/{demo_id}/video/upload`、`POST /demos/{demo_id}/video/calibration`、`POST /demos/{demo_id}/render/mock` 返回 `404`（manual video upload 在读取 body 之前就返回 `404`）。`POST /demos/{demo_id}/render/clip` 和 `POST /demos/{demo_id}/render/jobs/{job_id}/retry` 在 production 下也返回 `404`，除非设置 `RENDER_CLIPS_ENABLED=1`。未登录的 production 写请求仍先得到 `401`。`GET /auth/me` 返回 `capabilities: {devTools, renderClips}`，前端据此隐藏对应入口。
 
 ## 用户 API
 
@@ -31,7 +33,7 @@ API 运行时的交互式文档在 `http://localhost:8000/docs`。
 - `GET /demos/{demo_id}/status`
 - `GET /demos/{demo_id}/diagnostics`
 - `POST /demos/{demo_id}/parse/retry`
-- `POST /uploads/mock`
+- `POST /uploads/mock`（仅 development/test；production 返回 `404`）
 - `POST /uploads/demo`
 
 ### Replay and coaching
@@ -46,10 +48,11 @@ API 运行时的交互式文档在 `http://localhost:8000/docs`。
 
 - `GET /demos/{demo_id}/video`
 - `GET|HEAD /demos/{demo_id}/media/video`（校验 session + owner；支持 byte range）
-- `POST /demos/{demo_id}/video/upload`
-- `POST /demos/{demo_id}/video/calibration`
-- `POST /demos/{demo_id}/render/mock`
-- `POST /demos/{demo_id}/render/clip`
+- `POST /demos/{demo_id}/video/upload`（仅 development/test）
+- `POST /demos/{demo_id}/video/calibration`（仅 development/test）
+- `POST /demos/{demo_id}/render/mock`（仅 development/test）
+- `POST /demos/{demo_id}/render/clip`（production 需 `RENDER_CLIPS_ENABLED=1`）
+- `POST /demos/{demo_id}/render/jobs/{job_id}/retry`（production 需 `RENDER_CLIPS_ENABLED=1`）
 - `GET /demos/{demo_id}/render/jobs`
 - `GET|HEAD /demos/{demo_id}/render/jobs/{job_id}/media/video`（支持 Range）
 

@@ -10,6 +10,7 @@ from starlette.background import BackgroundTask
 from app.core.auth import get_current_owner_id
 from app.core.config import settings
 from app.core.database import get_db
+from app.core.features import require_dev_tools, require_render_clips
 from app.core.redis import get_redis_client
 from app.schemas.demo import (
     DemoListItem,
@@ -200,7 +201,11 @@ def get_demo_video(
     return ReplayVideoStatus.model_validate(service.public_video_status(demo))
 
 
-@router.post("/demos/{demo_id}/video/upload", response_model=ReplayVideoStatus)
+@router.post(
+    "/demos/{demo_id}/video/upload",
+    response_model=ReplayVideoStatus,
+    dependencies=[Depends(require_dev_tools)],
+)
 def upload_demo_video(
     demo_id: str,
     file: UploadFile = File(...),
@@ -232,7 +237,11 @@ def upload_demo_video(
     return ReplayVideoStatus.model_validate(service.public_video_status(demo))
 
 
-@router.post("/demos/{demo_id}/video/calibration", response_model=ReplayVideoStatus)
+@router.post(
+    "/demos/{demo_id}/video/calibration",
+    response_model=ReplayVideoStatus,
+    dependencies=[Depends(require_dev_tools)],
+)
 def update_demo_video_calibration(
     demo_id: str,
     calibration: VideoCalibrationUpdate,
@@ -259,7 +268,12 @@ def update_demo_video_calibration(
     return ReplayVideoStatus.model_validate(service.public_video_status(demo))
 
 
-@router.post("/demos/{demo_id}/render/mock", response_model=RenderJobCreated, status_code=201)
+@router.post(
+    "/demos/{demo_id}/render/mock",
+    response_model=RenderJobCreated,
+    status_code=201,
+    dependencies=[Depends(require_dev_tools)],
+)
 def create_mock_render_job(
     demo_id: str,
     db: Session = Depends(get_db),
@@ -284,7 +298,12 @@ def create_mock_render_job(
     )
 
 
-@router.post("/demos/{demo_id}/render/clip", response_model=RenderJobCreated, status_code=201)
+@router.post(
+    "/demos/{demo_id}/render/clip",
+    response_model=RenderJobCreated,
+    status_code=201,
+    dependencies=[Depends(require_render_clips)],
+)
 def create_render_clip_job(
     demo_id: str,
     request: RenderClipRequest,
@@ -316,7 +335,11 @@ def create_render_clip_job(
     )
 
 
-@router.post("/demos/{demo_id}/render/jobs/{job_id}/retry", response_model=RenderJobCreated)
+@router.post(
+    "/demos/{demo_id}/render/jobs/{job_id}/retry",
+    response_model=RenderJobCreated,
+    dependencies=[Depends(require_render_clips)],
+)
 def retry_render_clip_job(
     demo_id: str,
     job_id: str,

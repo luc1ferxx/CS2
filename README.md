@@ -141,7 +141,7 @@ Radar 资源来自 [rabume/cs2-dma-radar](https://github.com/rabume/cs2-dma-rada
 
 ## 配置
 
-完整表格（68 项）见 [Configuration Reference](docs/configuration_reference_v1.md)。最常用的：
+完整表格（77 项）见 [Configuration Reference](docs/configuration_reference_v1.md)。最常用的：
 
 | Name | Default | Used by |
 | --- | --- | --- |
@@ -157,6 +157,7 @@ Radar 资源来自 [rabume/cs2-dma-radar](https://github.com/rabume/cs2-dma-rada
 | `STEAM_DEMO_PROVIDER` | `disabled` | 本 build 拒绝除 `disabled` 外的一切取值 |
 | `RENDER_WORKER_MODE` | `fallback` | `fallback` / `external` |
 | `RENDER_WORKER_TOKEN` | `dev-render-worker-token` | production 必须改 |
+| `RENDER_CLIPS_ENABLED` | `0` | 仅 production：为 `1` 时才开放生成/重试短片，否则相关路由返回 `404` |
 | `MAX_DEMO_UPLOAD_BYTES` | `1073741824` | 实际流式字节上限 |
 | `DEV_USER_ID` | `dev-user` | 仅 development/test |
 

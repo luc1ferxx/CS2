@@ -226,6 +226,10 @@ class Settings:
     max_render_clip_seconds: int = int(os.getenv("MAX_RENDER_CLIP_SECONDS", "60"))
     render_worker_token: str = os.getenv("RENDER_WORKER_TOKEN", "dev-render-worker-token")
     render_worker_mode: str = os.getenv("RENDER_WORKER_MODE", "fallback")
+    # Production-only switch for user-facing render_clip creation/retry. Off by
+    # default so a beta without a GPU worker does not offer clips that can only
+    # fail; development/test always keep them (see render_clips_available).
+    render_clips_enabled: bool = _bool_from_env("RENDER_CLIPS_ENABLED")
     # Lets GET /render-worker/jobs/next reclaim jobs stuck on "rendering": a
     # worker asking for work is by definition not rendering, so with a single
     # consumer any such job is an orphan and can go back to the queue at once.
@@ -298,6 +302,10 @@ class Settings:
         if self.auth_mode == "production":
             return [self.frontend_public_url]
         return self.cors_origins
+
+    @property
+    def render_clips_available(self) -> bool:
+        return self.auth_mode != "production" or self.render_clips_enabled
 
     @property
     def oidc_allowed_algorithms(self) -> list[str]:

@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.core.auth import require_trusted_origin
 from app.core.database import get_db
+from app.core.features import feature_capabilities
 from app.services.account_service import (
     AccountConflictError,
     AccountService,
@@ -262,6 +263,7 @@ def me(
                 "avatarUrl": None,
                 "provider": "development",
             },
+            "capabilities": feature_capabilities(service.settings),
         }
     if service.settings.auth_mode != "production":
         raise HTTPException(status_code=503, detail="Authentication is not configured")
@@ -282,6 +284,7 @@ def me(
             "avatarUrl": account.avatar_url,
             "provider": public_provider,
         },
+        "capabilities": feature_capabilities(service.settings),
     }
 
 

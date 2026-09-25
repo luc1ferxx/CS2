@@ -373,6 +373,61 @@ class MultipartRequestLimitMiddlewareTest(unittest.TestCase):
         self.assertEqual(receive_calls, 2)
         self.assertEqual(downstream.received_body, b"12345678")
 
+    def test_disabled_manual_video_upload_is_not_found_before_body_or_upload_slot(self) -> None:
+        downstream = RecordingBodyApp()
+        app = MultipartRequestLimitMiddleware(
+            downstream,
+            video_envelope_limit_bytes=16,
+            max_concurrent_uploads=1,
+            manual_video_upload_enabled=False,
+        )
+        # A demo upload in flight holds the only slot: the 404 must neither
+        # wait for it (503 INTAKE_BUSY) nor claim it.
+        app._active_uploads = 1
+
+        status, headers, body, receive_calls = invoke_asgi(
+            app,
+            path="/demos/demo-123/video/upload",
+            chunks=[b"must-not-be-read"],
+            headers=[(b"content-length", b"999")],
+        )
+
+        self.assertEqual(status, 404)
+        self.assertEqual(json.loads(body), {"detail": "Not found"})
+        self.assertEqual(headers["cache-control"], "private, no-store")
+        self.assertEqual(receive_calls, 0)
+        self.assertFalse(downstream.called)
+        self.assertEqual(app._active_uploads, 1)
+
+    def test_disabled_manual_video_upload_leaves_other_upload_routes_streaming(self) -> None:
+        for path, headers in (
+            ("/uploads/demo", []),
+            (
+                "/render-worker/jobs/job-123/media",
+                [(b"x-render-worker-token", b"expected-token")],
+            ),
+            ("/demos/demo-123/video", []),
+        ):
+            with self.subTest(path=path):
+                downstream = RecordingBodyApp()
+                app = MultipartRequestLimitMiddleware(
+                    downstream,
+                    demo_envelope_limit_bytes=8,
+                    worker_media_envelope_limit_bytes=16,
+                    render_worker_token="expected-token",
+                    manual_video_upload_enabled=False,
+                )
+
+                status, _, body, _ = invoke_asgi(
+                    app,
+                    path=path,
+                    chunks=[b"1234"],
+                    headers=headers,
+                )
+
+                self.assertEqual(status, 200)
+                self.assertEqual(json.loads(body), {"received": 4})
+
     def test_non_target_route_passes_through_without_request_envelope_limit(self) -> None:
         downstream = RecordingBodyApp()
         app = MultipartRequestLimitMiddleware(

@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 
 from app.core.auth import get_current_owner_id
 from app.core.database import get_db
+from app.core.features import require_dev_tools
 from app.schemas.demo import DemoListItem
 from app.services.artifact_intake import ArtifactIntakeError
 from app.services.demo_service import DemoArtifactBindError, DemoDispatchError, DemoService
@@ -12,7 +13,12 @@ from app.services.upload_service import DemoUploadValidationError
 router = APIRouter(tags=["uploads"])
 
 
-@router.post("/uploads/mock", response_model=DemoListItem, status_code=201)
+@router.post(
+    "/uploads/mock",
+    response_model=DemoListItem,
+    status_code=201,
+    dependencies=[Depends(require_dev_tools)],
+)
 def create_mock_upload(
     db: Session = Depends(get_db),
     owner_id: str = Depends(get_current_owner_id),
