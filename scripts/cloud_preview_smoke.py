@@ -8,6 +8,7 @@ import time
 import urllib.error
 import urllib.request
 import uuid
+from collections import Counter
 from collections.abc import Mapping, Sequence
 from http.client import HTTPConnection, HTTPException, HTTPSConnection
 from pathlib import Path
@@ -55,7 +56,11 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     video_url = video_url_from_payload(replay)
     if capabilities["renderClips"]:
-        render_request = render_clip_request(replay, coaching if isinstance(coaching, list) else [])
+        render_request = render_clip_request(
+            replay,
+            coaching if isinstance(coaching, list) else [],
+            require_pov=not capabilities["devTools"],
+        )
         render_response = request_json("POST", f"/demos/{demo_id}/render/clip", render_request)
         job_id = required_str(render_response, "job_id")
         jobs = request_json("GET", f"/demos/{demo_id}/render/jobs")
@@ -288,7 +293,12 @@ def sample_calibration_label(replay: dict[str, Any] | None) -> str:
     return f"{display_name} {confidence} {calibration_state}"
 
 
-def render_clip_request(replay: dict[str, Any], coaching: list[Any]) -> dict[str, Any]:
+def render_clip_request(
+    replay: dict[str, Any],
+    coaching: list[Any],
+    *,
+    require_pov: bool = False,
+) -> dict[str, Any]:
     tick_rate = int(replay.get("tickRate") or (replay.get("video") or {}).get("tickRate") or 64)
     rounds = replay.get("rounds") if isinstance(replay.get("rounds"), list) else []
     first_round = rounds[0] if rounds else {}
@@ -300,7 +310,7 @@ def render_clip_request(replay: dict[str, Any], coaching: list[Any]) -> dict[str
     tick_end = min(end_tick, max(tick_start + tick_rate, event_tick + tick_rate * 5))
     if tick_end <= tick_start:
         tick_end = tick_start + tick_rate
-    return {
+    request: dict[str, Any] = {
         "eventId": event.get("id"),
         "tickStart": tick_start,
         "tickEnd": tick_end,
@@ -308,6 +318,52 @@ def render_clip_request(replay: dict[str, Any], coaching: list[Any]) -> dict[str
         "roundNumber": first_round.get("roundNumber"),
         "renderPreset": "cloud_preview_smoke_v1",
     }
+    # An external renderer (RENDER_WORKER_MODE=external) refuses a clip without a
+    # SteamID64 POV; the in-repo fallback accepts one without a player at all.
+    player_id = render_pov_player_id(replay, event)
+    if player_id is not None:
+        request["playerId"] = player_id
+    elif require_pov:
+        raise SmokeFailure(
+            "render_clip needs a POV player, but no replay player has a 17-digit SteamID64; "
+            "the production renderer refuses clips without one, so smoke a sample demo "
+            "whose parsed players carry Steam IDs"
+        )
+    return request
+
+
+def render_pov_player_id(replay: dict[str, Any], event: dict[str, Any]) -> str | None:
+    """Pick a render POV the API will accept, or None when no player qualifies.
+
+    Mirrors RenderLifecycle._resolve_render_pov: the API matches `playerId`
+    against replay player ids and needs exactly one match carrying a SteamID64.
+    The coaching event's own player and evidence players come first, because
+    the clip is centred on that event.
+    """
+    raw_players = replay.get("players")
+    players = [item for item in raw_players if isinstance(item, dict)] if isinstance(raw_players, list) else []
+    ids = [player_id if isinstance(player_id := player.get("id"), str) else None for player in players]
+    id_counts = Counter(ids)
+    usable = [
+        player_id
+        for player, player_id in zip(players, ids, strict=True)
+        if player_id is not None and id_counts[player_id] == 1 and _steam_id64(player) is not None
+    ]
+    context = event.get("structured_context_json")
+    involved = context.get("involvedPlayerIds") if isinstance(context, dict) else None
+    preferred = [event.get("player_id"), *(involved if isinstance(involved, list) else [])]
+    for candidate in preferred:
+        if isinstance(candidate, str) and candidate in usable:
+            return candidate
+    return usable[0] if usable else None
+
+
+def _steam_id64(player: dict[str, Any]) -> str | None:
+    # Same precedence and shape check as the API: steamId, else the player id.
+    value = player.get("steamId") or player.get("id")
+    if isinstance(value, str) and len(value) == 17 and value.isascii() and value.isdecimal():
+        return value
+    return None
 
 
 def video_url_from_payload(payload: Any) -> str | None:
