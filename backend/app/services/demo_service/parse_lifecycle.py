@@ -2,6 +2,8 @@
 
 import logging
 import uuid
+from collections.abc import Callable
+from contextlib import AbstractContextManager, nullcontext
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -120,7 +122,18 @@ class ParseLifecycle(ServiceComponent):
             failure=failure,
         )
 
-    def retry_parse_job(self, demo: Demo) -> DemoListItem:
+    def retry_parse_job(
+        self,
+        demo: Demo,
+        *,
+        admission: Callable[[], AbstractContextManager[object]] = nullcontext,
+    ) -> DemoListItem:
+        """Queue a fresh parse of a failed demo's verified source.
+
+        `admission` wraps only the new job's commit, so a caller can run its
+        capacity check under the same lock without holding it across the
+        source-artifact verification or the queue dispatch.
+        """
         if demo.status != "failed" and not self._service.replay.replay_artifact_is_missing(demo):
             raise ValueError("Only failed parse jobs can be retried")
         latest_job = self.latest_parse_job(demo)
@@ -134,28 +147,35 @@ class ParseLifecycle(ServiceComponent):
         if latest_job is not None and latest_job.status in ACTIVE_PARSE_JOB_STATUSES:
             raise ValueError("Parse is already active")
 
-        job_id = str(uuid.uuid4())
-        job = DemoJob(
-            id=job_id,
-            demo_id=demo.id,
-            job_type="real_parse",
-            status="queued",
-            attempts=0,
-            metadata_json=_metadata_json(
-                {
-                    "phase": "uploaded",
-                    "sourceArtifact": verified.snapshot.as_dict(),
-                }
-            ),
-        )
-        demo.status = "queued"
-        demo.error_message = None
-        demo.completed_at = None
-        linked_match_id = self._steam_matches.linked_match_id(demo, latest_job)
-        if linked_match_id is not None:
-            self._steam_matches.reset_for_retry(linked_match_id, demo)
-        self.db.add(job)
-        self.db.commit()
+        # Only the commit that makes the demo active runs inside the admission:
+        # source verification above and dispatch below can block on the network.
+        with admission():
+            # A concurrent retry of this demo may have queued its job since the
+            # checks above; the admission serializes this re-read with its commit.
+            if self._active_parse_job_exists(demo):
+                raise ValueError("Parse is already active")
+            job_id = str(uuid.uuid4())
+            job = DemoJob(
+                id=job_id,
+                demo_id=demo.id,
+                job_type="real_parse",
+                status="queued",
+                attempts=0,
+                metadata_json=_metadata_json(
+                    {
+                        "phase": "uploaded",
+                        "sourceArtifact": verified.snapshot.as_dict(),
+                    }
+                ),
+            )
+            demo.status = "queued"
+            demo.error_message = None
+            demo.completed_at = None
+            linked_match_id = self._steam_matches.linked_match_id(demo, latest_job)
+            if linked_match_id is not None:
+                self._steam_matches.reset_for_retry(linked_match_id, demo)
+            self.db.add(job)
+            self.db.commit()
         self.db.refresh(demo)
 
         try:
@@ -312,6 +332,18 @@ class ParseLifecycle(ServiceComponent):
         if job.job_type == "real_parse":
             self._steam_matches.mark_parse_failed(demo, failed_at)
         self.db.commit()
+
+    def _active_parse_job_exists(self, demo: Demo) -> bool:
+        return (
+            self.db.query(DemoJob.id)
+            .filter(
+                DemoJob.demo_id == demo.id,
+                DemoJob.job_type.in_(PARSE_JOB_TYPES),
+                DemoJob.status.in_(ACTIVE_PARSE_JOB_STATUSES),
+            )
+            .first()
+            is not None
+        )
 
     def _ensure_parse_job(self, job: DemoJob) -> None:
         if job.job_type not in PARSE_JOB_TYPES:

@@ -149,7 +149,9 @@ class UploadQuotaService:
 def parse_admission(db: Session, runtime_settings: Settings = settings) -> Iterator[None]:
     """Serialize a parse-capacity count with the commit that makes a demo active.
 
-    Wrap the authoritative quota check and that commit. A process-wide lock
+    Wrap the authoritative quota check and that commit, and nothing that can
+    wait on the network (artifact checks, queue dispatch): every other upload
+    and retry in the process waits on this lock meanwhile. A process-wide lock
     covers this API process; on PostgreSQL a transaction-scoped advisory lock
     taken in `db` also covers other API processes until the commit (or the
     rollback on failure) ends the transaction. That relies on READ COMMITTED,
@@ -171,6 +173,22 @@ def parse_admission(db: Session, runtime_settings: Settings = settings) -> Itera
         except BaseException:
             db.rollback()
             raise
+
+
+@contextmanager
+def retry_admission(
+    db: Session,
+    owner_id: str,
+    runtime_settings: Settings = settings,
+) -> Iterator[None]:
+    """The admission a parse retry commits under: the in-flight caps, checked inside it.
+
+    A refusal raises UploadQuotaExceeded on entry, before the retry has changed
+    anything, and `parse_admission` rolls the transaction back.
+    """
+    with parse_admission(db, runtime_settings):
+        UploadQuotaService(db, runtime_settings).check_parse_retry(owner_id)
+        yield
 
 
 def upload_quota_precheck(

@@ -27,8 +27,8 @@ Rules of the composition:
   `app.services.demo_service.get_redis_client`.
 """
 
-from collections.abc import Iterator
-from contextlib import AbstractContextManager
+from collections.abc import Callable, Iterator
+from contextlib import AbstractContextManager, nullcontext
 from datetime import datetime
 from pathlib import Path
 from typing import Any, BinaryIO
@@ -288,8 +288,13 @@ class DemoService:
     def demo_ingestion_status(self, demo: Demo) -> DemoIngestionStatus:
         return self.parse.demo_ingestion_status(demo)
 
-    def retry_parse_job(self, demo: Demo) -> DemoListItem:
-        return self.parse.retry_parse_job(demo)
+    def retry_parse_job(
+        self,
+        demo: Demo,
+        *,
+        admission: Callable[[], AbstractContextManager[object]] = nullcontext,
+    ) -> DemoListItem:
+        return self.parse.retry_parse_job(demo, admission=admission)
 
     def claim_parse_job(self, demo: Demo, job: DemoJob) -> bool:
         return self.parse.claim_parse_job(demo, job)

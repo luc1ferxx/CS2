@@ -34,7 +34,7 @@ from app.services.demo_service import (
     ReplayBlobUnavailableError,
 )
 from app.services.diagnostics import render_worker_availability, write_render_worker_heartbeat
-from app.services.upload_quota import UploadQuotaExceeded, UploadQuotaService, parse_admission
+from app.services.upload_quota import UploadQuotaExceeded, retry_admission
 from app.services.upload_service import DemoUploadValidationError, store_video_artifact
 
 logger = logging.getLogger(__name__)
@@ -157,10 +157,12 @@ def retry_demo_parse(
     if demo is None:
         raise HTTPException(status_code=404, detail="Demo not found")
     try:
-        # The count and the commit that queues the demo share one admission.
-        with parse_admission(db):
-            UploadQuotaService(db).check_parse_retry(owner_id)
-            return service.retry_parse_job(demo)
+        # Eligibility (409) is checked first; the in-flight count and the commit
+        # that queues the demo then share one admission, and dispatch runs after.
+        return service.retry_parse_job(
+            demo,
+            admission=lambda: retry_admission(db, owner_id),
+        )
     except UploadQuotaExceeded as exc:
         return exc.to_response()
     except DemoDispatchError as exc:

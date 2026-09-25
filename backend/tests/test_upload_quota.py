@@ -703,35 +703,115 @@ class ProductionUploadQuotaApiTest(unittest.TestCase):
         self.assert_no_upload_side_effects(before)
 
     def test_parse_retry_honours_the_in_flight_caps_but_not_the_daily_limit(self) -> None:
-        (failed_id,) = self.seed(OWNER, status="failed", age=timedelta(hours=1))
+        admitted_id, capped_id = self.upload_failed_demos(2)
+        (stuck_id,) = self.seed(OWNER, status="failed", age=timedelta(hours=1))
         self.seed(OWNER, status="completed", age=timedelta(hours=1), count=3)
         object.__setattr__(settings, "demo_upload_daily_limit", 1)
+        object.__setattr__(settings, "demo_active_parse_limit", 2)
+        object.__setattr__(settings, "parse_queue_global_limit", 50)
         client = self.client()
 
-        # Under the in-flight caps the route reaches retry_parse_job, which
-        # refuses this demo for its own reason (no parse job to retry).
-        allowed = client.post(f"/demos/{failed_id}/parse/retry")
-        self.assertEqual(allowed.status_code, 409)
-        self.assertEqual(allowed.json(), {"detail": "Uploaded source demo is not available for retry"})
+        # Well past the daily limit, but a retry reuses its demo row.
+        admitted = client.post(f"/demos/{admitted_id}/parse/retry")
+        self.assertEqual(admitted.status_code, 200, admitted.text)
+        self.assertEqual(admitted.json()["status"], "queued")
 
-        self.seed(OWNER, status="analyzing", age=timedelta(days=2), count=2)
+        # One queued plus one analyzing puts the owner at the in-flight cap.
+        self.seed(OWNER, status="analyzing", age=timedelta(days=2))
         self.assert_quota_response(
-            client.post(f"/demos/{failed_id}/parse/retry"),
+            client.post(f"/demos/{capped_id}/parse/retry"),
             status_code=429,
             code="active_parse_limit",
         )
 
+        # Eligibility is checked before the quota, so a demo that could never
+        # be retried keeps its own 409 even over the cap.
+        stuck = client.post(f"/demos/{stuck_id}/parse/retry")
+        self.assertEqual(stuck.status_code, 409)
+        self.assertEqual(stuck.json(), {"detail": "Uploaded source demo is not available for retry"})
+
         object.__setattr__(settings, "parse_queue_global_limit", 2)
         self.assert_quota_response(
-            client.post(f"/demos/{failed_id}/parse/retry"),
+            client.post(f"/demos/{capped_id}/parse/retry"),
             status_code=503,
             code="parse_queue_full",
         )
 
         with self.Session() as db:
-            self.assertEqual(db.get(Demo, failed_id).status, "failed")
-            self.assertEqual(db.query(DemoJob).count(), 0)
-        self.assertEqual(self.redis.payloads, [])
+            # The refused retries left no job and no status change behind.
+            self.assertEqual(db.get(Demo, capped_id).status, "failed")
+            self.assertEqual(db.get(Demo, stuck_id).status, "failed")
+            jobs = db.query(DemoJob.demo_id, DemoJob.status).all()
+        self.assertEqual(
+            sorted(jobs),
+            sorted([(admitted_id, "failed"), (admitted_id, "queued"), (capped_id, "failed")]),
+        )
+        self.assertEqual(len(self.redis.payloads), 1)
+        self.assertEqual(json.loads(self.redis.payloads[0])["demo_id"], admitted_id)
+
+    def test_parse_retry_dispatches_and_verifies_outside_the_admission(self) -> None:
+        (failed_id,) = self.upload_failed_demos(1)
+        object.__setattr__(settings, "demo_active_parse_limit", 2)
+        object.__setattr__(settings, "parse_queue_global_limit", 50)
+        lock_held: dict[str, bool] = {}
+        verify = demo_ingest.verify_accepted_artifact
+        check = UploadQuotaService.check_parse_retry
+        dispatch = demo_ingest.DemoIngest.dispatch_parse_job
+
+        def other_admission_can_enter() -> bool:
+            if not _parse_admission_lock.acquire(blocking=False):
+                return False
+            _parse_admission_lock.release()
+            return True
+
+        def recording_verify(*args: Any, **kwargs: Any) -> Any:
+            lock_held["verify"] = not other_admission_can_enter()
+            return verify(*args, **kwargs)
+
+        def recording_check(quota: UploadQuotaService, owner_id: str) -> None:
+            lock_held["check"] = _parse_admission_lock.locked()
+            check(quota, owner_id)
+
+        def recording_dispatch(ingest: Any, **kwargs: Any) -> None:
+            # A hung LPUSH here must not stall every other upload and retry.
+            lock_held["dispatch"] = not other_admission_can_enter()
+            dispatch(ingest, **kwargs)
+
+        with (
+            patch.object(demo_ingest, "verify_accepted_artifact", recording_verify),
+            patch.object(UploadQuotaService, "check_parse_retry", recording_check),
+            patch.object(demo_ingest.DemoIngest, "dispatch_parse_job", recording_dispatch),
+        ):
+            response = self.client().post(f"/demos/{failed_id}/parse/retry")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(lock_held, {"verify": False, "check": True, "dispatch": False})
+        self.assertEqual(len(self.redis.payloads), 1)
+
+    def test_concurrent_retries_of_one_demo_queue_it_once(self) -> None:
+        self.use_file_database()
+        (failed_id,) = self.upload_failed_demos(1)
+        object.__setattr__(settings, "demo_active_parse_limit", 2)
+        object.__setattr__(settings, "parse_queue_global_limit", 50)
+        verify = demo_ingest.verify_accepted_artifact
+        both_verified = threading.Barrier(2, timeout=10)
+
+        def verify_together(*args: Any, **kwargs: Any) -> Any:
+            # Both requests pass eligibility before either reaches the admission.
+            both_verified.wait()
+            return verify(*args, **kwargs)
+
+        with patch.object(demo_ingest, "verify_accepted_artifact", verify_together):
+            statuses = self.race(
+                [lambda client: client.post(f"/demos/{failed_id}/parse/retry")] * 2
+            )
+
+        self.assertEqual(statuses, [200, 409])
+        with self.Session() as db:
+            self.assertEqual(
+                db.query(DemoJob).filter(DemoJob.status == "queued").count(), 1
+            )
+        self.assertEqual(len(self.redis.payloads), 1)
 
     def test_parse_retry_of_another_owners_demo_is_still_not_found(self) -> None:
         (other_failed,) = self.seed(OTHER_OWNER, status="failed", age=timedelta(hours=1))
