@@ -1,6 +1,6 @@
 "use client";
 
-import { Crosshair, RadioTower, Scissors, Video } from "lucide-react";
+import { Crosshair, RadioTower, Video } from "lucide-react";
 import {
   forwardRef,
   useCallback,
@@ -12,11 +12,18 @@ import {
 
 import { useAuth } from "@/components/auth/AuthProvider";
 import type { RenderJobStatus, RenderWorkerStatus } from "@/lib/api";
-import { friendlyErrorMessage, isRenderActiveStatus } from "@/lib/demo-library";
+import { isRenderActiveStatus } from "@/lib/demo-library";
 import { resolvePrivateMediaSource } from "@/lib/media-url";
-import { renderWorkerNotice } from "@/lib/render-worker";
-import { tickToVideoTime, videoMediaIdentity, videoTimeRange, videoTimeToTick, type VideoPlaybackState } from "@/lib/replay-time";
+import {
+  RENDER_WORKER_OFFLINE_DETAIL as RENDER_OFFLINE_DETAIL,
+  RENDER_WORKER_OFFLINE_LABEL as RENDER_OFFLINE_LABEL,
+  renderWorkerOffline
+} from "@/lib/render-worker";
+import { formatRoundTime, tickToVideoTime, videoMediaIdentity, videoTimeRange, videoTimeToTick, type VideoPlaybackState } from "@/lib/replay-time";
+import { renderFailureMessage } from "@/lib/user-errors";
 import type { ReplayData, ReplayFrame } from "@/types/replay";
+
+const VIDEO_TICK_PUBLISH_STEP = 2;
 
 interface FirstPersonReplayProps {
   replay: ReplayData;
@@ -89,7 +96,7 @@ export const FirstPersonReplay = forwardRef<FirstPersonReplayHandle, FirstPerson
     renderClipRequesting ||
     isRenderActiveStatus(currentTickClipJob?.status);
   const tickClipReady = currentTickClipJob?.status === "completed" && currentTickClipJob.video?.status === "ready" && Boolean(currentTickClipJob.video.url);
-  const clipWorkerNotice = renderWorkerNotice(renderWorker, currentTickClipJob);
+  const clipWorkerOffline = renderWorkerOffline(renderWorker) && currentTickClipJob?.status === "queued";
   const progress = Math.min(
     1,
     Math.max(0, (videoTime - timeRange.start) / Math.max(1, timeRange.end - timeRange.start))
@@ -127,6 +134,13 @@ export const FirstPersonReplay = forwardRef<FirstPersonReplayHandle, FirstPerson
 
   useImperativeHandle(ref, () => ({ seekToTick: seekVideoToTick }), [seekVideoToTick]);
 
+  // A paused video emits no timeupdate, so a listener that attaches later gets the current position once.
+  useEffect(() => {
+    const element = videoRef.current;
+    if (!onVideoTimeChange || !element || !activeVideoSource) return;
+    onVideoTimeChange(element.currentTime);
+  }, [activeVideoSource, onVideoTimeChange]);
+
   const finishVideoClip = useCallback(() => {
     if (!feedbackAllowedRef.current || !activeVideoSource) return;
     feedbackAllowedRef.current = false;
@@ -151,22 +165,23 @@ export const FirstPersonReplay = forwardRef<FirstPersonReplayHandle, FirstPerson
       pendingSeekTickRef.current = null;
     }
 
+    // About 30 updates a second at 64 tick: enough for the map and clock, without a page commit every frame.
     const lastSyncedTick = lastSyncedTickRef.current;
-    if (lastSyncedTick === null || Math.abs(nextTick - lastSyncedTick) >= 1) {
+    if (lastSyncedTick === null || Math.abs(nextTick - lastSyncedTick) >= VIDEO_TICK_PUBLISH_STEP) {
       lastSyncedTickRef.current = nextTick;
       onVideoTickChange(nextTick);
     }
   }, [activeVideoSource, finishVideoClip, onVideoTickChange, onVideoTimeChange, replay.video]);
 
   useEffect(() => {
-    onVideoTimeChange?.(videoTime);
-  }, [onVideoTimeChange, videoTime]);
-
-  useEffect(() => {
     lastSyncedTickRef.current = null;
     pendingSeekTickRef.current = null;
     feedbackAllowedRef.current = false;
   }, [activeVideoSource, mediaIdentity]);
+
+  // Read at play/pause time only, so this effect does not re-run on every published tick.
+  const currentTickRef = useRef(currentTick);
+  currentTickRef.current = currentTick;
 
   useEffect(() => {
     const element = videoRef.current;
@@ -175,7 +190,7 @@ export const FirstPersonReplay = forwardRef<FirstPersonReplayHandle, FirstPerson
     }
 
     if (lastSyncedTickRef.current === null) {
-      seekVideoToTick(currentTick);
+      seekVideoToTick(currentTickRef.current);
     }
     element.playbackRate = speed;
     if (playing && element.paused) {
@@ -186,7 +201,7 @@ export const FirstPersonReplay = forwardRef<FirstPersonReplayHandle, FirstPerson
     } else if (!playing) {
       element.pause();
     }
-  }, [activeVideoSource, currentTick, mediaIdentity, onVideoUnavailable, playing, seekVideoToTick, speed]);
+  }, [activeVideoSource, mediaIdentity, onVideoUnavailable, playing, seekVideoToTick, speed]);
 
   useEffect(() => {
     const element = videoRef.current;
@@ -216,12 +231,12 @@ export const FirstPersonReplay = forwardRef<FirstPersonReplayHandle, FirstPerson
   }, [activeVideoSource, playing, publishVideoTime]);
 
   return (
-    <section className={`panel first-person-panel ${compact ? "compact" : ""}`} aria-label="First-person replay player">
+    <section className={`panel first-person-panel ${compact ? "compact" : ""}`} aria-label="第一人称视频">
       {!compact ? <div className="first-person-header">
         <div>
-          <h2>第一人称回放</h2>
-          <span title={`Tick ${Math.round(currentTick)}`}>
-            {activeVideoSource ? `${videoLabel(replay.video.source)} · ${povLabel}` : "战术回放可用"} · {formatTime(videoTime)}
+          <h2>第一人称视频</h2>
+          <span>
+            {activeVideoSource ? `${videoLabel(replay.video.source)}：${povLabel}` : "战术回放可用"}，{formatTime(videoTime)}
           </span>
         </div>
         <div className="render-actions">
@@ -231,7 +246,7 @@ export const FirstPersonReplay = forwardRef<FirstPersonReplayHandle, FirstPerson
               type="button"
               onClick={onViewVideoClip}
               disabled={Boolean(replay.video.povSteamId && !recordedPlayer)}
-              title={`观看 ${povLabel} · Tick ${replay.video.tickStart}–${replay.video.tickEnd}`}
+              title={`观看 ${povLabel}`}
             >
               <Video size={14} />
               观看{recordedPlayer?.name ? ` ${recordedPlayer.name} ` : ""}视频
@@ -244,7 +259,7 @@ export const FirstPersonReplay = forwardRef<FirstPersonReplayHandle, FirstPerson
           {latestRenderClipJob && isRenderActiveStatus(latestRenderClipJob.status) ? (
             <span
               className={`mini-pill clip-job-pill ${latestRenderClipJob.status}`}
-              title="正在生成新的片段，已有视频仍可观看"
+              title="正在生成新的视频，已有视频仍可观看"
             >
               {statusLabel(latestRenderClipJob.status)}
             </span>
@@ -254,10 +269,10 @@ export const FirstPersonReplay = forwardRef<FirstPersonReplayHandle, FirstPerson
             type="button"
             onClick={onRequestRenderClip}
             disabled={clipJobBusy || !renderClipPlayerSelected}
-            title={clipWorkerNotice ? clipWorkerNotice.detail : tickClipReady ? "观看当前时刻已保存的视频" : "生成当前时刻的第一人称片段，完成后可重复观看"}
+            title={clipWorkerOffline ? RENDER_OFFLINE_DETAIL : tickClipReady ? "观看当前时刻已保存的视频" : "生成当前时刻的第一人称视频，完成后可重复观看"}
           >
-            <Scissors size={14} />
-            {renderClipRequesting ? "正在提交…" : tickClipReady ? "观看这一刻" : clipWorkerNotice ? clipWorkerNotice.label : isRenderActiveStatus(currentTickClipJob?.status) ? statusLabel(currentTickClipJob?.status ?? "queued") : "生成这一刻的视频"}
+            <Video size={14} aria-hidden="true" />
+            {renderClipRequesting ? "正在提交…" : tickClipReady ? "观看这一刻的视频" : clipWorkerOffline ? RENDER_OFFLINE_LABEL : isRenderActiveStatus(currentTickClipJob?.status) ? statusLabel(currentTickClipJob?.status ?? "queued") : "生成这一刻的视频"}
           </button> : null}
           {showDevActions ? <button
             className="secondary-button compact-button"
@@ -353,7 +368,7 @@ function RenderStatusOverlay({
       <div className="render-status-overlay failed">
         <span>视频暂不可用</span>
         <strong>未能加载这段视频</strong>
-        <p>可以继续使用战术回放，或重新生成当前片段。</p>
+        <p>可以继续使用战术回放，或重新生成这段视频。</p>
       </div>
     );
   }
@@ -362,10 +377,10 @@ function RenderStatusOverlay({
     if (playbackState === "active") return null;
     return (
       <div className="render-status-overlay pending">
-        <span>第一人称片段 · {povLabel}</span>
+        <span>第一人称视频：{povLabel}</span>
         <strong>{playbackState === "different-player" ? "这段视频来自其他玩家的视角" : "当前时刻不在视频范围内"}</strong>
         <p>
-          这段视频长 {formatTime((video.tickEnd - video.tickStart) / video.tickRate)}。继续使用战术回放，或从已保存片段中观看。
+          这段视频长 {formatTime((video.tickEnd - video.tickStart) / video.tickRate)}。继续使用战术回放，或从已保存的视频中观看。
         </p>
       </div>
     );
@@ -391,25 +406,23 @@ function RenderStatusOverlay({
     },
     queued: {
       heading: "视频等待生成",
-      body: "完成后会更新到已保存片段。你可以继续使用战术回放。"
+      body: "完成后会保存到已保存的视频。你可以继续使用战术回放。"
     },
     processing: {
       heading: "正在生成视频",
-      body: "完成后会更新到已保存片段。你可以继续复盘其他时刻。"
+      body: "完成后会保存到已保存的视频。你可以继续复盘其他时刻。"
     },
     rendering: {
       heading: "正在生成视频",
-      body: "完成后会更新到已保存片段。你可以继续复盘其他时刻。"
+      body: "完成后会保存到已保存的视频。你可以继续复盘其他时刻。"
     },
     ready: {
       heading: "视频文件尚未就绪",
-      body: "任务已结束，但视频文件暂不可用。可刷新片段状态，或继续使用战术回放。"
+      body: "任务已结束，但视频文件暂不可用。可稍后刷新，或继续使用战术回放。"
     },
     failed: {
       heading: "视频生成未完成",
-      body: video.errorMessage
-        ? friendlyErrorMessage(video.errorMessage)
-        : "请重试生成视频。战术回放仍可正常使用。"
+      body: `${renderFailureMessage(video.errorCode)}战术回放仍可正常使用。`
     }
   };
 
@@ -470,7 +483,7 @@ function MockFirstPersonFrame({
       <div className="mock-crosshair" style={{ transform: `translateY(${recoilOffset * -0.4}px)` }}>
         <Crosshair size={44} strokeWidth={1.6} />
       </div>
-      <div className="mock-render-label">模拟占位画面 · 非真实游戏录像</div>
+      <div className="mock-render-label">模拟占位画面，非真实游戏画面</div>
       <div className="mock-fps-stats">
         <span>CT 存活：{aliveEnemies}</span>
       </div>
@@ -500,8 +513,4 @@ function statusLabel(status: string): string {
   return ({ pending: "等待生成", queued: "等待生成", processing: "生成中", rendering: "生成中", ready: "可以观看", completed: "已完成", failed: "生成失败" } as Record<string, string>)[status] ?? "状态待更新";
 }
 
-function formatTime(seconds: number): string {
-  const minutes = Math.floor(seconds / 60);
-  const remainingSeconds = Math.floor(seconds % 60);
-  return `${minutes}:${remainingSeconds.toString().padStart(2, "0")}`;
-}
+const formatTime = formatRoundTime;

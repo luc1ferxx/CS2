@@ -136,10 +136,10 @@ const coachingEvents = [
   );
 
   assert.deepEqual(normalize(targets), [
-    { id: "round_start", label: "Round start", tick: 100, available: true },
-    { id: "live_start", label: "Live start", tick: 180, available: true },
-    { id: "first_kill", label: "First kill", tick: 220, available: true },
-    { id: "bomb_plant", label: "Bomb plant", tick: 310, available: true }
+    { id: "round_start", label: "回合开始", tick: 100, available: true },
+    { id: "live_start", label: "冻结时间结束", tick: 180, available: true },
+    { id: "first_kill", label: "全场首杀", tick: 220, available: true },
+    { id: "bomb_plant", label: "安装炸弹", tick: 310, available: true }
   ]);
 }
 
@@ -192,6 +192,65 @@ const coachingEvents = [
   assert.equal(model.rounds[0].isCurrent, false);
   assert.equal(model.rounds[1].isSelected, false);
   assert.equal(model.rounds[1].isCurrent, true);
+}
+
+{
+  // Sides swap at half: the outcome is read from the reviewed player's side in each round.
+  const frames = [
+    frame(190, 1, "T"), frame(700, 2, "CT"), frame(1250, 3, "CT")
+  ];
+  const kills = [
+    replayEvent({ id: "me-kills", type: "kill", tick: 230, roundNumber: 1,
+      metadata: { attackerId: "me", victimId: "enemy", attackerSide: "T", victimSide: "CT" } }),
+    replayEvent({ id: "me-dies", type: "kill", tick: 900, roundNumber: 2,
+      metadata: { attackerId: "enemy", victimId: "me", attackerSide: "T", victimSide: "CT" } }),
+    replayEvent({ id: "me-dies-late", type: "kill", tick: 950, roundNumber: 2,
+      metadata: { attackerId: "enemy", victimId: "me" } })
+  ];
+  const model = buildRoundReviewModel({
+    rounds, parserEvents: kills, currentTick: 240, selectedRoundNumber: 1, tickRate: 64,
+    selectedPlayerId: "me", frames
+  });
+  assert.deepEqual(normalize(model.rounds.map((item) => [item.playerSide, item.playerOutcome, item.playerDeath.tick, item.playerFirstKill.tick])), [
+    ["T", "won", null, 230],
+    ["CT", "won", 900, null],
+    ["CT", "lost", null, null]
+  ]);
+  const withPlayer = jumpTargetsForRound(model.rounds[1], true);
+  assert.deepEqual(normalize(withPlayer.slice(4).map((target) => [target.id, target.label, target.tick, target.available])), [
+    ["player_first_kill", "个人首杀", null, false],
+    ["player_death", "阵亡", 900, true]
+  ]);
+  assert.equal(jumpTargetsForRound(model.rounds[1]).length, 4, "Player jumps only appear for a reviewed player");
+
+  // Without frames the side falls back to the kill feed; with neither, no outcome is claimed.
+  const noFrames = buildRoundReviewModel({
+    rounds, parserEvents: kills, currentTick: 240, selectedRoundNumber: 1, tickRate: 64, selectedPlayerId: "me"
+  });
+  assert.deepEqual(normalize(noFrames.rounds.map((item) => [item.playerSide, item.playerOutcome])), [
+    ["T", "won"], ["CT", "won"], [null, null]
+  ]);
+  // The half-time divider sits where the players change sides, read from positions or else the kill feed.
+  assert.deepEqual(normalize(model.rounds.map((item) => item.startsNewHalf)), [false, true, false]);
+  assert.deepEqual(normalize(noFrames.rounds.map((item) => item.startsNewHalf)), [false, true, false]);
+  assert.deepEqual(
+    normalize(buildRoundReviewModel({ rounds, currentTick: 240, selectedRoundNumber: 1, tickRate: 64 }).rounds.map((item) => item.startsNewHalf)),
+    [false, false, false],
+    "No side data, no half claimed"
+  );
+  const nobody = buildRoundReviewModel({ rounds, parserEvents: kills, currentTick: 240, selectedRoundNumber: 1, tickRate: 64 });
+  assert.equal(nobody.rounds[0].playerOutcome, null);
+  assert.equal(nobody.rounds[1].playerDeath.tick, null);
+
+  // A known current round wins over the tick, so callers need not rebuild the model every tick.
+  const pinned = buildRoundReviewModel({ rounds, currentTick: 240, currentRoundNumber: 3, selectedRoundNumber: 1, tickRate: 64 });
+  assert.equal(pinned.rounds[2].isCurrent, true);
+  assert.equal(pinned.rounds[0].isCurrent, false);
+}
+
+function frame(tick, roundNumber, side) {
+  return { tick, timeSeconds: tick / 64, roundNumber, bombState: { status: "carried" },
+    players: [{ id: "me", name: "me", side, x: 0, y: 0, alive: true, hp: 100, hasBomb: false }] };
 }
 
 function round(overrides) {

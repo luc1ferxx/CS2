@@ -22,7 +22,7 @@ licensed internal asset pipeline.
 | File | Purpose | Download URL | SHA-256 |
 | --- | --- | --- | --- |
 | `de_ancient_radar.png` | CS2 Ancient tactical radar background | https://raw.githubusercontent.com/rabume/cs2-dma-radar/main/client/src/assets/map/de_ancient_radar.png | `0e7689cdb175aa8446efb8d311dd4cf514fffd751c8a558f42e84fa58cbd9c85` |
-| `de_anubis_radar.png` | CS2 Anubis tactical radar background | https://raw.githubusercontent.com/rabume/cs2-dma-radar/main/client/src/assets/map/de_anubis_radar.png | `a117c55fcd6690c74210125c2f409a32b9348c931213b388cf3ab5ed0c3d47ae` |
+| `de_anubis_radar.png` | CS2 Anubis tactical radar background; a 1024×1024 Lanczos resize of the 2048×2048 source (source SHA-256 `a117c55fcd6690c74210125c2f409a32b9348c931213b388cf3ab5ed0c3d47ae`), matching the other radars | https://raw.githubusercontent.com/rabume/cs2-dma-radar/main/client/src/assets/map/de_anubis_radar.png | `343ae58d4af5ea116a3c5d5a2fcd88e34612e73b50c4b61e5926200ec6b5a3d6` |
 | `de_dust2_radar.png` | CS2 Dust II tactical radar background | https://raw.githubusercontent.com/rabume/cs2-dma-radar/main/client/src/assets/map/de_dust2_radar.png | `834c3cda4b87c80344caefcfd2c20aada7e09ce1bd6a8da7f8f6ab5590b7e188` |
 | `de_inferno_radar.png` | CS2 Inferno tactical radar background | https://raw.githubusercontent.com/rabume/cs2-dma-radar/main/client/src/assets/map/de_inferno_radar.png | `074557015e7c5778a6f7177fe118d18152da351897a88ed55c29a29b67139415` |
 | `de_mirage_radar.png` | CS2 Mirage tactical radar background | https://raw.githubusercontent.com/rabume/cs2-dma-radar/main/client/src/assets/map/de_mirage_radar.png | `72b825fcd0e1ba1b7b6cd0129f8fc67eb08ff5809c15da9ddc34e35b9e13b1fd` |

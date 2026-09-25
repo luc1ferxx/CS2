@@ -182,7 +182,10 @@ function loadTypeScriptModule(relativePath, runtimeImports = {}) {
       "@/lib/demo-library": loadTypeScriptModule("./demo-library.ts"),
       "@/lib/media-url": loadTypeScriptModule("./media-url.ts"),
       "@/lib/render-worker": loadTypeScriptModule("./render-worker.ts"),
-      "@/lib/replay-time": loadTypeScriptModule("./replay-time.ts")
+      "@/lib/replay-time": loadTypeScriptModule("./replay-time.ts"),
+      "@/lib/user-errors": loadTypeScriptModule("./user-errors.ts", {
+        "@/lib/upload-limits": loadTypeScriptModule("./upload-limits.ts")
+      })
     }
   );
 
@@ -234,17 +237,19 @@ function loadTypeScriptModule(relativePath, runtimeImports = {}) {
   const offlineClipMarkup = playerMarkup({}, {}, 100, null, {
     currentTickClipJob: queuedClipJob, renderWorker: offlineWorker
   });
-  assert.match(offlineClipMarkup, /渲染器未连接<\/button>/);
-  assert.match(offlineClipMarkup, /任务已保留/);
+  // Player copy: no renderer or polling jargon, just that the service is offline and the job waits.
+  assert.match(offlineClipMarkup, /视频服务暂时离线<\/button>/);
+  assert.match(offlineClipMarkup, /已排队，服务恢复后会自动开始生成。/);
+  assert.doesNotMatch(offlineClipMarkup, /渲染器|轮询/);
   assert.doesNotMatch(offlineClipMarkup, /等待生成<\/button>/);
   const connectedClipMarkup = playerMarkup({}, {}, 100, null, {
     currentTickClipJob: queuedClipJob, renderWorker: { ...offlineWorker, connected: true, status: "connected" }
   });
   assert.match(connectedClipMarkup, /等待生成<\/button>/);
-  assert.doesNotMatch(connectedClipMarkup, /渲染器未连接/);
+  assert.doesNotMatch(connectedClipMarkup, /视频服务暂时离线/);
   assert.doesNotMatch(
     playerMarkup({}, {}, 100, null, { currentTickClipJob: queuedClipJob }),
-    /渲染器未连接/
+    /视频服务暂时离线/
   );
 
   const noFramesMarkup = playerMarkup({}, { frames: [] });

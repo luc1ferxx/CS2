@@ -112,15 +112,17 @@ const panelProps = {
 };
 const panel = renderToStaticMarkup(React.createElement(CoachingPanel, panelProps));
 assert.match(panel, /重点建议/);
-assert.match(panel, /当前回合 · 1/);
-assert.match(panel, /全部回合 · 2/);
+assert.match(panel, /当前回合<span class="coaching-count"> 1 条<\/span>/);
+assert.match(panel, /全部回合<span class="coaching-count"> 2 条<\/span>/);
 assert.equal((panel.match(/<article/g) ?? []).length, 1, "Initial rail shows the selected round only");
 assert.match(panel, /查看这一刻/);
+assert.match(panel, /<span class="coaching-feed-clock" title="第 2 回合 0:11">0:11<\/span>/,
+  "cards lead with the same m:ss round clock as the replay");
 assert.match(panel, /<details class="coaching-filter-toggle">/,
   "Detailed filters start collapsed so a finding is visible first");
 const emptyRound = renderToStaticMarkup(React.createElement(CoachingPanel, { ...panelProps, selectedRound: 4 }));
 assert.match(emptyRound, /这一回合暂无建议/);
 assert.match(emptyRound, /查看其他回合的 2 条建议/);
-assert.doesNotMatch(emptyRound, /没有提示不代表每次选择都正确/,
+assert.doesNotMatch(emptyRound, /没有建议不代表每次选择都正确/,
   "A quiet round must not be confused with an entirely empty review");
 console.log("Chinese coaching guidance, honest evidence, timing, localized search and accessible primary actions passed.");

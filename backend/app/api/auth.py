@@ -283,14 +283,20 @@ def me(
         service.revoke_session(session_token)
         raise HTTPException(status_code=401, detail="Authentication required")
     public_provider = provider_label(account.provider)
+    account_body: dict[str, object] = {
+        "displayName": account.display_name
+        or ("Steam account" if public_provider == "steam" else "Account"),
+        "avatarUrl": account.avatar_url,
+        "provider": public_provider,
+    }
+    if public_provider == "steam":
+        # The viewer's own SteamID64, so the review page can find them in a demo.
+        account_body["steamId"] = AccountService(db).get_external_subject(
+            owner_id, "steam"
+        )
     return {
         "authenticated": True,
-        "account": {
-            "displayName": account.display_name
-            or ("Steam account" if public_provider == "steam" else "Account"),
-            "avatarUrl": account.avatar_url,
-            "provider": public_provider,
-        },
+        "account": account_body,
         "capabilities": feature_capabilities(service.settings),
     }
 

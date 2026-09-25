@@ -37,6 +37,14 @@ function loadTypeScriptModule(relativePath) {
 const {
   canRetryParse,
   countActiveLibraryDemos,
+  countParsingLibraryDemos,
+  countVideoLibraryDemos,
+  demoStatusDisplayLabel,
+  formatLibraryDate,
+  libraryDisplayTitle,
+  libraryVideoLabel,
+  demoFailureState,
+  detailLoadState,
   detailSummaryItems,
   demoLibraryFilterOptions,
   filterAndSortDemos,
@@ -44,10 +52,14 @@ const {
   ingestionPhaseLabel,
   isRenderActiveStatus,
   libraryEmptyState,
+  parseFailureAction,
+  parseFailureCopy,
   parseFailureReason,
   playbackReadiness,
+  processingElapsedLabel,
+  processingHeadline,
+  processingSteps,
   renderStatusLabel,
-  replayUnavailableNotice,
   shouldPollLibrary
 } = loadTypeScriptModule("./demo-library.ts");
 
@@ -176,7 +188,7 @@ const demos = [
 
 {
   const result = filterAndSortDemos(demos, {
-    search: "render processing",
+    search: "视频生成中",
     status: "all",
     map: "all",
     sort: "recent",
@@ -189,7 +201,7 @@ const demos = [
 
 {
   const result = filterAndSortDemos(demos, {
-    search: "dust ready",
+    search: "dust 可以复盘",
     status: "all",
     map: "all",
     sort: "name",
@@ -283,7 +295,7 @@ const demos = [
       })
     ],
     {
-      search: "timed retry",
+      search: "意外 重新处理",
       status: "all",
       map: "all",
       sort: "recent",
@@ -366,7 +378,111 @@ const demos = [
 
   assert.equal(state.kind, "error");
   assert.equal(state.showRefreshAction, true);
+  // The API is unreachable, so an upload would fail too.
+  assert.equal(state.showUploadAction, false);
+  assert.equal(state.showMockAction, false);
   assert.match(state.message, /API is unreachable/);
+}
+
+{
+  // A returning player's rows are on their way: no first-run CTAs meanwhile.
+  const state = libraryEmptyState({
+    loading: true,
+    error: null,
+    demos: [],
+    visibleDemos: [],
+    filters: defaultFilters
+  });
+
+  assert.equal(state.kind, "loading");
+  for (const flag of ["showMockAction", "showUploadAction", "showRefreshAction", "showClearFiltersAction", "showArchivedAction"]) {
+    assert.equal(state[flag], false, flag);
+  }
+}
+
+{
+  // Search reads the labels the rows show, not IDs, timestamps or English tokens.
+  const library = [
+    demo({ id: "0f3e9a1c-aaaa-4bbb-8ccc-000000000001", name: "Bravo Dust", map_name: "de_dust2", status: "completed" }),
+    demo({
+      id: "0f3e9a1c-aaaa-4bbb-8ccc-000000000002",
+      name: "Broken Upload",
+      map_name: "de_mirage",
+      status: "failed",
+      ingestion: ingestion({
+        phase: "failed",
+        retryable: false,
+        failure: {
+          errorCode: "INVALID_DEMO",
+          message: "Invalid or unreadable demo file.",
+          failedAt: "2026-05-08T00:03:00Z",
+          updatedAt: "2026-05-08T00:04:00Z",
+          retryable: false,
+          attemptCount: 1
+        }
+      })
+    })
+  ];
+  const search = (query, labels) =>
+    normalize(filterAndSortDemos(library, { ...defaultFilters, search: query, sort: "name", order: "asc" }, labels).map((item) => item.name));
+
+  assert.deepEqual(search("处理失败"), ["Broken Upload"]);
+  assert.deepEqual(search("失败"), ["Broken Upload"]);
+  assert.deepEqual(search("可以复盘"), ["Bravo Dust"]);
+  assert.deepEqual(search("文件无法读取"), ["Broken Upload"]);
+  assert.deepEqual(search("ready"), []);
+  assert.deepEqual(search("2026"), []);
+  // "f" is in both UUIDs but in nothing either row shows.
+  assert.deepEqual(search("f"), []);
+  assert.deepEqual(search("0f3e"), [], "a short ID fragment is not a search");
+  assert.deepEqual(search("0f3e9a1c"), ["Bravo Dust", "Broken Upload"]);
+  const mapLabel = (map) => ({ de_dust2: "Dust II", de_mirage: "Mirage" })[map] ?? map;
+  assert.deepEqual(search("dust ii", { mapLabel }), ["Bravo Dust"]);
+}
+
+{
+  assert.equal(demoStatusDisplayLabel("completed"), "可以复盘");
+  assert.equal(demoStatusDisplayLabel("failed"), "处理失败");
+  assert.equal(demoStatusDisplayLabel("queued"), "等待处理");
+  assert.equal(libraryVideoLabel(demo({ status: "parsing", video_status: null, latest_render_status: null })), null);
+  assert.equal(libraryVideoLabel(demo({ status: "completed", latest_render_status: "rendering" })), "视频生成中");
+}
+
+{
+  // Only reads and analyses count as "正在处理"; a video job is reported on its own.
+  const library = [
+    demo({ id: "queued", status: "queued", latest_render_status: null, video_status: null }),
+    demo({ id: "reparse", status: "failed", latest_render_status: null, video_status: null, ingestion: ingestion({ active: true }) }),
+    demo({ id: "video", status: "completed", latest_render_status: "rendering" }),
+    demo({ id: "done", status: "completed", latest_render_status: "completed" })
+  ];
+  assert.equal(countParsingLibraryDemos(library), 2);
+  assert.equal(countVideoLibraryDemos(library), 1);
+}
+
+{
+  const mapLabel = (map) => (map === "de_dust2" ? "Dust II" : map);
+  const upload = { name: "match730_0037.dem", original_filename: "match730_0037.dem", map_name: "de_dust2", round_count: 24 };
+  assert.deepEqual(
+    { ...libraryDisplayTitle({ ...upload, status: "completed" }, mapLabel) },
+    { title: "Dust II，24 回合", filename: "match730_0037.dem", composed: true }
+  );
+  // Still parsing: nothing better than the file name yet.
+  assert.deepEqual(
+    { ...libraryDisplayTitle({ ...upload, status: "parsing", round_count: 0 }, mapLabel) },
+    { title: "match730_0037.dem", filename: null, composed: false }
+  );
+  // A name the player chose always wins.
+  assert.deepEqual(
+    { ...libraryDisplayTitle({ ...upload, name: "决赛 第二图", status: "completed" }, mapLabel) },
+    { title: "决赛 第二图", filename: "match730_0037.dem", composed: false }
+  );
+}
+
+{
+  assert.equal(formatLibraryDate("not-a-date"), "—");
+  assert.equal(formatLibraryDate(null), "—");
+  assert.match(formatLibraryDate("2026-09-25T07:04:00Z"), /^9\/25/);
 }
 
 {
@@ -459,7 +575,7 @@ const demos = [
 
 {
   // A completed demo whose replay artifact went missing must never be told it
-  // is "still preparing" -- the parse already ended, so nothing will arrive.
+  // is "still loading" -- the parse already ended, so nothing will arrive.
   const artifactGone = demoStatus({
     status: "completed",
     ingestion: ingestion({
@@ -476,68 +592,161 @@ const demos = [
       }
     })
   });
-  const notice = replayUnavailableNotice(artifactGone);
-  assert.equal(notice.retryable, true, "the reported reason comes with the action that fixes it");
-  assert.match(notice.message, /回放暂时无法打开。/);
-  assert.match(notice.message, /REPLAY_ARTIFACT_MISSING/);
-  assert.doesNotMatch(notice.message, /正在准备回放/);
+  const gone = detailLoadState({ status: artifactGone, statusFailure: null, replayLoadFailed: false });
+  assert.equal(gone.kind, "replay_unavailable");
+  assert.equal(gone.retryable, true, "the reported reason comes with the action that fixes it");
+  assert.equal(gone.next.action, "retry");
+  assert.equal(gone.failure.message, "回放数据已失效，重新处理即可恢复。");
+  assert.equal(gone.errorCode, "REPLAY_ARTIFACT_MISSING", "the code stays available for the technical details");
+  assert.doesNotMatch(JSON.stringify(gone.failure), /Replay data|Re-parse/, "backend English never reaches the copy");
 
-  // Same state, but the source demo is gone too: say why, offer nothing.
-  const unrecoverable = replayUnavailableNotice(demoStatus({
-    status: "completed",
-    ingestion: ingestion({
-      phase: "ready",
-      retryable: false,
-      failure: { ...artifactGone.ingestion.failure, retryable: false }
-    })
-  }));
+  // Same state, but the source demo is gone too: say why, point at a new upload.
+  const unrecoverable = detailLoadState({
+    status: demoStatus({
+      status: "completed",
+      ingestion: ingestion({
+        phase: "ready",
+        retryable: false,
+        failure: { ...artifactGone.ingestion.failure, retryable: false }
+      })
+    }),
+    statusFailure: null,
+    replayLoadFailed: false
+  });
+  assert.equal(unrecoverable.kind, "replay_unavailable");
   assert.equal(unrecoverable.retryable, false);
-  assert.match(unrecoverable.message, /REPLAY_ARTIFACT_MISSING/);
+  assert.equal(unrecoverable.next.action, "reupload");
 
-  assert.deepEqual(
-    normalize(replayUnavailableNotice(demoStatus({ status: "parsing", ingestion: ingestion({ phase: "parsing" }) }))),
-    { message: "正在准备回放，完成后会自动显示。", retryable: false },
-    "a demo still being ingested is genuinely still preparing"
+  const parsing = detailLoadState({
+    status: demoStatus({ status: "parsing", ingestion: ingestion({ phase: "parsing", startedAt: "2026-05-08T00:01:00Z" }) }),
+    statusFailure: null,
+    replayLoadFailed: false
+  });
+  assert.deepEqual(normalize(parsing), { kind: "processing", step: "parsing", stale: false, startedAt: "2026-05-08T00:01:00Z" },
+    "a demo still being ingested is genuinely still processing");
+  assert.equal(
+    detailLoadState({ status: demoStatus({ status: "queued", ingestion: ingestion({ phase: "uploaded" }) }), statusFailure: null, replayLoadFailed: false }).step,
+    "uploaded"
   );
-  assert.deepEqual(
-    normalize(replayUnavailableNotice(null)),
-    { message: "正在准备回放，完成后会自动显示。", retryable: false },
-    "before the first status lands there is nothing to report"
+  assert.equal(
+    detailLoadState({ status: demoStatus({ status: "analyzing", ingestion: ingestion({ phase: "analyzing", stale: true }) }), statusFailure: null, replayLoadFailed: false }).stale,
+    true
   );
+  // A re-parse queued on a failed row is processing again, not failed.
+  assert.equal(detailLoadState({
+    status: demoStatus({ status: "failed", ingestion: ingestion({ phase: "failed", active: true, jobStatus: "queued" }) }),
+    statusFailure: null,
+    replayLoadFailed: false
+  }).step, "uploaded");
 
-  const failed = replayUnavailableNotice(demoStatus({
+  assert.deepEqual(normalize(detailLoadState({ status: null, statusFailure: null, replayLoadFailed: false })), { kind: "connecting" },
+    "before the first status lands there is nothing to report");
+
+  const failed = detailLoadState({
+    status: demoStatus({
+      status: "failed",
+      ingestion: ingestion({
+        phase: "failed",
+        retryable: true,
+        failure: {
+          errorCode: "PARSER_FAILED",
+          message: "Parser timed out while reading demo",
+          failedAt: "2026-05-08T00:03:00Z",
+          updatedAt: "2026-05-08T00:04:00Z",
+          retryable: true,
+          attemptCount: 2
+        }
+      })
+    }),
+    statusFailure: null,
+    replayLoadFailed: false
+  });
+  assert.equal(failed.kind, "failed");
+  assert.equal(failed.retryable, true);
+  assert.equal(failed.attemptCount, 2);
+  assert.equal(failed.failure.message, "处理时出现意外错误。", "unknown codes fall back to the generic reason");
+  assert.equal(failed.next.action, "retry");
+
+  // A completed demo the backend reports as healthy is mid-fetch, not broken:
+  // claiming otherwise flashed a false failure on every cold page load.
+  assert.deepEqual(normalize(detailLoadState({ status: demoStatus({ status: "completed" }), statusFailure: null, replayLoadFailed: false })),
+    { kind: "loading_replay" }, "the replay fetch has not settled yet, so nothing is known to be wrong");
+  assert.deepEqual(normalize(detailLoadState({ status: demoStatus({ status: "completed" }), statusFailure: null, replayLoadFailed: true })),
+    { kind: "replay_load_failed", retryable: false }, "once the caller's fetch has actually failed, say so");
+
+  // The backend's verdict outranks the caller's: a missing artifact still names
+  // the reason and offers the re-parse, not a pointless reload.
+  const failedFetchWithReason = detailLoadState({ status: artifactGone, statusFailure: null, replayLoadFailed: true });
+  assert.equal(failedFetchWithReason.kind, "replay_unavailable");
+  assert.equal(failedFetchWithReason.retryable, true);
+
+  // A status fetch that 404s (deleted, another account's demo, a mistyped link)
+  // is final; a dropped connection only is before the first status arrives.
+  assert.equal(detailLoadState({ status: null, statusFailure: "not_found", replayLoadFailed: false }).kind, "not_found");
+  assert.equal(detailLoadState({ status: artifactGone, statusFailure: "not_found", replayLoadFailed: false }).kind, "not_found");
+  assert.equal(detailLoadState({ status: null, statusFailure: "unreachable", replayLoadFailed: false }).kind, "unreachable");
+  assert.equal(detailLoadState({ status: artifactGone, statusFailure: "unreachable", replayLoadFailed: false }).kind,
+    "replay_unavailable", "a known status keeps its own state while the poll retries");
+}
+
+{
+  // Files that cannot be fixed by another pass point at a new upload, even when
+  // the backend would accept a retry.
+  for (const code of ["INVALID_DEMO", "UNSUPPORTED_PARSER_FORMAT", "MISSING_MATCH_METADATA", "MISSING_FRAMES", "PARSE_ABANDONED"]) {
+    const copy = parseFailureCopy(code);
+    assert.equal(copy.suggestion, "reupload", code);
+    assert.equal(parseFailureAction(copy, true).action, "reupload", code);
+  }
+  for (const code of ["PARSE_TIMED_OUT", "PARSE_OUT_OF_MEMORY", "PARSER_CRASHED", "STORAGE_READ_FAILED", "NORMALIZATION_FAILED", "PARSER_UNEXPECTED", "REPLAY_ARTIFACT_MISSING"]) {
+    const copy = parseFailureCopy(code);
+    assert.equal(copy.suggestion, "retry", code);
+    assert.equal(parseFailureAction(copy, true).action, "retry", code);
+    assert.equal(parseFailureAction(copy, false).action, "reupload", `${code} without a usable source file`);
+  }
+  for (const code of ["INVALID_DEMO", "PARSE_TIMED_OUT", "PARSER_UNEXPECTED", null, undefined, "SOMETHING_NEW"]) {
+    assert.doesNotMatch(parseFailureCopy(code).message, /[A-Za-z]{4,}/, `${code} reads as Chinese copy, not a backend string`);
+  }
+
+  const invalid = demoFailureState(demoStatus({
     status: "failed",
     ingestion: ingestion({
       phase: "failed",
       retryable: true,
+      attemptCount: 1,
       failure: {
-        errorCode: "PARSER_FAILED",
-        message: "Parser timed out while reading demo",
+        errorCode: "INVALID_DEMO",
+        message: "Invalid or unreadable demo file.",
         failedAt: "2026-05-08T00:03:00Z",
         updatedAt: "2026-05-08T00:04:00Z",
         retryable: true,
-        attemptCount: 2
+        attemptCount: 1
       }
     })
   }));
-  assert.equal(failed.retryable, true);
-  assert.match(failed.message, /^比赛处理失败。PARSER_FAILED: /);
+  assert.equal(invalid.failure.message, "文件无法读取，可能不是完整的 CS2 .dem 比赛文件。");
+  assert.equal(invalid.next.action, "reupload");
+  assert.equal(invalid.retryable, true, "the retry stays available, just not as the suggested fix");
+  assert.equal(demoFailureState(demoStatus({ status: "completed" })), null);
+  // A legacy failed row without ingestion metadata still gets a reason.
+  assert.equal(demoFailureState(demoStatus({ status: "failed", ingestion: null, error_message: "boom" })).failure.message,
+    "处理时出现意外错误。");
+}
 
-  // A completed demo the backend reports as healthy is mid-fetch, not broken:
-  // claiming otherwise flashed a false failure on every cold page load.
-  const inFlight = normalize(replayUnavailableNotice(demoStatus({ status: "completed" })));
-  assert.deepEqual(inFlight, { message: "正在准备回放，完成后会自动显示。", retryable: false },
-    "the replay fetch has not settled yet, so nothing is known to be wrong");
+{
+  assert.deepEqual(normalize(processingSteps("uploaded")).map((step) => step.state), ["done", "current", "pending"]);
+  assert.deepEqual(normalize(processingSteps("parsing")).map((step) => step.state), ["done", "current", "pending"]);
+  assert.deepEqual(normalize(processingSteps("analyzing")).map((step) => step.state), ["done", "done", "current"]);
+  assert.deepEqual(normalize(processingSteps("parsing")).map((step) => step.label), ["上传完成", "解析比赛", "分析建议"]);
+  assert.match(processingHeadline("uploaded"), /排队/);
+  assert.match(processingHeadline("parsing"), /^解析中/);
+  assert.match(processingHeadline("analyzing"), /^分析中/);
 
-  const fetchFailed = normalize(replayUnavailableNotice(demoStatus({ status: "completed" }), true));
-  assert.deepEqual(fetchFailed, { message: "回放暂时无法打开，请刷新页面重试。", retryable: false },
-    "once the caller's fetch has actually failed, say so and offer the reload");
-
-  // The backend's verdict outranks the caller's: a missing artifact still names
-  // the reason and offers the re-parse, not a pointless refresh.
-  const failedFetchWithReason = replayUnavailableNotice(artifactGone, true);
-  assert.match(failedFetchWithReason.message, /REPLAY_ARTIFACT_MISSING/);
-  assert.equal(failedFetchWithReason.retryable, true);
+  const started = Date.parse("2026-05-08T00:00:00Z");
+  assert.equal(processingElapsedLabel("2026-05-08T00:00:00Z", started + 133_000), "已用时 2:13");
+  assert.equal(processingElapsedLabel("2026-05-08T00:00:00Z", started + 5_000), "已用时 0:05");
+  assert.equal(processingElapsedLabel(null, started), null, "a queued job has not started");
+  assert.equal(processingElapsedLabel("2026-05-08T00:00:00Z", started - 5_000), null, "clock skew hides the timer");
+  assert.equal(processingElapsedLabel("not a date", started), null);
 }
 
 function demo(overrides) {

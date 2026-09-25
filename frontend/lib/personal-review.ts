@@ -1,7 +1,11 @@
+import type { AuthAccount } from "@/lib/auth";
+import { compareFindingPriority, isPriorityFinding } from "@/lib/coaching-review";
 import type { CoachingEvent } from "@/types/coaching";
 import type { ReplayEvent, ReplayPlayer } from "@/types/replay";
 
-export const DEFAULT_PLAYER_IDENTITY = "xelex";
+// Local QA reviews the development corpus as this player. Real accounts never
+// default to it: they start from their own SteamID64 or display name.
+export const DEVELOPMENT_PLAYER_IDENTITY = "xelex";
 export const PLAYER_PREFERENCE_KEY = "cs2-coach.player-preference.v1";
 
 interface PreferenceStorage {
@@ -13,6 +17,18 @@ export interface PlayerMatch {
   status: "matched" | "missing" | "ambiguous";
   player: ReplayPlayer | null;
   candidates: ReplayPlayer[];
+}
+
+export type IdentitySource = "saved" | "steamId" | "displayName" | "development";
+
+export interface IdentityCandidate {
+  identity: string;
+  source: IdentitySource;
+}
+
+export interface ReviewIdentityMatch extends PlayerMatch {
+  identity: string;
+  source: IdentitySource | null;
 }
 
 export function matchPreferredPlayer(players: ReplayPlayer[], identity: string): PlayerMatch {
@@ -29,30 +45,88 @@ export function matchPreferredPlayer(players: ReplayPlayer[], identity: string):
   };
 }
 
-export function readPreferredPlayer(getStorage: () => PreferenceStorage | null): string {
+// One saved identity per signed-in account, so a shared browser never carries
+// one player's choice into another account's review.
+export function playerPreferenceKey(account: AuthAccount | null | undefined): string | null {
+  if (!account) return null;
+  if (account.provider === "development") return PLAYER_PREFERENCE_KEY;
+  const subject = steamIdOf(account) ?? account.displayName.trim();
+  return subject ? `${PLAYER_PREFERENCE_KEY}:${account.provider}:${subject}` : null;
+}
+
+export function accountIdentityCandidates(account: AuthAccount | null | undefined): IdentityCandidate[] {
+  if (!account) return [];
+  if (account.provider === "development") {
+    return [{ identity: DEVELOPMENT_PLAYER_IDENTITY, source: "development" }];
+  }
+  const steamId = steamIdOf(account);
+  if (steamId) return [{ identity: steamId, source: "steamId" }];
+  const displayName = account.displayName.trim();
+  return validIdentity(displayName) ? [{ identity: displayName, source: "displayName" }] : [];
+}
+
+export function reviewIdentityCandidates(
+  savedIdentity: string,
+  account: AuthAccount | null | undefined
+): IdentityCandidate[] {
+  const candidates: IdentityCandidate[] = validIdentity(savedIdentity)
+    ? [{ identity: savedIdentity.trim(), source: "saved" }]
+    : [];
+  for (const candidate of accountIdentityCandidates(account)) {
+    if (!candidates.some((item) => item.identity.toLowerCase() === candidate.identity.toLowerCase())) {
+      candidates.push(candidate);
+    }
+  }
+  return candidates;
+}
+
+// The first candidate that names exactly one player wins. A saved identity that
+// is not in this match falls through to the account's own, so a choice made on
+// someone else's demo never hides the viewer in their own.
+export function resolveReviewIdentity(
+  players: ReplayPlayer[],
+  candidates: IdentityCandidate[]
+): ReviewIdentityMatch {
+  let fallback: ReviewIdentityMatch | null = null;
+  for (const candidate of candidates) {
+    const result = { ...matchPreferredPlayer(players, candidate.identity), ...candidate };
+    if (result.status === "matched") return result;
+    if (!fallback || (result.status === "ambiguous" && fallback.status !== "ambiguous")) {
+      fallback = result;
+    }
+  }
+  return fallback ?? { status: "missing", player: null, candidates: [], identity: "", source: null };
+}
+
+export function readPreferredPlayer(
+  getStorage: () => PreferenceStorage | null,
+  key: string | null
+): string {
+  if (!key) return "";
   try {
-    const value = getStorage()?.getItem(PLAYER_PREFERENCE_KEY);
-    if (!value) return DEFAULT_PLAYER_IDENTITY;
+    const value = getStorage()?.getItem(key);
+    if (!value) return "";
     const saved: unknown = JSON.parse(value);
-    if (typeof saved !== "object" || saved === null) return DEFAULT_PLAYER_IDENTITY;
+    if (typeof saved !== "object" || saved === null) return "";
     const preference = saved as Record<string, unknown>;
     return preference.version === 1 && validIdentity(preference.identity)
       ? preference.identity.trim()
-      : DEFAULT_PLAYER_IDENTITY;
+      : "";
   } catch {
-    return DEFAULT_PLAYER_IDENTITY;
+    return "";
   }
 }
 
 export function savePreferredPlayer(
   identity: string,
-  getStorage: () => PreferenceStorage | null
+  getStorage: () => PreferenceStorage | null,
+  key: string | null
 ): boolean {
-  if (!validIdentity(identity)) return false;
+  if (!key || !validIdentity(identity)) return false;
   try {
     const storage = getStorage();
     if (!storage) return false;
-    storage.setItem(PLAYER_PREFERENCE_KEY, JSON.stringify({ version: 1, identity: identity.trim() }));
+    storage.setItem(key, JSON.stringify({ version: 1, identity: identity.trim() }));
     return true;
   } catch {
     return false;
@@ -77,14 +151,22 @@ export function personalReviewSummary(events: CoachingEvent[], playerId: string 
   const findings = coachingForPlayer(events, playerId);
   return {
     findingCount: findings.length,
-    highPriorityCount: findings.filter((event) => event.severity === "high" || event.severity === "critical").length,
+    priorityCount: findings.filter(isPriorityFinding).length,
     roundCount: new Set(findings.map((event) => event.round_number)).size,
-    firstFindingTick: findings.length ? Math.min(...findings.map((event) => event.tick_start)) : null
+    topFinding: findings.reduce<CoachingEvent | null>(
+      (best, event) => (best === null || compareFindingPriority(event, best) < 0 ? event : best),
+      null
+    )
   };
 }
 
 function isMatchContext(event: ReplayEvent): boolean {
   return event.type.startsWith("bomb_") || event.type === "round_start" || event.type === "round_end";
+}
+
+function steamIdOf(account: AuthAccount): string | null {
+  const steamId = account.steamId?.trim();
+  return steamId && /^\d{17}$/.test(steamId) ? steamId : null;
 }
 
 function validIdentity(value: unknown): value is string {

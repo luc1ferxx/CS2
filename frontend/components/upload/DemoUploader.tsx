@@ -5,6 +5,12 @@ import { useRef } from "react";
 
 interface DemoUploaderProps {
   disabled: boolean;
+  // Shown with a spinner while something is being added ("上传中 42%").
+  busyLabel?: string | null;
+  // The line under the button; defaults to what the button accepts.
+  hint?: string | null;
+  // Why the button is disabled when nothing is running (quota used up).
+  disabledReason?: string | null;
   inputId?: string;
   // Omitted when the API does not serve mock demos (production).
   onMockUpload?: () => void;
@@ -13,11 +19,15 @@ interface DemoUploaderProps {
 
 export function DemoUploader({
   disabled,
+  busyLabel = null,
+  hint = null,
+  disabledReason = null,
   inputId = "demo-upload-input",
   onMockUpload,
   onDemoUpload
 }: DemoUploaderProps) {
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const busy = Boolean(busyLabel);
 
   return (
     <div className="upload-actions" aria-label="添加比赛">
@@ -39,16 +49,17 @@ export function DemoUploader({
       />
       <div className="upload-action-stack upload-real-action">
         <button
+          id={`${inputId}-button`}
           className="primary-button"
           type="button"
           onClick={() => inputRef.current?.click()}
           disabled={disabled}
-          title="上传 .dem 比赛文件，自动准备回放和复盘建议"
+          title={disabledReason ?? "上传 .dem 比赛文件，自动准备回放和复盘建议"}
         >
-          {disabled ? <Loader2 size={17} className="spin-icon" /> : <FileUp size={17} strokeWidth={2.2} />}
-          {disabled ? "正在添加…" : "上传比赛"}
+          {busy ? <Loader2 size={17} className="spin-icon" /> : <FileUp size={17} strokeWidth={2.2} />}
+          {busyLabel ?? "上传比赛"}
         </button>
-        <span>.dem 比赛文件</span>
+        <span className="upload-action-hint">{hint ?? ".dem 比赛文件"}</span>
       </div>
       {onMockUpload ? (
         <div className="upload-action-stack upload-mock-action">

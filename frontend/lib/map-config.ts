@@ -177,6 +177,33 @@ export function getTacticalMapConfig(mapName: string | null | undefined): Tactic
   return TACTICAL_MAP_CONFIGS[mapName as keyof typeof TACTICAL_MAP_CONFIGS] ?? null;
 }
 
+// Player-facing map name: the configured display name ("Dust II"), a tidied raw
+// name for maps without a config, and "地图待识别" before the parser has named it.
+export function mapDisplayName(mapName: string | null | undefined): string {
+  const trimmed = mapName?.trim();
+  if (!trimmed || trimmed === "unknown") {
+    return "地图待识别";
+  }
+  const config = getTacticalMapConfig(trimmed);
+  if (config) {
+    return config.displayName;
+  }
+  const bare = trimmed.replace(/^de_/, "");
+  return bare.charAt(0).toUpperCase() + bare.slice(1);
+}
+
+// Radar images the tactical map will request for this map, so a page can start
+// fetching them while the replay JSON is still downloading.
+export function tacticalRadarImagePaths(mapName: string | null | undefined): string[] {
+  const config = getTacticalMapConfig(mapName);
+  if (!config) {
+    return [];
+  }
+  return config.secondaryRadarImagePath
+    ? [config.radarImagePath, config.secondaryRadarImagePath]
+    : [config.radarImagePath];
+}
+
 export function getTacticalMapPresentation(replay: {
   mapName?: string | null;
   mapMetadata?: ReplayMapMetadata;

@@ -23,6 +23,8 @@ import {
   saveSteamConnectionCredentials,
   syncSteamMatches
 } from "@/lib/api";
+import { formatLibraryDate } from "@/lib/demo-library";
+import { mapDisplayName } from "@/lib/map-config";
 import {
   buildSteamConnectionDisplay,
   buildSteamMatchDisplay,
@@ -75,7 +77,7 @@ export function RecentSteamMatches() {
       if (matchesResult.status === "fulfilled") {
         setMatches(matchesResult.value);
       } else {
-        errors.push("Could not load recent Steam matches. Refresh to retry.");
+        errors.push("暂时无法读取最近的 Steam 比赛，请刷新重试。");
       }
       setLoadError(errors.length > 0 ? [...new Set(errors)].join(" ") : null);
     } finally {
@@ -147,7 +149,7 @@ export function RecentSteamMatches() {
     const nextGameAuthCode = gameAuthCode.trim();
     const nextMatchSharingCode = initialMatchSharingCode.trim();
     if (!nextGameAuthCode || !nextMatchSharingCode) {
-      setActionError("Enter both Steam codes before saving the connection.");
+      setActionError("请先填写两个授权码，再保存连接。");
       return;
     }
 
@@ -161,7 +163,7 @@ export function RecentSteamMatches() {
       });
       setConnection(nextConnection);
       setEditingCredentials(false);
-      setNotice("Steam match-history authorization saved. The codes are never shown back here.");
+      setNotice("授权已保存。授权码不会再显示在这个页面上。");
       await loadSteamData();
     } catch (error) {
       setActionError(requestErrorMessage(error, "connect"));
@@ -190,7 +192,7 @@ export function RecentSteamMatches() {
 
   async function handleDisconnect() {
     const confirmed = window.confirm(
-      "Disconnect Steam match history? Saved authorization codes and discovered Steam match records will be deleted. Existing imported demos are retained."
+      "断开 Steam 比赛记录？已保存的授权码和已发现的比赛记录会被删除，已导入的比赛会保留在比赛库中。"
     );
     if (!confirmed) {
       return;
@@ -206,9 +208,7 @@ export function RecentSteamMatches() {
       setEditingCredentials(false);
       setGameAuthCode("");
       setInitialMatchSharingCode("");
-      setNotice(
-        "Steam connection and discovered match records were deleted. Imported demos remain in the Demo Library."
-      );
+      setNotice("已断开连接，授权码和比赛记录已删除。已导入的比赛仍在比赛库中。");
     } catch (error) {
       setActionError(requestErrorMessage(error, "disconnect"));
     } finally {
@@ -233,9 +233,9 @@ export function RecentSteamMatches() {
         current.map((match) => (match.id === imported.id ? imported : match))
       );
       if (imported.status === "ready" && imported.demo_id) {
-        setNotice("The imported Demo is ready for 2D review.");
+        setNotice("比赛已导入，可以复盘了。");
       } else {
-        setNotice("The Demo is queued for parsing.");
+        setNotice("比赛已导入，正在排队处理。");
       }
       await loadSteamData();
     } catch (error) {
@@ -254,9 +254,9 @@ export function RecentSteamMatches() {
     <section className="steam-match-sync" aria-labelledby="recent-steam-matches-title">
       <header className="steam-sync-header">
         <div>
-          <span className="workspace-kicker">Steam match discovery</span>
+          <span className="workspace-kicker">Steam 比赛记录</span>
           <div className="steam-sync-title-row">
-            <h2 id="recent-steam-matches-title">Recent Steam Matches</h2>
+            <h2 id="recent-steam-matches-title">最近的 Steam 比赛</h2>
             {connectionDisplay ? (
               <span className={`steam-state-pill ${connectionDisplay.statusTone}`}>
                 {connectionDisplay.statusLabel}
@@ -264,8 +264,7 @@ export function RecentSteamMatches() {
             ) : null}
           </div>
           <p>
-            Discover official match-history records, then import only through the configured licensed Demo provider.
-            Manual .dem upload remains independent.
+            连接后可以同步你在官方匹配中的比赛记录。当前版本还不能自动下载比赛录像，要复盘请手动上传 .dem 文件。
           </p>
         </div>
         <div className="steam-sync-actions">
@@ -281,7 +280,7 @@ export function RecentSteamMatches() {
               }}
             >
               <ShieldCheck size={14} />
-              Replace codes
+              更换授权码
             </button>
           ) : null}
           <button
@@ -291,7 +290,7 @@ export function RecentSteamMatches() {
             onClick={() => void handleRefresh()}
           >
             <RefreshCcw size={14} className={busyAction === "refresh" ? "spin-icon" : ""} />
-            Refresh
+            刷新
           </button>
           <button
             className="primary-button compact-button"
@@ -304,7 +303,7 @@ export function RecentSteamMatches() {
             ) : (
               <Link2 size={14} />
             )}
-            {busyAction === "sync" ? "Syncing" : "Sync now"}
+            {busyAction === "sync" ? "同步中…" : "立即同步"}
           </button>
           {connected ? (
             <button
@@ -314,7 +313,7 @@ export function RecentSteamMatches() {
               onClick={() => void handleDisconnect()}
             >
               <Unplug size={14} />
-              {busyAction === "disconnect" ? "Disconnecting" : "Disconnect"}
+              {busyAction === "disconnect" ? "正在断开…" : "断开连接"}
             </button>
           ) : null}
         </div>
@@ -330,7 +329,7 @@ export function RecentSteamMatches() {
             onClick={() => void handleRefresh()}
           >
             <RefreshCcw size={14} />
-            Retry
+            重试
           </button>
         </div>
       ) : null}
@@ -344,33 +343,33 @@ export function RecentSteamMatches() {
       {initialLoading && !connection ? (
         <div className="steam-sync-loading" aria-live="polite">
           <Loader2 size={16} className="spin-icon" />
-          Loading Steam connection and recent matches
+          正在读取 Steam 连接和最近的比赛…
         </div>
       ) : (
         <div className="steam-sync-layout">
           <div className="steam-connection-pane">
             <div className="steam-pane-heading">
               <div>
-                <span>Connection</span>
-                <strong>{connectionDisplay?.statusLabel ?? "Unavailable"}</strong>
+                <span>连接</span>
+                <strong>{connectionDisplay?.statusLabel ?? "暂时无法读取"}</strong>
               </div>
               <span className="steam-schedule-label">
-                Scheduled sync {connectionDisplay?.scheduledSyncEnabled ? "enabled" : "off"}
+                {connectionDisplay?.scheduledSyncEnabled ? "已开启定时同步" : "未开启定时同步"}
               </span>
             </div>
 
             {connectionDisplay ? (
               <dl className="steam-connection-meta">
                 <div>
-                  <dt>Last sync</dt>
+                  <dt>上次同步</dt>
                   <dd>{formatSteamDate(connectionDisplay.lastSyncCompletedAt)}</dd>
                 </div>
                 <div>
-                  <dt>Last attempt</dt>
+                  <dt>上次尝试</dt>
                   <dd>{formatSteamDate(connectionDisplay.lastSyncStartedAt)}</dd>
                 </div>
                 <div>
-                  <dt>Next retry</dt>
+                  <dt>下次重试</dt>
                   <dd>{formatSteamDate(connectionDisplay.nextRetryAt)}</dd>
                 </div>
               </dl>
@@ -390,7 +389,7 @@ export function RecentSteamMatches() {
                     onClick={openManualUpload}
                   >
                     <FileUp size={13} />
-                    Upload .dem
+                    手动上传 .dem
                   </button>
                 ) : null}
               </div>
@@ -398,23 +397,23 @@ export function RecentSteamMatches() {
 
             {connection === null ? (
               <p className="steam-connection-warning">
-                Connection status is unavailable. Refresh before entering or replacing codes.
+                暂时无法读取连接状态，请先刷新，再填写或更换授权码。
               </p>
             ) : showCredentialsForm ? (
               <form className="steam-credentials-form" onSubmit={handleSaveCredentials}>
                 <div className="steam-credentials-heading">
-                  <strong>{credentialsConfigured ? "Replace authorization" : "Connect match history"}</strong>
+                  <strong>{credentialsConfigured ? "更换授权" : "连接比赛记录"}</strong>
                   <a
-                    href="https://help.steampowered.com/en/wizard/HelpWithGameIssue/?appid=730&issueid=128"
+                    href="https://help.steampowered.com/zh-cn/wizard/HelpWithGameIssue/?appid=730&issueid=128"
                     target="_blank"
                     rel="noreferrer"
                   >
-                    Manage codes on Steam
+                    在 Steam 获取授权码
                     <ExternalLink size={12} />
                   </a>
                 </div>
                 <label>
-                  <span>Game Authentication Code</span>
+                  <span>游戏验证码（Game Authentication Code）</span>
                   <input
                     type="password"
                     value={gameAuthCode}
@@ -426,7 +425,7 @@ export function RecentSteamMatches() {
                   />
                 </label>
                 <label>
-                  <span>Initial Match Sharing Code (no more than 1 month old)</span>
+                  <span>最近一场比赛的分享代码（一个月内）</span>
                   <input
                     type="password"
                     value={initialMatchSharingCode}
@@ -438,7 +437,7 @@ export function RecentSteamMatches() {
                   />
                 </label>
                 <p>
-                  Both codes go directly to the server and are never returned by the API or stored in browser storage.
+                  两个授权码只发送到服务器加密保存，不会再显示在页面上，也不会存进浏览器，只用来读取比赛记录。
                 </p>
                 <div className="steam-credentials-actions">
                   <button
@@ -451,7 +450,7 @@ export function RecentSteamMatches() {
                     ) : (
                       <ShieldCheck size={14} />
                     )}
-                    {busyAction === "save" ? "Saving" : "Save connection"}
+                    {busyAction === "save" ? "正在保存…" : "保存连接"}
                   </button>
                   {credentialsConfigured ? (
                     <button
@@ -464,7 +463,7 @@ export function RecentSteamMatches() {
                         setInitialMatchSharingCode("");
                       }}
                     >
-                      Cancel
+                      取消
                     </button>
                   ) : null}
                 </div>
@@ -472,7 +471,7 @@ export function RecentSteamMatches() {
             ) : (
               <p className="steam-credentials-saved">
                 <ShieldCheck size={14} />
-                Authorization is encrypted server-side and is not exposed by this page.
+                授权已在服务器加密保存，这个页面不会显示授权码。
               </p>
             )}
           </div>
@@ -480,27 +479,27 @@ export function RecentSteamMatches() {
           <div className="steam-matches-pane">
             <div className="steam-pane-heading">
               <div>
-                <span>Discovered records</span>
-                <strong>{matchDisplays.length} recent matches</strong>
+                <span>已发现的比赛</span>
+                <strong>最近 {matchDisplays.length} 场</strong>
               </div>
-              <span className="steam-source-label">Steam match history</span>
+              <span className="steam-source-label">Steam 比赛记录</span>
             </div>
 
             {matchDisplays.length === 0 ? (
               <div className="steam-matches-empty">
                 <Clock3 size={17} />
                 <div>
-                  <strong>No discovered matches yet</strong>
-                  <p>Save both codes, then use Sync now. Manual .dem upload remains available.</p>
+                  <strong>还没有发现比赛</strong>
+                  <p>保存两个授权码后点「立即同步」。随时都可以手动上传 .dem 文件。</p>
                 </div>
               </div>
             ) : (
               <div className="steam-match-list" role="list">
                 <div className="steam-match-list-head" aria-hidden="true">
-                  <span>Match / parser summary</span>
-                  <span>Discovered</span>
-                  <span>Status</span>
-                  <span>Demo action</span>
+                  <span>比赛</span>
+                  <span>发现时间</span>
+                  <span>状态</span>
+                  <span>操作</span>
                 </div>
                 {matchDisplays.map((match) => {
                   const importAction = steamMatchImportAction(
@@ -520,10 +519,10 @@ export function RecentSteamMatches() {
                   return (
                     <article className="steam-match-record" key={match.id} role="listitem">
                       <div>
-                        <strong>{match.mapName ?? "Match record"}</strong>
+                        <strong>{match.mapName ? mapDisplayName(match.mapName) : "比赛记录"}</strong>
                         <span>
                           {parserSummary.length > 0
-                            ? parserSummary.join(" · ")
+                            ? parserSummary.join("，")
                             : match.sourceLabel}
                         </span>
                         {match.errorMessage ? (
@@ -538,7 +537,7 @@ export function RecentSteamMatches() {
                         {match.demoHref && match.status === "ready" ? (
                           <Link className="secondary-button compact-button" href={match.demoHref}>
                             <ExternalLink size={13} />
-                            Open 2D review
+                            进入复盘
                           </Link>
                         ) : importAction.enabled ? (
                           <button
@@ -552,7 +551,7 @@ export function RecentSteamMatches() {
                             ) : (
                               <Download size={13} />
                             )}
-                            {isImporting ? "Starting" : importAction.label}
+                            {isImporting ? "正在开始…" : importAction.label}
                           </button>
                         ) : connectionDisplay?.manualUploadSupported &&
                           !connectionDisplay.demoImportAvailable &&
@@ -563,7 +562,7 @@ export function RecentSteamMatches() {
                             onClick={openManualUpload}
                           >
                             <FileUp size={13} />
-                            Manual upload
+                            手动上传 .dem
                           </button>
                         ) : (
                           <span>{importAction.label}</span>
@@ -581,10 +580,10 @@ export function RecentSteamMatches() {
       <footer className="steam-sync-footer">
         <span>
           <FileUp size={13} />
-          Manual .dem upload remains the reliable fallback; match discovery does not depend on automatic Demo access.
+          手动上传 .dem 始终可用；同步比赛记录不需要自动下载录像。
         </span>
         <span>
-          Disconnecting deletes saved codes and discovered records. Imported demos remain in the Demo Library.
+          断开连接会删除已保存的授权码和比赛记录，已导入的比赛会保留在比赛库中。
         </span>
       </footer>
     </section>
@@ -599,20 +598,9 @@ function requestErrorMessage(error: unknown, action: SteamRequestAction): string
   );
 }
 
+// Same zh-CN format as the library rows, whatever the browser's locale.
 function formatSteamDate(value: string | null): string {
-  if (!value) {
-    return "Not yet";
-  }
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return "Unknown";
-  }
-  return date.toLocaleString(undefined, {
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit"
-  });
+  return value ? formatLibraryDate(value) : "尚未同步";
 }
 
 function disconnectedConnection(): SteamConnection {

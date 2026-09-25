@@ -36,3 +36,117 @@ function waitDuration(seconds: number | null | undefined): string | null {
   }
   return minutes === 0 ? `${hours} 小时` : `${hours} 小时 ${minutes} 分钟`;
 }
+
+// The API never accepts more than this (MAX_DEMO_UPLOAD_BYTES is capped at 1 GiB).
+export const MAX_DEMO_UPLOAD_BYTES = 1024 * 1024 * 1024;
+
+const SERVER_INTAKE_MESSAGE = "服务暂时无法接收文件，你的文件没有问题，请稍后重试。";
+const NOT_A_DEMO_MESSAGE = "这不是 CS2 的 .dem 比赛文件。压缩包（.zip、.rar、.gz、.bz2 等）请先解压，再上传里面的 .dem 文件。";
+
+// Keyed by the intake's error codes (backend artifact_intake.py, request_limits.py, api/uploads.py).
+const INTAKE_ERROR_COPY: Record<string, string> = {
+  INTAKE_TYPE_REJECTED: NOT_A_DEMO_MESSAGE,
+  INTAKE_CONTENT_MISMATCH: NOT_A_DEMO_MESSAGE,
+  INTAKE_EMPTY: "文件是空的，请重新下载这场比赛的 .dem 文件后再上传。",
+  INTAKE_TRUNCATED: "文件不完整，可能还没下载完。请重新下载这场比赛的 .dem 文件后再上传。",
+  INTAKE_INTEGRITY_FAILED: "文件校验没有通过，请重新上传。",
+  INTAKE_REJECTED: "这个文件无法作为比赛录像上传，请确认选择的是 CS2 的 .dem 文件。",
+  INTAKE_STORAGE_UNAVAILABLE: SERVER_INTAKE_MESSAGE,
+  INTAKE_UNAVAILABLE: SERVER_INTAKE_MESSAGE,
+  INTAKE_BUSY: "上传的人较多，服务正忙，请稍后重试。你的文件没有问题。"
+};
+
+// Copy for a rejected .dem upload, or null to fall back to the generic request copy.
+export function demoUploadErrorMessage(
+  status: number,
+  detailCode: string | null | undefined,
+  retryAfterSeconds: number | null | undefined,
+  maxUploadBytes: number = MAX_DEMO_UPLOAD_BYTES
+): string | null {
+  // Quota codes first: the quota's 503s must not read as an intake outage.
+  const limit = uploadLimitMessage(status, detailCode, retryAfterSeconds);
+  if (limit) return limit;
+  if (detailCode === "INTAKE_TOO_LARGE" || status === 413) {
+    return tooLargeMessage(maxUploadBytes);
+  }
+  if (detailCode && INTAKE_ERROR_COPY[detailCode]) {
+    return INTAKE_ERROR_COPY[detailCode];
+  }
+  if (status >= 500) return SERVER_INTAKE_MESSAGE;
+  return null;
+}
+
+// Checked before sending, so a wrong file never waits out a full transfer.
+export function demoFileProblem(
+  file: { name: string; size: number },
+  maxUploadBytes: number = MAX_DEMO_UPLOAD_BYTES
+): string | null {
+  if (!file.name.toLowerCase().endsWith(".dem")) {
+    return NOT_A_DEMO_MESSAGE;
+  }
+  if (file.size <= 0) {
+    return INTAKE_ERROR_COPY.INTAKE_EMPTY;
+  }
+  if (file.size > maxUploadBytes) {
+    return tooLargeMessage(maxUploadBytes);
+  }
+  return null;
+}
+
+function tooLargeMessage(maxUploadBytes: number): string {
+  return `文件超过上传上限（${sizeLabel(maxUploadBytes)}），请确认选择的是单场比赛的 .dem 文件。`;
+}
+
+function sizeLabel(bytes: number): string {
+  const gigabytes = bytes / (1024 * 1024 * 1024);
+  if (gigabytes >= 1) {
+    return `${Number.isInteger(gigabytes) ? gigabytes : gigabytes.toFixed(1)} GB`;
+  }
+  return `${Math.max(1, Math.round(bytes / (1024 * 1024)))} MB`;
+}
+
+export interface UploadQuotaCounts {
+  dailyLimit: number | null;
+  dailyUsed: number;
+  dailyResetSeconds: number | null;
+  activeLimit: number | null;
+  activeCount: number;
+}
+
+export interface UploadQuotaSummary {
+  // The line under the upload button, or null for the default.
+  hint: string | null;
+  // Set when the daily quota is used up: the upload stays off until it resets.
+  blockedReason: string | null;
+  // The allowance rules, for the .dem help.
+  helpNote: string | null;
+}
+
+// What the dashboard says about the quota before a file is picked. Only
+// production has limits; without them (or without an answer) it says nothing.
+export function uploadQuotaSummary(quota: UploadQuotaCounts | null | undefined): UploadQuotaSummary {
+  if (!quota) {
+    return { hint: null, blockedReason: null, helpNote: null };
+  }
+  const helpNote = quota.dailyLimit
+    ? `每个账号 24 小时内最多上传 ${quota.dailyLimit} 场，处理失败或已归档的上传也计入次数。`
+    : null;
+  if (quota.dailyLimit) {
+    const remaining = Math.max(0, quota.dailyLimit - quota.dailyUsed);
+    if (remaining === 0) {
+      return {
+        hint: "今天的次数已用完",
+        blockedReason: uploadLimitMessage(429, "upload_daily_limit", quota.dailyResetSeconds),
+        helpNote
+      };
+    }
+    if (quota.activeLimit && quota.activeCount >= quota.activeLimit) {
+      return { hint: "等当前比赛处理完再上传", blockedReason: null, helpNote };
+    }
+    return { hint: `今天还可上传 ${remaining} 场`, blockedReason: null, helpNote };
+  }
+  if (quota.activeLimit && quota.activeCount >= quota.activeLimit) {
+    return { hint: "等当前比赛处理完再上传", blockedReason: null, helpNote };
+  }
+  return { hint: null, blockedReason: null, helpNote };
+}

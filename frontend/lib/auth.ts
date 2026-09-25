@@ -18,6 +18,8 @@ export interface AuthAccount {
   displayName: string;
   avatarUrl: string | null;
   provider: "steam" | "oidc" | "development";
+  // The signed-in viewer's own SteamID64; only Steam accounts carry it.
+  steamId?: string | null;
 }
 
 // What the API will serve this session. The backend 404s the matching routes

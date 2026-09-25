@@ -1,7 +1,7 @@
 "use client";
 
 import { Save, TimerReset, Upload } from "lucide-react";
-import { useEffect, useId, useState } from "react";
+import { memo, useEffect, useId, useState } from "react";
 
 import type { VideoCalibrationUpdate } from "@/lib/api";
 import type { ReplayVideo } from "@/types/replay";
@@ -15,7 +15,8 @@ interface VideoSetupPanelProps {
   onUploadVideo: (file: File) => Promise<void>;
 }
 
-export function VideoSetupPanel({
+// Dev/QA bridge: attach a manual MP4 and line it up with demo ticks.
+export const VideoSetupPanel = memo(function VideoSetupPanel({
   currentVideoTime,
   detectedDurationSeconds,
   video,
@@ -49,9 +50,9 @@ export function VideoSetupPanel({
     setMessage(null);
     try {
       await onUploadVideo(file);
-      setMessage("Video uploaded");
+      setMessage("视频已上传");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to upload video");
+      setError(err instanceof Error ? err.message : "上传视频失败");
     } finally {
       setUploading(false);
     }
@@ -70,15 +71,15 @@ export function VideoSetupPanel({
       parsedTickRate === null ||
       parsedTimeOriginSeconds === null
     ) {
-      setError("Calibration values must be valid numbers");
+      setError("校准值必须是有效数字。");
       return;
     }
     if (parsedTickRate <= 0) {
-      setError("tickRate must be greater than zero");
+      setError("tickRate 必须大于 0。");
       return;
     }
     if (parsedTickEnd < parsedTickStart) {
-      setError("tickEnd must be greater than or equal to tickStart");
+      setError("tickEnd 不能小于 tickStart。");
       return;
     }
 
@@ -93,24 +94,24 @@ export function VideoSetupPanel({
         tickRate: parsedTickRate,
         timeOriginSeconds: parsedTimeOriginSeconds
       });
-      setMessage("Calibration saved");
+      setMessage("校准已保存");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to save calibration");
+      setError(err instanceof Error ? err.message : "保存校准失败");
     } finally {
       setSaving(false);
     }
   }
 
   return (
-    <section className="panel video-setup-panel" aria-label="Video setup and sync calibration">
+    <section className="panel video-setup-panel" aria-label="手动视频校准">
       <div className="video-setup-header">
         <div>
-          <h2>Video Setup / Sync Calibration</h2>
+          <h2>手动视频校准（开发测试）</h2>
           <span>{video.source} / {video.status}</span>
         </div>
         <label className={`secondary-button compact-button ${uploading ? "disabled-label" : ""}`} htmlFor={fileInputId}>
-          <Upload size={14} />
-          {uploading ? "Uploading" : "Upload MP4"}
+          <Upload size={14} aria-hidden="true" />
+          {uploading ? "上传中" : "上传 MP4"}
         </label>
         <input
           id={fileInputId}
@@ -128,27 +129,27 @@ export function VideoSetupPanel({
 
       <dl className="video-metadata-grid">
         <div>
-          <dt>Media</dt>
-          <dd>{video.url ? "Private media bound" : "No video bound"}</dd>
+          <dt>视频文件</dt>
+          <dd>{video.url ? "已关联私有视频" : "未关联视频"}</dd>
         </div>
         <div>
-          <dt>Duration</dt>
+          <dt>时长</dt>
           <dd>
             {formatSeconds(video.durationSeconds)}
-            {detectedDurationSeconds ? ` detected ${formatSeconds(detectedDurationSeconds)}` : ""}
+            {detectedDurationSeconds ? `（检测到 ${formatSeconds(detectedDurationSeconds)}）` : ""}
           </dd>
         </div>
         <div>
-          <dt>Tick range</dt>
+          <dt>Tick 范围</dt>
           <dd>{video.tickStart} - {video.tickEnd}</dd>
         </div>
         <div>
-          <dt>Origin</dt>
+          <dt>起点</dt>
           <dd>{formatSeconds(video.timeOriginSeconds ?? 0)}</dd>
         </div>
       </dl>
 
-      {calibrationDisabled ? <p className="setup-message">Saved clips keep their recorded timing. Upload an MP4 to use manual calibration.</p> : null}
+      {calibrationDisabled ? <p className="setup-message">已保存的视频片段沿用生成时的时间对齐；上传 MP4 后才能手动校准。</p> : null}
       <fieldset className="calibration-grid" disabled={calibrationDisabled} style={{ border: 0, padding: 0, margin: 0 }}>
         <label>
           <span>timeOriginSeconds</span>
@@ -201,8 +202,8 @@ export function VideoSetupPanel({
           disabled={!video.url || calibrationDisabled}
           onClick={() => setTimeOriginSeconds(currentVideoTime.toFixed(2))}
         >
-          <TimerReset size={14} />
-          Use current video time as tickStart origin
+          <TimerReset size={14} aria-hidden="true" />
+          用当前视频时间作为 tickStart 起点
         </button>
         <button
           className="primary-button compact-button"
@@ -210,8 +211,8 @@ export function VideoSetupPanel({
           disabled={saving || calibrationDisabled}
           onClick={() => void handleSave()}
         >
-          <Save size={14} />
-          {saving ? "Saving" : "Save Calibration"}
+          <Save size={14} aria-hidden="true" />
+          {saving ? "保存中" : "保存校准"}
         </button>
       </div>
 
@@ -219,7 +220,7 @@ export function VideoSetupPanel({
       {error ? <div className="setup-error">{error}</div> : null}
     </section>
   );
-}
+});
 
 function parseInteger(value: string): number | null {
   const parsed = Number(value);

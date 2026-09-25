@@ -69,16 +69,58 @@ interface RetrySource {
 
 // The detail page holds a DemoStatus and the library a DemoSummary; both carry
 // everything this needs, so ask for the fields instead of one of the shapes.
-type ReplayNoticeSource = ParseFailureSource & RetrySource & { status: DemoProcessingStatus };
+type DemoStateSource = ParseFailureSource & RetrySource & { status: DemoProcessingStatus };
 
-export interface ReplayUnavailableNotice {
+export type ParseFailureSuggestion = "reupload" | "retry";
+
+export interface ParseFailureCopy {
   message: string;
+  // What fixes this failure: another copy of the file, or another pass over this one.
+  suggestion: ParseFailureSuggestion;
+}
+
+export interface ParseFailureAction {
+  action: ParseFailureSuggestion;
+  hint: string;
+}
+
+export type DetailProcessingStep = "uploaded" | "parsing" | "analyzing";
+export type StatusFetchFailure = "not_found" | "unreachable";
+
+export interface DetailFailureState {
+  kind: "failed" | "replay_unavailable";
+  failure: ParseFailureCopy;
+  next: ParseFailureAction;
   retryable: boolean;
+  errorCode: string | null;
+  attemptCount: number;
+}
+
+// Everything the demo page can show before the review workspace is ready.
+export type DetailLoadState =
+  | { kind: "connecting" }
+  | { kind: "not_found" }
+  | { kind: "unreachable" }
+  | { kind: "processing"; step: DetailProcessingStep; stale: boolean; startedAt: string | null }
+  | DetailFailureState
+  | { kind: "replay_load_failed"; retryable: boolean }
+  | { kind: "loading_replay" };
+
+export interface DetailLoadStateInput {
+  status: DemoStateSource | null;
+  statusFailure: StatusFetchFailure | null;
+  // The caller's own verdict on its last replay fetch.
+  replayLoadFailed: boolean;
+}
+
+export interface ProcessingStepItem {
+  key: DetailProcessingStep;
+  label: string;
+  state: "done" | "current" | "pending";
 }
 
 const STATUS_ORDER: DemoProcessingStatus[] = ["queued", "parsing", "analyzing", "completed", "failed"];
 const ACTIVE_DEMO_STATUSES = new Set<DemoProcessingStatus>(["queued", "parsing", "analyzing"]);
-const PREPARING_REPLAY_MESSAGE = "正在准备回放，完成后会自动显示。";
 const ACTIVE_RENDER_STATUSES = new Set(["queued", "processing", "rendering"]);
 const STATUS_LABELS: Record<DemoProcessingStatus, string> = {
   queued: "uploaded",
@@ -88,10 +130,17 @@ const STATUS_LABELS: Record<DemoProcessingStatus, string> = {
   failed: "failed"
 };
 
+export interface DemoLibraryLabels {
+  // Player-facing map name; the dashboard passes map-config's mapDisplayName.
+  mapLabel?: (mapName: string) => string;
+}
+
 export function filterAndSortDemos(
   demos: DemoSummary[],
-  filters: DemoLibraryFilters
+  filters: DemoLibraryFilters,
+  labels: DemoLibraryLabels = {}
 ): DemoSummary[] {
+  const mapLabel = labels.mapLabel ?? fallbackMapLabel;
   const search = filters.search.trim().toLowerCase();
   const searchTokens = search.split(/\s+/).filter(Boolean);
   const filtered = demos.filter((demo) => {
@@ -107,8 +156,12 @@ export function filterAndSortDemos(
     if (searchTokens.length === 0) {
       return true;
     }
-    const searchableText = searchableDemoFields(demo).join(" ").toLowerCase();
-    return searchTokens.every((token) => searchableText.includes(token));
+    const searchableText = searchableDemoFields(demo, mapLabel).join(" ").toLowerCase();
+    const id = demo.id.toLowerCase();
+    // An ID only matches a deliberate prefix, so one letter does not hit every UUID.
+    return searchTokens.every(
+      (token) => searchableText.includes(token) || (token.length >= 8 && id.startsWith(token))
+    );
   });
 
   return filtered.sort((left, right) => compareDemos(left, right, filters.sort, filters.order));
@@ -170,21 +223,29 @@ export function libraryEmptyState(input: LibraryEmptyStateInput): LibraryEmptySt
     showArchivedAction: false
   };
 
+  // Nothing to act on yet: the rows are on their way, so no first-run CTAs.
   if (loading) {
     return {
       kind: "loading",
       title: "Loading demos",
       message: "Checking the local library, parser queue, and render jobs.",
-      ...baseActions
+      showMockAction: false,
+      showUploadAction: false,
+      showRefreshAction: false,
+      showClearFiltersAction: false,
+      showArchivedAction: false
     };
   }
 
+  // An upload would fail against the same unreachable API; refreshing is the one useful action.
   if (error && demos.length === 0) {
     return {
       kind: "error",
       title: "Library unavailable",
       message: friendlyErrorMessage(error),
-      ...baseActions
+      ...baseActions,
+      showMockAction: false,
+      showUploadAction: false
     };
   }
 
@@ -272,34 +333,129 @@ export function canRetryParse(demo: RetrySource): boolean {
   return Boolean(demo.ingestion?.retryable);
 }
 
-// `loadFailed` is the caller's own verdict on its last replay fetch. Status turns
-// "completed" a beat before that fetch resolves, so without it every cold load of
-// a healthy demo flashes a failure the backend never reported.
-export function replayUnavailableNotice(
-  demo: ReplayNoticeSource | null,
-  loadFailed = false
-): ReplayUnavailableNotice {
-  if (!demo || ACTIVE_DEMO_STATUSES.has(demo.status) || demo.ingestion?.active) {
-    return { message: PREPARING_REPLAY_MESSAGE, retryable: false };
-  }
+// Keyed by the backend's parse failure codes (demo_parser.py, workers/, demo_service/constants.py).
+const PARSE_FAILURE_COPY: Record<string, ParseFailureCopy> = {
+  INVALID_DEMO: { message: "文件无法读取，可能不是完整的 CS2 .dem 比赛文件。", suggestion: "reupload" },
+  UNSUPPORTED_PARSER_FORMAT: { message: "暂不支持这个比赛文件的格式。", suggestion: "reupload" },
+  MISSING_MATCH_METADATA: { message: "比赛文件缺少必要的对局信息，可能不完整。", suggestion: "reupload" },
+  MISSING_FRAMES: { message: "比赛文件里没有可用的玩家位置数据。", suggestion: "reupload" },
+  PARSE_ABANDONED: { message: "处理多次中断，已停止。", suggestion: "reupload" },
+  PARSE_TIMED_OUT: { message: "处理时间过长，已停止。", suggestion: "retry" },
+  PARSE_OUT_OF_MEMORY: { message: "处理这场比赛时内存不足，已停止。", suggestion: "retry" },
+  PARSER_CRASHED: { message: "读取比赛时处理程序意外中断。", suggestion: "retry" },
+  NORMALIZATION_FAILED: { message: "比赛数据整理失败。", suggestion: "retry" },
+  STORAGE_READ_FAILED: { message: "已上传的文件暂时无法读取。", suggestion: "retry" },
+  REPLAY_ARTIFACT_MISSING: { message: "回放数据已失效，重新处理即可恢复。", suggestion: "retry" }
+};
+const UNEXPECTED_PARSE_FAILURE: ParseFailureCopy = { message: "处理时出现意外错误。", suggestion: "retry" };
 
+export function parseFailureCopy(errorCode: string | null | undefined): ParseFailureCopy {
+  return (errorCode && PARSE_FAILURE_COPY[errorCode]) || UNEXPECTED_PARSE_FAILURE;
+}
+
+// The backend decides whether a retry is possible; the code decides whether it can help.
+export function parseFailureAction(copy: ParseFailureCopy, retryable: boolean): ParseFailureAction {
+  if (copy.suggestion === "retry" && retryable) {
+    return { action: "retry", hint: "可以重新处理，通常就能恢复。" };
+  }
+  if (copy.suggestion === "retry") {
+    return { action: "reupload", hint: "暂时无法重新处理，请在「我的比赛」重新上传这场比赛的 .dem 文件。" };
+  }
+  return { action: "reupload", hint: "请重新下载这场比赛的 .dem 文件，然后在「我的比赛」重新上传。" };
+}
+
+export function demoFailureState(demo: DemoStateSource): DetailFailureState | null {
+  const failure = demo.ingestion?.failure ?? null;
+  if (demo.status !== "failed" && !failure) {
+    return null;
+  }
+  const copy = parseFailureCopy(failure?.errorCode);
   const retryable = canRetryParse(demo);
-  const reason = parseFailureReason(demo);
-  if (demo.status === "failed") {
-    return { message: `比赛处理失败。${reason ?? "暂时无法加载回放。"}`, retryable };
+  return {
+    // A completed demo with a failure lost its replay after the parse succeeded.
+    kind: demo.status === "failed" ? "failed" : "replay_unavailable",
+    failure: copy,
+    next: parseFailureAction(copy, retryable),
+    retryable,
+    errorCode: failure?.errorCode ?? null,
+    attemptCount: failure?.attemptCount ?? demo.ingestion?.attemptCount ?? 0
+  };
+}
+
+// Status turns "completed" a beat before the replay fetch resolves, so a
+// completed demo without a reported failure is loading, never broken, until the
+// caller's own fetch has actually failed.
+export function detailLoadState(input: DetailLoadStateInput): DetailLoadState {
+  const { status, statusFailure, replayLoadFailed } = input;
+  if (statusFailure === "not_found") {
+    return { kind: "not_found" };
   }
-  if (reason) {
-    // The parse already finished, so "正在准备回放" would send the user off to
-    // wait for something that is never coming. A demo whose replay artifact
-    // went missing lands here: say what broke and offer the one fix.
-    return { message: `回放暂时无法打开。${reason}`, retryable };
+  if (!status) {
+    return statusFailure === "unreachable" ? { kind: "unreachable" } : { kind: "connecting" };
   }
-  if (loadFailed) {
-    // Nothing upstream is wrong, so there is no re-parse to offer: the fetch
-    // itself failed and a reload is the honest exit.
-    return { message: "回放暂时无法打开，请刷新页面重试。", retryable };
+  if (ACTIVE_DEMO_STATUSES.has(status.status) || status.ingestion?.active) {
+    return {
+      kind: "processing",
+      step: processingStep(status),
+      stale: Boolean(status.ingestion?.stale),
+      startedAt: status.ingestion?.startedAt ?? null
+    };
   }
-  return { message: PREPARING_REPLAY_MESSAGE, retryable: false };
+  const failure = demoFailureState(status);
+  if (failure) {
+    return failure;
+  }
+  return replayLoadFailed
+    ? { kind: "replay_load_failed", retryable: canRetryParse(status) }
+    : { kind: "loading_replay" };
+}
+
+const PROCESSING_STEPS: Array<{ key: DetailProcessingStep; label: string }> = [
+  { key: "uploaded", label: "上传完成" },
+  { key: "parsing", label: "解析比赛" },
+  { key: "analyzing", label: "分析建议" }
+];
+
+const PROCESSING_HEADLINES: Record<DetailProcessingStep, string> = {
+  uploaded: "已上传，正在排队等待解析…",
+  parsing: "解析中：读取回合与玩家位置…",
+  analyzing: "分析中：整理复盘建议…"
+};
+
+export function processingHeadline(step: DetailProcessingStep): string {
+  return PROCESSING_HEADLINES[step];
+}
+
+// "uploaded" means the upload is done and the parse is next in line, so the
+// parse step is the one in progress either way.
+export function processingSteps(step: DetailProcessingStep): ProcessingStepItem[] {
+  const current = step === "analyzing" ? 2 : 1;
+  return PROCESSING_STEPS.map((item, index) => ({
+    ...item,
+    state: index < current ? "done" : index === current ? "current" : "pending"
+  }));
+}
+
+export function processingElapsedLabel(startedAt: string | null | undefined, nowMs: number): string | null {
+  const started = safeTimestamp(startedAt);
+  if (started === null) {
+    return null;
+  }
+  const seconds = Math.floor((nowMs - started) / 1000);
+  // A skewed clock or a day-old job says nothing useful about this run.
+  if (seconds < 0 || seconds > 24 * 60 * 60) {
+    return null;
+  }
+  return `已用时 ${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+}
+
+function processingStep(demo: DemoStateSource): DetailProcessingStep {
+  if (demo.status === "analyzing") return "analyzing";
+  if (demo.status === "parsing") return "parsing";
+  if (demo.status === "queued") return "uploaded";
+  // A re-parse can be in flight while the row itself still reads failed or completed.
+  const jobStatus = demo.ingestion?.jobStatus;
+  return jobStatus === "queued" || jobStatus === "pending" ? "uploaded" : "parsing";
 }
 
 export function isRenderActiveStatus(status: string | null | undefined): boolean {
@@ -437,24 +593,21 @@ export function detailSummaryItems(input: DetailSummaryInput): DetailSummaryItem
   ];
 }
 
-function searchableDemoFields(demo: DemoSummary): string[] {
+// What the row shows, in the words it shows it: raw IDs, ISO timestamps and
+// English status tokens made every one-letter query match every row.
+function searchableDemoFields(demo: DemoSummary, mapLabel: (mapName: string) => string): string[] {
+  const failure = demoFailureState(demo);
   return [
-    demo.id,
     demo.name,
     demo.original_filename,
     demo.map_name,
-    demo.status,
-    demoStatusLabel(demo.status),
-    ingestionPhaseLabel(demo),
-    demo.ingestion?.stale ? "stale" : "",
-    canRetryParse(demo) ? "retry retryable" : "",
-    demo.ingestion?.jobStatus ?? "",
-    parseFailureReason(demo) ?? "",
-    renderStatusLabel(demo),
-    demo.created_at,
-    demo.updated_at,
-    `${demo.round_count} rounds`,
-    `${demo.coaching_event_count} coaching`
+    mapLabel(demo.map_name),
+    demoStatusDisplayLabel(demo.status),
+    failure?.failure.message ?? "",
+    failure?.retryable ? "重新处理" : "",
+    demo.ingestion?.stale ? "处理时间较长" : "",
+    demo.archived ? "已归档" : "",
+    libraryVideoLabel(demo) ?? ""
   ];
 }
 
@@ -582,4 +735,99 @@ function safeTimestamp(value: string | null | undefined): number | null {
 function statusRank(status: DemoProcessingStatus): number {
   const index = STATUS_ORDER.indexOf(status);
   return index === -1 ? STATUS_ORDER.length : index;
+}
+
+const STATUS_DISPLAY_LABELS: Record<DemoProcessingStatus, string> = {
+  queued: "等待处理",
+  parsing: "读取比赛中",
+  analyzing: "整理建议中",
+  completed: "可以复盘",
+  failed: "处理失败"
+};
+
+// The Chinese status every surface shows; demoStatusLabel stays the API token.
+export function demoStatusDisplayLabel(status: DemoProcessingStatus): string {
+  return STATUS_DISPLAY_LABELS[status] ?? status;
+}
+
+const PROCESSING_NOTICE_LABELS: Record<DemoProcessingStatus, string> = {
+  queued: "正在排队处理",
+  parsing: "正在读取比赛",
+  analyzing: "正在整理建议",
+  completed: "可以复盘",
+  failed: "处理失败"
+};
+
+export function processingNoticeLabel(status: DemoProcessingStatus): string {
+  return PROCESSING_NOTICE_LABELS[status] ?? status;
+}
+
+export function isDemoParseActive(demo: DemoSummary): boolean {
+  return Boolean(demo.ingestion?.active) || ACTIVE_DEMO_STATUSES.has(demo.status);
+}
+
+// Demos still being read or analyzed; video-only work is counted separately.
+export function countParsingLibraryDemos(demos: DemoSummary[]): number {
+  return demos.filter(isDemoParseActive).length;
+}
+
+export function countVideoLibraryDemos(demos: DemoSummary[]): number {
+  return demos.filter((demo) => !isDemoParseActive(demo) && playbackReadiness(demo) === "rendering").length;
+}
+
+export function libraryVideoLabel(demo: DemoSummary): string | null {
+  const readiness = playbackReadiness(demo);
+  if (readiness === "ready") return "有第一人称视频";
+  if (readiness === "rendering") return "视频生成中";
+  if (readiness === "none") return "战术回放可用";
+  return null;
+}
+
+export interface LibraryDisplayTitle {
+  title: string;
+  // The file name, when the title is not already it.
+  filename: string | null;
+  // True when the title was composed from the map and rounds, not a name.
+  composed: boolean;
+}
+
+// An upload is named after its file ("match730_0037….dem"), which reads the
+// same on every row; until the player renames it, a parsed demo is titled by
+// what tells it apart.
+export function libraryDisplayTitle(
+  demo: Pick<DemoSummary, "name" | "original_filename" | "status" | "map_name" | "round_count">,
+  mapLabel: (mapName: string) => string = fallbackMapLabel
+): LibraryDisplayTitle {
+  const autoNamed = demo.name === demo.original_filename;
+  if (autoNamed && demo.status === "completed" && demo.round_count > 0) {
+    return {
+      title: `${mapLabel(demo.map_name)}，${demo.round_count} 回合`,
+      filename: demo.original_filename,
+      composed: true
+    };
+  }
+  return {
+    title: demo.name,
+    filename: autoNamed ? null : demo.original_filename,
+    composed: false
+  };
+}
+
+export function formatLibraryDate(value: string | null | undefined): string {
+  const timestamp = safeTimestamp(value);
+  if (timestamp === null) {
+    return "—";
+  }
+  return new Date(timestamp).toLocaleString("zh-CN", {
+    month: "numeric",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit"
+  });
+}
+
+function fallbackMapLabel(mapName: string): string {
+  if (!mapName || mapName === "unknown") return "地图待识别";
+  const name = mapName.replace(/^de_/, "");
+  return name.charAt(0).toUpperCase() + name.slice(1);
 }

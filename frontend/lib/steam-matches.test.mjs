@@ -40,17 +40,18 @@ const {
   steamConnectionStatusLabel,
   steamMatchImportAction,
   steamMatchStatusLabel,
+  steamImportErrorMessage,
   steamRequestErrorMessage,
   steamSyncResultMessage
 } = loadTypeScriptModule("./steam-matches.ts");
 
 const statuses = {
-  discovered: "Discovered",
-  demo_pending: "Demo pending",
-  downloading: "Downloading",
-  parsing: "Parsing",
-  ready: "Ready",
-  unavailable: "Unavailable"
+  discovered: "已发现",
+  demo_pending: "等待获取",
+  downloading: "下载中",
+  parsing: "读取比赛中",
+  ready: "可以复盘",
+  unavailable: "无法导入"
 };
 
 for (const [status, label] of Object.entries(statuses)) {
@@ -59,21 +60,21 @@ for (const [status, label] of Object.entries(statuses)) {
 
 assert.equal(
   steamConnectionStatusLabel(connection({ connected: false, status: "disconnected" })),
-  "Not connected"
+  "未连接"
 );
 assert.equal(
   steamConnectionStatusLabel(connection({ credentials_configured: false })),
-  "Setup required"
+  "需要设置"
 );
-assert.equal(steamConnectionStatusLabel(connection({ status: "syncing" })), "Syncing");
-assert.equal(steamConnectionStatusLabel(connection({ status: "caught_up" })), "Up to date");
+assert.equal(steamConnectionStatusLabel(connection({ status: "syncing" })), "同步中");
+assert.equal(steamConnectionStatusLabel(connection({ status: "caught_up" })), "已是最新");
 assert.equal(
   steamConnectionStatusLabel(connection({ status: "retry_wait", next_retry_at: "2026-07-19T13:00:00Z" })),
-  "Waiting to retry"
+  "等待重试"
 );
 assert.equal(
   steamConnectionStatusLabel(connection({ status: "authorization_required" })),
-  "Needs attention"
+  "需要处理"
 );
 
 {
@@ -92,17 +93,14 @@ assert.equal(
   assert.equal(serialized.includes(secretAuthCode), false);
   assert.equal(serialized.includes(secretSharingCode), false);
   assert.equal(serialized.includes("last_error_message"), false);
-  assert.equal(
-    display.errorMessage,
-    "Steam rejected the saved authorization. Replace both codes before syncing again."
-  );
+  assert.equal(display.errorMessage, "Steam 拒绝了已保存的授权，请更换两个授权码后再同步。");
 }
 
 assert.equal(
   buildSteamConnectionDisplay(
     connection({ last_error_code: "steam_cursor_invalid", status: "authorization_required" })
   ).errorMessage,
-  "Use a recent match sharing code from this Steam account before syncing again."
+  "请使用这个 Steam 账号最近一场比赛的分享代码，然后再同步。"
 );
 
 {
@@ -120,7 +118,7 @@ assert.equal(
   });
   const serialized = JSON.stringify(display);
 
-  assert.equal(display.sourceLabel, "Steam match history");
+  assert.equal(display.sourceLabel, "Steam 比赛记录");
   assert.equal(display.demoHref, null);
   assert.equal(serialized.includes(secretSharingCode), false);
   assert.equal(serialized.includes("de_fake"), false);
@@ -148,12 +146,12 @@ assert.equal(
     manual_upload_supported: true
   });
 
-  assert.equal(display.statusLabel, "Ready");
+  assert.equal(display.statusLabel, "可以复盘");
   assert.equal(display.demoHref, "/demos/demo-2");
   assert.equal(display.mapName, "de_mirage");
-  assert.equal(display.durationLabel, "31m 15s");
-  assert.equal(display.sideRoundsLabel, "CT 13 · T 10");
-  assert.equal(display.playersLabel, "Player One, Player Two");
+  assert.equal(display.durationLabel, "31 分 15 秒");
+  assert.equal(display.sideRoundsLabel, "CT 13 比 T 10");
+  assert.equal(display.playersLabel, "Player One、Player Two");
   assert.equal(display.errorMessage, null);
 }
 
@@ -178,7 +176,7 @@ assert.equal(
     manual_upload_supported: true
   });
 
-  assert.equal(display.playersLabel, "One, Two, Three +2");
+  assert.equal(display.playersLabel, "One、Two、Three 等 5 人");
 }
 
 {
@@ -204,59 +202,60 @@ assert.equal(
 
   assert.equal(display.mapName, null);
   assert.equal(display.sideRoundsLabel, null);
-  assert.equal(display.errorMessage, "No licensed Demo source is configured.");
+  // The backend's English operator text never reaches the player; the code picks the copy.
+  assert.equal(display.errorMessage, "当前版本还不能从 Steam 自动下载比赛录像。同步只会列出你的比赛记录；要复盘，请手动上传这场比赛的 .dem 文件。");
   assert.equal(display.manualUploadSupported, true);
 }
 
 assert.equal(
   JSON.stringify(steamMatchImportAction("discovered", null, true)),
-  JSON.stringify({ enabled: true, label: "Import Demo" })
+  JSON.stringify({ enabled: true, label: "导入比赛" })
 );
 assert.equal(
   JSON.stringify(steamMatchImportAction("unavailable", null, true)),
-  JSON.stringify({ enabled: true, label: "Retry import" })
+  JSON.stringify({ enabled: true, label: "重新导入" })
 );
 assert.equal(
   JSON.stringify(steamMatchImportAction("downloading", null, true)),
-  JSON.stringify({ enabled: false, label: "Downloading" })
+  JSON.stringify({ enabled: false, label: "下载中" })
 );
 assert.equal(
   JSON.stringify(steamMatchImportAction("downloading", null, true, null, false, true)),
-  JSON.stringify({ enabled: true, label: "Retry import" })
+  JSON.stringify({ enabled: true, label: "重新导入" })
 );
 assert.equal(
   JSON.stringify(steamMatchImportAction("demo_pending", null, true, null, false, true)),
-  JSON.stringify({ enabled: true, label: "Retry import" })
+  JSON.stringify({ enabled: true, label: "重新导入" })
 );
 assert.equal(
   JSON.stringify(steamMatchImportAction("downloading", null, false, null, false, true)),
-  JSON.stringify({ enabled: false, label: "Manual upload" })
+  JSON.stringify({ enabled: false, label: "手动上传 .dem" })
 );
 assert.equal(
   JSON.stringify(steamMatchImportAction("parsing", "demo-2", true)),
-  JSON.stringify({ enabled: false, label: "Parsing" })
+  JSON.stringify({ enabled: false, label: "读取比赛中" })
 );
 assert.equal(
   JSON.stringify(steamMatchImportAction("parsing", "demo-2", true, null, true)),
-  JSON.stringify({ enabled: true, label: "Retry parser" })
+  JSON.stringify({ enabled: true, label: "重新处理" })
 );
 assert.equal(
   JSON.stringify(
     steamMatchImportAction("unavailable", "demo-2", false, "parser_dispatch_unavailable")
   ),
-  JSON.stringify({ enabled: true, label: "Retry parser" })
+  JSON.stringify({ enabled: true, label: "重新处理" })
 );
 assert.equal(
   JSON.stringify(steamMatchImportAction("unavailable", "demo-2", true, "parser_failed")),
-  JSON.stringify({ enabled: false, label: "Unavailable" })
+  JSON.stringify({ enabled: false, label: "无法导入" })
 );
 assert.equal(
   JSON.stringify(steamMatchImportAction("ready", "demo-2", true)),
-  JSON.stringify({ enabled: false, label: "Ready" })
+  JSON.stringify({ enabled: false, label: "可以复盘" })
 );
 assert.equal(
   JSON.stringify(steamMatchImportAction("discovered", null, false)),
-  JSON.stringify({ enabled: false, label: "Manual upload" })
+  JSON.stringify({ enabled: false, label: "手动上传 .dem" })
 );
 
 {
@@ -271,10 +270,7 @@ assert.equal(
   assert.equal(display.demoImportAvailable, false);
   assert.equal(display.demoSourceProvider, "disabled");
   assert.equal(display.manualUploadSupported, true);
-  assert.equal(
-    display.demoImportMessage,
-    "No licensed automatic Demo provider is configured. Use manual .dem upload."
-  );
+  assert.equal(display.demoImportMessage, "当前版本还不能从 Steam 自动下载比赛录像。同步只会列出你的比赛记录；要复盘，请手动上传这场比赛的 .dem 文件。");
 }
 
 {
@@ -298,7 +294,7 @@ assert.equal(
     limit_reached: false,
     status: "caught_up"
   }),
-  "No new matches. Steam match history is up to date."
+  "没有新比赛，Steam 比赛记录已是最新。"
 );
 assert.equal(
   steamSyncResultMessage({
@@ -307,37 +303,60 @@ assert.equal(
     limit_reached: true,
     status: "connected"
   }),
-  "Discovered 20 new matches. The sync limit was reached; sync again to continue."
+  "发现 20 场新比赛。本次同步已达上限，再同步一次可以继续。"
 );
 
 assert.equal(
   steamRequestErrorMessage(409, "sync", "steam_cursor_invalid"),
-  "Use a recent match sharing code from this Steam account before syncing again."
+  "请使用这个 Steam 账号最近一场比赛的分享代码，然后再同步。"
 );
 assert.equal(
   steamRequestErrorMessage(409, "sync", "steam_authorization_invalid"),
-  "Steam rejected the saved authorization. Replace both codes before syncing again."
+  "Steam 拒绝了已保存的授权，请更换两个授权码后再同步。"
 );
 assert.equal(
   steamRequestErrorMessage(403, "sync"),
-  "This request origin was rejected. Refresh the configured app origin and try again."
+  // No operator advice about request origins.
+  "同步 Steam 比赛记录失败，请稍后再试。"
 );
 assert.equal(
   steamRequestErrorMessage(503, "sync"),
-  "Steam match history is temporarily rate-limited or unavailable. Retry later."
+  "Steam 比赛记录暂时无法访问或请求过于频繁，请稍后再试。"
 );
 assert.equal(
   steamRequestErrorMessage(409, "import", "demo_source_unavailable"),
-  "No licensed automatic Demo provider is configured. Use manual .dem upload."
+  "当前版本还不能从 Steam 自动下载比赛录像。同步只会列出你的比赛记录；要复盘，请手动上传这场比赛的 .dem 文件。"
 );
 assert.equal(
   steamRequestErrorMessage(409, "import", "demo_import_in_progress"),
-  "This Demo import is already running. Refresh the match status."
+  "这场比赛正在导入，请刷新查看最新状态。"
 );
 assert.equal(
   steamRequestErrorMessage(502, "import", "demo_download_too_large"),
-  "The Demo provider response failed secure download checks. Use manual .dem upload or retry later."
+  "暂时无法自动导入这场比赛，可以手动上传 .dem 文件。"
 );
+assert.equal(steamRequestErrorMessage(401, "load"), "登录已过期，请重新登录后继续。");
+assert.equal(steamImportErrorMessage(null), null);
+assert.equal(steamImportErrorMessage("parser_dispatch_unavailable"), "比赛已下载，但还没能开始处理，可以重新处理。");
+assert.equal(steamImportErrorMessage("parser_failed"), "比赛录像无法读取，请手动上传这场比赛的 .dem 文件。");
+assert.equal(steamImportErrorMessage("demo_download_failed"), "暂时无法自动导入这场比赛，可以手动上传 .dem 文件。");
+
+{
+  // Every string the panel shows from these helpers is Chinese.
+  const english = /[A-Za-z]{4,}/;
+  const texts = [
+    ...Object.keys(statuses).map((status) => steamMatchStatusLabel(status)),
+    ...["load", "connect", "sync", "disconnect", "import"].flatMap((action) =>
+      [null, 403, 404, 409, 412, 429, 500, 502, 503].map((status) => steamRequestErrorMessage(status, action))
+    ),
+    ...["steam_credentials_invalid", "steam_cursor_invalid", "rate_limited", "unavailable", "other"].map(
+      (code) => buildSteamConnectionDisplay(connection({ last_error_code: code })).errorMessage
+    )
+  ];
+  for (const text of texts) {
+    assert.doesNotMatch(text.replace(/Steam|CT|\.dem/g, ""), english, text);
+  }
+}
 
 console.log("steam match helpers passed");
 

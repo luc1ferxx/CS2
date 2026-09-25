@@ -26,6 +26,8 @@ function load(relativePath) {
       if (specifier === "@/lib/demo-library") return { isRenderActiveStatus: () => false };
       if (specifier === "@/lib/render-clips") return load("./render-clips.ts");
       if (specifier === "@/lib/coaching-copy") return load("./coaching-copy.ts");
+      if (specifier === "@/lib/coaching-review") return load("./coaching-review.ts");
+      if (specifier === "@/lib/bomb-site") return load("./bomb-site.ts");
       throw new Error(`Unexpected runtime import: ${specifier}`);
     }
   }, { filename });
@@ -59,10 +61,27 @@ const events = [
 ];
 assert.deepEqual(ids(review.coachingForPlayer(events, selectedId)), ["own", "own-later"]);
 assert.deepEqual(ids(review.coachingForPlayer(events, null)), []);
-assert.deepEqual({ ...review.personalReviewSummary(events, selectedId) }, {
-  findingCount: 2, highPriorityCount: 1, roundCount: 2, firstFindingTick: 40
-});
-assert.equal(review.personalReviewSummary(events, null).firstFindingTick, null);
+{
+  const summary = review.personalReviewSummary(events, selectedId);
+  assert.deepEqual([summary.findingCount, summary.priorityCount, summary.roundCount], [2, 1, 2]);
+  assert.equal(summary.topFinding.id, "own");
+  assert.equal(review.personalReviewSummary(events, null).topFinding, null);
+  assert.equal(review.personalReviewSummary(events, null).priorityCount, 0);
+}
+{
+  // Real rules emit only medium and low: medium counts as worth reviewing first,
+  // and the top finding is the most severe one, not the earliest.
+  const realShaped = [
+    { id: "spacing-1", player_id: selectedId, severity: "low", round_number: 1, tick_start: 10 },
+    { id: "spacing-2", player_id: selectedId, severity: "low", round_number: 1, tick_start: 20 },
+    { id: "untraded-late", player_id: selectedId, severity: "medium", round_number: 3, tick_start: 90 },
+    { id: "untraded-early", player_id: selectedId, severity: "medium", round_number: 2, tick_start: 50 },
+    { id: "info", player_id: selectedId, severity: "info", round_number: 1, tick_start: 1 }
+  ];
+  const summary = review.personalReviewSummary(realShaped, selectedId);
+  assert.equal(summary.priorityCount, 2);
+  assert.equal(summary.topFinding.id, "untraded-early");
+}
 
 const parserEvents = [
   { id: "kill", type: "kill", playerId: "p2", playerIds: ["p2", selectedId] },
@@ -74,39 +93,124 @@ const parserEvents = [
 assert.deepEqual(ids(review.parserEventsForPlayer(parserEvents, selectedId)), ["kill", "own-damage", "plant", "round"]);
 assert.deepEqual(ids(review.parserEventsForPlayer(parserEvents, null)), ["plant", "round"]);
 
+const KEY = review.PLAYER_PREFERENCE_KEY;
+const devAccount = { displayName: "Local development", avatarUrl: null, provider: "development" };
+const steamAccount = { displayName: "Tactical Reviewer", avatarUrl: null, provider: "steam", steamId: selectedId };
+const otherSteamAccount = { ...steamAccount, displayName: "Someone else", steamId: "76561198000000009" };
+const oidcAccount = { displayName: "other", avatarUrl: null, provider: "oidc" };
+
+// Preferences are keyed per signed-in account; development keeps its original key.
+assert.equal(review.playerPreferenceKey(devAccount), KEY);
+assert.equal(review.playerPreferenceKey(steamAccount), `${KEY}:steam:${selectedId}`);
+assert.equal(review.playerPreferenceKey({ ...steamAccount, steamId: "not-a-steam-id" }), `${KEY}:steam:Tactical Reviewer`);
+assert.equal(review.playerPreferenceKey(oidcAccount), `${KEY}:oidc:other`);
+assert.equal(review.playerPreferenceKey(undefined), null);
+
+// Only local development defaults to the developer's player.
+const candidateIds = (values) => Array.from(values, (value) => `${value.source}:${value.identity}`);
+assert.deepEqual(candidateIds(review.accountIdentityCandidates(devAccount)), ["development:xelex"]);
+assert.deepEqual(candidateIds(review.accountIdentityCandidates(steamAccount)), [`steamId:${selectedId}`]);
+assert.deepEqual(candidateIds(review.accountIdentityCandidates({ ...steamAccount, steamId: null })), ["displayName:Tactical Reviewer"]);
+assert.deepEqual(candidateIds(review.accountIdentityCandidates({ ...steamAccount, steamId: " 123 " })), ["displayName:Tactical Reviewer"]);
+assert.deepEqual(candidateIds(review.accountIdentityCandidates(oidcAccount)), ["displayName:other"]);
+assert.deepEqual(candidateIds(review.accountIdentityCandidates(undefined)), []);
+assert.deepEqual(candidateIds(review.reviewIdentityCandidates(" p2 ", steamAccount)), ["saved:p2", `steamId:${selectedId}`]);
+assert.deepEqual(candidateIds(review.reviewIdentityCandidates(selectedId, steamAccount)), [`saved:${selectedId}`]);
+assert.deepEqual(candidateIds(review.reviewIdentityCandidates("", undefined)), []);
+
+{
+  const resolve = (saved, account, roster = players) =>
+    review.resolveReviewIdentity(roster, review.reviewIdentityCandidates(saved, account));
+  // The signed-in Steam account finds itself with nothing saved.
+  const own = resolve("", steamAccount);
+  assert.deepEqual([own.status, own.player.id, own.source], ["matched", selectedId, "steamId"]);
+  // A saved identity wins when it is in this match...
+  const saved = resolve("other", steamAccount);
+  assert.deepEqual([saved.player.id, saved.source], ["p2", "saved"]);
+  // ...and falls through to the account's own when it is not.
+  const fallThrough = resolve("somebody-from-another-demo", steamAccount);
+  assert.deepEqual([fallThrough.player.id, fallThrough.source], [selectedId, "steamId"]);
+  // Another account never lands on this player, and the report names the saved identity first.
+  const stranger = resolve("somebody", otherSteamAccount);
+  assert.deepEqual([stranger.status, stranger.player, stranger.identity, stranger.source], ["missing", null, "somebody", "saved"]);
+  const ambiguous = resolve("", { ...oidcAccount, displayName: "xelex" }, duplicateNamePlayers);
+  assert.deepEqual([ambiguous.status, ambiguous.candidates.length, ambiguous.source], ["ambiguous", 2, "displayName"]);
+  assert.deepEqual({ ...review.resolveReviewIdentity(players, []), candidates: [] },
+    { status: "missing", player: null, candidates: [], identity: "", source: null });
+}
+
 const data = new Map();
 const storage = { getItem: (key) => data.get(key) ?? null, setItem: (key, value) => data.set(key, value) };
-assert.equal(review.readPreferredPlayer(() => storage), "xelex");
-assert.equal(review.savePreferredPlayer(" other ", () => storage), true);
-assert.equal(review.readPreferredPlayer(() => storage), "other");
-assert.equal(review.savePreferredPlayer(" ", () => storage), false);
+const steamKey = review.playerPreferenceKey(steamAccount);
+const otherKey = review.playerPreferenceKey(otherSteamAccount);
+assert.equal(review.readPreferredPlayer(() => storage, steamKey), "");
+assert.equal(review.savePreferredPlayer(" other ", () => storage, steamKey), true);
+assert.equal(review.readPreferredPlayer(() => storage, steamKey), "other");
+// A second account on the same browser does not inherit the first one's choice.
+assert.equal(review.readPreferredPlayer(() => storage, otherKey), "");
+assert.equal(review.readPreferredPlayer(() => storage, KEY), "");
+assert.equal(review.savePreferredPlayer(" ", () => storage, steamKey), false);
+assert.equal(review.savePreferredPlayer("other", () => storage, null), false);
+assert.equal(review.readPreferredPlayer(() => storage, null), "");
 for (const bad of ["not json", "null", "[]", '{"version":2,"identity":"other"}', '{"version":1,"identity":22}', '{"version":1,"identity":""}']) {
-  data.set(review.PLAYER_PREFERENCE_KEY, bad);
-  assert.equal(review.readPreferredPlayer(() => storage), "xelex");
+  data.set(steamKey, bad);
+  assert.equal(review.readPreferredPlayer(() => storage, steamKey), "");
 }
 const blocked = () => { throw new Error("SecurityError"); };
-assert.equal(review.readPreferredPlayer(blocked), "xelex");
-assert.equal(review.savePreferredPlayer("other", blocked), false);
-assert.equal(review.savePreferredPlayer("other", () => ({ getItem: storage.getItem, setItem: blocked })), false);
-assert.equal(review.readPreferredPlayer(() => ({ getItem: blocked, setItem: storage.setItem })), "xelex");
-assert.equal(review.savePreferredPlayer("other", () => null), false);
+assert.equal(review.readPreferredPlayer(blocked, steamKey), "");
+assert.equal(review.savePreferredPlayer("other", blocked, steamKey), false);
+assert.equal(review.savePreferredPlayer("other", () => ({ getItem: storage.getItem, setItem: blocked }), steamKey), false);
+assert.equal(review.readPreferredPlayer(() => ({ getItem: blocked, setItem: storage.setItem }), steamKey), "");
+assert.equal(review.savePreferredPlayer("other", () => null, steamKey), false);
 
-const panel = (identity, roster = players, player = null) => renderToStaticMarkup(React.createElement(PersonalReviewPanel, {
-  preferredIdentity: identity,
-  match: review.matchPreferredPlayer(roster, identity),
+const panel = (saved, account, roster = players, player = null) => renderToStaticMarkup(React.createElement(PersonalReviewPanel, {
+  savedIdentity: saved,
+  match: review.resolveReviewIdentity(roster, review.reviewIdentityCandidates(saved, account)),
   players: roster, selectedPlayer: player,
   summary: review.personalReviewSummary(events, player?.id ?? null),
   preferenceSaved: true, onSaveIdentity() {}, onSelectPlayer() {}, onSeek() {}
 }));
-assert.match(panel("missing"), /这场比赛中未找到 missing/);
-assert.match(panel("missing"), /选择复盘玩家/);
-assert.doesNotMatch(panel("missing"), /正在复盘 <strong>xelex/);
-assert.match(panel("xelex", duplicateNamePlayers), /有多位玩家使用 xelex/);
-assert.match(panel("xelex", players, players[0]), /已匹配保存的身份 xelex/);
-assert.match(panel("xelex", players, players[1]), /正在复盘 <strong>other/);
-assert.match(panel("missing"), /<details[^>]*open=""/);
-assert.doesNotMatch(panel("xelex", players, players[0]), /<details[^>]*open=/);
-assert.match(panel("xelex", players, players[0]), /aria-label="First finding"/);
+{
+  // Nobody matched: ask the viewer directly and put the players right there.
+  const unmatched = panel("", otherSteamAccount);
+  assert.match(unmatched, /<h2>选择你在这场比赛中的玩家<\/h2>/);
+  assert.match(unmatched, /id="review-player-picker"/);
+  assert.match(unmatched, /<button[^>]*title="xelex · 76561198998266210"[^>]*>xelex<\/button>/);
+  assert.match(unmatched, /<button[^>]*title="other · p2"[^>]*>other<\/button>/);
+  assert.doesNotMatch(unmatched, /未找到|没有你保存的身份|查看最值得回看的一条/);
+  assert.doesNotMatch(unmatched, /76561198000000009/, "the viewer's own id is never echoed as a stranger");
+  assert.doesNotMatch(unmatched, /<details[^>]*open=/);
+}
+assert.match(panel("missing", otherSteamAccount), /这场比赛中没有你保存的身份 missing/);
+assert.doesNotMatch(panel("", devAccount, [players[1]]), /xelex/, "the development default is never named to the viewer");
+{
+  const ambiguous = panel("xelex", otherSteamAccount, duplicateNamePlayers);
+  assert.match(ambiguous, /有多位玩家叫 xelex/);
+  assert.match(ambiguous, /personal-player-chip active[^>]*>xelex<small>…6210<\/small>/);
+  assert.match(ambiguous, /personal-player-chip active[^>]*>XELEX<small>…p3<\/small>/);
+}
+{
+  const own = panel("", steamAccount, players, players[0]);
+  // A long name is cut with an ellipsis, so the full name rides along in its title.
+  assert.match(own, /正在复盘 <strong class="personal-review-name" title="xelex">xelex<\/strong>/);
+  assert.match(own, /已按你的 Steam 账号匹配到 xelex/);
+  assert.match(own, /<strong>1<\/strong> 条值得优先回看/);
+  assert.match(own, />查看最值得回看的一条<\/button>/);
+  assert.doesNotMatch(own, /id="review-player-picker"|设为我的玩家/);
+  assert.doesNotMatch(own, /First finding/);
+}
+assert.match(panel("xelex", devAccount, players, players[0]), /已按你保存的身份匹配到 xelex/);
+assert.match(panel("", devAccount, players, players[0]), /已按本地开发身份匹配到 xelex/);
+{
+  const someoneElse = panel("", steamAccount, players, players[1]);
+  assert.match(someoneElse, /正在复盘 <strong class="personal-review-name" title="other">other/);
+  assert.match(someoneElse, /已按你的 Steam 账号匹配到 xelex。当前在看其他玩家。/);
+  assert.match(someoneElse, />设为我的玩家<\/button>/);
+  // A pick that is not the viewer's player does not re-raise the "who are you" prompt.
+  const unconfirmed = panel("", otherSteamAccount, players, players[1]);
+  assert.match(unconfirmed, /还没有确认你在这场比赛中的玩家/);
+  assert.doesNotMatch(unconfirmed, /role="status">[^<]*选择你/);
+}
 
 const { CoachingEventCard } = load("../components/coaching/CoachingEventCard.tsx");
 const card = renderToStaticMarkup(React.createElement(CoachingEventCard, {
@@ -120,6 +224,18 @@ const card = renderToStaticMarkup(React.createElement(CoachingEventCard, {
 assert.match(card, /查看这一刻/);
 assert.match(card, /angle before taking the duel/);
 assert.match(card, /Positions cannot establish line of sight/);
-assert.match(card, /待复盘线索/);
-assert.match(card, /选手 xelex/);
-console.log("Personal review identity, target isolation, evidence scope, preference storage and UI states passed.");
+assert.match(card, /<dt>玩家<\/dt><dd>xelex<\/dd>/);
+assert.match(card, /<dt>相关玩家<\/dt><dd>xelex、other<\/dd>/);
+assert.doesNotMatch(card, /选手|待复盘线索/, "one word for a person: 玩家");
+assert.match(card, /<article id="coaching-event-own" tabindex="-1"/, "the card id contract the review page scrolls back to");
+assert.match(card, /<details class="coaching-technical-details"><summary>技术详情<\/summary><p>No trade was recorded\.<\/p>/,
+  "the English analyzer message is kept, but only inside 技术详情");
+{
+  const own = panel("", steamAccount, players, players[0]);
+  assert.match(own, /aria-label="复盘玩家"/);
+  assert.match(own, /<label for="review-player-select">当前复盘玩家<\/label>/);
+  assert.match(own, /<select id="review-player-select"/);
+  assert.doesNotMatch(own, /Player to review|Personal review|Selected player review summary/,
+    "accessible names are the Chinese labels the player sees");
+}
+console.log("Personal review identity defaults, per-account preferences, priority summary, target isolation and UI states passed.");

@@ -12,7 +12,7 @@ The primary routes are:
 
 - `GET /auth/steam/login`: creates a single-use Redis login attempt and redirects to Steam.
 - `GET /auth/steam/callback`: validates and directly verifies the assertion, resolves the account, rotates any prior session, and redirects to the frontend callback.
-- `GET /auth/me`: returns only compact display metadata for the authenticated account. It never exposes `owner_id` or SteamID64.
+- `GET /auth/me`: returns only compact display metadata for the authenticated account. It never exposes `owner_id`. For a Steam account it also returns `account.steamId`, the signed-in viewer's own SteamID64, so Demo Detail can default the reviewed player to them; it is never another account's ID. Development and OIDC accounts omit it.
 - `POST /auth/logout`: revokes the Redis session and expires the session cookie.
 
 `GET /auth/login`, `GET /auth/oidc/callback`, and `GET /auth/session` remain compatibility routes. They are not a second enabled provider when `AUTH_PROVIDER=steam`.

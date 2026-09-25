@@ -142,10 +142,14 @@ class ReplayBlob(ServiceComponent):
         return self._with_replay_contract_defaults(replay)
 
     def public_replay(self, demo: Demo) -> dict[str, object] | None:
+        # One read: a replay is tens of MB and each load re-parses and re-normalizes it.
         replay = self.load_replay_blob(demo)
         if replay is None:
             return None
-        return _public_replay_contract(replay, self.public_video_status(demo))
+        return _public_replay_contract(
+            replay,
+            self.public_video_status(demo, internal_video=_replay_video_section(replay)),
+        )
 
     def get_video_status(self, demo: Demo) -> dict[str, Any]:
         replay = self.load_replay_blob(demo)
@@ -162,10 +166,7 @@ class ReplayBlob(ServiceComponent):
                 "errorMessage": None,
                 "timeOriginSeconds": 0,
             }
-        video = replay["video"]
-        if isinstance(video, dict):
-            return video
-        raise ValueError("Invalid replay video contract")
+        return _replay_video_section(replay)
 
     def public_video_status(
         self, demo: Demo, *, internal_video: dict[str, Any] | None = None
@@ -194,7 +195,7 @@ class ReplayBlob(ServiceComponent):
         video["errorMessage"] = error_message
         video["url"] = (
             f"/demos/{demo.id}/media/video"
-            if self._service.video.private_video_available(demo)
+            if self._service.video.private_video_available(demo, video=internal_video)
             else None
         )
         return video
@@ -277,7 +278,8 @@ class ReplayBlob(ServiceComponent):
         self.db.refresh(demo, with_for_update=True)
         current_video = self.get_video_status(demo)
         if current_video.get("source") == "manual_upload" or (
-            current_video.get("status") == "ready" and self._service.video.private_video_available(demo)
+            current_video.get("status") == "ready"
+            and self._service.video.private_video_available(demo, video=current_video)
         ):
             return current_video, None
 
@@ -352,3 +354,10 @@ class ReplayBlob(ServiceComponent):
             "errorMessage": video.get("errorMessage"),
             "timeOriginSeconds": max(0, time_origin_seconds),
         }
+
+
+def _replay_video_section(replay: dict[str, Any]) -> dict[str, Any]:
+    video = replay["video"]
+    if isinstance(video, dict):
+        return video
+    raise ValueError("Invalid replay video contract")

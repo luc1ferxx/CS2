@@ -10,15 +10,16 @@ describe("ReplayDiagnosticsPanel", () => {
     const diagnostics = buildReplayDiagnostics(replayData(), [coachingEvent()], []);
     render(<ReplayDiagnosticsPanel diagnostics={diagnostics} />);
 
-    const panel = screen.getByRole("region", { name: "Replay contract diagnostics" });
-    expect(panel).toHaveTextContent("Replay Contract");
-    expect(panel).toHaveTextContent("Contract data loaded");
+    const panel = screen.getByRole("region", { name: "回放数据检查" });
+    expect(panel).toHaveTextContent("回放数据检查");
+    expect(panel).toHaveTextContent("回放数据已载入");
     expect(panel).toHaveTextContent(diagnostics.contractVersion);
-    expect(panel).toHaveTextContent("Rounds2");
-    expect(panel).toHaveTextContent("Players2");
-    expect(panel).toHaveTextContent("Frames4");
-    expect(panel).toHaveTextContent("Coaching1");
-    expect(panel).toHaveTextContent("Parser events0");
+    expect(panel).toHaveTextContent("回合2");
+    expect(panel).toHaveTextContent("玩家2");
+    expect(panel).toHaveTextContent("位置帧4");
+    expect(panel).toHaveTextContent("建议1");
+    expect(panel).toHaveTextContent("解析事件0");
+    expect(panel).toHaveTextContent("视频生成未生成");
   });
 
   it("flags a normalized legacy contract and shows its warnings", () => {
@@ -44,11 +45,15 @@ describe("ReplayDiagnosticsPanel", () => {
     );
     render(<ReplayDiagnosticsPanel diagnostics={diagnostics} />);
 
-    const panel = screen.getByRole("region", { name: "Replay contract diagnostics" });
-    expect(panel).toHaveTextContent("Legacy or degraded contract normalized for review");
+    const panel = screen.getByRole("region", { name: "回放数据检查" });
+    expect(panel).toHaveTextContent("旧版或不完整的回放数据，已整理后用于复盘");
     expect(panel.querySelector(".replay-contract-version")).toHaveClass("legacy");
     const warnings = panel.querySelectorAll(".replay-diagnostics-warnings li");
     expect(warnings.length).toBe(diagnostics.warnings.length);
     expect(diagnostics.warnings.length).toBeGreaterThan(0);
+    // Known warnings read in Chinese; the helper's English stays out of the panel.
+    expect(panel).toHaveTextContent("旧版回放数据已在载入时整理。");
+    expect(panel).toHaveTextContent("缺少可选字段：events。");
+    expect(panel).not.toHaveTextContent(/No parser events|legacy replay contract|Missing optional/);
   });
 });

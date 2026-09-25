@@ -36,10 +36,25 @@ function loadTypeScriptModule(relativePath) {
 }
 
 const {
+  activeCoachingEventIds,
   buildCoachingReviewModel,
+  coachingEventSide,
+  coachingFacts,
+  coachingFeed,
+  coachingMomentLabel,
+  coachingRoundClock,
+  coachingSidesByRound,
+  compareFindingPriority,
   evidenceSummaryForEvent,
   feedbackProgress,
+  playerSidesByRound,
+  isPriorityFinding,
+  playerEvidenceForEvent,
+  reviewEventForEvent,
   ruleIdForEvent,
+  ruleLabelForRuleId,
+  sameIdSet,
+  severityFilterOptions,
   timelineMarkersForRound,
   withFeedback
 } = loadTypeScriptModule("./coaching-review.ts");
@@ -286,6 +301,32 @@ const events = [
 }
 
 {
+  // Inside a round the most severe card leads, then the earliest, like the analyzer.
+  const round = [
+    coachingEvent({ id: "low-early", round_number: 7, tick_start: 100, severity: "low", structured_context_json: { ruleId: "poor_spacing" } }),
+    coachingEvent({ id: "medium-late", round_number: 7, tick_start: 900, severity: "medium", structured_context_json: { ruleId: "untraded_death" } }),
+    coachingEvent({ id: "medium-early", round_number: 7, tick_start: 500, severity: "medium", structured_context_json: { ruleId: "untraded_death" } }),
+    coachingEvent({ id: "critical", round_number: 7, tick_start: 950, severity: "critical", structured_context_json: { ruleId: "isolated_entry" } }),
+    coachingEvent({ id: "info", round_number: 7, tick_start: 50, severity: "info", structured_context_json: { ruleId: "poor_spacing" } }),
+    coachingEvent({ id: "unknown", round_number: 7, tick_start: 10, severity: "bogus", structured_context_json: {} })
+  ];
+  const model = buildCoachingReviewModel(round, players, { severity: "all", rule: "all", search: "" });
+  assert.deepEqual(normalize(model.roundGroups[0].events.map((item) => item.event.id)),
+    ["critical", "medium-early", "medium-late", "low-early", "info", "unknown"]);
+  assert.deepEqual([...round].sort(compareFindingPriority).map((event) => event.id),
+    ["critical", "medium-early", "medium-late", "low-early", "info", "unknown"]);
+  assert.deepEqual(round.filter(isPriorityFinding).map((event) => event.id), ["medium-late", "medium-early", "critical"]);
+  // Only levels that are present become filters, with their counts.
+  assert.deepEqual(normalize(severityFilterOptions(round)), [
+    { value: "high", count: 1 }, { value: "medium", count: 2 }, { value: "low", count: 2 }
+  ]);
+  assert.deepEqual(normalize(severityFilterOptions(round.filter((event) => event.severity !== "critical"))), [
+    { value: "medium", count: 2 }, { value: "low", count: 2 }
+  ]);
+  assert.deepEqual(normalize(severityFilterOptions([])), []);
+}
+
+{
   const stamp = { note: null, updated_at: "2026-09-18T00:00:00Z" };
   const unrated = ["r1", "r2", "r3"].map((id, index) =>
     coachingEvent({
@@ -298,6 +339,114 @@ const events = [
   assert.equal(unrated[0].feedback, undefined, "withFeedback must not mutate its input");
   assert.deepEqual(normalize(feedbackProgress(withFeedback(rated, "r1", null))), { total: 3, rated: 1, helpful: 0, irrelevant: 0, unsure: 1 });
   assert.deepEqual(normalize(feedbackProgress([])), { total: 0, rated: 0, helpful: 0, irrelevant: 0, unsure: 0 });
+}
+
+{
+  // Rule names are Chinese and keyed by ruleId; nothing inherits from Object.prototype.
+  assert.equal(ruleLabelForRuleId("untraded_death"), "无人补枪的阵亡");
+  assert.equal(ruleLabelForRuleId("post_plant_spread_issue"), ruleLabelForRuleId("post_plant_spread"));
+  for (const id of ["future_rule", "toString", "__proto__"]) assert.equal(ruleLabelForRuleId(id), "其他建议");
+}
+
+{
+  // Each card carries the facts that tell it apart from others of its rule.
+  const fact = (ruleId, context) => coachingFacts(coachingEvent({ id: ruleId, round_number: 1, tick_start: 10, severity: "low",
+    structured_context_json: { ruleId, ...context } }));
+  assert.equal(fact("untraded_death", { attackerName: "donk", windowSeconds: 5 }), "被 donk 击杀，5 秒内没有队友补枪");
+  assert.equal(fact("untraded_death", {}), "没有记录到队友补枪");
+  assert.equal(fact("isolated_entry", { distance: 1075.93, isolatedTeammateDistance: 900 }), "T 方首个阵亡，最近的队友约 1076 单位外");
+  assert.equal(fact("isolated_entry", { distance: 26.42 }), "T 方首个阵亡", "legacy radar-percent distances are not called units");
+  assert.equal(fact("poor_spacing", { spacingType: "too_far", maxNearestDistance: 1403.2, distance: 28 }), "最近的队友约 1403 单位外");
+  assert.equal(fact("poor_spacing", { spacingType: "stacked", minPairDistance: 88.4 }), "两名队友相距约 88 单位");
+  assert.equal(fact("poor_spacing", { spacingType: "stacked", distance: 2.1 }), "队友站位较近");
+  assert.equal(fact("post_plant_spread_issue", { site: "B", nearbyCount: 3, windowSeconds: 4.25 }), "B 点下包后 3 名 T 站位集中，持续约 4.3 秒");
+  assert.equal(fact("post_plant_spacing_with_bomb_event", { site: 313 }), "下包后站位集中");
+  assert.equal(fact("retake_desync", { nearbyCount: 2, windowSeconds: 3.5 }), "2 名 CT 先后到达包点，前后相差约 3.5 秒");
+  assert.equal(fact("weak_utility_before_execute", { utilityCount: 1, requiredUtilityCount: 2, windowSeconds: 12 }), "下包前 12 秒内记录到 1/2 个道具");
+  assert.equal(fact("late_post_plant_utility", { utilityType: "smoke", windowSeconds: 18 }), "下包约 18 秒后投出第一个烟雾弹");
+  assert.equal(fact("late_post_plant_utility", { utilityLabel: "Molotov" }), "", "no timing, no fact line");
+  assert.equal(fact("future_rule", { attackerName: "donk" }), "");
+  for (const text of [fact("untraded_death", { attackerName: "donk", windowSeconds: 5 }), fact("weak_utility_before_execute", { utilityCount: 1 })]) {
+    assert.doesNotMatch(text, /tick|evt-|[a-z]+_[a-z]+/, "no raw ids or rule slugs in the facts line");
+  }
+}
+
+{
+  // Player evidence drops ids, ticks and parser enums and translates what it keeps;
+  // the raw evidence list (search, legacy callers) is unchanged.
+  const event = events[3];
+  assert.deepEqual(normalize(playerEvidenceForEvent(event).slice(0, 3)), [
+    { label: "windowSeconds", value: "12" },
+    { label: "utilityType", value: "烟雾弹" },
+    { label: "utilityLabel", value: "烟雾弹" }
+  ]);
+  for (const item of playerEvidenceForEvent(event)) {
+    assert.ok(!["relatedEventIds", "evidenceTicks", "bombTick", "bombEventType"].includes(item.label), item.label);
+  }
+  assert.equal(playerEvidenceForEvent(events[2]).find((item) => item.label === "spacingType").value, "过近");
+  assert.equal(evidenceSummaryForEvent(event)[0].label, "relatedEventIds");
+  const reviewEvent = reviewEventForEvent(events[0], new Map());
+  assert.equal(reviewEvent.facts, coachingFacts(events[0]));
+  assert.deepEqual(normalize(reviewEvent.playerEvidence), normalize(playerEvidenceForEvent(events[0])));
+}
+
+{
+  const rounds = [{ roundNumber: 2, startTick: 1000, freezeEndTick: 1200, endTick: 9000 }];
+  const event = coachingEvent({ id: "moment", round_number: 2, tick_start: 1000 + 64 * 71, severity: "low", structured_context_json: {} });
+  assert.equal(coachingMomentLabel(event, rounds, 64), "第 2 回合 1:11");
+  assert.equal(coachingMomentLabel({ ...event, tick_start: 1000 + 64 * 9 }, rounds, 64), "第 2 回合 0:09");
+  for (const rate of [undefined, 0, -1, NaN, Infinity]) assert.equal(coachingMomentLabel(event, rounds, rate), "第 2 回合");
+  assert.equal(coachingMomentLabel(event, [], 64), "第 2 回合");
+  // The kill-feed time column: the m:ss clock alone, or nothing when it cannot be told.
+  assert.equal(coachingRoundClock(event, rounds, 64), "1:11");
+  assert.equal(coachingRoundClock({ ...event, tick_start: 900 }, rounds, 64), null);
+  assert.equal(coachingRoundClock(event, [], 64), null);
+}
+
+{
+  // A card as a kill-feed row: killer ✕ victim for a death, and a finding that does not repeat them.
+  const feed = (ruleId, context) => normalize(coachingFeed(coachingEvent({ id: ruleId, round_number: 3, tick_start: 10, severity: "low",
+    structured_context_json: { ruleId, ...context } })));
+  assert.deepEqual(feed("untraded_death", { attackerName: "donk", windowSeconds: 5 }), { died: true, killer: "donk", finding: "5 秒内没有队友补枪" });
+  assert.deepEqual(feed("untraded_death", {}), { died: true, killer: null, finding: "没有记录到队友补枪" });
+  assert.deepEqual(feed("isolated_entry", {}), { died: true, killer: null, finding: "T 方首个阵亡" });
+  assert.deepEqual(feed("poor_spacing", { spacingType: "too_far", maxNearestDistance: 1403.2 }),
+    { died: false, killer: null, finding: "最近的队友约 1403 单位外" });
+  assert.deepEqual(feed("future_rule", {}), { died: false, killer: null, finding: "" });
+
+  // Sides swap at half, so the side comes from the round, not the roster.
+  const side = (ruleId, context = {}, round = 3) => coachingEvent({ id: `${ruleId}-${round}`, round_number: round, tick_start: 10,
+    severity: "low", structured_context_json: { ruleId, ...context } });
+  assert.equal(coachingEventSide(side("poor_spacing", { side: "CT" })), "CT");
+  assert.equal(coachingEventSide(side("poor_spacing", { side: "spectator" })), null);
+  assert.equal(coachingEventSide(side("isolated_entry")), "T");
+  assert.equal(coachingEventSide(side("late_post_plant_utility")), "T");
+  assert.equal(coachingEventSide(side("retake_desync")), "CT");
+  assert.equal(coachingEventSide(side("untraded_death")), null);
+  assert.deepEqual(normalize([...coachingSidesByRound([side("untraded_death"), side("poor_spacing", { side: "CT" }), side("retake_desync", {}, 14),
+    side("isolated_entry", {}, 14)])]), [[3, "CT"], [14, "CT"]]);
+
+  const frameAt = (tick, playerSide) => ({ tick, timeSeconds: 0, roundNumber: 0, bombState: { status: "unknown" },
+    players: [{ id: "me", name: "me", side: playerSide, x: 0, y: 0, alive: true, hp: 100, hasBomb: false }] });
+  const sideRounds = [
+    { roundNumber: 1, startTick: 0, freezeEndTick: 100, endTick: 900, winnerSide: "T" },
+    { roundNumber: 13, startTick: 1000, freezeEndTick: 1100, endTick: 1900, winnerSide: "CT" },
+    { roundNumber: 14, startTick: 2000, freezeEndTick: 2100, endTick: 2900, winnerSide: "CT" }
+  ];
+  const frames = [frameAt(0, "CT"), frameAt(120, "T"), frameAt(1120, "CT")];
+  assert.deepEqual(normalize([...playerSidesByRound(frames, sideRounds, "me")]), [[1, "T"], [13, "CT"]]);
+  assert.deepEqual(normalize([...playerSidesByRound(frames, sideRounds, null)]), []);
+}
+
+{
+  const a = coachingEvent({ id: "a", round_number: 1, tick_start: 1000, severity: "low", structured_context_json: {} });
+  const b = coachingEvent({ id: "b", round_number: 1, tick_start: 2000, severity: "low", structured_context_json: {} });
+  assert.deepEqual([...activeCoachingEventIds([a, b], 1000 - 128)], ["a"]);
+  assert.deepEqual([...activeCoachingEventIds([a, b], a.tick_end + 129)], []);
+  assert.deepEqual([...activeCoachingEventIds([a, b], 1900)].sort(), ["b"]);
+  assert.equal(sameIdSet(new Set(["a", "b"]), new Set(["b", "a"])), true);
+  assert.equal(sameIdSet(new Set(["a"]), new Set(["b"])), false);
+  assert.equal(sameIdSet(new Set(), new Set(["a"])), false);
 }
 
 function coachingEvent(overrides) {

@@ -124,6 +124,15 @@ export function buildTickClipRequest(
   };
 }
 
+// What a render poll compares between runs. /render/jobs already reads the
+// replay blob once for this list, so the demo's own video (a second read) is
+// only refetched when something here moved.
+export function renderJobsSignature(jobs: RenderJobStatus[]): string {
+  return jobs
+    .map((job) => [job.job_id, job.status, job.video_status ?? "", job.video?.status ?? "", job.video?.renderJobId ?? ""].join(":"))
+    .join("|");
+}
+
 function clipRangeForTick(replay: ReplayData, tick: number, roundNumber: number, tickRate: number) {
   const paddingTicks = tickRate * 20;
   const round = replay.rounds.find((item) => item.roundNumber === roundNumber);

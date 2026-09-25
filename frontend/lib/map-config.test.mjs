@@ -39,9 +39,11 @@ const {
   getTacticalMapConfig,
   getTacticalMapPresentation,
   getTacticalMapLevel,
+  mapDisplayName,
   resolveTacticalMapLevel,
   sanitizeRadarPercent,
   sanitizeRadarPoint,
+  tacticalRadarImagePaths,
   worldToRadarPercent
 } = loadTypeScriptModule("./map-config.ts");
 
@@ -139,4 +141,18 @@ function normalize(value) {
   assert.equal(resolveTacticalMapLevel(nuke, "auto", undefined).followingPlayer, false);
   assert.deepEqual(normalize(worldToRadarPercent("de_nuke", -3453, 2887)), { x: 0, y: 0, confidence: "calibrated" });
   assert.deepEqual(normalize(worldToRadarPercent("de_nuke", 3715, -4281)), { x: 100, y: 100, confidence: "calibrated" });
+}
+
+{
+  assert.equal(mapDisplayName("de_dust2"), "Dust II");
+  assert.equal(mapDisplayName("de_nuke"), "Nuke");
+  assert.equal(mapDisplayName("de_vertigo"), "Vertigo", "maps without a config still lose the de_ prefix");
+  for (const pending of ["unknown", "", "  ", null, undefined]) {
+    assert.equal(mapDisplayName(pending), "地图待识别", `upload placeholder ${JSON.stringify(pending)}`);
+  }
+
+  assert.deepEqual(normalize(tacticalRadarImagePaths("de_dust2")), ["/maps/de_dust2_radar.png"]);
+  assert.deepEqual(normalize(tacticalRadarImagePaths("de_nuke")), ["/maps/de_nuke_radar.png", "/maps/de_nuke_lower_radar.png"],
+    "Nuke preloads both levels");
+  assert.deepEqual(normalize(tacticalRadarImagePaths("unknown")), []);
 }

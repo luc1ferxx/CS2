@@ -66,15 +66,15 @@ const { parserEventPresentationForType, timelineParserEventMarkersForRound } =
   const markers = timelineParserEventMarkersForRound(replay.events, 1, 100, 500);
 
   assert.deepEqual(normalize(markers.map((marker) => marker.presentation.shortLabel)), [
-    "K",
-    "P",
-    "S",
-    "F"
+    "击",
+    "包",
+    "烟",
+    "闪"
   ]);
   assert.deepEqual(normalize(parserEventPresentationForType("future_parser_event")), {
-    label: "Event",
+    label: "事件",
     tone: "objective",
-    shortLabel: "E"
+    shortLabel: "事"
   });
 }
 

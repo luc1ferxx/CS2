@@ -36,6 +36,7 @@ Production credentials 绝不能进入 `NEXT_PUBLIC_*`、源码、日志、签�
 | --- | --- | --- |
 | `NEXT_PUBLIC_API_BASE_URL` | `http://localhost:8000` | frontend browser API/media URL |
 | `NEXT_PUBLIC_AUTH_PROVIDER` | `steam` | public frontend login label/path; must match server `AUTH_PROVIDER` |
+| `NEXT_PUBLIC_BETA_CONTACT_URL` | unset | optional `mailto:` or form URL shown as "申请内测资格" on the not-invited sign-in page; inlined at frontend build time (preview passes it as a build arg) |
 
 ## 身份、会话与 owner 边界
 

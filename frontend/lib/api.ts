@@ -390,7 +390,10 @@ interface ResponseErrorDetails {
 }
 
 async function responseErrorDetails(response: Response): Promise<ResponseErrorDetails> {
-  const body = await response.text();
+  return errorDetailsFromBody(await response.text());
+}
+
+function errorDetailsFromBody(body: string): ResponseErrorDetails {
   if (!body) {
     return { message: "", detailCode: null, retryAfterSeconds: null };
   }
@@ -450,4 +453,109 @@ function positiveSeconds(value: unknown): number | null {
 function retryAfterHeaderSeconds(value: string | null): number | null {
   const trimmed = value?.trim() ?? "";
   return /^\d+$/.test(trimmed) ? positiveSeconds(Number(trimmed)) : null;
+}
+
+// The owner's upload allowance. A null limit means that limit is off
+// (always the case outside production). Advisory: the upload re-checks.
+export interface UploadQuota {
+  dailyLimit: number | null;
+  dailyUsed: number;
+  dailyResetSeconds: number | null;
+  activeLimit: number | null;
+  activeCount: number;
+  maxUploadBytes?: number | null;
+}
+
+export function getUploadQuota(): Promise<UploadQuota> {
+  return requestJson<UploadQuota>("/uploads/quota");
+}
+
+export interface UploadProgress {
+  loaded: number;
+  total: number;
+}
+
+export interface UploadDemoFileOptions {
+  onProgress?: (progress: UploadProgress) => void;
+  signal?: AbortSignal;
+}
+
+// createDemoUpload over XMLHttpRequest, which reports upload progress and can
+// be aborted. Failures raise the same ApiError as every other request, plus
+// the intake's sibling `errorCode` as detailCode when there is no structured one.
+export function uploadDemoFile(file: File, options: UploadDemoFileOptions = {}): Promise<DemoSummary> {
+  const { onProgress, signal } = options;
+  return new Promise<DemoSummary>((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(uploadAbortError());
+      return;
+    }
+    const xhr = new XMLHttpRequest();
+    const onAbortSignal = () => xhr.abort();
+    const settle = () => signal?.removeEventListener("abort", onAbortSignal);
+
+    xhr.open("POST", `${API_BASE_URL}/uploads/demo`);
+    xhr.withCredentials = true;
+    xhr.upload.onprogress = (event) => {
+      onProgress?.({ loaded: event.loaded, total: event.lengthComputable ? event.total : file.size });
+    };
+    xhr.onload = () => {
+      settle();
+      if (xhr.status >= 200 && xhr.status < 300) {
+        try {
+          resolve(JSON.parse(xhr.responseText) as DemoSummary);
+        } catch {
+          reject(new ApiError(xhr.status, "Upload response was not valid JSON"));
+        }
+        return;
+      }
+      if (xhr.status === 401) {
+        for (const listener of unauthorizedListeners) {
+          listener();
+        }
+      }
+      const detail = errorDetailsFromBody(xhr.responseText ?? "");
+      reject(
+        new ApiError(
+          xhr.status,
+          detail.message || `Request failed with ${xhr.status}`,
+          detail.detailCode ?? siblingErrorCode(xhr.responseText ?? ""),
+          detail.retryAfterSeconds ?? retryAfterHeaderSeconds(xhr.getResponseHeader("Retry-After"))
+        )
+      );
+    };
+    // Same message fetch uses, so the shared error copy reads it as a network failure.
+    xhr.onerror = () => {
+      settle();
+      reject(new TypeError("Failed to fetch"));
+    };
+    xhr.onabort = () => {
+      settle();
+      reject(uploadAbortError());
+    };
+    signal?.addEventListener("abort", onAbortSignal);
+
+    const formData = new FormData();
+    formData.append("file", file);
+    xhr.send(formData);
+  });
+}
+
+export function isUploadAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === "AbortError";
+}
+
+function uploadAbortError(): Error {
+  const error = new Error("Upload cancelled");
+  error.name = "AbortError";
+  return error;
+}
+
+function siblingErrorCode(body: string): string | null {
+  try {
+    const parsed = JSON.parse(body) as { errorCode?: unknown };
+    return typeof parsed.errorCode === "string" ? parsed.errorCode : null;
+  } catch {
+    return null;
+  }
 }

@@ -89,8 +89,8 @@ class _AcceptedVideoHandle:
 class VideoRegistry(ServiceComponent):
     """Reached as ``DemoService.video``."""
 
-    def private_video_available(self, demo: Demo) -> bool:
-        storage_key = self._private_video_storage_key(demo)
+    def private_video_available(self, demo: Demo, *, video: dict[str, Any] | None = None) -> bool:
+        storage_key = self._private_video_storage_key(demo, video=video)
         if storage_key is None:
             return False
         if storage_key.startswith("artifact://"):
@@ -145,8 +145,11 @@ class VideoRegistry(ServiceComponent):
             )
         return self.storage.open_video_for_demo(demo.id, storage_key)
 
-    def _private_video_storage_key(self, demo: Demo) -> str | None:
-        video = self._service.replay.get_video_status(demo)
+    def _private_video_storage_key(self, demo: Demo, *, video: dict[str, Any] | None = None) -> str | None:
+        # Callers that already hold the replay's video section pass it in; each
+        # get_video_status() is a full read and normalization of the replay blob.
+        if video is None:
+            video = self._service.replay.get_video_status(demo)
         if video.get("status") != "ready":
             return None
 

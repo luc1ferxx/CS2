@@ -12,6 +12,7 @@ import math
 import threading
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -63,6 +64,17 @@ class UploadQuotaExceeded(Exception):
         )
 
 
+@dataclass(frozen=True)
+class UploadQuotaSnapshot:
+    """What the dashboard shows before an upload: None limits mean the limit is off."""
+
+    daily_limit: int | None
+    daily_used: int
+    daily_reset_seconds: int | None
+    active_limit: int | None
+    active_count: int
+
+
 class UploadQuotaService:
     def __init__(
         self,
@@ -82,6 +94,41 @@ class UploadQuotaService:
         with self.db.no_autoflush:
             self._check_parse_capacity(owner_id)
             self._check_daily_uploads(owner_id)
+
+    def snapshot(self, owner_id: str) -> UploadQuotaSnapshot:
+        """The owner's counts against the limits `check_new_upload` enforces.
+
+        Advisory only: the upload route re-checks authoritatively. The global
+        parse cap is shared by every owner and is not reported here.
+        """
+        active_count = self._active_demo_count(owner_id)
+        if self.settings.auth_mode != "production":
+            return UploadQuotaSnapshot(None, 0, None, None, active_count)
+        daily_limit = self.settings.demo_upload_daily_limit or None
+        daily_used = 0
+        daily_reset_seconds: int | None = None
+        if daily_limit:
+            now = self.clock()
+            recent = (
+                self.db.query(Demo.created_at)
+                .filter(
+                    Demo.owner_id == owner_id,
+                    Demo.created_at > now - UPLOAD_QUOTA_WINDOW,
+                )
+                .order_by(Demo.created_at.desc())
+                .limit(daily_limit)
+                .all()
+            )
+            daily_used = len(recent)
+            if daily_used >= daily_limit:
+                daily_reset_seconds = _seconds_until_slot_frees(recent[-1][0], now)
+        return UploadQuotaSnapshot(
+            daily_limit=daily_limit,
+            daily_used=daily_used,
+            daily_reset_seconds=daily_reset_seconds,
+            active_limit=self.settings.demo_active_parse_limit or None,
+            active_count=active_count,
+        )
 
     def check_parse_retry(self, owner_id: str) -> None:
         # A retry reuses its demo row, so only the in-flight caps apply.
@@ -125,15 +172,11 @@ class UploadQuotaService:
         )
         if len(recent) < limit:
             return
-        # The owner is back under the limit once the limit-th newest upload
-        # leaves the window; with exactly `limit` uploads that is the oldest.
-        blocking = _as_utc(recent[-1][0])
-        seconds = (blocking + UPLOAD_QUOTA_WINDOW - now).total_seconds()
         raise UploadQuotaExceeded(
             429,
             "upload_daily_limit",
             "Daily upload limit reached. Try again later.",
-            max(1, min(math.ceil(seconds), 86_400)),
+            _seconds_until_slot_frees(recent[-1][0], now),
         )
 
     def _active_demo_count(self, owner_id: str | None = None) -> int:
@@ -233,6 +276,13 @@ def _any_parse_limit(runtime_settings: Settings) -> bool:
         or runtime_settings.demo_active_parse_limit
         or runtime_settings.parse_queue_global_limit
     )
+
+
+def _seconds_until_slot_frees(blocking_created_at: datetime, now: datetime) -> int:
+    # The owner is back under the limit once the limit-th newest upload
+    # leaves the window; with exactly `limit` uploads that is the oldest.
+    seconds = (_as_utc(blocking_created_at) + UPLOAD_QUOTA_WINDOW - now).total_seconds()
+    return max(1, min(math.ceil(seconds), 86_400))
 
 
 def _as_utc(value: datetime) -> datetime:

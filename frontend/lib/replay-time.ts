@@ -1,4 +1,7 @@
-import type { ReplayVideo } from "@/types/replay";
+import type { ReplayRound, ReplayVideo } from "@/types/replay";
+
+// Seconds of lead-in before a suggestion, so the player sees what led to it.
+export const FINDING_LEAD_SECONDS = 3;
 
 export interface VideoTimeRange {
   start: number;
@@ -76,6 +79,40 @@ export function videoTimeRange(video: ReplayVideo): VideoTimeRange {
   const mediaEnd = video.durationSeconds > 0 ? video.durationSeconds : tickRangeEnd;
   const end = Math.max(start, Math.min(mediaEnd, tickRangeEnd));
   return { start, end };
+}
+
+/** Round clock as "m:ss", the one time format used in player-facing copy. */
+export function formatRoundTime(seconds: number): string {
+  const total = Number.isFinite(seconds) ? Math.max(0, Math.floor(seconds)) : 0;
+  return `${Math.floor(total / 60)}:${(total % 60).toString().padStart(2, "0")}`;
+}
+
+export function roundTimeAt(tick: number, round: Pick<ReplayRound, "startTick"> | null | undefined, tickRate: number): string {
+  const rate = Number.isFinite(tickRate) && tickRate > 0 ? tickRate : 64;
+  return formatRoundTime((tick - (round?.startTick ?? tick)) / rate);
+}
+
+/** First tick worth watching: the end of freeze time when the parser recorded a usable one. */
+export function roundPlaybackStartTick(round: Pick<ReplayRound, "startTick" | "freezeEndTick" | "endTick">): number {
+  const freezeEnd = round.freezeEndTick;
+  return Number.isFinite(freezeEnd) && freezeEnd >= round.startTick && freezeEnd < round.endTick
+    ? freezeEnd
+    : round.startTick;
+}
+
+/** Where "查看这一刻" lands: a short lead-in before the moment, never before the round's playable start. */
+export function findingLeadInTick(
+  tick: number,
+  round: Pick<ReplayRound, "startTick" | "freezeEndTick" | "endTick"> | null | undefined,
+  tickRate: number,
+  leadSeconds = FINDING_LEAD_SECONDS
+): number {
+  const rate = Number.isFinite(tickRate) && tickRate > 0 ? tickRate : 64;
+  const leadIn = tick - leadSeconds * rate;
+  if (!round) return Math.max(0, leadIn);
+  const playableStart = roundPlaybackStartTick(round);
+  const floor = tick >= playableStart ? playableStart : round.startTick;
+  return Math.min(tick, Math.max(floor, leadIn));
 }
 
 function normalizedTickRate(video: ReplayVideo): number {

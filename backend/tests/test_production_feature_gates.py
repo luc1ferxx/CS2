@@ -338,6 +338,15 @@ class ProductionFeatureGateApiTest(unittest.TestCase):
                     me.json()["capabilities"],
                     {"devTools": True, "renderClips": True},
                 )
+                # Local QA keeps its account shape: no Steam identity to expose.
+                self.assertEqual(
+                    me.json()["account"],
+                    {
+                        "displayName": "Local development",
+                        "avatarUrl": None,
+                        "provider": "development",
+                    },
+                )
 
 
 class FakeRedis:

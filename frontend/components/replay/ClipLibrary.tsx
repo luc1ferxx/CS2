@@ -1,10 +1,12 @@
 "use client";
 
 import { Play } from "lucide-react";
+import { memo } from "react";
 
 import type { RenderJobStatus } from "@/lib/api";
-import { friendlyErrorMessage } from "@/lib/demo-library";
 import { playableClipVideo } from "@/lib/render-clips";
+import { formatRoundTime } from "@/lib/replay-time";
+import { renderFailureMessage } from "@/lib/user-errors";
 import type { ReplayRound } from "@/types/replay";
 
 interface ClipLibraryProps {
@@ -17,7 +19,7 @@ interface ClipLibraryProps {
   onPlay: (job: RenderJobStatus) => void;
 }
 
-export function ClipLibrary({ jobs, playerName, rounds, canGenerate, selectedJobId, onPlay }: ClipLibraryProps) {
+export const ClipLibrary = memo(function ClipLibrary({ jobs, playerName, rounds, canGenerate, selectedJobId, onPlay }: ClipLibraryProps) {
   const readyCount = jobs.filter((job) => playableClipVideo(job)).length;
   const currentJobs = jobs.filter((job) => job.status !== "failed" && (job.status !== "completed" || playableClipVideo(job)));
   const historyJobs = jobs.filter((job) => !currentJobs.includes(job));
@@ -37,18 +39,21 @@ export function ClipLibrary({ jobs, playerName, rounds, canGenerate, selectedJob
       : job.status === "failed" ? "生成失败"
         : job.status === "rendering" || job.status === "processing" ? "生成中" : "等待生成";
 
+    const place = `${roundNumber ? `第 ${roundNumber} 回合` : "回合未知"}${offset !== null ? ` ${formatRoundTime(offset)}` : ""}`;
+    const action = selected ? "重新观看" : "观看视频";
+
     return (
       <li key={job.job_id} className={`clip-library-item ${selected ? "selected" : ""}`}>
-        <div className="clip-library-coordinate" title={`Tick ${start ?? "?"}–${end ?? "?"}`}>
-          <strong>{roundNumber ? `第 ${roundNumber} 回合` : "回合未知"}{offset !== null ? ` · ${formatClipTime(offset)}` : ""}</strong>
-          <span>{duration !== null ? `${Math.round(duration)} 秒片段` : "片段时长未知"}</span>
-          {job.error_message ? <small>{friendlyErrorMessage(job.error_message)}</small> : null}
+        <div className="clip-library-coordinate">
+          <strong>{roundNumber ? `第 ${roundNumber} 回合` : "回合未知"}{offset !== null ? ` ${formatRoundTime(offset)}` : ""}</strong>
+          <span>{duration !== null ? `${Math.round(duration)} 秒视频` : "视频时长未知"}</span>
+          {job.error_message || job.error_code ? <small>{renderFailureMessage(job.error_code)}</small> : null}
         </div>
         <span className={`mini-pill clip-job-pill ${job.status}`} role="status">{label}</span>
         {video ? (
           <button className="secondary-button compact-button" type="button" onClick={() => onPlay(job)}
-            aria-pressed={selected} aria-label={`Play ${playerName ?? "player"} clip at tick ${start}`}>
-            <Play size={14} aria-hidden="true" />{selected ? "重新观看" : "观看视频"}
+            aria-pressed={selected} aria-label={`${action}：${playerName ?? "玩家"} · ${place}`}>
+            <Play size={14} aria-hidden="true" />{action}
           </button>
         ) : null}
       </li>
@@ -56,14 +61,14 @@ export function ClipLibrary({ jobs, playerName, rounds, canGenerate, selectedJob
   }
 
   return (
-    <section className="panel clip-library" aria-label="Saved first-person clips">
+    <section className="panel clip-library" aria-label="已保存的第一人称视频">
       <div className="clip-library-heading">
-        <h2>{playerName ? `${playerName} 的片段` : "第一人称片段"}</h2>
+        <h2>{playerName ? `${playerName} 的视频` : "第一人称视频"}</h2>
         <span>{readyCount} 段可观看</span>
       </div>
       {jobs.length === 0 ? (
         <p className="clip-library-empty">
-          {!playerName ? "选择复盘玩家后，查看已保存的片段。"
+          {!playerName ? "选择复盘玩家后，查看已保存的视频。"
             : canGenerate ? "从建议或当前时刻生成视频，完成后会保存在这里，随时重播。" : "暂无已保存的视频。"}
         </p>
       ) : (
@@ -71,7 +76,7 @@ export function ClipLibrary({ jobs, playerName, rounds, canGenerate, selectedJob
           {currentJobs.length > 0 ? <ul className="clip-library-list">{currentJobs.map(renderClip)}</ul> : null}
           {historyJobs.length > 0 ? (
             <details className="clip-library-history">
-              <summary>未完成与不可用的片段 · {historyJobs.length}</summary>
+              <summary>未完成与不可用的视频（{historyJobs.length}）</summary>
               <ul className="clip-library-list">{historyJobs.map(renderClip)}</ul>
             </details>
           ) : null}
@@ -79,8 +84,4 @@ export function ClipLibrary({ jobs, playerName, rounds, canGenerate, selectedJob
       )}
     </section>
   );
-}
-
-function formatClipTime(seconds: number): string {
-  return `${Math.floor(seconds / 60)}:${Math.floor(seconds % 60).toString().padStart(2, "0")}`;
-}
+});

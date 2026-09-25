@@ -80,6 +80,7 @@ services:
       args:
         NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:?Set the public HTTPS API origin}
         NEXT_PUBLIC_AUTH_PROVIDER: ${AUTH_PROVIDER:?Set the production identity provider to steam or oidc}
+        NEXT_PUBLIC_BETA_CONTACT_URL: ${NEXT_PUBLIC_BETA_CONTACT_URL:-}
     command: npm run start -- --hostname 0.0.0.0 --port 3000
     environment:
       NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:?Set the public HTTPS API origin}

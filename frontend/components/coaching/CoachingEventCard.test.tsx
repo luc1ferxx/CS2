@@ -1,13 +1,14 @@
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import type { ComponentProps } from "react";
 import { describe, expect, it, vi } from "vitest";
 
-import { CoachingEventCard } from "@/components/coaching/CoachingEventCard";
+import { CoachingEventCard, coachingCardId } from "@/components/coaching/CoachingEventCard";
 import { reviewEventForEvent } from "@/lib/coaching-review";
 import { coachingEvent, renderJob } from "@/lib/test-fixtures/review";
 import type { CoachingEvent } from "@/types/coaching";
 
-type CardProps = Parameters<typeof CoachingEventCard>[0];
+type CardProps = ComponentProps<typeof CoachingEventCard>;
 
 function renderCard(event: CoachingEvent, overrides: Partial<CardProps> = {}) {
   const props: CardProps = {
@@ -28,6 +29,22 @@ function renderCard(event: CoachingEvent, overrides: Partial<CardProps> = {}) {
 function verdictGroup() {
   return screen.getByRole("group", { name: /这条建议是否有帮助/ });
 }
+
+const untradedDeath = coachingEvent({
+  id: "untraded-1",
+  title: "Review an untraded death",
+  message: "T Entry died; the recorded killer was not killed by a teammate within 5 seconds.",
+  structured_context_json: {
+    ruleId: "untraded_death",
+    attackerName: "CT Anchor",
+    windowSeconds: 5,
+    distance: 1075.93,
+    evidenceTicks: [400],
+    relatedEventIds: ["kill-400-76561198000000002-76561198000000001"],
+    action: "Check who can trade before retaking this duel.",
+    limitation: "Positions cannot establish line of sight."
+  }
+});
 
 describe("CoachingEventCard", () => {
   it("offers the three verdicts with none pressed for an unrated suggestion", () => {
@@ -60,13 +77,86 @@ describe("CoachingEventCard", () => {
     const props = renderCard(event);
 
     await user.click(screen.getByRole("button", { name: /^查看这一刻：/ }));
-    expect(props.onSeek).toHaveBeenCalledWith(640);
+    expect(props.onSeek).toHaveBeenCalledWith(640, event.id);
 
     await user.click(screen.getByRole("button", { name: /^查看依据：/ }));
-    expect(props.onToggleInspect).toHaveBeenCalledTimes(1);
+    expect(props.onToggleInspect).toHaveBeenCalledWith(event.id);
 
     await user.click(screen.getByRole("button", { name: "生成视频" }));
     expect(props.onGenerateClip).toHaveBeenCalledWith(event);
+  });
+
+  it("carries the coaching-event-<id> anchor the review page returns to", () => {
+    renderCard(untradedDeath);
+    const card = screen.getByRole("article");
+    expect(card).toHaveAttribute("id", "coaching-event-untraded-1");
+    expect(coachingCardId("untraded-1")).toBe("coaching-event-untraded-1");
+    // Focusable by script only, so returning to the card does not add a Tab stop.
+    expect(card).toHaveAttribute("tabindex", "-1");
+  });
+
+  it("reads like a kill-feed row: clock, killer ✕ victim in side colors, then the finding", () => {
+    renderCard(untradedDeath, { clock: "1:12", locationLabel: "第 1 回合 1:12", side: "T" });
+    const row = screen.getByRole("article");
+    const line = within(row).getByRole("heading", { level: 3 });
+
+    expect(within(row).getByText("1:12")).toHaveAttribute("title", "第 1 回合 1:12");
+    expect(within(line).getByText("CT Anchor")).toHaveClass("side-ct");
+    expect(within(line).getByText("T Entry")).toHaveClass("reviewed", "side-t");
+    expect(within(line).getByText("5 秒内没有队友补枪")).toBeInTheDocument();
+    // Read aloud as a sentence with the severity; the ✕ glyph itself is decoration.
+    expect(line).toHaveTextContent("CT Anchor 击杀 ✕T Entry5 秒内没有队友补枪，值得留意");
+    expect(within(line).getByText("✕")).toHaveAttribute("aria-hidden", "true");
+    expect(screen.queryByText(/untraded_death|kill-400|tick/)).not.toBeInTheDocument();
+  });
+
+  it("keeps names neutral when the round's side is not known, and leads with the finding for other rules", () => {
+    renderCard(untradedDeath);
+    expect(screen.getByText("CT Anchor")).toHaveClass("side-unknown");
+
+    const spacing = coachingEvent({ id: "spacing-1", structured_context_json: { ruleId: "poor_spacing", spacingType: "too_far", maxNearestDistance: 1326 } });
+    renderCard(spacing, { clock: "2:05" });
+    const card = document.getElementById("coaching-event-spacing-1") as HTMLElement;
+    expect(within(card).getByRole("heading", { level: 3 })).toHaveTextContent("最近的队友约 1326 单位外");
+    expect(card.querySelector(".coaching-feed-kill")).toBeNull();
+  });
+
+  it("opens the evidence in Chinese and keeps raw ids and the analyzer's English in 技术详情", () => {
+    renderCard(untradedDeath, { inspected: true });
+    const inspector = document.getElementById("coaching-event-untraded-1-evidence") as HTMLElement;
+    const technical = inspector.querySelector("details.coaching-technical-details") as HTMLElement;
+
+    expect(within(inspector).getByText("判断边界")).toBeInTheDocument();
+    expect(within(inspector).getByText("被 CT Anchor 击杀，5 秒内没有队友补枪")).toBeInTheDocument();
+    expect(within(inspector).getByText("规则").nextElementSibling).toHaveTextContent("无人补枪的阵亡");
+    expect(within(inspector).getByText("玩家").nextElementSibling).toHaveTextContent("T Entry");
+    expect(within(inspector).getByText("相关玩家")).toBeInTheDocument();
+    expect(within(inspector).getByText("直线距离（世界坐标单位）")).toBeInTheDocument();
+
+    expect(technical).not.toHaveAttribute("open");
+    expect(within(technical).getByText("技术详情")).toBeInTheDocument();
+    expect(within(technical).getByText(untradedDeath.message)).toBeInTheDocument();
+    expect(within(technical).getByText("untraded_death")).toBeInTheDocument();
+    expect(within(technical).getByText("kill-400-76561198000000002-76561198000000001")).toBeInTheDocument();
+    // Everything outside 技术详情 is free of slugs, event ids, ticks and the English message.
+    const outside = inspector.cloneNode(true) as HTMLElement;
+    outside.querySelector("details")?.remove();
+    expect(outside.textContent).not.toMatch(/untraded_death|kill-400|tick|died|选手/);
+  });
+
+  it("says in place when a verdict was not saved and re-sends that verdict", async () => {
+    const user = userEvent.setup();
+    const props = renderCard(untradedDeath, { feedbackState: { status: "failed", verdict: "helpful" } });
+
+    expect(screen.getByRole("status")).toHaveTextContent("评价没有保存。");
+    await user.click(screen.getByRole("button", { name: "重新保存" }));
+    expect(props.onFeedback).toHaveBeenCalledWith(untradedDeath, "helpful");
+  });
+
+  it("marks the verdicts busy while a save is in flight and keeps the status line empty", () => {
+    renderCard(untradedDeath, { feedbackState: { status: "saving", verdict: "unsure" } });
+    expect(verdictGroup()).toHaveAttribute("aria-busy", "true");
+    expect(screen.getByRole("status")).toBeEmptyDOMElement();
   });
 
   it("drops the clip button when no clip handler is given, keeping locate and verdicts", () => {

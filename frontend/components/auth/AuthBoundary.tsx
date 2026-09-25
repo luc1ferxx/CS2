@@ -1,9 +1,14 @@
 "use client";
 
 import { LogIn, RefreshCw, ShieldCheck } from "lucide-react";
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 
 import { useAuth } from "@/components/auth/AuthProvider";
+import { AppBrand } from "@/components/layout/AppBrand";
+import { AuthShell } from "@/components/layout/AuthShell";
+
+// Most session checks finish well inside this; only a slow one earns a message.
+const CONNECTING_NOTICE_DELAY_MS = 400;
 
 export function AuthBoundary({ children }: { children: ReactNode }) {
   const { provider, refreshSession, signIn, state } = useAuth();
@@ -11,18 +16,27 @@ export function AuthBoundary({ children }: { children: ReactNode }) {
   if (state.status === "authenticated") {
     return children;
   }
+  if (state.status === "checking") {
+    return <SessionCheckShell />;
+  }
 
   const copy = authBoundaryCopy(state.status, provider);
+  const signingIn = state.status === "anonymous" || state.status === "expired";
 
   return (
-    <main className="auth-shell">
+    <AuthShell beta>
       <section className="panel auth-panel" aria-live="polite">
         <span className="auth-icon">
-          <ShieldCheck size={24} />
+          <ShieldCheck size={20} aria-hidden="true" />
         </span>
         <div>
           <h1>{copy.title}</h1>
           <p>{copy.message}</p>
+          {signingIn && provider === "steam" ? (
+            <p className="auth-note">
+              将跳转到 Steam 官方页面（steamcommunity.com）登录。我们只会得到你的 Steam ID 和公开的昵称、头像，不会获得你的密码。
+            </p>
+          ) : null}
           {state.status === "error" && state.message ? (
             <details>
               <summary>查看错误详情</summary>
@@ -30,7 +44,7 @@ export function AuthBoundary({ children }: { children: ReactNode }) {
             </details>
           ) : null}
         </div>
-        {state.status === "anonymous" || state.status === "expired" ? (
+        {signingIn ? (
           <button className="primary-button" type="button" onClick={() => signIn()}>
             <LogIn size={16} />
             {provider === "steam" ? "通过 Steam 登录" : "登录"}
@@ -47,6 +61,26 @@ export function AuthBoundary({ children }: { children: ReactNode }) {
           </button>
         ) : null}
       </section>
+    </AuthShell>
+  );
+}
+
+// The page's own shell, empty, so a deep link does not flash a centered card
+// before the workspace; the page itself stays withheld until the session is known.
+function SessionCheckShell() {
+  const [slow, setSlow] = useState(false);
+  useEffect(() => {
+    const timeoutId = window.setTimeout(() => setSlow(true), CONNECTING_NOTICE_DELAY_MS);
+    return () => window.clearTimeout(timeoutId);
+  }, []);
+  return (
+    <main className="app-shell library-app session-check-shell">
+      <header className="topbar">
+        <AppBrand />
+      </header>
+      <section className="page" aria-busy="true">
+        <p className="session-check-notice" role="status">{slow ? "正在连接…" : ""}</p>
+      </section>
     </main>
   );
 }
@@ -55,12 +89,6 @@ function authBoundaryCopy(
   status: string,
   provider: "steam" | "oidc"
 ) {
-  if (status === "checking") {
-    return {
-      title: "正在打开比赛库",
-      message: "正在连接，请稍候。"
-    };
-  }
   if (status === "expired") {
     return {
       title: "登录已过期",
@@ -70,14 +98,14 @@ function authBoundaryCopy(
   if (status === "error") {
     return {
       title: "暂时无法连接",
-      message: "请确认应用已启动，然后重新连接。"
+      message: "网络连接中断，请检查网络后重新连接。"
     };
   }
   return {
     title: provider === "steam" ? "通过 Steam 登录" : "登录",
     message:
       provider === "steam"
-        ? "连接 Steam 账户，查看属于你的比赛和复盘记录。"
-        : "登录账户，打开你的比赛库。"
+        ? "上传 CS2 比赛录像（.dem），查看战术回放和复盘建议。用 Steam 账号登录后，比赛只有你自己能看到。"
+        : "上传 CS2 比赛录像（.dem），查看战术回放和复盘建议。登录后打开你的比赛库。"
   };
 }

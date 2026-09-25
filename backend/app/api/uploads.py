@@ -1,17 +1,37 @@
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
 from app.core.auth import get_current_owner_id
+from app.core.config import settings
 from app.core.database import get_db
 from app.core.features import require_dev_tools
 from app.schemas.demo import DemoListItem
+from app.schemas.upload_quota import UploadQuotaResponse
 from app.services.artifact_intake import ArtifactIntakeError
 from app.services.demo_service import DemoArtifactBindError, DemoDispatchError, DemoService
 from app.services.upload_quota import UploadQuotaExceeded, UploadQuotaService, parse_admission
 from app.services.upload_service import DemoUploadValidationError
 
 router = APIRouter(tags=["uploads"])
+
+
+@router.get("/uploads/quota", response_model=UploadQuotaResponse)
+def get_upload_quota(
+    response: Response,
+    db: Session = Depends(get_db),
+    owner_id: str = Depends(get_current_owner_id),
+) -> UploadQuotaResponse:
+    snapshot = UploadQuotaService(db).snapshot(owner_id)
+    response.headers["Cache-Control"] = "private, no-store"
+    return UploadQuotaResponse(
+        dailyLimit=snapshot.daily_limit,
+        dailyUsed=snapshot.daily_used,
+        dailyResetSeconds=snapshot.daily_reset_seconds,
+        activeLimit=snapshot.active_limit,
+        activeCount=snapshot.active_count,
+        maxUploadBytes=settings.max_demo_upload_bytes,
+    )
 
 
 @router.post(

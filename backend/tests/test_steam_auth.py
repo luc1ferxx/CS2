@@ -330,12 +330,13 @@ class SteamOpenIdBrowserTest(unittest.TestCase):
                     "displayName": "Tactical Reviewer",
                     "avatarUrl": "https://avatars.steamstatic.com/avatar_full.jpg",
                     "provider": "steam",
+                    # The viewer's own SteamID64 only; the owner id stays private.
+                    "steamId": STEAM_ID_A,
                 },
                 "capabilities": {"devTools": False, "renderClips": False},
             },
         )
         self.assertNotIn("owner", me.text.lower())
-        self.assertNotIn(STEAM_ID_A, me.text)
         self.assertEqual(me.headers["cache-control"], "private, no-store")
         self.assertTrue(
             {"cookie", "origin"}.issubset(
@@ -454,6 +455,7 @@ class SteamOpenIdBrowserTest(unittest.TestCase):
                 "displayName": "Steam account",
                 "avatarUrl": None,
                 "provider": "steam",
+                "steamId": STEAM_ID_A,
             },
         )
 
@@ -499,6 +501,14 @@ class SteamOpenIdBrowserTest(unittest.TestCase):
             db.add(make_demo("demo-steam-a", owner_a))
             db.add(make_demo("demo-steam-b", owner_b))
             db.commit()
+
+        # Each session sees only its own SteamID64, never the other account's.
+        me_a = client_a.get("/auth/me")
+        me_b = client_b.get("/auth/me")
+        self.assertEqual(me_a.json()["account"]["steamId"], STEAM_ID_A)
+        self.assertEqual(me_b.json()["account"]["steamId"], STEAM_ID_B)
+        self.assertNotIn(STEAM_ID_B, me_a.text)
+        self.assertNotIn(STEAM_ID_A, me_b.text)
 
         demos_a = client_a.get("/demos")
         demos_b = client_b.get("/demos")

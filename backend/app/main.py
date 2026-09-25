@@ -15,6 +15,7 @@ from app.core.auth import SessionCsrfMiddleware
 from app.core.config import settings
 from app.core.database import SessionLocal, init_db
 from app.core.features import api_docs_kwargs
+from app.core.json_compression import JsonGzipMiddleware
 from app.core.redis import get_redis_client
 from app.core.request_limits import (
     MultipartRequestLimitMiddleware,
@@ -70,6 +71,10 @@ app = FastAPI(
 install_auth_callback_access_log_redaction()
 suppress_outbound_http_request_logging()
 
+# JSON only: media Range responses and streamed downloads pass through untouched.
+# Added first so it sits innermost, next to the routes: SessionCsrfMiddleware is
+# a BaseHTTPMiddleware, and anything outside it sees every body re-streamed in chunks.
+app.add_middleware(JsonGzipMiddleware, minimum_size=1024, compresslevel=5)
 multipart_envelope_overhead = 8 * 1024 * 1024
 app.add_middleware(
     MultipartRequestLimitMiddleware,

@@ -22,7 +22,7 @@ Production 的上传额度（`DEMO_UPLOAD_DAILY_LIMIT`、`DEMO_ACTIVE_PARSE_LIMI
 - `GET /diagnostics`（仅 development/test；production 返回 `404`）
 - `GET /auth/steam/login`
 - `GET /auth/steam/callback`（不在 `STEAM_LOGIN_ALLOWLIST` 中的 Steam ID 会 `303` 到 `/auth/callback?error=not_invited`，不创建账号、不发 session，并撤销浏览器已有的 session）
-- `GET /auth/me`
+- `GET /auth/me`（Steam 账号额外返回登录者本人的 `account.steamId`，用于在比赛中默认定位本人；development/OIDC 不返回）
 - `POST /auth/logout`
 - `GET /auth/login`、`GET /auth/oidc/callback`、`GET /auth/session`（`AUTH_PROVIDER=oidc` / legacy frontend 兼容）
 - `GET /steam/connection`
@@ -37,12 +37,13 @@ Production 的上传额度（`DEMO_UPLOAD_DAILY_LIMIT`、`DEMO_ACTIVE_PARSE_LIMI
 - `GET /demos/{demo_id}/status`
 - `GET /demos/{demo_id}/diagnostics`
 - `POST /demos/{demo_id}/parse/retry`（production 受全站/个人处理中额度限制：`503` `parse_queue_full`、`429` `active_parse_limit`）
+- `GET /uploads/quota`（当前 owner 的上传额度：`{dailyLimit, dailyUsed, dailyResetSeconds, activeLimit, activeCount, maxUploadBytes}`；development/test 下各 limit 为 `null`；`Cache-Control: private, no-store`；仅供提示，上传时仍以 `POST /uploads/demo` 的检查为准，不报告全站 `PARSE_QUEUE_GLOBAL_LIMIT`）
 - `POST /uploads/mock`（仅 development/test；production 返回 `404`）
 - `POST /uploads/demo`（production 受上传额度限制：`503` `parse_queue_full`、`429` `active_parse_limit` / `upload_daily_limit`、`503` `upload_quota_unavailable`）
 
 ### Replay and coaching
 
-- `GET /demos/{demo_id}/replay`
+- `GET /demos/{demo_id}/replay`（紧凑 JSON；客户端发送 `Accept-Encoding: gzip` 时 gzip 压缩。JSON 响应 ≥1 KB 时都按此压缩，媒体、Range 与流式响应不压缩）
 - `GET /demos/{demo_id}/coaching`（每条事件附带当前 owner 自己的 `feedback`：`{verdict, note, updated_at}` 或 `null`）
 - `PUT /demos/{demo_id}/coaching/{event_id}/feedback`（body `{"verdict": "helpful" | "irrelevant" | "unsure", "note"?: ≤240 字符}`；事件不属于该 demo → 404）
 - `DELETE /demos/{demo_id}/coaching/{event_id}/feedback`（204，幂等）
@@ -84,6 +85,8 @@ curl http://localhost:8000/diagnostics
 ### 上传 `.dem`
 
 ```bash
+# Advisory allowance before uploading (limits are null outside production):
+curl http://localhost:8000/uploads/quota
 curl -F "file=@sample.dem" http://localhost:8000/uploads/demo
 # development/test harness only:
 curl -H "X-Dev-User-Id: owner-a" -F "file=@sample.dem" http://localhost:8000/uploads/demo
@@ -213,7 +216,7 @@ Demo list/detail responses 包含：
 }
 ```
 
-解析失败会保留 compact failure metadata，含 `errorCode`、`message`、`failedAt`、`updatedAt`、`retryable`、`attemptCount`。
+解析失败会保留 compact failure metadata，含 `errorCode`、`message`、`failedAt`、`updatedAt`、`retryable`、`attemptCount`。前端按 `errorCode` 显示中文原因（`frontend/lib/demo-library.ts` 的 `parseFailureCopy`），`message` 只留作技术信息。
 
 ### Parser failure taxonomy
 

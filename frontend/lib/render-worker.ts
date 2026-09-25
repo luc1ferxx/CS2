@@ -1,8 +1,14 @@
 import type { RenderJobStatus, RenderWorkerStatus } from "@/lib/api";
 
+// Player-facing wording for a queued clip with no renderer: no renderer or polling jargon.
+export const RENDER_WORKER_OFFLINE_LABEL = "视频服务暂时离线";
+export const RENDER_WORKER_OFFLINE_DETAIL = "已排队，服务恢复后会自动开始生成。";
+
 export interface RenderWorkerNotice {
   label: string;
   detail: string;
+  // How long the renderer has been silent; for the operator view only.
+  operatorDetail: string;
 }
 
 /**
@@ -28,8 +34,9 @@ export function renderWorkerNotice(
 ): RenderWorkerNotice | null {
   if (!renderWorkerOffline(worker) || job?.status !== "queued") return null;
   return {
-    label: "渲染器未连接",
-    detail: `${renderWorkerLastSeenText(worker)}任务已保留，渲染器启动后会自动开始。`
+    label: RENDER_WORKER_OFFLINE_LABEL,
+    detail: RENDER_WORKER_OFFLINE_DETAIL,
+    operatorDetail: `${renderWorkerLastSeenText(worker)}任务已保留，渲染器启动后会自动开始。`
   };
 }
 

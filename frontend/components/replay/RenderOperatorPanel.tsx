@@ -1,10 +1,11 @@
 "use client";
 
 import { AlertTriangle, CheckCircle2, Clock3, RefreshCw, Wrench } from "lucide-react";
+import { memo } from "react";
 
 import type { RenderJobStatus, RenderWorkerStatus } from "@/lib/api";
 import { friendlyErrorMessage } from "@/lib/demo-library";
-import { renderWorkerOperatorHint } from "@/lib/render-worker";
+import { renderWorkerNotice } from "@/lib/render-worker";
 import type { ReplayVideo } from "@/types/replay";
 
 interface RenderOperatorPanelProps {
@@ -14,25 +15,43 @@ interface RenderOperatorPanelProps {
   jobCount: number;
   refreshing: boolean;
   onRefresh: () => void;
+  // Job ids, ticks, POV ids and the manual-render CLI steps are for the
+  // operator running the renderer; players only see the clip's state.
+  devTools?: boolean;
 }
 
-export function RenderOperatorPanel({
+type OperatorTone = "ready" | "failed" | "waiting" | "idle";
+
+interface OperatorState {
+  label: string;
+  nextAction: string;
+  operatorAction?: string;
+  tone: OperatorTone;
+}
+
+const JOB_STATES: Record<string, string> = {
+  queued: "排队中", processing: "处理中", rendering: "生成中", completed: "已完成", failed: "失败", ready: "可播放", pending: "未开始"
+};
+
+export const RenderOperatorPanel = memo(function RenderOperatorPanel({
   video,
   latestJob,
   renderWorker = null,
   jobCount,
   refreshing,
-  onRefresh
+  onRefresh,
+  devTools = false
 }: RenderOperatorPanelProps) {
   const request = latestJob ? renderRequest(latestJob) : null;
   const state = operatorState(video, latestJob, renderWorker);
+  const errorMessage = latestJob?.error_message ?? video.errorMessage;
 
   return (
-    <section className="panel render-operator-panel" aria-label="Render operator status">
+    <section className="panel render-operator-panel" aria-label="视频生成状态">
       <div className="render-operator-header">
         <div>
-          <h2>Render Operator</h2>
-          <span>{jobCount > 0 ? `${jobCount} render_clip jobs` : "No render_clip jobs"}</span>
+          <h2>视频生成状态</h2>
+          <span>{jobCount > 0 ? `共 ${jobCount} 个视频片段任务` : "还没有视频片段任务"}</span>
         </div>
         <button
           className="secondary-button compact-button"
@@ -40,13 +59,13 @@ export function RenderOperatorPanel({
           disabled={refreshing}
           onClick={onRefresh}
         >
-          <RefreshCw size={14} />
-          {refreshing ? "Refreshing" : "Refresh"}
+          <RefreshCw size={14} aria-hidden="true" />
+          {refreshing ? "刷新中" : "刷新"}
         </button>
       </div>
 
       <div className="operator-state-row">
-        <span className={`operator-state-icon ${state.tone}`}>
+        <span className={`operator-state-icon ${state.tone}`} aria-hidden="true">
           {state.tone === "ready" ? (
             <CheckCircle2 size={16} />
           ) : state.tone === "failed" ? (
@@ -59,107 +78,115 @@ export function RenderOperatorPanel({
         </span>
         <div>
           <strong>{state.label}</strong>
-          <p>{state.nextAction}</p>
+          <p>{devTools && state.operatorAction ? state.operatorAction : state.nextAction}</p>
         </div>
       </div>
 
       <dl className="operator-metadata-grid">
         <div>
-          <dt>Latest job</dt>
-          <dd>{latestJob ? `${latestJob.job_type} / ${latestJob.status}` : "none"}</dd>
+          <dt>最近任务</dt>
+          <dd>{latestJob ? jobStateLabel(latestJob.status) : "无"}</dd>
         </div>
         <div>
-          <dt>Job id</dt>
-          <dd>{latestJob ? latestJob.job_id.slice(0, 8) : "none"}</dd>
+          <dt>片段时长</dt>
+          <dd>{request ? `${formatSeconds(request.durationSeconds)} 秒` : "—"}</dd>
         </div>
         <div>
-          <dt>Tick range</dt>
-          <dd>{request ? `${request.tickStart} - ${request.tickEnd}` : "none"}</dd>
+          <dt>视频</dt>
+          <dd>{video.url ? "可以播放" : "暂不可播放"}</dd>
         </div>
-        <div>
-          <dt>Seconds</dt>
-          <dd>{request ? formatSeconds(request.durationSeconds) : "none"}</dd>
-        </div>
-        <div>
-          <dt>Event</dt>
-          <dd>{latestJob?.event_id ?? fieldFromMetadata(latestJob, "eventId") ?? "none"}</dd>
-        </div>
-        <div>
-          <dt>Player / POV</dt>
-          <dd>{playerLabel(latestJob)}</dd>
-        </div>
-        <div>
-          <dt>Video</dt>
-          <dd>{videoLabel(video)}</dd>
-        </div>
-        <div>
-          <dt>Output</dt>
-          <dd>{video.url ? "Private media bound" : "Not playable"}</dd>
-        </div>
+        {devTools ? (
+          <>
+            <div>
+              <dt>任务</dt>
+              <dd>{latestJob ? `${latestJob.job_type} / ${latestJob.status} · ${latestJob.job_id.slice(0, 8)}` : "无"}</dd>
+            </div>
+            <div>
+              <dt>Tick 范围</dt>
+              <dd>{request ? `${request.tickStart} - ${request.tickEnd}` : "无"}</dd>
+            </div>
+            <div>
+              <dt>建议 ID</dt>
+              <dd>{latestJob?.event_id ?? fieldFromMetadata(latestJob, "eventId") ?? "无"}</dd>
+            </div>
+            <div>
+              <dt>玩家 / POV</dt>
+              <dd>{playerLabel(latestJob)}</dd>
+            </div>
+            <div>
+              <dt>视频来源</dt>
+              <dd>{videoLabel(video)}</dd>
+            </div>
+          </>
+        ) : null}
       </dl>
 
-      {latestJob?.error_message || video.errorMessage ? (
-        <div className="operator-error">
-          {friendlyErrorMessage(latestJob?.error_message ?? video.errorMessage)}
-        </div>
+      {devTools && errorMessage ? (
+        <div className="operator-error">{friendlyErrorMessage(errorMessage)}</div>
       ) : null}
     </section>
   );
-}
+});
 
 function operatorState(
   video: ReplayVideo,
   latestJob: RenderJobStatus | null,
   renderWorker: RenderWorkerStatus | null
-) {
+): OperatorState {
   if (latestJob?.status === "failed" || (video.status === "failed" && latestJob?.status !== "completed")) {
     return {
-      label: "Failed",
-      nextAction: "Review the error; diagnostics can confirm whether the local no-GPU fallback or an external worker failure produced it.",
+      label: "生成失败",
+      nextAction: "可以在对应的建议上重新生成这段视频。",
+      operatorAction: "查看下方错误；诊断信息可以确认是本地无 GPU 回退还是外部渲染器失败。",
       tone: "failed"
-    } as const;
+    };
   }
 
   if (video.status === "ready" && video.source === "rendered" && video.url) {
     return {
-      label: "Completed and playable",
-      nextAction: "Rendered video is bound to replay metadata.",
+      label: "已完成，可以播放",
+      nextAction: "生成的视频已关联到这场比赛的回放。",
       tone: "ready"
-    } as const;
+    };
   }
 
   if (latestJob?.status === "queued") {
-    const offlineHint = renderWorkerOperatorHint(renderWorker);
+    const offline = renderWorkerNotice(renderWorker, latestJob);
     return {
-      label: offlineHint ? "Queued, no render worker" : "Queued",
-      nextAction:
-        offlineHint ??
-        "Waiting for a render worker to claim the job; it starts on its own once one polls.",
+      label: offline ? `排队中，${offline.label}` : "排队中",
+      nextAction: offline?.detail ?? "等待开始生成，开始后这里会自动更新。",
+      operatorAction: offline?.operatorDetail ?? "等待渲染器领取任务，领取后会自动开始。",
       tone: "waiting"
-    } as const;
+    };
   }
 
   if (latestJob?.status === "processing" || latestJob?.status === "rendering") {
     return {
-      label: latestJob.status === "processing" ? "Processing" : "Waiting for worker output",
-      nextAction: "For manual probing, run prepare-job, place the MP4 at the expected output path, then complete it.",
+      label: latestJob.status === "processing" ? "处理中" : "生成中",
+      nextAction: "视频生成中，完成后会出现在已保存的视频里。",
+      operatorAction: "手动验证：运行 prepare-job，把 MP4 放到预期的输出路径，再运行 complete-prepared-job。",
       tone: "waiting"
-    } as const;
+    };
   }
 
   if (video.source === "manual_upload" && video.url) {
     return {
-      label: "Manual upload playable",
-      nextAction: "Manual MP4 is available while render_clip output is pending.",
+      label: "手动上传的视频可以播放",
+      nextAction: "生成的视频完成前，先使用手动上传的 MP4。",
       tone: "ready"
-    } as const;
+    };
   }
 
   return {
-    label: "Mock shell active",
-    nextAction: "The replay's 生成这一刻的视频 button creates a render_clip job for a worker/operator to complete.",
+    label: "还没有生成视频",
+    nextAction: "在建议上点击“生成视频”，即可生成那一刻的第一人称视频。",
+    operatorAction: "回放里的“生成此刻视频”会创建 render_clip 任务，由渲染器或操作员完成。",
     tone: "idle"
-  } as const;
+  };
+}
+
+function jobStateLabel(status: string): string {
+  return Object.prototype.hasOwnProperty.call(JOB_STATES, status) ? JOB_STATES[status] : status;
 }
 
 function renderRequest(job: RenderJobStatus) {
@@ -175,14 +202,14 @@ function renderRequest(job: RenderJobStatus) {
 
 function playerLabel(job: RenderJobStatus | null): string {
   if (!job) {
-    return "none";
+    return "无";
   }
   return (
     job.pov_steam_id ??
     fieldFromMetadata(job, "povSteamId") ??
     job.player_id ??
     fieldFromMetadata(job, "playerId") ??
-    "operator-selected"
+    "由操作员选择"
   );
 }
 
@@ -193,7 +220,7 @@ function videoLabel(video: ReplayVideo): string {
   if (video.source === "rendered") {
     return `rendered / ${video.status}`;
   }
-  return `mock shell / ${video.status}`;
+  return `mock / ${video.status}`;
 }
 
 function numberFromMetadata(job: RenderJobStatus, key: string): number | null {
@@ -207,5 +234,5 @@ function fieldFromMetadata(job: RenderJobStatus | null, key: string): string | n
 }
 
 function formatSeconds(seconds: number): string {
-  return `${Number(seconds || 0).toFixed(2)}s`;
+  return Number(seconds || 0).toFixed(1).replace(/\.0$/, "");
 }

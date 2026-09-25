@@ -25,7 +25,7 @@ function load(path, imports = {}) {
 }
 
 const helpers = load("./render-clips.ts");
-const { playableClipVideo, matchingClipJob, clipRequestAction, clipsForPlayer, buildEventClipRequest, buildTickClipRequest, retainSelectedClip, reviewVideo } = helpers;
+const { playableClipVideo, matchingClipJob, clipRequestAction, clipsForPlayer, buildEventClipRequest, buildTickClipRequest, retainSelectedClip, reviewVideo, renderJobsSignature } = helpers;
 const xelex = "76561198998266210";
 const request = { playerId: xelex, tickStart: 5000, tickEnd: 7560, tickRate: 64, renderPreset: "event_clip_v1" };
 const ready = {
@@ -39,7 +39,7 @@ const ready = {
   }
 };
 const queued = { ...ready, job_id: "queued-2", status: "queued", video: null };
-const failed = { ...ready, job_id: "failed-3", status: "failed", video: null, error_message: "GPU worker not connected" };
+const failed = { ...ready, job_id: "failed-3", status: "failed", video: null, error_code: "RENDER_WORKER_UNAVAILABLE", error_message: "GPU worker not connected" };
 const other = { ...ready, job_id: "other-player", pov_steam_id: "another-player" };
 const legacy = { ...ready, job_id: "old-job", video: undefined };
 
@@ -127,18 +127,23 @@ assert.equal(reviewVideo(manual, [], null, "demo-1"), manual);
 assert.equal(retainSelectedClip({ demoId: "demo-1", video: manual }, [ready], defaultA, "demo-1").video, ready.video);
 
 const { ClipLibrary } = load("../components/replay/ClipLibrary.tsx", {
-  "@/lib/render-clips": helpers, "@/lib/demo-library": { friendlyErrorMessage: (message) => message }
+  "@/lib/render-clips": helpers,
+  "@/lib/replay-time": load("./replay-time.ts"),
+  "@/lib/user-errors": load("./user-errors.ts", { "@/lib/upload-limits": load("./upload-limits.ts") })
 });
 const markup = renderToStaticMarkup(React.createElement(ClipLibrary, {
   jobs: [ready, queued, failed, legacy], playerName: "xelex", rounds, selectedJobId: ready.job_id, onPlay() {}
 }));
 assert.match(markup, /1 段可观看/);
-assert.match(markup, /aria-label="Play xelex clip at tick 5000"/);
+// The accessible name starts with the visible label and says where the clip is, in round time.
+assert.match(markup, /aria-label="重新观看：xelex · 第 1 回合 0:03"/);
+assert.doesNotMatch(markup, /片段|[Tt]ick/);
 assert.match(markup, /aria-pressed="true"/);
 assert.match(markup, /视频不可用/);
 assert.match(markup, /<details class="clip-library-history">/);
 assert.doesNotMatch(markup, /<details[^>]*open=/);
-assert.match(markup, /GPU worker not connected/);
+assert.match(markup, /视频生成服务暂时不可用，请稍后重试。/);
+assert.doesNotMatch(markup, /GPU worker not connected/, "players get the Chinese reason, not the backend string");
 assert.equal((markup.match(/<button/g) ?? []).length, 1, "Only validated ready artifacts get a play action");
 const { CoachingEventCard } = load("../components/coaching/CoachingEventCard.tsx", {
   "@/lib/render-clips": helpers,
@@ -155,4 +160,13 @@ function card(job) {
 assert.match(card(ready), /观看视频/);
 assert.match(card(queued), /disabled=""[^>]*>.*等待生成/);
 assert.match(card(failed), /重试/);
+{
+  const signature = renderJobsSignature([queued, ready]);
+  assert.equal(renderJobsSignature([queued, ready]), signature, "an unchanged job list keeps its signature");
+  assert.notEqual(renderJobsSignature([{ ...queued, status: "rendering" }, ready]), signature, "a status move changes it");
+  assert.notEqual(renderJobsSignature([{ ...queued, video_status: "rendering" }, ready]), signature,
+    "the demo video status carried on each job changes it");
+  assert.notEqual(renderJobsSignature([ready]), signature, "a job leaving the list changes it");
+  assert.equal(renderJobsSignature([]), "");
+}
 console.log("Saved clip POV isolation, reuse, range, legacy and UI state checks passed.");

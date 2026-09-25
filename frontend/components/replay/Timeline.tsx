@@ -1,9 +1,11 @@
 "use client";
 
-import type { CSSProperties } from "react";
+import { memo, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent } from "react";
 
 import { timelineMarkersForRound } from "@/lib/coaching-review";
+import { coachingCopy } from "@/lib/coaching-copy";
 import { timelineParserEventMarkersForRound } from "@/lib/replay-events";
+import { formatRoundTime, roundPlaybackStartTick } from "@/lib/replay-time";
 import type { CoachingEvent } from "@/types/coaching";
 import type { ReplayEvent, ReplayRound } from "@/types/replay";
 
@@ -14,44 +16,73 @@ interface TimelineProps {
   events: CoachingEvent[];
   parserEvents?: ReplayEvent[];
   selectedPlayerName?: string | null;
+  selectedPlayerId?: string | null;
   tickRate?: number;
   onSeek: (tick: number) => void;
+  // A suggestion marker lands like "查看这一刻" (lead-in, focused card) when this is given.
+  onSeekFinding?: (event: CoachingEvent) => void;
 }
 
-export function Timeline({
+export const Timeline = memo(function Timeline({
   currentTick,
   selectedRound,
   rounds,
   events,
   parserEvents = [],
   selectedPlayerName,
+  selectedPlayerId = null,
   tickRate = 64,
-  onSeek
+  onSeek,
+  onSeekFinding
 }: TimelineProps) {
   const round = rounds.find((item) => item.roundNumber === selectedRound) ?? rounds[0];
   const minTick = round?.startTick ?? 0;
   const maxTick = round?.endTick ?? 0;
-  const markers = timelineMarkersForRound(events, selectedRound, minTick, maxTick);
-  const parserEventMarkers = timelineParserEventMarkersForRound(
-    parserEvents,
-    selectedRound,
-    minTick,
-    maxTick
+  const markers = useMemo(
+    () => timelineMarkersForRound(events, selectedRound, minTick, maxTick),
+    [events, maxTick, minTick, selectedRound]
+  );
+  const parserEventMarkers = useMemo(
+    () => timelineParserEventMarkersForRound(parserEvents, selectedRound, minTick, maxTick, selectedPlayerId),
+    [maxTick, minTick, parserEvents, selectedPlayerId, selectedRound]
   );
   const hasRounds = rounds.length > 0;
+  const span = Math.max(1, maxTick - minTick);
   const currentTickPercent = hasRounds
-    ? Math.max(0, Math.min(100, ((currentTick - minTick) / Math.max(1, maxTick - minTick)) * 100))
+    ? Math.max(0, Math.min(100, ((currentTick - minTick) / span) * 100))
     : 0;
-  const timelineStyle = { "--timeline-current-tick": `${currentTickPercent}%` } as CSSProperties;
+  const freezeEndPercent = round ? Math.max(0, Math.min(100, ((roundPlaybackStartTick(round) - minTick) / span) * 100)) : 0;
+  const timelineStyle = {
+    "--timeline-current-tick": `${currentTickPercent}%`,
+    "--timeline-freeze-end": `${freezeEndPercent}%`
+  } as CSSProperties;
   const safeTickRate = Number.isFinite(tickRate) && tickRate > 0 ? tickRate : 64;
-  const elapsed = formatTimelineTime((Math.min(maxTick, Math.max(minTick, currentTick)) - minTick) / safeTickRate);
-  const duration = formatTimelineTime((maxTick - minTick) / safeTickRate);
+  const clock = (tick: number) => formatRoundTime((tick - minTick) / safeTickRate);
+  const elapsed = clock(Math.min(maxTick, Math.max(minTick, currentTick)));
+  const duration = formatRoundTime((maxTick - minTick) / safeTickRate);
+  const seekBy = (deltaSeconds: number) =>
+    onSeek(Math.min(maxTick, Math.max(minTick, currentTick + deltaSeconds * safeTickRate)));
+
+  function handleSliderKeyDown(event: KeyboardEvent<HTMLInputElement>) {
+    // Matches the page shortcuts: arrows move 5 s, Shift + arrow 1 s.
+    const step = event.shiftKey ? 1 : 5;
+    const moves: Record<string, number> = {
+      ArrowLeft: -step, ArrowDown: -step, ArrowRight: step, ArrowUp: step, PageDown: -10, PageUp: 10
+    };
+    if (event.key in moves) {
+      event.preventDefault();
+      seekBy(moves[event.key]);
+    } else if (event.key === "Home" || event.key === "End") {
+      event.preventDefault();
+      onSeek(event.key === "Home" ? minTick : maxTick);
+    }
+  }
 
   return (
-    <section className="timeline-panel evidence-timeline" aria-label="Replay timeline">
+    <section className="timeline-panel evidence-timeline" aria-label="回合时间轴">
       <div className="timeline-heading">
         <div>
-          <strong title={`Tick ${Math.round(currentTick)}`}>第 {selectedRound} 回合 · {elapsed} <span>/ {duration}</span></strong>
+          <strong>第 {selectedRound} 回合 · {elapsed} <span>/ {duration}</span></strong>
           <span>{parserEventMarkers.length} 个事件 · {markers.length} 条建议</span>
           {selectedPlayerName !== undefined ? (
             <small className="visually-hidden">{selectedPlayerName ? `${selectedPlayerName} 的事件和建议，保留炸弹与回合事件` : "选择玩家后显示个人事件；当前显示比赛事件"}</small>
@@ -84,8 +115,8 @@ export function Timeline({
                 className="round-boundary-marker start"
                 type="button"
                 onClick={() => onSeek(minTick)}
-                aria-label={`Jump to round ${selectedRound} start at tick ${minTick}`}
-                title={`回合开始 · Tick ${minTick}`}
+                aria-label={`开始：跳到第 ${selectedRound} 回合开始`}
+                title="回合开始 · 0:00"
               >
                 开始
               </button>
@@ -94,42 +125,60 @@ export function Timeline({
                 className="round-boundary-marker end"
                 type="button"
                 onClick={() => onSeek(maxTick)}
-                aria-label={`Jump to round ${selectedRound} end at tick ${maxTick}`}
-                title={`回合结束 · Tick ${maxTick}`}
+                aria-label={`结束：跳到第 ${selectedRound} 回合结束`}
+                title={`回合结束 · ${duration}`}
               >
                 结束
               </button>
             </div>
-            <div className="timeline-lane-track parser-lane parser-event-markers" aria-label="Parser event markers">
-              {parserEventMarkers.map((marker) => (
-                <button
-                  key={marker.event.id}
-                  className={`parser-event-marker ${marker.presentation.tone}`}
-                  style={{ left: `${marker.leftPercent}%` }}
-                  type="button"
-                  onClick={() => onSeek(marker.seekTick)}
-                  aria-label={`Jump to ${marker.presentation.label} parser event at tick ${marker.seekTick}`}
-                  title={`${parserEventLabel(marker.event.type)} · ${formatTimelineTime((marker.seekTick - minTick) / safeTickRate)} · Tick ${marker.seekTick}`}
-                >
-                  {parserEventLabel(marker.event.type).slice(0, 1)}
-                </button>
-              ))}
-            </div>
-            <div className="timeline-lane-track coaching-lane event-markers" aria-label="Coaching event markers">
-              {markers.map((marker) => (
-                <button
-                  key={marker.event.id}
-                  className={`event-marker ${marker.event.severity}`}
-                  style={{ left: `${marker.leftPercent}%` }}
-                  type="button"
-                  onClick={() => onSeek(marker.event.tick_start)}
-                  aria-label={`Jump to ${marker.event.severity} coaching event at tick ${marker.event.tick_start}`}
-                  title={`${marker.event.title} · ${formatTimelineTime((marker.event.tick_start - minTick) / safeTickRate)} · Tick ${marker.event.tick_start}`}
-                >
-                  <span className="visually-hidden">{marker.event.title}</span>
-                </button>
-              ))}
-            </div>
+            <MarkerLane
+              className="timeline-lane-track parser-lane parser-event-markers"
+              label="比赛事件"
+              currentTick={currentTick}
+              markers={parserEventMarkers}
+              markerTick={(marker) => marker.seekTick}
+              renderMarker={(marker, tabIndex, register) => {
+                const text = `${marker.description} · ${clock(marker.seekTick)}`;
+                return (
+                  <button
+                    key={marker.event.id}
+                    ref={register}
+                    className={`parser-event-marker ${marker.presentation.tone}${marker.side ? ` side-${marker.side.toLowerCase()}` : ""}`}
+                    style={{ left: `${marker.leftPercent}%` }}
+                    type="button"
+                    tabIndex={tabIndex}
+                    onClick={() => onSeek(marker.seekTick)}
+                    aria-label={`${marker.presentation.label}：${text}`}
+                    title={text}
+                  >
+                    {marker.presentation.shortLabel}
+                  </button>
+                );
+              }}
+            />
+            <MarkerLane
+              className="timeline-lane-track coaching-lane event-markers"
+              label="建议"
+              currentTick={currentTick}
+              markers={markers}
+              markerTick={(marker) => marker.event.tick_start}
+              renderMarker={(marker, tabIndex, register) => {
+                const text = `建议：${coachingCopy(marker.event).title} · ${clock(marker.event.tick_start)}`;
+                return (
+                  <button
+                    key={marker.event.id}
+                    ref={register}
+                    className={`event-marker ${marker.event.severity}`}
+                    style={{ left: `${marker.leftPercent}%` }}
+                    type="button"
+                    tabIndex={tabIndex}
+                    onClick={() => (onSeekFinding ? onSeekFinding(marker.event) : onSeek(marker.event.tick_start))}
+                    aria-label={text}
+                    title={text}
+                  />
+                );
+              }}
+            />
           </div>
         </div>
       ) : (
@@ -137,7 +186,7 @@ export function Timeline({
       )}
 
       {hasRounds ? (
-        <div className="timeline-scrubber">
+        <div className="timeline-scrubber" style={timelineStyle}>
           <input
             className="timeline-slider"
             type="range"
@@ -146,24 +195,69 @@ export function Timeline({
             step={1}
             value={Math.min(maxTick, Math.max(minTick, currentTick))}
             onChange={(event) => onSeek(Number(event.target.value))}
-            aria-label="Seek replay"
+            onKeyDown={handleSliderKeyDown}
+            aria-label="拖动定位回放"
             aria-valuetext={`第 ${selectedRound} 回合 ${elapsed}，共 ${duration}`}
           />
         </div>
       ) : null}
     </section>
   );
-}
+});
 
-function formatTimelineTime(seconds: number): string {
-  const total = Math.max(0, Math.floor(seconds));
-  return `${Math.floor(total / 60)}:${(total % 60).toString().padStart(2, "0")}`;
-}
+// One Tab stop per lane: the marker at or before the playhead is reachable, arrows move between markers.
+function MarkerLane<T extends { event: { id: string } }>({
+  className,
+  label,
+  currentTick,
+  markers,
+  markerTick,
+  renderMarker
+}: {
+  className: string;
+  label: string;
+  currentTick: number;
+  markers: T[];
+  markerTick: (marker: T) => number;
+  renderMarker: (marker: T, tabIndex: number, register: (element: HTMLButtonElement | null) => void) => JSX.Element;
+}) {
+  // Index of the marker holding focus; -1 while focus is elsewhere, so the playhead picks the stop.
+  const [focusedIndex, setFocusedIndex] = useState(-1);
+  const buttons = useRef<(HTMLButtonElement | null)[]>([]);
+  let rovingIndex = focusedIndex >= 0 && focusedIndex < markers.length ? focusedIndex : -1;
+  if (rovingIndex < 0) {
+    rovingIndex = 0;
+    for (let index = 0; index < markers.length; index += 1) {
+      if (markerTick(markers[index]) <= currentTick + 0.5) rovingIndex = index;
+    }
+  }
 
-function parserEventLabel(type: ReplayEvent["type"]): string {
-  return {
-    kill: "击杀", death: "阵亡", damage: "伤害", bomb_pickup: "拾取炸弹", bomb_dropped: "丢下炸弹",
-    bomb_planted: "安装炸弹", bomb_defused: "拆除炸弹", bomb_exploded: "炸弹爆炸",
-    smoke: "烟雾弹", flash: "闪光弹", molotov: "燃烧弹", he: "手雷", round_start: "回合开始", round_end: "回合结束"
-  }[type] ?? "事件";
+  function handleKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    if (markers.length === 0 || event.altKey || event.ctrlKey || event.metaKey) return;
+    const index = buttons.current.findIndex((button) => button === event.target);
+    if (index < 0) return;
+    const next = event.key === "ArrowLeft" ? index - 1 : event.key === "ArrowRight" ? index + 1
+      : event.key === "Home" ? 0 : event.key === "End" ? markers.length - 1 : null;
+    if (next === null) return;
+    event.preventDefault();
+    const target = Math.max(0, Math.min(markers.length - 1, next));
+    setFocusedIndex(target);
+    buttons.current[target]?.focus();
+  }
+
+  buttons.current.length = markers.length;
+  return (
+    <div className={className} role="group" aria-label={label} onKeyDown={handleKeyDown}
+      onFocus={(event) => {
+        const target: EventTarget = event.target;
+        setFocusedIndex(buttons.current.findIndex((button) => button === target));
+      }}
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setFocusedIndex(-1);
+      }}>
+      {markers.map((marker, index) => renderMarker(marker, index === rovingIndex ? 0 : -1, (element) => {
+        buttons.current[index] = element;
+      }))}
+    </div>
+  );
 }

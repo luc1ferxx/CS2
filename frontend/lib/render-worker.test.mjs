@@ -43,11 +43,13 @@ assert.equal(renderWorkerOffline(fallback), false,
 assert.equal(renderWorkerOffline(null), false, "An unknown status must not accuse a healthy renderer");
 assert.equal(renderWorkerOffline(undefined), false);
 
-assert.match(renderWorkerNotice(offline, queued).label, /渲染器未连接/);
-assert.match(renderWorkerNotice(offline, queued).detail, /15 分钟/, "The detail names how long it has been silent");
-assert.match(renderWorkerNotice(offline, queued).detail, /任务已保留/,
-  "The job stays durably queued, so the copy must not imply it was lost");
-assert.match(renderWorkerNotice(neverSeen, queued).detail, /从未连接过/);
+assert.equal(renderWorkerNotice(offline, queued).label, "视频服务暂时离线");
+assert.equal(renderWorkerNotice(offline, queued).detail, "已排队，服务恢复后会自动开始生成。",
+  "The job stays durably queued, so the player copy must not imply it was lost");
+assert.doesNotMatch(renderWorkerNotice(offline, queued).detail, /渲染器|轮询|分钟/, "Players get no renderer or polling jargon");
+assert.match(renderWorkerNotice(offline, queued).operatorDetail, /15 分钟/, "The operator detail names how long it has been silent");
+assert.match(renderWorkerNotice(offline, queued).operatorDetail, /任务已保留/);
+assert.match(renderWorkerNotice(neverSeen, queued).operatorDetail, /从未连接过/);
 assert.equal(renderWorkerNotice(fallback, queued), null);
 assert.equal(renderWorkerNotice(connected, queued), null);
 assert.equal(renderWorkerNotice(rendering, queued), null);
@@ -75,19 +77,32 @@ const { RenderOperatorPanel } = load("../components/replay/RenderOperatorPanel.t
 });
 const pendingVideo = { status: "pending", source: "mock", url: null, tickStart: 0, tickEnd: 0, tickRate: 64, durationSeconds: 0, timeOriginSeconds: 0, povSteamId: null, renderJobId: null };
 const queuedJob = { job_id: "queued-job-1", demo_id: "demo-1", job_type: "render_clip", status: "queued", source: "rendered", metadata: {}, created_at: "2026-09-16T12:00:00Z" };
-function panel(renderWorker) {
+function panel(renderWorker, extra = {}) {
   return renderToStaticMarkup(React.createElement(RenderOperatorPanel, {
-    video: pendingVideo, latestJob: queuedJob, renderWorker, jobCount: 1, refreshing: false, onRefresh() {}
+    video: pendingVideo, latestJob: queuedJob, renderWorker, jobCount: 1, refreshing: false, onRefresh() {}, ...extra
   }));
 }
-assert.match(panel(offline), /Queued, no render worker/);
-assert.match(panel(offline), /last polled 15m ago/);
-assert.match(panel(connected), /<strong>Queued<\/strong>/);
-assert.match(panel(connected), /starts on its own once one polls/);
-assert.match(panel(null), /<strong>Queued<\/strong>/, "An unreachable status endpoint must not report the renderer as offline");
+assert.match(panel(offline), /<strong>排队中，视频服务暂时离线<\/strong>/);
+assert.match(panel(offline), /已排队，服务恢复后会自动开始生成。/);
+assert.doesNotMatch(panel(offline), /渲染器|15 分钟/, "the renderer's heartbeat stays in the operator view");
+assert.match(panel(offline, { devTools: true }), /15 分钟/);
+assert.match(panel(offline, { devTools: true }), /任务已保留，渲染器启动后会自动开始/);
+assert.match(panel(connected), /<strong>排队中<\/strong>/);
+assert.match(panel(connected), /等待开始生成/);
+assert.match(panel(connected, { devTools: true }), /领取后会自动开始/);
+assert.match(panel(null), /<strong>排队中<\/strong>/, "An unreachable status endpoint must not report the renderer as offline");
 for (const markup of [panel(offline), panel(connected), panel(null)]) {
   assert.doesNotMatch(markup, /check diagnostics for worker heartbeat/,
     "The panel now reports the heartbeat itself instead of pointing elsewhere");
+  assert.doesNotMatch(markup, /Queued|render_clip|queued-job/, "players get Chinese state, not job internals");
+}
+{
+  const rendering = { ...queuedJob, status: "rendering", tick_start: 400, tick_end: 1040, tick_rate: 64 };
+  const player = panel(connected, { latestJob: rendering });
+  assert.doesNotMatch(player, /prepare-job|Tick 范围|400 - 1040/, "operator CLI steps and ticks stay behind dev tools");
+  const operator = panel(connected, { latestJob: rendering, devTools: true });
+  assert.match(operator, /prepare-job/);
+  assert.match(operator, /400 - 1040/);
 }
 
 console.log("Render worker liveness copy, fallback-mode gating and operator panel checks passed.");

@@ -1,4 +1,5 @@
 import io
+import json
 import tempfile
 import unittest
 from contextlib import contextmanager
@@ -131,7 +132,8 @@ class PublicMediaProjectionTest(unittest.TestCase):
                                  "sourcePath": "/data/private-event.json"}]
             bind_replay(self.db, service, demo, replay)
 
-            projected = get_replay(demo.id, db=self.db, owner_id=demo.owner_id)
+            response = get_replay(demo.id, db=self.db, owner_id=demo.owner_id)
+            projected = json.loads(response.body)
 
         self.assertEqual(projected["frames"][0]["players"][0]["z"], -700)
         self.assertEqual(projected["frames"][0]["bombState"], {"status": "defused", "x": 30, "y": 40, "z": -700})
