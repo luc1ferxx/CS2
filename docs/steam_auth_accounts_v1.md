@@ -32,6 +32,8 @@ The callback fails closed unless all of these checks pass:
 - `response_nonce` is well formed, fresh, and not already reserved in Redis;
 - a direct `check_authentication` POST to the pinned Valve endpoint returns `is_valid:true` in the OpenID key-value response.
 
+In production the verified SteamID64 must then be in `STEAM_LOGIN_ALLOWLIST` (unless it is `*`) before any account is resolved; otherwise the callback revokes any prior session, clears the state and session cookies, and redirects to `/auth/callback?error=not_invited` without creating an account, external identity, or session.
+
 The callback query, assertion signature, state, opaque session, and Steam Web API key are not application-log or frontend payload data. The application installs a Uvicorn access-log filter for Steam/OIDC callback queries and returns `Referrer-Policy: no-referrer`; ingress/CDN logs must also redact or suppress callback query strings, and outbound Steam debug logging must remain disabled. Redis fixed-window limits bound Steam login and callback requests per resolved client address; the edge should still enforce broader abuse controls. Production requires HTTPS, `__Host-` cookies, one exact frontend/API origin, exact CORS, Redis, and all existing storage/render-worker production controls.
 
 ## Accounts and identity mapping
@@ -69,6 +71,7 @@ The application never asks for or stores a Steam password, Steam Guard code, Gam
 | `AUTH_CLOCK_SKEW_SECONDS` | `30` | Allowed future clock skew for the OpenID nonce. |
 | `STEAM_OPENID_NONCE_TTL_SECONDS` | `600` | Assertion freshness and replay-reservation window; must cover login TTL plus skew. |
 | `STEAM_WEB_API_KEY` | unset | Optional 32-character server-side key for profile enrichment only. |
+| `STEAM_LOGIN_ALLOWLIST` | unset | Invite gate: comma-separated individual SteamID64s (at most 1000, unique), or `*` for every Steam account. Required in production with `AUTH_PROVIDER=steam`; development/test validate the format but never enforce it. |
 | `NEXT_PUBLIC_AUTH_PROVIDER` | `steam` | Public frontend provider selector; must equal `AUTH_PROVIDER`, contains no credential. |
 
 OIDC variables are required only when `AUTH_PROVIDER=oidc`. `NEXT_PUBLIC_AUTH_PROVIDER` is a non-secret UI selector; no authentication credential may use a `NEXT_PUBLIC_` name or be passed to frontend, queue worker, or render-worker containers.

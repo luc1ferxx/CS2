@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Development-mode RC gate: it starts the local Compose stack and requires
+# GET /diagnostics, which a production API answers with 404. For a hosted
+# production preview (docker-compose.preview.yml sets AUTH_MODE=production), run
+# scripts/cloud_preview_smoke.py directly with AUTH_SESSION_COOKIE (a signed-in
+# __Host-cs2_session value) and SAMPLE_DEMO_PATH; it reads /auth/me capabilities
+# and skips the mock upload and render_clip steps production hides.
+
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 API_BASE_URL="${API_BASE_URL:-http://localhost:8000}"
 FRONTEND_URL="${FRONTEND_URL:-http://localhost:3000}"

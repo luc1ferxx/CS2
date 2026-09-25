@@ -60,7 +60,7 @@ Production credentials 绝不能进入 `NEXT_PUBLIC_*`、源码、日志、签�
 | `STEAM_AUTH_STATE_COOKIE_NAME` | `__Host-cs2_steam_state` | short-lived Steam state cookie name |
 | `STEAM_OPENID_NONCE_TTL_SECONDS` | `600` | Steam assertion freshness/replay reservation window |
 | `STEAM_WEB_API_KEY` | unset | server-only GetPlayerSummaries + match-history publisher key; required in production, never frontend/worker-visible |
-| `STEAM_LOGIN_ALLOWLIST` | unset | API-only invite gate: comma-separated individual Steam ID64s (at most 1000, unique), or `*` for every Steam account. Required when `AUTH_MODE=production` and `AUTH_PROVIDER=steam`; with `AUTH_PROVIDER=oidc` only empty or `*` is accepted. An uninvited callback redirects to `/auth/callback?error=not_invited` before any account is created, and removing an ID ends that user's live sessions (sessions without a recorded Steam ID fail closed and sign in again). Needs an API restart to change. Development/test validate the format but never enforce it |
+| `STEAM_LOGIN_ALLOWLIST` | unset | API-only invite gate: comma-separated individual Steam ID64s (at most 1000, unique), or `*` for every Steam account. Required when `AUTH_MODE=production` and `AUTH_PROVIDER=steam`; with `AUTH_PROVIDER=oidc` only empty or `*` is accepted. An uninvited callback redirects to `/auth/callback?error=not_invited` before any account is created, and removing an ID ends that user's live sessions (sessions without a recorded Steam ID fail closed and sign in again). To change it, redeploy the API container so it re-reads the environment (`docker compose -f docker-compose.yml -f docker-compose.preview.yml up -d`); a plain `docker compose restart` keeps the old value. Development/test validate the format but never enforce it |
 
 ### OIDC 兼容路径
 

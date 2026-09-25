@@ -122,9 +122,11 @@ FRONTEND_URL="$FRONTEND_URL" \
 python3 scripts/cloud_preview_smoke.py
 ```
 
+The preview Compose shape sets `AUTH_MODE=production`, so there the smoke also needs `AUTH_SESSION_COOKIE` (the value of a signed-in invited account's `__Host-cs2_session` cookie) and `SAMPLE_DEMO_PATH`. It reads `/auth/me` capabilities first: with `devTools=false` it skips the mock upload and uses the uploaded sample for the replay, coaching, and media checks (and fails without `SAMPLE_DEMO_PATH`); with `renderClips=false` it skips the `render_clip` step. Each run uploads the sample through `POST /uploads/demo`, so it counts toward that account's `DEMO_UPLOAD_DAILY_LIMIT`. Keep the cookie value out of shell history and handoff evidence.
+
 For a production-auth RC, set `AUTH_MODE=production`, explicitly set `AUTH_PROVIDER=steam` (or compatibility `oidc`) and matching `NEXT_PUBLIC_AUTH_PROVIDER`, secure `__Host-` cookies, one exact HTTPS origin for frontend/API/auth/media routing, a real server-only `STEAM_WEB_API_KEY`, `STEAM_LOGIN_ALLOWLIST` (invited Steam ID64s, or `*` to open Steam sign-in), random `STEAM_CREDENTIAL_ENCRYPTION_KEY`, disabled V1 scheduler, `STEAM_DEMO_PROVIDER=disabled`, `STEAM_DEMO_EXPERIMENTAL_REPLAY_CDN_ENABLED=0`, the selected identity provider's complete configuration, and a non-default render-worker service credential through the deployment secret/config system. Verify that `/diagnostics`, the dev/QA routes (`/uploads/mock`, manual video upload/calibration, `/render/mock`), and `/docs`/`/openapi.json` return `404`, and that `render/clip` returns `404` unless `RENDER_CLIPS_ENABLED=1`; do not run the development script as a substitute for independently authenticated owner A/B browser/API sessions.
 
-If a sample is available for the preview environment:
+If a sample is available for the preview environment (a production preview requires it, with `AUTH_SESSION_COOKIE` exported):
 
 ```bash
 SAMPLE_DEMO_PATH=/absolute/path/to/sample.dem \
@@ -143,13 +145,14 @@ For demos owned separately by A and B, exercise all of these surfaces:
 - Rename; archive; unarchive.
 - Mock upload; real `.dem` upload; parser retry.
 - Video status; development/QA video upload; calibration.
-- Mock render; `render_clip`; render-job list.
+- Mock render; `render_clip`; render-job retry; render-job list.
 - Private video full GET, HEAD, satisfiable Range, and unsatisfiable Range.
 - Steam connection read/write/delete, manual sync, retry/repair state, Recent Steam Matches list, and owner-scoped Demo import attempt.
 
 Expected results:
 
 - Each owner sees and mutates only their own rows. Cross-owner resource IDs return the same generic `404` as unknown IDs and cause no row, job, metadata, or artifact mutation.
+- Mock upload, development/QA video upload, calibration, and mock render return `404` for every signed-in owner, A and B alike, and cause no row, job, metadata, or artifact mutation; anonymous, invalid, expired, and revoked sessions still get `401`. `render_clip` and render-job retry return the same `404` unless `RENDER_CLIPS_ENABLED=1`, and then follow the owner rules above.
 - Anonymous, invalid, expired, and revoked sessions return `401` before user data or media bytes are returned and cause no mutation.
 - Production ignores/rejects `X-Dev-User-Id`; a valid A session plus a B header remains A.
 - A copied private-media URL fails for B and anonymous sessions. Legacy `/media/videos/...`, traversal, another demo's storage reference, leaf or parent-directory symlinks, post-validation path replacement, and missing files return no foreign bytes or local/storage-key details.

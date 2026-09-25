@@ -140,10 +140,13 @@ Run the owner matrix with two independently authenticated identities A and B, pl
 | Library list | Only A rows | Only B rows | `401` |
 | Status, replay, coaching, demo diagnostics | A resource succeeds | Generic `404` | `401` |
 | Rename, archive/unarchive, retry | A mutation succeeds | Generic `404`; no mutation | `401`; no mutation |
-| Mock/real upload | New row owned by A | New row owned by B | `401`; no row/artifact/job |
-| Video status/upload/calibration | A resource succeeds | Generic `404`; no mutation | `401`; no mutation |
-| Mock/clip render and job list | A resource succeeds | Generic `404`; no job/mutation | `401`; no job/mutation |
+| Real `.dem` upload | New row owned by A | New row owned by B | `401`; no row/artifact/job |
+| Video status and render-job list | A resource succeeds | Generic `404` | `401` |
+| Mock upload, manual video upload/calibration, mock render | `404`; no row/artifact/job/mutation | `404`; no row/artifact/job/mutation | `401`; no row/artifact/job/mutation |
+| `render_clip` and render-job retry | `404`; no job/mutation unless `RENDER_CLIPS_ENABLED=1`, then A job succeeds | Generic `404`; no job/mutation | `401`; no job/mutation |
 | Private video GET/HEAD/Range | `200`/`206` as applicable | Generic `404`, no bytes/path details | `401`, no bytes/path details |
+
+Mock upload, manual video upload/calibration, and mock render are development/test tools: production answers `404` for every signed-in owner (`/auth/me` reports `capabilities.devTools=false`) while anonymous callers still get `401` first. `render_clip` and render-job retry are hidden the same way until `RENDER_CLIPS_ENABLED=1` (`capabilities.renderClips`), and then follow the owner A/B pattern of the other mutation rows.
 
 In production, also prove that `X-Dev-User-Id` cannot select an owner, missing/inconsistent selected-provider or application-origin configuration stops startup, unsafe-method requests from missing/untrusted origins cause no mutation, logout revokes the server session, `/diagnostics` is `404`, `/health` is coarse, and `/media/videos/...` is not mounted. Run the provider-specific Steam matrix in `docs/steam_auth_accounts_v1.md`; when OIDC is selected, also deny invalid issuer/audience/signature/algorithm/claims/nonce/timestamps.
 

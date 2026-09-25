@@ -40,6 +40,9 @@ The Steam/account contract is in `docs/steam_auth_accounts_v1.md`; match authori
 | `MAX_VIDEO_UPLOAD_BYTES` | `2147483648` | API, render-worker API | Authoritative actual video-byte limit for dev/QA/worker paths. |
 | `MAX_REPLAY_ARTIFACT_BYTES` | `134217728` | API, worker | Bound for replay JSON writes and reads. |
 | `UPLOAD_CHUNK_BYTES` | `1048576` | API, worker | Bounded streaming chunk; validation never loads a full large artifact into memory. |
+| `DEMO_UPLOAD_DAILY_LIMIT` | `10` | API | Production only: new demos per owner in a rolling 24h window (archived demos count); over it `POST /uploads/demo` returns `429` `upload_daily_limit` with `Retry-After`. Range `0..1000` (checked in every mode); `0` disables it. |
+| `DEMO_ACTIVE_PARSE_LIMIT` | `2` | API | Production only: demos per owner still `queued`/`parsing`/`analyzing`; uploads and parse retries over it return `429` `active_parse_limit` (`Retry-After: 60`). Range `0..100`; `0` disables it. |
+| `PARSE_QUEUE_GLOBAL_LIMIT` | `50` | API | Production only: in-flight demos across all owners (database count, not Redis queue length); uploads and parse retries over it return `503` `parse_queue_full` (`Retry-After: 60`). Range `0..100000`; `0` disables it. |
 
 The provider-neutral boundary generates logical references that bind state, kind, owner, demo, and a server-generated artifact ID. It supports private streamed writes, exact size/SHA-256 metadata, conditional reads, HEAD, delete, promotion, range delivery, deterministic quarantine cleanup, and bounded source materialization. Production objects have no public ACL/URL and browser media continues to use only the owner-scoped route. The full contract is `docs/object_storage_safe_artifact_intake_v1.md`.
 
@@ -75,6 +78,7 @@ PostgreSQL should store compact metadata and storage keys only. Large `.dem`, re
 | `STEAM_AUTH_STATE_COOKIE_NAME` | `__Host-cs2_steam_state` | Backend API | Single-use Steam state cookie; production requires a distinct `__Host-` name. |
 | `STEAM_OPENID_NONCE_TTL_SECONDS` | `600` | Backend API, Redis | Steam assertion freshness and replay-reservation window; must cover login TTL plus skew. |
 | `STEAM_WEB_API_KEY` | unset | Backend API | Server-only GetPlayerSummaries/match-history publisher key; required in production, never frontend/worker-visible. |
+| `STEAM_LOGIN_ALLOWLIST` | unset | Backend API | Invite gate: comma-separated individual Steam ID64s (at most 1000, unique), or `*` for every Steam account. Required in production with `AUTH_PROVIDER=steam`; with `AUTH_PROVIDER=oidc` only empty or `*` is accepted. An uninvited callback redirects to `/auth/callback?error=not_invited` before any account is created, and removing an ID ends that user's live sessions. Development/test validate the format but never enforce it. |
 | `STEAM_CREDENTIAL_ENCRYPTION_KEY` | unset | Backend API | URL-safe base64 of 32 random bytes for AES-256-GCM; required and non-development in production. |
 | `STEAM_CREDENTIAL_ENCRYPTION_KEY_VERSION` | `dev-v1` | Backend API | Active bounded key version stored beside ciphertext; production should set its own version. |
 | `STEAM_SYNC_MAX_MATCHES` | `20` | Backend API | Hard maximum sharing codes consumed by one manual sync. |
@@ -104,7 +108,7 @@ PostgreSQL should store compact metadata and storage keys only. Large `.dem`, re
 | `AUTH_CLOCK_SKEW_SECONDS` | `30` | Backend API | Bounded identity timestamp leeway; production accepts `0..300`. |
 | `DEV_USER_ID` | `dev-user` | Backend API | Development/test owner harness only. `X-Dev-User-Id` is never a production identity source. |
 
-Production API startup fails closed unless the selected identity provider, secure `__Host-` cookie, exact single HTTPS application origin, exact single-origin CORS, bounded session/nonce settings, server-only Steam publisher/encryption keys, disabled V1 scheduler, disabled Demo source/experimental CDN, bounded download policy, and non-default render-worker credential are valid. Steam realm and callback are derived from `BACKEND_PUBLIC_URL`; complete OIDC configuration is required only when `AUTH_PROVIDER=oidc`. Demo source/download configuration is API-only. The parser/render queue worker uses a narrower validation path and does not receive browser Steam/OIDC secrets, match-history credentials, provider configuration, or provider secrets. Verified identities resolve through `accounts` and `external_identities` to a stable opaque `owner_v1_...`; browser sessions remain random opaque Redis entries. Unsafe browser mutations require the exact `FRONTEND_PUBLIC_URL` origin. No SteamID64, provider token, Game Authentication Code, Match Sharing Code, encryption metadata, raw identity claim, auth secret, provider source URL, or owner ID belongs in a frontend-visible payload.
+Production API startup fails closed unless the selected identity provider, secure `__Host-` cookie, exact single HTTPS application origin, exact single-origin CORS, bounded session/nonce settings, server-only Steam publisher/encryption keys, an explicit `STEAM_LOGIN_ALLOWLIST` when `AUTH_PROVIDER=steam`, disabled V1 scheduler, disabled Demo source/experimental CDN, bounded download policy, and non-default render-worker credential are valid. Steam realm and callback are derived from `BACKEND_PUBLIC_URL`; complete OIDC configuration is required only when `AUTH_PROVIDER=oidc`. Demo source/download configuration is API-only. The parser/render queue worker uses a narrower validation path and does not receive browser Steam/OIDC secrets, match-history credentials, provider configuration, or provider secrets. Verified identities resolve through `accounts` and `external_identities` to a stable opaque `owner_v1_...`; browser sessions remain random opaque Redis entries. Unsafe browser mutations require the exact `FRONTEND_PUBLIC_URL` origin. No SteamID64, provider token, Game Authentication Code, Match Sharing Code, encryption metadata, raw identity claim, auth secret, provider source URL, or owner ID belongs in a frontend-visible payload.
 
 Every browser-private auth, demo, upload, replay, coaching, diagnostics, render-job, and media response—including `4xx` failures—sets `Cache-Control: private, no-store` and merges `Cookie, Origin` into `Vary`. Render failures persist and expose only the stable `RENDER_FAILED` or `RENDER_WORKER_UNAVAILABLE` code and safe message; callback-provided error text and background exception strings do not enter the database, replay payload, user JSON, or logs.
 
@@ -113,6 +117,7 @@ Every browser-private auth, demo, upload, replay, coaching, diagnostics, render-
 | Variable | Default | Used by | Notes |
 | --- | --- | --- | --- |
 | `MAX_RENDER_CLIP_SECONDS` | `60` | API | Maximum accepted `render_clip` duration. |
+| `RENDER_CLIPS_ENABLED` | `0` | API | Production-only opt-in for user-facing `render/clip` creation and render-job retry; while off those routes return `404` and `/auth/me` reports `capabilities.renderClips=false`. Keep `0` unless an external GPU worker (`RENDER_WORKER_MODE=external`) is deployed. Development/test always allow clips. |
 | `RENDER_WORKER_TOKEN` | `dev-render-worker-token` | API, render-worker | Separate service credential for manifest, media upload, and callback endpoints. Production rejects the development default. It is not a browser identity credential. |
 | `API_BASE_URL` | `http://localhost:8000` | render-worker | API origin used by `render-worker/runner.py`. |
 | `WORK_DIR` | `.render-worker-work` | render-worker | Local workspace for manifest snapshots and manual operator files. |
@@ -126,7 +131,8 @@ Every browser-private auth, demo, upload, replay, coaching, diagnostics, render-
 
 | Variable / flag | Default | Used by | Notes |
 | --- | --- | --- | --- |
-| `SAMPLE_DEMO_PATH` | unset | `scripts/cloud_preview_smoke.py` | Absolute path to a local `.dem` for fresh upload/parser smoke. When unset, sample upload is skipped unless required. |
+| `SAMPLE_DEMO_PATH` | unset | `scripts/cloud_preview_smoke.py` | Absolute path to a local `.dem` for fresh upload/parser smoke. When unset, sample upload is skipped unless required; a production API (`/auth/me` reports `capabilities.devTools=false`) always requires it. |
+| `AUTH_SESSION_COOKIE` | unset | `scripts/cloud_preview_smoke.py` | Value of a signed-in account's `__Host-cs2_session` cookie, needed to smoke a production API. Never commit it or paste it into evidence. |
 | `SAMPLE_DEMO_NAME` | unset | `scripts/cloud_preview_smoke.py` | Optional display name applied to the uploaded sample demo through the normal demo update API. |
 | `REQUIRE_SAMPLE_DEMO` / `SAMPLE_DEMO_REQUIRED` | `0` | `scripts/cloud_preview_smoke.py` | Treat missing or invalid `SAMPLE_DEMO_PATH` as a smoke failure. The CLI flag `--require-sample` does the same. |
 
@@ -308,7 +314,7 @@ Cloud preview smoke is documented in `docs/cloud_preview_deploy_v1.md` and can b
 API_BASE_URL=http://localhost:8000 FRONTEND_URL=http://localhost:3000 python3 scripts/cloud_preview_smoke.py
 ```
 
-The current script smoke is a development/test harness. Without `SAMPLE_DEMO_PATH`, it runs health, frontend, mock upload, replay/coaching, render job, private-media routing checks, and a compact development diagnostics summary, then exits successfully with a sample-skip message. It does not replace the production provider/account/owner matrix. With a configured sample, it uploads through `POST /uploads/demo`, waits for parse completion, and prints map, round, coaching, and map calibration/fallback status:
+The current script smoke is a development/test harness. Without `SAMPLE_DEMO_PATH`, it runs health, frontend, mock upload, replay/coaching, render job, private-media routing checks, and a compact development diagnostics summary, then exits successfully with a sample-skip message. It does not replace the production provider/account/owner matrix. Against a production API it needs `AUTH_SESSION_COOKIE` and `SAMPLE_DEMO_PATH`, and it skips the mock upload and `render_clip` steps that `/auth/me` capabilities report as off (see `docs/cloud_preview_deploy_v1.md`). With a configured sample, it uploads through `POST /uploads/demo`, waits for parse completion, and prints map, round, coaching, and map calibration/fallback status:
 
 ```bash
 SAMPLE_DEMO_PATH=/absolute/path/to/sample.dem python3 scripts/cloud_preview_smoke.py
@@ -395,14 +401,14 @@ For release-candidate sign-off, use `docs/release_candidate_qa_v1.md`. The short
    ```
 
 3. Open `http://localhost:3000/dashboard`. Development mode should use the explicit local harness; a production candidate must redirect an anonymous browser through Steam OpenID (or the explicitly selected OIDC compatibility flow) and return through the frontend callback without assertion/session tokens in the URL.
-4. Create a mock upload and wait for it to complete.
+4. Development/test only: create a mock upload and wait for it to complete. Production returns `404` for `POST /uploads/mock`; use the real `.dem` from step 5.
 5. If a sample is available, set `SAMPLE_DEMO_PATH` and upload a real `.dem`.
 6. Open a demo detail page.
 7. Use round review quick jumps and confirm first-person shell/private video, tactical map, timeline, parser markers, and coaching cards stay synchronized.
 8. Confirm Replay Contract diagnostics show counts and no unexpected degraded fields for a healthy mock demo.
 9. For a failed parse fixture or seeded row, confirm the Dashboard and detail summary show compact failure metadata such as `INVALID_DEMO` or `UNSUPPORTED_PARSER_FORMAT`, and retry availability only when a source artifact exists.
-10. Click `Generate Clip` on a coaching event.
-11. Confirm render job status appears in the UI and `/demos/{demo_id}/render/jobs`.
+10. Development/test only, or production with `RENDER_CLIPS_ENABLED=1`: click `Generate Clip` on a coaching event.
+11. After step 10, confirm render job status appears in the UI and `/demos/{demo_id}/render/jobs`.
 12. For render-worker callback validation, run either the fake adapter with `DEV_FAKE_VIDEO_PATH` or the manual adapter flow documented in `render-worker/README.md`.
 13. Validate owner A, owner B, anonymous, expired, and revoked sessions across every surface in `docs/production_auth_owner_private_media_v1.md`, including private video GET/HEAD/Range and copied/guessed URL denial.
 14. Confirm production `/diagnostics` is `404`, public `/health` is coarse, and `/media/videos/...` is not mounted.

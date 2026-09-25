@@ -30,42 +30,52 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     check_health()
     check_frontend()
+    capabilities = fetch_capabilities()
 
-    demo = request_json("POST", "/uploads/mock")
-    demo_id = required_str(demo, "id")
-    print(f"created mock demo {demo_id}")
+    if capabilities["devTools"]:
+        demo = request_json("POST", "/uploads/mock")
+        demo_id = required_str(demo, "id")
+        print(f"created mock demo {demo_id}")
 
-    status = wait_for_completed_demo(demo_id)
-    print(f"mock demo completed: {status.get('map_name')} / {status.get('round_count')} rounds")
+        status = wait_for_completed_demo(demo_id)
+        print(f"mock demo completed: {status.get('map_name')} / {status.get('round_count')} rounds")
+        replay = request_json("GET", f"/demos/{demo_id}/replay")
+    else:
+        # Production hides the mock upload, so the real sample is the smoke demo.
+        if sample_path is None:
+            raise SmokeFailure(
+                "SAMPLE_DEMO_PATH is required when /auth/me reports devTools=false: "
+                "production has no mock upload, so the smoke needs a real sample demo"
+            )
+        print("mock upload skipped: /auth/me reports devTools=false; using the sample demo")
+        demo_id, replay = upload_sample_and_wait(sample_path)
 
-    replay = request_json("GET", f"/demos/{demo_id}/replay")
     coaching = request_json("GET", f"/demos/{demo_id}/coaching")
     print(f"loaded replay and {len(coaching) if isinstance(coaching, list) else 0} coaching events")
 
-    render_request = render_clip_request(replay, coaching if isinstance(coaching, list) else [])
-    render_response = request_json("POST", f"/demos/{demo_id}/render/clip", render_request)
-    job_id = required_str(render_response, "job_id")
-    jobs = request_json("GET", f"/demos/{demo_id}/render/jobs")
-    if not isinstance(jobs, list) or not any(job.get("job_id") == job_id for job in jobs):
-        raise SmokeFailure("render job list did not include the created render_clip job")
-    print(f"created render_clip job {job_id}")
+    video_url = video_url_from_payload(replay)
+    if capabilities["renderClips"]:
+        render_request = render_clip_request(replay, coaching if isinstance(coaching, list) else [])
+        render_response = request_json("POST", f"/demos/{demo_id}/render/clip", render_request)
+        job_id = required_str(render_response, "job_id")
+        jobs = request_json("GET", f"/demos/{demo_id}/render/jobs")
+        if not isinstance(jobs, list) or not any(job.get("job_id") == job_id for job in jobs):
+            raise SmokeFailure("render job list did not include the created render_clip job")
+        print(f"created render_clip job {job_id}")
+        video_url = video_url_from_payload(render_response) or video_url
+    else:
+        print("render_clip skipped: /auth/me reports renderClips=false")
 
-    video_url = video_url_from_payload(render_response) or video_url_from_payload(replay)
     check_media_route(video_url)
 
-    if sample_path:
-        print(f"uploading sample demo: {sample_path.name}")
-        sample_demo_id = upload_sample_demo(sample_path)
-        status = wait_for_completed_demo(sample_demo_id, timeout_seconds=120)
-        if SAMPLE_DEMO_NAME:
-            status = rename_demo(sample_demo_id, SAMPLE_DEMO_NAME)
-        sample_replay = request_json("GET", f"/demos/{sample_demo_id}/replay")
-        print(sample_completion_message(sample_demo_id, status, sample_replay))
-    else:
-        print(
-            "sample demo upload skipped; set SAMPLE_DEMO_PATH=/absolute/path/to/sample.dem "
-            "or pass --require-sample for stricter validation"
-        )
+    if capabilities["devTools"]:
+        if sample_path:
+            upload_sample_and_wait(sample_path)
+        else:
+            print(
+                "sample demo upload skipped; set SAMPLE_DEMO_PATH=/absolute/path/to/sample.dem "
+                "or pass --require-sample for stricter validation"
+            )
 
     print(failure_diagnostics_summary())
     print("cloud preview smoke passed")
@@ -74,6 +84,35 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 class SmokeFailure(RuntimeError):
     pass
+
+
+def fetch_capabilities() -> dict[str, bool]:
+    try:
+        payload = request_json("GET", "/auth/me")
+    except SmokeFailure as exc:
+        if AUTH_SESSION_COOKIE:
+            raise
+        raise SmokeFailure(
+            f"{exc}; a production preview needs AUTH_SESSION_COOKIE set to a signed-in "
+            "__Host-cs2_session value"
+        ) from exc
+    capabilities = capabilities_from_auth_me(payload)
+    print(
+        f"capabilities: devTools={str(capabilities['devTools']).lower()} "
+        f"renderClips={str(capabilities['renderClips']).lower()}"
+    )
+    return capabilities
+
+
+def capabilities_from_auth_me(payload: Any) -> dict[str, bool]:
+    # Missing or malformed capabilities count as off, like the frontend does.
+    raw = payload.get("capabilities") if isinstance(payload, dict) else None
+    if not isinstance(raw, dict):
+        raw = {}
+    return {
+        "devTools": raw.get("devTools") is True,
+        "renderClips": raw.get("renderClips") is True,
+    }
 
 
 def require_sample_enabled(argv: Sequence[str], env: Mapping[str, str]) -> bool:
@@ -296,6 +335,17 @@ def check_media_route(video_url: str | None) -> None:
     if status not in expected:
         raise SmokeFailure(f"media route returned HTTP {status}, expected {sorted(expected)}")
     print(f"media route returned expected HTTP {status}")
+
+
+def upload_sample_and_wait(sample_path: Path) -> tuple[str, Any]:
+    print(f"uploading sample demo: {sample_path.name}")
+    sample_demo_id = upload_sample_demo(sample_path)
+    status = wait_for_completed_demo(sample_demo_id, timeout_seconds=120)
+    if SAMPLE_DEMO_NAME:
+        status = rename_demo(sample_demo_id, SAMPLE_DEMO_NAME)
+    sample_replay = request_json("GET", f"/demos/{sample_demo_id}/replay")
+    print(sample_completion_message(sample_demo_id, status, sample_replay))
+    return sample_demo_id, sample_replay
 
 
 def upload_sample_demo(path: Path) -> str:

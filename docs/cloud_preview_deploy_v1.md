@@ -84,7 +84,7 @@ Required preview values:
 | `ARTIFACT_STORAGE_ROOT` and category dirs | API, worker | Local volume roots for uploads, replay blobs, summaries, and videos. |
 | `STEAM_AUTH_STATE_COOKIE_NAME`, `STEAM_OPENID_NONCE_TTL_SECONDS` | API, Redis | Steam state cookie and assertion freshness/replay window. |
 | `STEAM_WEB_API_KEY` | API | Required production server-only GetPlayerSummaries/match-history publisher key. Never prefix with `NEXT_PUBLIC_` or send to workers. |
-| `STEAM_LOGIN_ALLOWLIST` | API | Required by the preview Compose shape: comma-separated invited Steam ID64s, or `*` to allow every Steam account (with `AUTH_PROVIDER=oidc`, set `*`). Uninvited Steam sign-ins land on `/auth/callback?error=not_invited` without creating an account; removing an ID ends that user's live sessions. Restart the API after editing it. |
+| `STEAM_LOGIN_ALLOWLIST` | API | Required by the preview Compose shape: comma-separated invited Steam ID64s, or `*` to allow every Steam account (with `AUTH_PROVIDER=oidc`, set `*`). Uninvited Steam sign-ins land on `/auth/callback?error=not_invited` without creating an account; removing an ID ends that user's live sessions. After editing it, redeploy the API container so it re-reads the environment (`docker compose -f docker-compose.yml -f docker-compose.preview.yml up -d`); a plain `docker compose restart` keeps the old value. |
 | `STEAM_CREDENTIAL_ENCRYPTION_KEY`, `STEAM_CREDENTIAL_ENCRYPTION_KEY_VERSION` | API | AES-256-GCM key material/version for authorization, cursor, and discovered sharing codes. |
 | `STEAM_SYNC_MAX_MATCHES`, `STEAM_SYNC_TIMEOUT_SECONDS`, `STEAM_SYNC_RETRY_BASE_SECONDS`, `STEAM_SYNC_RETRY_MAX_SECONDS` | API | Bounded manual-sync and persisted-backoff policy. |
 | `STEAM_SCHEDULED_SYNC_ENABLED` | API | Must remain false in V1; no scheduler is registered. |
@@ -102,13 +102,14 @@ Required preview values:
 | `API_BASE_URL` | render-worker | Public API origin used by `render-worker/runner.py`. |
 | `DEV_FAKE_VIDEO_PATH` | render-worker | Optional MP4 for fake adapter callback validation. |
 | `CS2_INSTALL_DIR`, `STEAM_USER_DATA_DIR`, `CS2_MANUAL_OUTPUT_FILENAME` | render-worker | Manual adapter instruction metadata only. |
-| `SAMPLE_DEMO_PATH` | smoke script | Optional absolute path to a local sample `.dem` for fresh upload/parser validation. Archive samples are development compatibility only. |
+| `AUTH_SESSION_COOKIE` | smoke script | Value of a signed-in account's `__Host-cs2_session` cookie; required to smoke a production preview, where `X-Dev-User-Id` selects no owner. Never commit it or paste it into evidence. |
+| `SAMPLE_DEMO_PATH` | smoke script | Optional absolute path to a local sample `.dem` for fresh upload/parser validation; required when `/auth/me` reports `capabilities.devTools=false` (production). Archive samples are development compatibility only. |
 | `SAMPLE_DEMO_NAME` | smoke script | Optional display name applied after sample upload through `PATCH /demos/{demo_id}`. |
 | `REQUIRE_SAMPLE_DEMO` | smoke script | Set to `1` when smoke should fail if no sample is configured. Equivalent CLI flag: `--require-sample`. |
 
 ## Smoke Checklist
 
-For release-candidate sign-off, use the full checklist in `docs/release_candidate_qa_v1.md`. For reviewer handoff evidence, use `docs/internal_preview_packaging_v1.md`. The script smoke below covers the explicit development-mode API/frontend/mock/render/private-media projection and optional sample upload; it does not acquire a production Steam/OIDC session or replace the account/owner matrices.
+For release-candidate sign-off, use the full checklist in `docs/release_candidate_qa_v1.md`. For reviewer handoff evidence, use `docs/internal_preview_packaging_v1.md`. The script smoke below covers the explicit development-mode API/frontend/mock/render/private-media projection and optional sample upload; it does not acquire a production Steam/OIDC session or replace the account/owner matrices. Against the `AUTH_MODE=production` preview above, sign in with an invited account first and export `AUTH_SESSION_COOKIE` (that session's `__Host-cs2_session` value) plus `SAMPLE_DEMO_PATH`: the script reads `/auth/me` capabilities, skips the mock upload when `devTools=false` (the sample becomes the replay/coaching/media demo, so it fails without `SAMPLE_DEMO_PATH`) and skips `render_clip` when `renderClips=false`, printing each skip. Every run uploads the sample, which counts toward that account's `DEMO_UPLOAD_DAILY_LIMIT`.
 
 API/script smoke:
 
@@ -118,7 +119,7 @@ FRONTEND_URL="$FRONTEND_URL" \
 python3 scripts/cloud_preview_smoke.py
 ```
 
-When no sample is configured, the script prints a skip message and still exits successfully after the mandatory mock upload, replay/coaching, render job, private-media route checks, and compact development diagnostics summary. If diagnostics is unavailable, the script keeps the original failure visible. Add a real demo parse check when a sample is available:
+When no sample is configured against a development/test API, the script prints a skip message and still exits successfully after the mandatory mock upload, replay/coaching, render job, private-media route checks, and compact development diagnostics summary. If diagnostics is unavailable, the script keeps the original failure visible. Add a real demo parse check when a sample is available:
 
 ```bash
 SAMPLE_DEMO_PATH=/absolute/path/to/sample.dem \
@@ -153,7 +154,7 @@ Manual browser smoke:
 11. Sign out and prove the old session no longer loads library data or media. Run the owner A/B/anonymous/expired/revoked matrix in `docs/production_auth_owner_private_media_v1.md`.
 12. If a sample `.dem` exists, upload it or run smoke with `SAMPLE_DEMO_PATH`, then confirm the same detail-page sync behavior and compact parser failure copy if the sample is invalid.
 
-For local preview RC checks, `./scripts/rc_check.sh` runs the non-browser command sequence against `API_BASE_URL` and `FRONTEND_URL`, then prints the manual browser checklist reminder. Set those variables to public preview origins when using it outside localhost.
+For local preview RC checks, `./scripts/rc_check.sh` runs the non-browser command sequence against `API_BASE_URL` and `FRONTEND_URL`, then prints the manual browser checklist reminder. Set those variables to public preview origins when using it outside localhost against a development-mode API; a production API returns `404` for `/diagnostics`, so run `scripts/cloud_preview_smoke.py` directly as above instead.
 
 ## Render Worker Preview
 
