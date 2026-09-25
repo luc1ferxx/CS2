@@ -141,7 +141,7 @@ Radar 资源来自 [rabume/cs2-dma-radar](https://github.com/rabume/cs2-dma-rada
 
 ## 配置
 
-完整表格（78 项）见 [Configuration Reference](docs/configuration_reference_v1.md)。最常用的：
+完整表格（81 项）见 [Configuration Reference](docs/configuration_reference_v1.md)。最常用的：
 
 | Name | Default | Used by |
 | --- | --- | --- |
@@ -160,6 +160,7 @@ Radar 资源来自 [rabume/cs2-dma-radar](https://github.com/rabume/cs2-dma-rada
 | `RENDER_WORKER_TOKEN` | `dev-render-worker-token` | production 必须改 |
 | `RENDER_CLIPS_ENABLED` | `0` | 仅 production：为 `1` 时才开放生成/重试短片，否则相关路由返回 `404` |
 | `MAX_DEMO_UPLOAD_BYTES` | `1073741824` | 实际流式字节上限 |
+| `DEMO_UPLOAD_DAILY_LIMIT` / `DEMO_ACTIVE_PARSE_LIMIT` / `PARSE_QUEUE_GLOBAL_LIMIT` | `10` / `2` / `50` | 仅 production：每个 owner 滚动 24h 上传数、每个 owner 同时处理中的 demo 数、全站处理中的 demo 数；`0` 表示不限 |
 | `DEV_USER_ID` | `dev-user` | 仅 development/test |
 
 Production 启动会 fail closed 地要求：显式 identity provider、HTTPS + `__Host-` cookie + 单一 origin + 精确 CORS、真实 server-only Steam Web API key、Steam 登录时显式的 `STEAM_LOGIN_ALLOWLIST`、非开发用的随机加密 key、非默认 render token、private S3-compatible 存储。Demo source/download 配置只属于 API——parser/render worker 永远拿不到 Steam/OIDC 浏览器密钥或 provider secret。

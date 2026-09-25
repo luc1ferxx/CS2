@@ -1,10 +1,19 @@
 from __future__ import annotations
 
+import logging
 import re
 import secrets
+from collections.abc import Callable
+from typing import TYPE_CHECKING
 
+from starlette.concurrency import run_in_threadpool
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
+
+if TYPE_CHECKING:
+    from app.services.upload_quota import UploadQuotaExceeded
+
+logger = logging.getLogger(__name__)
 
 DEMO_ENVELOPE_LIMIT_BYTES = (1024 * 1024 * 1024) + (8 * 1024 * 1024)
 VIDEO_ENVELOPE_LIMIT_BYTES = (2 * 1024 * 1024 * 1024) + (8 * 1024 * 1024)
@@ -33,6 +42,7 @@ class MultipartRequestLimitMiddleware:
         render_worker_token: str | None = None,
         max_concurrent_uploads: int = 1,
         manual_video_upload_enabled: bool = True,
+        demo_upload_precheck: Callable[[str], UploadQuotaExceeded | None] | None = None,
     ) -> None:
         if max_concurrent_uploads <= 0:
             raise ValueError("max_concurrent_uploads must be positive")
@@ -44,6 +54,7 @@ class MultipartRequestLimitMiddleware:
         self.render_worker_token = render_worker_token
         self.max_concurrent_uploads = max_concurrent_uploads
         self.manual_video_upload_enabled = manual_video_upload_enabled
+        self.demo_upload_precheck = demo_upload_precheck
         self._active_uploads = 0
 
     async def __call__(
@@ -76,6 +87,29 @@ class MultipartRequestLimitMiddleware:
         ):
             await _send_request_too_large(scope, receive, send)
             return
+
+        # The route's own quota check would also run only after the whole file
+        # has streamed in, so an owner already at a limit is turned away here
+        # first. SessionCsrfMiddleware sets the owner in production only; the
+        # route still re-checks authoritatively.
+        owner_id = _authenticated_owner_id(scope)
+        if (
+            self.demo_upload_precheck is not None
+            and scope.get("path") == "/uploads/demo"
+            and owner_id is not None
+        ):
+            try:
+                exceeded = await run_in_threadpool(self.demo_upload_precheck, owner_id)
+            except Exception as exc:
+                logger.warning(
+                    "Upload quota precheck failed (%s); rejecting the upload",
+                    type(exc).__name__,
+                )
+                await _send_upload_quota_unavailable(scope, receive, send)
+                return
+            if exceeded is not None:
+                await exceeded.to_response()(scope, receive, send)
+                return
 
         if self._active_uploads >= self.max_concurrent_uploads:
             await _send_upload_busy(scope, receive, send)
@@ -201,6 +235,14 @@ class SensitiveJsonRequestLimitMiddleware:
             await _send_sensitive_request_too_large(scope, receive, send)
 
 
+def _authenticated_owner_id(scope: Scope) -> str | None:
+    state = scope.get("state")
+    if not isinstance(state, dict):
+        return None
+    owner_id = state.get("authenticated_owner_id")
+    return owner_id if isinstance(owner_id, str) and owner_id else None
+
+
 def _has_trustworthy_oversized_content_length(
     headers: list[tuple[bytes, bytes]] | tuple[tuple[bytes, bytes], ...],
     limit: int,
@@ -270,6 +312,25 @@ async def _send_sensitive_request_too_large(
             "errorCode": "REQUEST_TOO_LARGE",
         },
         headers={"Cache-Control": "private, no-store", "Vary": "Cookie, Origin"},
+    )
+    await response(scope, receive, send)
+
+
+async def _send_upload_quota_unavailable(
+    scope: Scope,
+    receive: Receive,
+    send: Send,
+) -> None:
+    response = JSONResponse(
+        status_code=503,
+        content={
+            "detail": {
+                "code": "upload_quota_unavailable",
+                "message": "Upload quota could not be checked. Try again shortly.",
+                "retryAfterSeconds": 30,
+            }
+        },
+        headers={"Cache-Control": "private, no-store", "Retry-After": "30"},
     )
     await response(scope, receive, send)
 

@@ -8,6 +8,7 @@ from app.core.features import require_dev_tools
 from app.schemas.demo import DemoListItem
 from app.services.artifact_intake import ArtifactIntakeError
 from app.services.demo_service import DemoArtifactBindError, DemoDispatchError, DemoService
+from app.services.upload_quota import UploadQuotaExceeded, UploadQuotaService
 from app.services.upload_service import DemoUploadValidationError
 
 router = APIRouter(tags=["uploads"])
@@ -32,6 +33,10 @@ def create_demo_upload(
     db: Session = Depends(get_db),
     owner_id: str = Depends(get_current_owner_id),
 ) -> DemoListItem | JSONResponse:
+    try:
+        UploadQuotaService(db).check_new_upload(owner_id)
+    except UploadQuotaExceeded as exc:
+        return exc.to_response()
     try:
         return DemoService(db, owner_id=owner_id).create_real_demo(file)
     except ArtifactIntakeError as exc:

@@ -3,7 +3,7 @@ import secrets
 from typing import Any
 
 from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, Response, UploadFile
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from sqlalchemy.orm import Session
 from starlette.background import BackgroundTask
 
@@ -34,6 +34,7 @@ from app.services.demo_service import (
     ReplayBlobUnavailableError,
 )
 from app.services.diagnostics import render_worker_availability, write_render_worker_heartbeat
+from app.services.upload_quota import UploadQuotaExceeded, UploadQuotaService
 from app.services.upload_service import DemoUploadValidationError, store_video_artifact
 
 logger = logging.getLogger(__name__)
@@ -150,11 +151,15 @@ def retry_demo_parse(
     demo_id: str,
     db: Session = Depends(get_db),
     owner_id: str = Depends(get_current_owner_id),
-) -> DemoListItem:
+) -> DemoListItem | JSONResponse:
     service = DemoService(db, owner_id=owner_id)
     demo = service.get_demo(demo_id)
     if demo is None:
         raise HTTPException(status_code=404, detail="Demo not found")
+    try:
+        UploadQuotaService(db).check_parse_retry(owner_id)
+    except UploadQuotaExceeded as exc:
+        return exc.to_response()
     try:
         return service.retry_parse_job(demo)
     except DemoDispatchError as exc:

@@ -95,6 +95,7 @@ Required preview values:
 | `AUTH_COOKIE_SECURE`, `AUTH_SESSION_COOKIE_NAME` | API | Secure opaque session cookie controls. Production requires secure cookies. |
 | `AUTH_SESSION_TTL_SECONDS`, `AUTH_LOGIN_TTL_SECONDS` | API, Redis | Bounded session and one-time login attempt lifetimes. |
 | `DEV_USER_ID` | API | Development/test owner harness only; `X-Dev-User-Id` is not a production identity source. |
+| `DEMO_UPLOAD_DAILY_LIMIT`, `DEMO_ACTIVE_PARSE_LIMIT`, `PARSE_QUEUE_GLOBAL_LIMIT` | API | Production-only beta quotas (defaults `10`, `2`, `50`; `0` disables one): new demos per owner in a rolling 24h window, demos per owner still queued/parsing/analyzing, and in-flight demos across all owners. Uploads over a limit are refused before the body is read and again in the route; parse retries honour the two in-flight caps. Rejections are `429`/`503` with `Retry-After`. |
 | `MAX_RENDER_CLIP_SECONDS` | API, worker | Render clip duration guard. |
 | `RENDER_WORKER_TOKEN` | API, render-worker | Separate worker service credential. Production rejects the development default. |
 | `RENDER_CLIPS_ENABLED` | API | Production-only opt-in (default `0`) for user-facing `render/clip` creation and retry; while off those routes return `404` and `/auth/me` reports `capabilities.renderClips=false`. Keep `0` unless an external GPU worker (`RENDER_WORKER_MODE=external`) is deployed. Development/test always allow clips. |

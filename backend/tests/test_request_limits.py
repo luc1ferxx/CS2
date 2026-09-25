@@ -13,6 +13,7 @@ from app.core.request_limits import (
     MultipartRequestLimitMiddleware,
     SensitiveJsonRequestLimitMiddleware,
 )
+from app.services.upload_quota import UploadQuotaExceeded
 
 
 class RecordingBodyApp:
@@ -55,6 +56,7 @@ def invoke_asgi(
     path: str,
     chunks: Iterable[bytes] = (),
     headers: Iterable[tuple[bytes, bytes]] = (),
+    state: dict[str, Any] | None = None,
 ) -> tuple[int, dict[str, str], bytes, int]:
     materialized_chunks = list(chunks)
     messages = [
@@ -93,6 +95,8 @@ def invoke_asgi(
         "client": ("127.0.0.1", 1234),
         "server": ("testserver", 80),
     }
+    if state is not None:
+        scope["state"] = state
     asyncio.run(app(scope, receive, send))
 
     start = next(message for message in sent if message["type"] == "http.response.start")
@@ -427,6 +431,140 @@ class MultipartRequestLimitMiddlewareTest(unittest.TestCase):
 
                 self.assertEqual(status, 200)
                 self.assertEqual(json.loads(body), {"received": 4})
+
+    def test_demo_upload_precheck_rejects_an_owner_at_a_quota_before_the_body(self) -> None:
+        downstream = RecordingBodyApp()
+        calls: list[str] = []
+
+        def precheck(owner_id: str) -> UploadQuotaExceeded:
+            calls.append(owner_id)
+            return UploadQuotaExceeded(429, "upload_daily_limit", "Daily upload limit reached.", 1234)
+
+        app = MultipartRequestLimitMiddleware(
+            downstream,
+            demo_envelope_limit_bytes=64,
+            demo_upload_precheck=precheck,
+        )
+        # A quota rejection must not queue behind (or take) the upload slot.
+        app._active_uploads = 1
+
+        status, headers, body, receive_calls = invoke_asgi(
+            app,
+            path="/uploads/demo",
+            chunks=[b"must-not-be-read"],
+            headers=[(b"content-length", b"16")],
+            state={"authenticated_owner_id": "owner_v1_at_limit"},
+        )
+
+        self.assertEqual(status, 429)
+        self.assertEqual(
+            json.loads(body),
+            {
+                "detail": {
+                    "code": "upload_daily_limit",
+                    "message": "Daily upload limit reached.",
+                    "retryAfterSeconds": 1234,
+                }
+            },
+        )
+        self.assertEqual(headers["retry-after"], "1234")
+        self.assertEqual(headers["cache-control"], "private, no-store")
+        self.assertEqual(calls, ["owner_v1_at_limit"])
+        self.assertEqual(receive_calls, 0)
+        self.assertFalse(downstream.called)
+        self.assertEqual(app._active_uploads, 1)
+
+    def test_demo_upload_precheck_that_raises_fails_closed_before_the_body(self) -> None:
+        downstream = RecordingBodyApp()
+
+        def precheck(_owner_id: str) -> None:
+            raise ConnectionError("database unavailable")
+
+        app = MultipartRequestLimitMiddleware(
+            downstream,
+            demo_envelope_limit_bytes=64,
+            demo_upload_precheck=precheck,
+        )
+
+        with self.assertLogs("app.core.request_limits", level="WARNING") as logs:
+            status, headers, body, receive_calls = invoke_asgi(
+                app,
+                path="/uploads/demo",
+                chunks=[b"must-not-be-read"],
+                state={"authenticated_owner_id": "owner_v1_secret_owner"},
+            )
+
+        self.assertEqual(status, 503)
+        self.assertEqual(json.loads(body)["detail"]["code"], "upload_quota_unavailable")
+        self.assertEqual(json.loads(body)["detail"]["retryAfterSeconds"], 30)
+        self.assertEqual(headers["retry-after"], "30")
+        self.assertEqual(headers["cache-control"], "private, no-store")
+        self.assertEqual(receive_calls, 0)
+        self.assertFalse(downstream.called)
+        self.assertEqual(app._active_uploads, 0)
+        logged = " ".join(logs.output)
+        self.assertNotIn("owner_v1_secret_owner", logged)
+        self.assertNotIn("database unavailable", logged)
+
+    def test_demo_upload_precheck_passes_allowed_owners_through_to_the_stream(self) -> None:
+        downstream = RecordingBodyApp()
+        calls: list[str] = []
+
+        def precheck(owner_id: str) -> None:
+            calls.append(owner_id)
+
+        app = MultipartRequestLimitMiddleware(
+            downstream,
+            demo_envelope_limit_bytes=8,
+            demo_upload_precheck=precheck,
+        )
+
+        status, _, body, receive_calls = invoke_asgi(
+            app,
+            path="/uploads/demo",
+            chunks=[b"1234"],
+            state={"authenticated_owner_id": "owner_v1_allowed"},
+        )
+
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body), {"received": 4})
+        self.assertEqual(calls, ["owner_v1_allowed"])
+        self.assertEqual(receive_calls, 1)
+        self.assertEqual(app._active_uploads, 0)
+
+    def test_demo_upload_precheck_is_skipped_without_owner_other_paths_or_oversize(self) -> None:
+        for path, headers, state, expected_status in (
+            ("/uploads/demo", [], None, 200),
+            ("/uploads/demo", [], {}, 200),
+            ("/uploads/demo", [(b"content-length", b"9")], {"authenticated_owner_id": "o"}, 413),
+            ("/demos/demo-123/video/upload", [], {"authenticated_owner_id": "o"}, 200),
+            ("/uploads/mock", [], {"authenticated_owner_id": "o"}, 200),
+        ):
+            with self.subTest(path=path, headers=headers, state=state):
+                downstream = RecordingBodyApp()
+                calls: list[str] = []
+
+                def precheck(owner_id: str, calls: list[str] = calls) -> UploadQuotaExceeded:
+                    calls.append(owner_id)
+                    return UploadQuotaExceeded(429, "active_parse_limit", "Busy.", 60)
+
+                app = MultipartRequestLimitMiddleware(
+                    downstream,
+                    demo_envelope_limit_bytes=8,
+                    video_envelope_limit_bytes=8,
+                    demo_upload_precheck=precheck,
+                )
+
+                status, _, _, _ = invoke_asgi(
+                    app,
+                    path=path,
+                    chunks=[b"1234"],
+                    headers=headers,
+                    state=state,
+                )
+
+                self.assertEqual(status, expected_status)
+                self.assertEqual(calls, [])
 
     def test_non_target_route_passes_through_without_request_envelope_limit(self) -> None:
         downstream = RecordingBodyApp()

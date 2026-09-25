@@ -22,6 +22,7 @@ from app.core.request_limits import (
 )
 from app.services.artifact_intake import ArtifactIntakeError, ArtifactIntakePolicy, ArtifactIntakeService
 from app.services.storage import artifact_store_from_settings
+from app.services.upload_quota import upload_quota_precheck
 
 logger = logging.getLogger(__name__)
 
@@ -80,6 +81,9 @@ app.add_middleware(
     render_worker_token=settings.render_worker_token,
     max_concurrent_uploads=1,
     manual_video_upload_enabled=settings.auth_mode != "production",
+    demo_upload_precheck=(
+        upload_quota_precheck(SessionLocal) if settings.auth_mode == "production" else None
+    ),
 )
 app.add_middleware(SensitiveJsonRequestLimitMiddleware)
 app.add_middleware(SessionCsrfMiddleware)
@@ -89,6 +93,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["Retry-After"],
 )
 
 app.include_router(demos.router)

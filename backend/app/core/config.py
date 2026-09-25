@@ -213,6 +213,12 @@ class Settings:
         )
     )
     upload_chunk_bytes: int = int(os.getenv("UPLOAD_CHUNK_BYTES", str(1024 * 1024)))
+    # Production-only upload quotas (app/services/upload_quota.py); 0 disables
+    # a limit. Daily counts demos created per owner in a rolling 24h window;
+    # the other two count demos still queued/parsing/analyzing.
+    demo_upload_daily_limit: int = int(os.getenv("DEMO_UPLOAD_DAILY_LIMIT", "10"))
+    demo_active_parse_limit: int = int(os.getenv("DEMO_ACTIVE_PARSE_LIMIT", "2"))
+    parse_queue_global_limit: int = int(os.getenv("PARSE_QUEUE_GLOBAL_LIMIT", "50"))
     artifact_storage_root: Path = DEFAULT_ARTIFACT_STORAGE_ROOT
     replay_storage_dir: Path = Path(
         os.getenv("REPLAY_STORAGE_DIR", str(DEFAULT_ARTIFACT_STORAGE_ROOT / "replays"))
@@ -362,6 +368,7 @@ class Settings:
             self._validate_steam_demo_import_configuration()
             self._validate_artifact_storage_configuration()
             self._validate_beta_access_configuration()
+            self._validate_upload_quota_configuration()
             return
 
         if self.auth_provider == "oidc":
@@ -447,6 +454,7 @@ class Settings:
         self._validate_steam_sync_configuration()
         self._validate_steam_demo_import_configuration()
         self._validate_beta_access_configuration()
+        self._validate_upload_quota_configuration()
 
     def validate_worker_runtime_configuration(self) -> None:
         if self.render_worker_mode not in {"fallback", "external"}:
@@ -749,6 +757,16 @@ class Settings:
                 "STEAM_LOGIN_ALLOWLIST applies only to AUTH_PROVIDER=steam; leave it "
                 "empty or * with AUTH_PROVIDER=oidc"
             )
+
+    def _validate_upload_quota_configuration(self) -> None:
+        limits = (
+            ("DEMO_UPLOAD_DAILY_LIMIT", self.demo_upload_daily_limit, 1_000),
+            ("DEMO_ACTIVE_PARSE_LIMIT", self.demo_active_parse_limit, 100),
+            ("PARSE_QUEUE_GLOBAL_LIMIT", self.parse_queue_global_limit, 100_000),
+        )
+        for env_name, value, maximum in limits:
+            if not 0 <= value <= maximum:
+                raise RuntimeError(f"{env_name} must be between 0 and {maximum}")
 
     def _validate_production_oidc_configuration(self) -> None:
         required = (

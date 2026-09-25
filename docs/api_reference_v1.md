@@ -10,6 +10,8 @@ Production 隐藏 dev/QA 路由：`POST /uploads/mock`、`POST /demos/{demo_id}/
 
 Production 的 Steam 登录受 `STEAM_LOGIN_ALLOWLIST` 限制（逗号分隔的 Steam ID64，或 `*`）。Session 记录登录时的 Steam ID；名单不是 `*` 时，每次解析 session 都会重新核对名单：被移出名单的用户、以及没有记录 Steam ID 的旧 session，在所有需要登录的路由上都会得到 `401`。
 
+Production 的上传额度（`DEMO_UPLOAD_DAILY_LIMIT`、`DEMO_ACTIVE_PARSE_LIMIT`、`PARSE_QUEUE_GLOBAL_LIMIT`）作用于 `POST /uploads/demo` 和 `POST /demos/{demo_id}/parse/retry`。拒绝时返回 `{"detail": {"code": ..., "message": ..., "retryAfterSeconds": ...}}`、`Retry-After` 头和 `Cache-Control: private, no-store`：`parse_queue_full` → `503`，`active_parse_limit` → `429`，`upload_daily_limit` → `429`（仅上传），额度检查本身不可用时 `upload_quota_unavailable` → `503`（仅上传）。上传在读取 body 之前就会被拒绝。development/test 不检查额度。
+
 ## 用户 API
 
 所有 demo/upload/replay/coaching/library/render/private-media 路由都从可信 session 派生 `owner_id`，并复用各自已有的 owner-scoped 查询。
@@ -34,9 +36,9 @@ Production 的 Steam 登录受 `STEAM_LOGIN_ALLOWLIST` 限制（逗号分隔的 
 - `POST /demos/{demo_id}/archive`
 - `GET /demos/{demo_id}/status`
 - `GET /demos/{demo_id}/diagnostics`
-- `POST /demos/{demo_id}/parse/retry`
+- `POST /demos/{demo_id}/parse/retry`（production 受全站/个人处理中额度限制：`503` `parse_queue_full`、`429` `active_parse_limit`）
 - `POST /uploads/mock`（仅 development/test；production 返回 `404`）
-- `POST /uploads/demo`
+- `POST /uploads/demo`（production 受上传额度限制：`503` `parse_queue_full`、`429` `active_parse_limit` / `upload_daily_limit`、`503` `upload_quota_unavailable`）
 
 ### Replay and coaching
 
