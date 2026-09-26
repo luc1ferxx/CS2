@@ -3,8 +3,10 @@ import io
 import os
 import tempfile
 import unittest
+import urllib.error
 import uuid
 from contextlib import redirect_stdout
+from email.message import Message
 from pathlib import Path
 from unittest import mock
 
@@ -198,6 +200,88 @@ class CloudPreviewSampleConfigTest(unittest.TestCase):
             self.smoke.auth_headers("POST"),
             {"X-Dev-User-Id": "smoke-owner"},
         )
+
+
+class CloudPreviewHealthTest(unittest.TestCase):
+    """check_health fails on the 503 a degraded API answers, and says why."""
+
+    def setUp(self) -> None:
+        self.smoke = load_smoke_module()
+        self.smoke.API_BASE_URL = "https://coach.example.test"
+        self.smoke.AUTH_SESSION_COOKIE = ""
+
+    def serve(self, status: int, body: bytes) -> list[str]:
+        urls: list[str] = []
+
+        def fake_urlopen(request, timeout=None):
+            urls.append(request.full_url)
+            if status >= 400:
+                raise urllib.error.HTTPError(request.full_url, status, "error", Message(), io.BytesIO(body))
+            return FakeResponse(body)
+
+        patcher = mock.patch.object(self.smoke.urllib.request, "urlopen", side_effect=fake_urlopen)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        return urls
+
+    def test_ok_health_passes(self) -> None:
+        urls = self.serve(200, b'{"status":"ok"}')
+        output = io.StringIO()
+
+        with redirect_stdout(output):
+            self.smoke.check_health()
+
+        self.assertEqual(urls, ["https://coach.example.test/health"])
+        self.assertIn("health ok", output.getvalue())
+
+    def test_degraded_503_is_a_clear_health_failure(self) -> None:
+        self.serve(503, b'{"status":"degraded"}')
+
+        with self.assertRaises(self.smoke.SmokeFailure) as raised:
+            self.smoke.check_health()
+
+        message = str(raised.exception)
+        self.assertIn('API health is degraded (HTTP 503 {"status":"degraded"})', message)
+        self.assertIn("database, Redis or worker configuration", message)
+
+    def test_other_http_errors_name_the_status(self) -> None:
+        self.serve(502, b"Bad Gateway")
+
+        with self.assertRaises(self.smoke.SmokeFailure) as raised:
+            self.smoke.check_health()
+
+        self.assertEqual(str(raised.exception), "GET /health failed with HTTP 502: Bad Gateway")
+
+    def test_degraded_health_stops_the_smoke_before_any_write(self) -> None:
+        urls = self.serve(503, b'{"status":"degraded"}')
+        self.smoke.check_frontend = mock.Mock()
+        self.smoke.SAMPLE_DEMO_PATH = None
+        environ = mock.patch.dict(os.environ)
+        environ.start()
+        self.addCleanup(environ.stop)
+        os.environ.pop("REQUIRE_SAMPLE_DEMO", None)
+        os.environ.pop("SAMPLE_DEMO_REQUIRED", None)
+
+        with self.assertRaises(self.smoke.SmokeFailure), redirect_stdout(io.StringIO()):
+            self.smoke.main([])
+
+        self.assertEqual(urls, ["https://coach.example.test/health"])
+        self.smoke.check_frontend.assert_not_called()
+
+
+class FakeResponse:
+    def __init__(self, body: bytes) -> None:
+        self.body = body
+        self.status = 200
+
+    def __enter__(self) -> "FakeResponse":
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        return None
+
+    def read(self) -> bytes:
+        return self.body
 
 
 class CloudPreviewCapabilitiesTest(unittest.TestCase):

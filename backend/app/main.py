@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
 from app.api import auth, coaching, demos, diagnostics, private_media, replay, steam, uploads
@@ -111,8 +112,11 @@ app.include_router(private_media.router)
 app.include_router(steam.router)
 
 
-@app.get("/health")
-def health() -> dict[str, object]:
+@app.get(
+    "/health",
+    responses={503: {"description": 'A dependency check failed; the body is {"status": "degraded"}.'}},
+)
+def health() -> JSONResponse:
     db_ok = False
     redis_ok = False
 
@@ -135,4 +139,8 @@ def health() -> dict[str, object]:
         and settings.max_render_clip_seconds > 0
     )
 
-    return {"status": "ok" if db_ok and redis_ok and worker_dependencies_ok else "degraded"}
+    # The status code carries the verdict so Caddy, uptime checks and deploy
+    # scripts can fail on it without parsing the body; the body stays coarse.
+    if db_ok and redis_ok and worker_dependencies_ok:
+        return JSONResponse({"status": "ok"})
+    return JSONResponse({"status": "degraded"}, status_code=503)

@@ -362,9 +362,10 @@ class DiagnosticsEndpointTest(unittest.TestCase):
             "app.main.get_redis_client",
             return_value=self.redis,
         ):
-            body = main.health()
+            response = main.health()
 
-        self.assertEqual(body, {"status": "ok"})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(json.loads(bytes(response.body)), {"status": "ok"})
 
 
 class BrokenRedis:

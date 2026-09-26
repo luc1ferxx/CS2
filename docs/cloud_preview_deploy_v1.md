@@ -4,6 +4,8 @@ This preview path uses Docker Compose with the FastAPI API, Redis worker, Postgr
 
 For the complete internal reviewer package, including local RC commands, strict sample validation, browser smoke, known limitations, and handoff evidence, use `docs/internal_preview_packaging_v1.md`.
 
+For the production launch on one VPS (Caddy edge, `docker-compose.prod.yml`, bootstrap/deploy/rollback, production smoke, backups and restore drills), use [vps_deploy_v1](vps_deploy_v1.md).
+
 ## Selected Preview Shape
 
 Use the default `docker-compose.yml` for local development. Use `docker-compose.preview.yml` as an override when the frontend should run from a production Next.js build:
@@ -51,11 +53,11 @@ Set required `STEAM_WEB_API_KEY`, a random `STEAM_CREDENTIAL_ENCRYPTION_KEY`, an
 
 `NEXT_PUBLIC_API_BASE_URL` and `NEXT_PUBLIC_AUTH_PROVIDER` are baked into the frontend browser bundle during `next build`, so rebuild the frontend image whenever either changes. The public provider selector must match server `AUTH_PROVIDER`. Steam publisher/encryption keys have no `NEXT_PUBLIC_*` form.
 
-The repository does not provision an edge proxy or cloud resource. A production candidate must supply same-origin routing externally: frontend pages and static assets, including frontend `/auth/callback`, go to Next.js; `/auth/steam/login`, `/auth/steam/callback`, `/auth/me`, `/auth/logout`, compatibility auth routes, `/steam/*`, `/demos/*`, `/uploads/*`, `/health`, and render-worker API paths go to FastAPI on the same public origin. The backend Steam callback and frontend completion page must remain distinct. The checked-in two-port localhost layout remains development mode.
+The preview override does not provision an edge proxy or cloud resource; for a single VPS, `deploy/Caddyfile` in `docker-compose.prod.yml` implements this routing (see [vps_deploy_v1](vps_deploy_v1.md)). A production candidate must supply same-origin routing: frontend pages and static assets, including frontend `/auth/callback`, go to Next.js; `/auth/steam/login`, `/auth/steam/callback`, `/auth/me`, `/auth/logout`, compatibility auth routes, `/steam/*`, `/demos`, every path below `/demos/{id}/`, `PATCH /demos/{id}`, `/uploads/*`, `/coaching/*`, `/health`, and render-worker API paths go to FastAPI on the same public origin, while `GET /demos/{id}` is the Next.js review page. The backend Steam callback and frontend completion page must remain distinct. The checked-in two-port localhost layout remains development mode.
 
 User-facing video metadata contains only `/demos/{demo_id}/media/video`, which the frontend resolves against `NEXT_PUBLIC_API_BASE_URL`. The API checks the opaque session and owner again for every GET/HEAD/Range request. There is no public `/media/videos` mount. Production must route frontend pages plus API/auth/media paths through the same exact HTTPS origin; split subdomains fail runtime validation.
 
-`GET /health` returns only `{"status":"ok"}` or `{"status":"degraded"}` and does not echo origins, dependencies, or storage paths.
+`GET /health` returns only HTTP `200` `{"status":"ok"}` or, when any dependency check fails, HTTP `503` `{"status":"degraded"}`, and does not echo origins, dependencies, or storage paths.
 
 `GET /diagnostics` is available only in development/test previews. Production returns `404`; use the authenticated owner-scoped `/demos/{demo_id}/diagnostics` for user-visible demo diagnosis and defer protected operational diagnostics to the observability stage.
 

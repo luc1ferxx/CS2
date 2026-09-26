@@ -46,3 +46,7 @@ render-worker/work/
 *.webm
 *.mkv
 frontend/public/videos/
+
+# Production deploy secrets and history (docs/vps_deploy_v1.md)
+deploy/.env.production
+deploy/.deploy-history

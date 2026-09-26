@@ -1,0 +1,110 @@
+# Caddy v2 edge for the single-VPS production shape (docs/vps_deploy_v1.md).
+#
+# One public HTTPS origin serves both Next.js and FastAPI (production config
+# validation rejects split origins). The API container publishes no port, so
+# Caddy is the only way in; that is what makes uvicorn's
+# --forwarded-allow-ips=* safe in docker-compose.prod.yml.
+#
+# Env (from deploy/.env.production via docker-compose.prod.yml):
+#   SITE_DOMAIN  bare host name, e.g. coach.example.com (DNS-only A/AAAA record)
+#   ACME_EMAIL   Let's Encrypt account contact
+{
+	email {$ACME_EMAIL}
+
+	# .dem uploads reach 1 GiB and some players upload over slow links, so the
+	# body read and the response write (which waits for the body) get hours.
+	servers {
+		timeouts {
+			read_body 2h
+			read_header 30s
+			write 2h
+			idle 5m
+		}
+	}
+}
+
+# Caddy closes idle upstream connections before uvicorn / Next.js do (both run
+# with a 75s keep-alive in docker-compose.prod.yml), so a reused connection is
+# never one the upstream just closed.
+(api_upstream) {
+	reverse_proxy api:8000 {
+		transport http {
+			keepalive 60s
+		}
+	}
+}
+
+{$SITE_DOMAIN} {
+	# JSON access log on stdout. Caddy itself redacts only the Cookie,
+	# Set-Cookie, Authorization and Proxy-Authorization headers; the filter also
+	# drops what the API keeps out of its own logs (app/core/access_log.py):
+	# - the sign-in callback query (OpenID assertion with the SteamID64,
+	#   signature and nonce, the one-time state, an OIDC code),
+	# - the render-worker token header,
+	# - the query of redirect Locations (the sign-in redirect embeds the state).
+	# [?] instead of \? keeps the patterns free of Caddyfile escaping.
+	log {
+		output stdout
+		format filter {
+			wrap json
+			fields {
+				request>uri regexp "^(/auth/(?:steam|oidc)/callback)[?].*$" "$1?[query-redacted]"
+				request>headers>X-Render-Worker-Token delete
+				resp_headers>Location regexp "[?].*$" "?[query-redacted]"
+			}
+		}
+	}
+
+	# HSTS for every response on the origin (frontend and API).
+	header Strict-Transport-Security "max-age=31536000"
+
+	# FastAPI routes. /auth/callback is deliberately absent: it is the Next.js
+	# sign-in completion page, distinct from the backend /auth/steam/callback.
+	@api path /auth/steam/login /auth/steam/callback /auth/login /auth/oidc/callback /auth/me /auth/session /auth/logout /demos /steam/* /uploads/* /coaching/* /render-worker/* /render/* /health /diagnostics
+
+	# Anything below a demo id: status, replay, coaching, diagnostics, video and
+	# private media (Range requests), render jobs, archive, parse retry.
+	@api_demo_subpath path_regexp api_demo_subpath ^/demos/[^/]+/.+$
+
+	# /demos/{id} itself is the Next.js review page for GET/HEAD (including the
+	# client-side RSC fetches of the same path) and the API for PATCH.
+	@api_demo_write {
+		path_regexp api_demo_write ^/demos/[^/]+/?$
+		not method GET HEAD
+	}
+
+	# Uploads are streamed to the API unbuffered; the API enforces
+	# MAX_DEMO_UPLOAD_BYTES (1 GiB) itself. 1100MB leaves room for multipart framing.
+	request_body /uploads/* {
+		max_size 1100MB
+	}
+
+	# No `encode` on API routes: the API already gzips JSON itself, and media
+	# must reach the browser byte-for-byte so Range requests stay valid.
+	handle @api {
+		import api_upstream
+	}
+	handle @api_demo_subpath {
+		import api_upstream
+	}
+	handle @api_demo_write {
+		import api_upstream
+	}
+
+	# Everything else is Next.js: /, /dashboard, /demos/{id}, /auth/callback,
+	# /_next/*, /maps/*, /favicon.svg and the not-found page.
+	handle {
+		encode zstd gzip
+		header {
+			X-Content-Type-Options "nosniff"
+			Referrer-Policy "strict-origin-when-cross-origin"
+			X-Frame-Options "DENY"
+			-X-Powered-By
+		}
+		reverse_proxy frontend:3000 {
+			transport http {
+				keepalive 60s
+			}
+		}
+	}
+}

@@ -1,0 +1,11 @@
+# Daily at 03:30 UTC; Persistent=true runs a missed backup after the VPS boots.
+[Unit]
+Description=Daily CS2 Coach backup at 03:30 UTC
+
+[Timer]
+OnCalendar=*-*-* 03:30:00 UTC
+Persistent=true
+Unit=cs2coach-backup.service
+
+[Install]
+WantedBy=timers.target

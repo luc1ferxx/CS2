@@ -150,7 +150,7 @@ See `docs/sample_demo_fixture_v1.md` for the local convention and ad hoc upload 
 }
 ```
 
-`status` becomes `degraded` when PostgreSQL, Redis, or required worker configuration is unavailable. The response does not reveal dependency names, internal URLs, credentials, queue names, or storage paths. It is not a monitoring system.
+When PostgreSQL, Redis, or required worker configuration is unavailable, the endpoint answers HTTP `503` with `{"status":"degraded"}`, so Compose health checks, the reverse proxy, uptime probes, and the smoke scripts can fail on the status code alone. The response does not reveal dependency names, internal URLs, credentials, queue names, or storage paths. It is not a monitoring system.
 
 ## Safe Diagnostics
 

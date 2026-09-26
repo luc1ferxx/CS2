@@ -91,6 +91,15 @@ class SmokeFailure(RuntimeError):
     pass
 
 
+class HttpStatusFailure(SmokeFailure):
+    """An HTTP error response, keeping the status so a caller can explain it."""
+
+    def __init__(self, message: str, *, status: int, detail: str) -> None:
+        super().__init__(message)
+        self.status = status
+        self.detail = detail
+
+
 def fetch_capabilities() -> dict[str, bool]:
     try:
         payload = request_json("GET", "/auth/me")
@@ -165,16 +174,32 @@ def request_json(method: str, path: str, payload: dict[str, Any] | None = None) 
             return json.loads(body.decode("utf-8")) if body else None
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="replace")
-        raise SmokeFailure(f"{method} {path} failed with HTTP {exc.code}: {detail}") from exc
+        raise HttpStatusFailure(
+            f"{method} {path} failed with HTTP {exc.code}: {detail}", status=exc.code, detail=detail
+        ) from exc
     except urllib.error.URLError as exc:
         raise SmokeFailure(f"{method} {path} failed: {exc.reason}") from exc
 
 
 def check_health() -> None:
-    payload = request_json("GET", "/health")
+    try:
+        payload = request_json("GET", "/health")
+    except HttpStatusFailure as exc:
+        raise SmokeFailure(health_failure_message(exc.status, exc.detail)) from exc
     if not isinstance(payload, dict) or payload.get("status") != "ok":
         raise SmokeFailure(f"health was not ok: {payload}")
     print("health ok")
+
+
+def health_failure_message(status: int, detail: str) -> str:
+    # /health answers 503 {"status":"degraded"} when a dependency check fails.
+    if status == 503:
+        return (
+            f"API health is degraded (HTTP 503 {detail.strip()}): the database, Redis or "
+            "worker configuration check failed; see `docker compose logs api` and, in "
+            "development, GET /diagnostics"
+        )
+    return f"GET /health failed with HTTP {status}: {detail.strip()}"
 
 
 def check_frontend() -> None:

@@ -1,0 +1,102 @@
+# Production override for one VPS behind Caddy (docs/vps_deploy_v1.md).
+# Apply on top of the base and preview files, always in this order:
+#
+#   docker compose --env-file deploy/.env.production \
+#     -f docker-compose.yml -f docker-compose.preview.yml -f docker-compose.prod.yml up -d
+#
+# Requires Docker Compose >= 2.24 for the `!reset` tag. Caddy is the only
+# published service; api and frontend are reachable solely on the private
+# compose network. Artifacts live in the S3-compatible bucket the preview
+# override already requires; the base local artifact volumes stay declared but
+# production does not rely on them.
+name: cs2coach
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+services:
+  caddy:
+    image: caddy:2.10-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      SITE_DOMAIN: ${SITE_DOMAIN:?Set SITE_DOMAIN to the public host name, e.g. coach.example.com}
+      ACME_EMAIL: ${ACME_EMAIL:?Set ACME_EMAIL for the Let's Encrypt account}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      api:
+        condition: service_healthy
+      frontend:
+        condition: service_started
+    logging: *default-logging
+
+  postgres:
+    restart: unless-stopped
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD (hex, e.g. openssl rand -hex 24); production has no default}
+    logging: *default-logging
+
+  redis:
+    restart: unless-stopped
+    # Append-only persistence keeps sign-in sessions and queued jobs across restarts.
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    logging: *default-logging
+
+  api:
+    restart: unless-stopped
+    # One uvicorn process on purpose (the in-process upload slot relies on it).
+    # Forwarded client IPs are trusted from any peer only because this port is
+    # not published: the sole peer is Caddy, which overwrites X-Forwarded-For.
+    command:
+      - uvicorn
+      - app.main:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --proxy-headers
+      - --forwarded-allow-ips=*
+      - --timeout-keep-alive
+      - "75"
+    environment:
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-cs2coach}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-cs2coach}
+    ports: !reset []
+    logging: *default-logging
+
+  worker:
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-cs2coach}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-cs2coach}
+    logging: *default-logging
+
+  frontend:
+    restart: unless-stopped
+    command:
+      - npm
+      - run
+      - start
+      - --
+      - --hostname
+      - 0.0.0.0
+      - --port
+      - "3000"
+      - --keepAliveTimeout
+      - "75000"
+    ports: !reset []
+    logging: *default-logging
+
+volumes:
+  redis-data:
+  caddy_data:
+  caddy_config:

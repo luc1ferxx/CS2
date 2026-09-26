@@ -16,6 +16,7 @@ This repository is a mock MVP for a website-based CS2 demo AI coach.
 - `docs/release_candidate_qa_v1.md`: full RC checklist for local Docker checks, preview smoke, optional/strict sample validation, and manual browser QA.
 - `docs/sample_demo_fixture_v1.md`: ignored local `.dem` sample convention, strict sample smoke modes, and ad hoc upload command.
 - `docs/deployment_target_decision_v1.md`: internal preview target decision covering localhost/LAN, tunnel caveats, and VPS escalation.
+- `docker-compose.prod.yml`, `deploy/` (`Caddyfile`, `env.production.example`; the real `deploy/.env.production` is git-ignored) and `scripts/deploy/`: single-VPS production kit (Caddy edge, bootstrap, deploy/rollback, production smoke, backup/restore, systemd timer); runbook in `docs/vps_deploy_v1.md` (Chinese).
 
 ## Build, Test, and Development Commands
 
@@ -23,7 +24,9 @@ This repository is a mock MVP for a website-based CS2 demo AI coach.
 - `docker compose build` and `docker compose up -d`: run the split Docker build/start sequence used by the RC checklist.
 - `docker compose -f docker-compose.yml -f docker-compose.preview.yml up --build`: run the preview Compose shape with a production-built frontend; set `NEXT_PUBLIC_API_BASE_URL`, `BACKEND_PUBLIC_URL`, `CORS_ORIGINS`, and `MEDIA_URL_BASE` before building hosted previews.
 - `docker compose -f docker-compose.yml -f docker-compose.preview.yml down` and `docker compose -f docker-compose.yml -f docker-compose.preview.yml down -v`: stop a Compose preview with data preserved, or intentionally remove preview volumes for a clean environment.
-- `curl http://localhost:8000/health`: verify API, database, and Redis health.
+- `docker compose --env-file deploy/env.production.example -f docker-compose.yml -f docker-compose.preview.yml -f docker-compose.prod.yml config`: render the production Compose shape locally (Compose >= 2.24) without starting anything.
+- On the VPS (`docs/vps_deploy_v1.md`): `bash scripts/deploy/bootstrap.sh` (root, once), `bash scripts/deploy/deploy.sh [--rollback <sha>]`, `bash scripts/deploy/prod_smoke.sh https://<domain>`, `bash scripts/deploy/backup.sh`, and `bash scripts/deploy/restore.sh <dump> [--into-production --confirm-production-restore]` (default restores into the scratch DB `cs2coach_restore_check`); `bash -n scripts/deploy/*.sh` is the local syntax check.
+- `curl http://localhost:8000/health`: verify API, database, and Redis health (`200 {"status":"ok"}`; any failed check answers `503 {"status":"degraded"}`).
 - `curl http://localhost:8000/diagnostics`: inspect safe DB/Redis/storage/worker/job diagnostics without local paths or secrets.
 - `curl "http://localhost:8000/demos?search=dust&status=completed&map=de_dust2&sort=recent&includeArchived=true"`: inspect the owner-scoped Demo Library API with the same search/filter/sort/archive visibility used by `/dashboard`.
 - `curl -X PATCH http://localhost:8000/demos/{demo_id} -H "Content-Type: application/json" -d '{"name":"Review sample","archived":false}'`: rename, unarchive, or update library metadata; omit fields you are not changing.

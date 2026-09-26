@@ -80,7 +80,7 @@ curl http://localhost:8000/health
 curl http://localhost:8000/diagnostics
 ```
 
-`/health` 只返回 coarse `status=ok|degraded`，不泄漏 dependency、URL 或 storage 配置。development/test 的 `/diagnostics` 返回 compact readiness、Redis queue/worker heartbeat、job counts、recent failed job summary 和 render-worker inferred status；production 对该 system endpoint 返回 `404`。它不暴露本地 storage path、env dump、token、stack trace、raw parser data 或上传内容。
+`/health` 只返回 coarse `status=ok|degraded`：正常时 HTTP `200` `{"status":"ok"}`，数据库、Redis 或 worker 配置任一检查失败时 HTTP `503` `{"status":"degraded"}`；不泄漏 dependency、URL 或 storage 配置。development/test 的 `/diagnostics` 返回 compact readiness、Redis queue/worker heartbeat、job counts、recent failed job summary 和 render-worker inferred status；production 对该 system endpoint 返回 `404`。它不暴露本地 storage path、env dump、token、stack trace、raw parser data 或上传内容。
 
 ### 上传 `.dem`
 

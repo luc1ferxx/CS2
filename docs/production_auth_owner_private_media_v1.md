@@ -17,7 +17,7 @@ Every user API derives `owner_id` from the trusted session. Existing owner-scope
 - `development` and `test` retain `DEV_USER_ID` and `X-Dev-User-Id` only as an explicit local/test harness. They are not accepted as proof of identity in production.
 - An absent, unknown, expired, or revoked session returns `401 Authentication required` from authenticated user APIs.
 - A valid user session that requests another owner's resource receives the same not-found response as an unknown resource. Resource lookups do not reveal whether another owner has the guessed ID.
-- `GET /health` remains public and returns only coarse readiness: `{"status":"ok"}` or `{"status":"degraded"}`.
+- `GET /health` remains public and returns only coarse readiness: `200` `{"status":"ok"}` or `503` `{"status":"degraded"}`.
 - System `GET /diagnostics` is disabled with `404` in production. `GET /demos/{demo_id}/diagnostics` remains authenticated and owner-scoped.
 - Render-worker manifest, media-upload, and result endpoints continue to use the separate `X-Render-Worker-Token` service credential. A browser session cannot replace it, and it does not grant user API access.
 - Every browser-auth/session, demo, upload, replay, coaching, diagnostics, render-job, and private-media response is marked `Cache-Control: private, no-store` and varies on `Cookie, Origin`, including error responses. A shared edge cannot replay one owner's response to another owner before application authorization runs.

@@ -94,7 +94,8 @@ backend/         app/api/ 路由 · app/analysis/ 规则 · app/parser/ demopars
                  app/services/ 领域服务（demo_service/、storage/ 为包）· app/workers/ 解析 worker
 render-worker/   独立渲染机的 runner 与适配器（fake / manual / CSDM），见 render-worker/README.md
 docs/            接口与配置参考、运维手册、验收记录
-scripts/         verify.sh · rc_check.sh · cloud_preview_smoke.py · Windows 启动脚本
+deploy/          生产 Caddyfile 与 env 模板（配合 docker-compose.prod.yml）
+scripts/         verify.sh · rc_check.sh · cloud_preview_smoke.py · Windows 启动脚本 · deploy/ VPS 部署脚本
 ```
 
 ## 开发与验证
@@ -158,11 +159,12 @@ PYTHONPATH=backend .venv/bin/python -m unittest discover backend/tests
 
 ## 部署
 
+- **生产（单台海外 VPS）**：`docker-compose.prod.yml` 叠加在 base 和 preview 之上，加入 Caddy（自动 HTTPS、同源路由）；`scripts/deploy/` 提供初始化、部署/回滚、生产冒烟、每日备份和恢复演练。步骤见 [vps_deploy_v1](docs/vps_deploy_v1.md)。
 - **预览环境**：`docker compose -f docker-compose.yml -f docker-compose.preview.yml up --build`，使用 production 模式和生产构建的前端。必填变量、冒烟命令与回滚步骤见 [cloud_preview_deploy_v1](docs/cloud_preview_deploy_v1.md)。
 - **冒烟测试**：`scripts/cloud_preview_smoke.py` 会读取 `/auth/me` 返回的能力开关，跳过 production 隐藏的模拟数据和片段步骤。对 production 预览需要提供已登录的会话 cookie 和一份真实 `.dem`；每次运行都会占用该账号滚动 24 小时上传配额（`DEMO_UPLOAD_DAILY_LIMIT`）中的一次。
 - **上线检查清单**：[deployment_readiness_v1](docs/deployment_readiness_v1.md) 和 [release_candidate_qa_v1](docs/release_candidate_qa_v1.md)。
 
-在正式开放之前，[上线计划](docs/rules_2d_beta_launch_v1.md) 中还有这些没有完成：解析器的 CPU、磁盘与输出隔离（目前只有超时和内存上限），数据库迁移，自动部署与回滚，监控告警，备份恢复，存储孤儿清理，以及真实 demo 语料的强制冒烟门禁。
+在正式开放之前，[上线计划](docs/rules_2d_beta_launch_v1.md) 中还有这些没有完成：解析器的 CPU、磁盘与输出隔离（目前只有超时和内存上限），数据库迁移，自动部署（目前是手动运行 `scripts/deploy/deploy.sh`），监控告警，在真实部署上完成一次备份恢复演练，存储孤儿清理，以及真实 demo 语料的强制冒烟门禁。
 
 ## 安全与隐私边界
 
@@ -185,7 +187,7 @@ PYTHONPATH=backend .venv/bin/python -m unittest discover backend/tests
 - **不能自动下载比赛**：Valve 没有公开个人比赛的下载接口，仓库也没有获得许可的来源，所以只能手动上传 `.dem`。相关导入代码已经写好并有测试，但在这个版本里走不到。
 - **解析是单 worker 串行执行**：崩溃恢复是自动的，但有分钟级延迟。租约为 60 秒；如果 Redis 数据全部丢失，排队中的任务约 5 分钟（`PARSE_REDISPATCH_AFTER_SECONDS`）后重新投递，正在解析的任务要等 `PARSE_RECLAIM_AFTER_SECONDS`（默认 30 分钟）。
 - **CI 不解析真实 `.dem`**：真实文件只在可选的样本冒烟测试里校验。
-- **健康检查**：`/health` 在数据库和 Redis 都不可用时仍返回 HTTP 200，只在响应体里标记 `degraded`。
+- **健康检查很粗**：`/health` 在数据库、Redis 或 worker 配置任一项检查失败时返回 HTTP 503 `{"status":"degraded"}`（正常为 200 `{"status":"ok"}`），但不说明是哪一项；production 下要看 `docker compose logs api` 才能定位。
 - **数据覆盖有限**：
   - 解析帧是采样数据；炸弹和道具事件尽量提取，不保证完整；
   - 没有经济、装备、视线和道具轨迹等战术信息。
@@ -218,6 +220,7 @@ PYTHONPATH=backend .venv/bin/python -m unittest discover backend/tests
 
 **上线与运维**：
 - [2D 内测上线计划](docs/rules_2d_beta_launch_v1.md)
+- [VPS 部署](docs/vps_deploy_v1.md)
 - [部署准备](docs/deployment_readiness_v1.md)
 - [云端预览部署](docs/cloud_preview_deploy_v1.md)
 - [部署目标决策](docs/deployment_target_decision_v1.md)

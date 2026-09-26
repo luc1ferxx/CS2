@@ -38,6 +38,39 @@ wait_for_url() {
   return 1
 }
 
+# /health answers 200 {"status":"ok"}, or 503 {"status":"degraded"} while a
+# database, Redis or worker-configuration check fails. Waiting covers startup;
+# a stack still degraded at the end is reported as degraded, not unreachable.
+wait_for_health() {
+  local url="$1"
+  local attempts="${2:-30}"
+  local delay_seconds="${3:-2}"
+  local response=""
+  local code=""
+  local body=""
+
+  printf '\n==> waiting for api health: %s\n' "$url"
+  for ((attempt = 1; attempt <= attempts; attempt += 1)); do
+    response="$(curl -sS --max-time 5 -w '\n%{http_code}' "$url" 2>/dev/null || true)"
+    code="${response##*$'\n'}"
+    body="${response%$'\n'*}"
+    if [ "$code" = "200" ] && [[ "$body" == *'"status":"ok"'* ]]; then
+      printf 'api health ok: %s\n' "$body"
+      return 0
+    fi
+    sleep "$delay_seconds"
+  done
+
+  if [ "$code" = "503" ]; then
+    printf 'api health is degraded (HTTP 503 %s): the database, Redis or worker configuration check failed; inspect "docker compose logs api" and %s/diagnostics\n' \
+      "$body" "${url%/health}" >&2
+  else
+    printf 'api health was not ready after %s attempts: %s (last HTTP status %s)\n' \
+      "$attempts" "$url" "${code:-none}" >&2
+  fi
+  return 1
+}
+
 truthy() {
   case "$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')" in
     1|true|yes|y|on) return 0 ;;
@@ -60,47 +93,47 @@ docker_cmd() {
   return 1
 }
 
-cd "$ROOT_DIR"
+main() {
+  cd "$ROOT_DIR"
 
-DOCKER_BIN="$(docker_cmd)"
-DOCKER_BIN_DIR="$(dirname "$DOCKER_BIN")"
-export PATH="$DOCKER_BIN_DIR:$PATH"
+  DOCKER_BIN="$(docker_cmd)"
+  DOCKER_BIN_DIR="$(dirname "$DOCKER_BIN")"
+  export PATH="$DOCKER_BIN_DIR:$PATH"
 
-if truthy "$REQUIRE_SAMPLE_DEMO" && [ -z "$SAMPLE_DEMO_PATH" ]; then
-  printf '\nSAMPLE_DEMO_PATH is required when REQUIRE_SAMPLE_DEMO=1.\n' >&2
-  exit 1
-fi
-
-run ./scripts/verify.sh
-run "$DOCKER_BIN" compose build
-run "$DOCKER_BIN" compose up -d
-wait_for_url "$API_BASE_URL/health" "api health"
-run curl -fsS "$API_BASE_URL/health"
-wait_for_url "$API_BASE_URL/diagnostics" "api diagnostics"
-run curl -fsS "$API_BASE_URL/diagnostics"
-wait_for_url "$FRONTEND_URL/dashboard" "frontend dashboard"
-
-run env \
-  API_BASE_URL="$API_BASE_URL" \
-  FRONTEND_URL="$FRONTEND_URL" \
-  python3 scripts/cloud_preview_smoke.py
-
-if [ -n "$SAMPLE_DEMO_PATH" ]; then
-  sample_args=()
-  if truthy "$REQUIRE_SAMPLE_DEMO"; then
-    sample_args+=(--require-sample)
+  if truthy "$REQUIRE_SAMPLE_DEMO" && [ -z "$SAMPLE_DEMO_PATH" ]; then
+    printf '\nSAMPLE_DEMO_PATH is required when REQUIRE_SAMPLE_DEMO=1.\n' >&2
+    exit 1
   fi
+
+  run ./scripts/verify.sh
+  run "$DOCKER_BIN" compose build
+  run "$DOCKER_BIN" compose up -d
+  wait_for_health "$API_BASE_URL/health"
+  wait_for_url "$API_BASE_URL/diagnostics" "api diagnostics"
+  run curl -fsS "$API_BASE_URL/diagnostics"
+  wait_for_url "$FRONTEND_URL/dashboard" "frontend dashboard"
+
   run env \
     API_BASE_URL="$API_BASE_URL" \
     FRONTEND_URL="$FRONTEND_URL" \
-    SAMPLE_DEMO_PATH="$SAMPLE_DEMO_PATH" \
-    SAMPLE_DEMO_NAME="${SAMPLE_DEMO_NAME:-}" \
-    python3 scripts/cloud_preview_smoke.py "${sample_args[@]}"
-else
-  printf '\n==> sample demo smoke skipped; set SAMPLE_DEMO_PATH to include it\n'
-fi
+    python3 scripts/cloud_preview_smoke.py
 
-cat <<'EOF'
+  if [ -n "$SAMPLE_DEMO_PATH" ]; then
+    sample_args=()
+    if truthy "$REQUIRE_SAMPLE_DEMO"; then
+      sample_args+=(--require-sample)
+    fi
+    run env \
+      API_BASE_URL="$API_BASE_URL" \
+      FRONTEND_URL="$FRONTEND_URL" \
+      SAMPLE_DEMO_PATH="$SAMPLE_DEMO_PATH" \
+      SAMPLE_DEMO_NAME="${SAMPLE_DEMO_NAME:-}" \
+      python3 scripts/cloud_preview_smoke.py "${sample_args[@]}"
+  else
+    printf '\n==> sample demo smoke skipped; set SAMPLE_DEMO_PATH to include it\n'
+  fi
+
+  cat <<'EOF'
 
 ==> manual browser QA still required
 Open the target /dashboard and complete docs/release_candidate_qa_v1.md:
@@ -111,3 +144,9 @@ Open the target /dashboard and complete docs/release_candidate_qa_v1.md:
 - coaching filters/cards, Generate Clip fallback, RenderOperatorPanel
 - desktop and mobile with no current console errors
 EOF
+}
+
+# Sourcing the script (the tests do) defines the helpers without running the gate.
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi
