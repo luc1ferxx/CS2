@@ -1,5 +1,7 @@
 # Local startup recovery — 2026-09-07
 
+> **Update 2026-09-26.** The recurring Docker startup crash (Win32 1920 renaming a stale `*.sock` under `%LOCALAPPDATA%\Docker\run` or `docker-secrets-engine`) was traced to Docker Desktop being launched from inside a packaged desktop app (Claude/Codex), not to anti-cheat drivers. `scripts/start-local.ps1` now starts Docker Desktop through Explorer and restarts a sandbox-started instance once. Details: [deployment readiness — Windows local dev](deployment_readiness_v1.md#windows-local-dev-docker-desktop-crashes-when-started-from-a-packaged-desktop-app).
+
 ## Root cause and repair
 
 Docker Desktop could not finish starting, so the App at `localhost:3000` and its API were unavailable. Its original AppData `Docker` root was a junction to `D:\DockerData`, and damaged runtime socket entries prevented the backend from binding the Windows AF_UNIX socket `sailor-ingest.sock`.

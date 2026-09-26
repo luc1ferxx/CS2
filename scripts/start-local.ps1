@@ -43,21 +43,60 @@ function Test-DockerEngine([string]$DockerPath) {
     finally { $probe.Dispose() }
 }
 
-function Invoke-DockerSocketPreflight([switch]$ReportOnly) {
-    # Clear stale AF_UNIX sockets a previous shutdown left under %LOCALAPPDATA%
-    # (and surface the anti-cheat-minifilter cause when a socket is stuck) so
-    # Docker's secrets-engine does not crash on its startup rename. Best-effort:
-    # a failure here must never abort the launch attempt. Only ever runs while
-    # the engine is down. See evict-stale-docker-sockets.ps1 for the full story.
-    $evictScript = Join-Path $PSScriptRoot 'evict-stale-docker-sockets.ps1'
-    if (-not (Test-Path -LiteralPath $evictScript -PathType Leaf)) {
-        Write-Warning "Docker socket preflight script missing: $evictScript"
-        return
+function Start-DockerDesktop([string]$DesktopPath) {
+    # Launch through Explorer, never as a child of this process. When this
+    # launcher runs inside a packaged (MSIX) desktop app such as the Claude or
+    # Codex desktop apps, a direct child inherits the app's file-system
+    # virtualization, which cannot open Docker's AF_UNIX socket files; the
+    # backend then crashes renaming a stale socket with Win32 1920 ("The file
+    # cannot be accessed by the system"). Started by Explorer it runs in the
+    # normal user session and clears stale sockets itself. From an ordinary
+    # shell or a double-click this behaves exactly like a direct start.
+    $explorer = Join-Path $env:WINDIR 'explorer.exe'
+    for ($attempt = 0; $attempt -lt 2; $attempt++) {
+        Start-Process -FilePath $explorer -ArgumentList ('"{0}"' -f $DesktopPath)
+        # Explorer hands off and returns at once; confirm the app really started
+        # (a new instance exits if an old one is still shutting down).
+        $deadline = [DateTime]::UtcNow.AddSeconds(20)
+        do {
+            Start-Sleep -Seconds 2
+            if (Get-Process -Name 'Docker Desktop' -ErrorAction SilentlyContinue) { return }
+        } while ([DateTime]::UtcNow -lt $deadline)
     }
-    try {
-        if ($ReportOnly) { & $evictScript -ReportOnly } else { & $evictScript }
+}
+
+function Wait-DockerEngine([int]$Seconds) {
+    # Require two answers 5 s apart: an instance that is quitting can still
+    # answer once, and a fresh one can flap while its backend settles.
+    $deadline = [DateTime]::UtcNow.AddSeconds($Seconds)
+    do {
+        if (Test-DockerEngine $script:dockerPath) {
+            Start-Sleep -Seconds 5
+            if (Test-DockerEngine $script:dockerPath) { return $true }
+        }
+        Start-Sleep -Seconds 2
+    } while ([DateTime]::UtcNow -lt $deadline)
+    return $false
+}
+
+function Stop-DockerDesktop {
+    # Only called when the engine has been down for the whole wait, so no
+    # container is running and a graceful quit would just block on the broken
+    # backend (`docker desktop stop` can hang for minutes, and its helper
+    # process retries later -- quitting the fresh instance we start next).
+    # End the app, its backend and any CLI helper, then stop the engine VM.
+    # Volumes, images and settings are never touched.
+    $names = 'Docker Desktop', 'com.docker.backend', 'com.docker.build', 'docker-desktop'
+    Get-Process -Name $names -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+    & (Join-Path $env:WINDIR 'System32\wsl.exe') --terminate docker-desktop 2>$null | Out-Null
+    # Do not start the next instance until the old one is gone; otherwise the
+    # new app exits on the single-instance lock.
+    $deadline = [DateTime]::UtcNow.AddSeconds(30)
+    while ((Get-Process -Name $names -ErrorAction SilentlyContinue) -and [DateTime]::UtcNow -lt $deadline) {
+        Start-Sleep -Seconds 1
+        Get-Process -Name $names -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
     }
-    catch { Write-Warning ('Docker socket preflight error: ' + $_.Exception.Message) }
+    Start-Sleep -Seconds 3
 }
 
 function Invoke-DockerStep([string]$Label, [string[]]$DockerArgs) {
@@ -105,34 +144,31 @@ try {
 
     Write-Host 'Checking Docker engine...'
     if (-not (Test-DockerEngine $script:dockerPath)) {
-        $dockerDesktop = Get-Process -Name 'Docker Desktop' -ErrorAction SilentlyContinue
-        if (-not $dockerDesktop) {
-            # Engine down and Docker Desktop not running: clear any stale sockets
-            # from a prior shutdown before the fresh start so the secrets-engine
-            # rename cannot hit Win32 1920 and crash the backend.
-            Invoke-DockerSocketPreflight
-            $desktopPath = Join-Path $env:ProgramFiles 'Docker\Docker\Docker Desktop.exe'
-            Require-File $desktopPath
+        $desktopPath = Join-Path $env:ProgramFiles 'Docker\Docker\Docker Desktop.exe'
+        Require-File $desktopPath
+        if (-not (Get-Process -Name 'Docker Desktop' -ErrorAction SilentlyContinue)) {
             Write-Host 'Starting Docker Desktop...'
-            Start-Process -FilePath $desktopPath -WindowStyle Hidden | Out-Null
+            Start-DockerDesktop $desktopPath
         }
-        $engineDeadline = [DateTime]::UtcNow.AddSeconds(120)
-        $engineReady = $false
-        do {
-            Start-Sleep -Seconds 2
-            $engineReady = Test-DockerEngine $script:dockerPath
-        } while (-not $engineReady -and [DateTime]::UtcNow -lt $engineDeadline)
+        $engineReady = Wait-DockerEngine 120
         if (-not $engineReady) {
-            # Still down after the wait. Docker Desktop is running now, so any
-            # socket present may belong to its backend coming up: report what is
-            # there and the driver status, but delete nothing.
-            Invoke-DockerSocketPreflight -ReportOnly
-            throw 'Docker Desktop is open but its engine is unavailable after 120 seconds. If the preflight above reported stale anti-cheat-blocked sockets, fully quit Docker Desktop (or reboot) and run this launcher again. Do not reset or delete its data.'
+            # Docker Desktop is up but its engine is not: typically it was started
+            # from inside a packaged app (see Start-DockerDesktop) or it crashed
+            # on a stale socket. Restart it once in the normal user session.
+            Write-Host 'Docker Desktop is running but its engine is down; restarting it once...'
+            Stop-DockerDesktop
+            Start-DockerDesktop $desktopPath
+            $engineReady = Wait-DockerEngine 180
+        }
+        if (-not $engineReady) {
+            throw "Docker engine did not start. See $env:LOCALAPPDATA\Docker\backend.error.json and the logs in $env:LOCALAPPDATA\Docker\log\host. No data was removed; do not reset Docker Desktop to factory defaults."
         }
     }
 
     $appArgs = @('compose', '--project-directory', $projectRoot, '-p', 'cs2', '-f', $appCompose, '-f', $localOverride)
-    Invoke-DockerStep 'Starting the CS2 Coach app...' ($appArgs + @('up', '-d', '--wait', '--wait-timeout', '120'))
+    # --build keeps the containers on the checked-out code; unchanged sources hit
+    # the build cache, so this costs seconds when nothing changed.
+    Invoke-DockerStep 'Starting the CS2 Coach app...' ($appArgs + @('up', '-d', '--build', '--wait', '--wait-timeout', '120'))
     Wait-HttpReady 'http://localhost:8000/health' -HealthJson
     Wait-HttpReady $dashboardUrl
 
