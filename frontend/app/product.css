@@ -860,3 +860,32 @@
   .demo-progress-steps { flex-direction: column; }
   .demo-progress-steps li + li { border-top: 1px solid var(--line-subtle); border-left: 0; }
 }
+
+/* === D1: 账户与数据 and 隐私说明 (spec D1, S8 look) ===
+   Both are a left-aligned column of panels with header bars; the privacy page
+   is one panel whose sections carry lighter grey bars, lines kept near 72ch. */
+.account-page { display: grid; align-content: start; gap: 12px; }
+.account-panel { max-width: 760px; }
+.account-facts { margin: 0; }
+.account-facts > div { display: grid; grid-template-columns: 96px minmax(0, 1fr); align-items: baseline; gap: 12px; padding: 6px 12px; border-bottom: 1px solid var(--line-subtle); }
+.account-facts > div:last-child { border-bottom: 0; }
+.account-facts dt { color: var(--ink-2); font-size: var(--step-sm); }
+.account-facts dd { min-width: 0; margin: 0; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.account-panel-body { display: grid; justify-items: start; gap: 8px; padding: 10px 12px 12px; }
+.account-panel-body :is(p, ul) { max-width: 72ch; margin: 0; }
+.account-panel-body ul { padding-left: 20px; }
+.account-panel-body li + li { margin-top: 2px; }
+.account-danger { border-left: 3px solid var(--danger); }
+.account-error { color: var(--danger-text); }
+.account-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
+
+.privacy-doc { max-width: calc(72ch + 24px); font-size: var(--step-md); }
+.privacy-section + .privacy-section { border-top: 1px solid var(--line-bold); }
+.privacy-section-bar { margin: 0; padding: 6px 12px; border-bottom: 1px solid var(--line-subtle); background: var(--row-alt); color: var(--ink); font-size: var(--step-md); font-weight: 700; line-height: var(--leading-tight); }
+.privacy-section-body { display: grid; gap: 6px; padding: 10px 12px 12px; }
+.privacy-section-body :is(p, ul) { margin: 0; }
+.privacy-section-body ul { padding-left: 20px; }
+.privacy-section-body li + li { margin-top: 2px; }
+.privacy-section-body code { font-family: var(--font-mono); font-size: 12px; overflow-wrap: anywhere; }
+.privacy-updated { margin: 0; padding: 8px 12px; border-top: 1px solid var(--line-bold); color: var(--ink-2); font-size: var(--step-sm); }
+.auth-note-link { margin-left: 6px; }

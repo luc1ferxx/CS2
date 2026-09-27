@@ -57,6 +57,43 @@ function loadTypeScriptModule(relativePath, overrides = {}) {
 }
 
 {
+  const requests = [];
+  const api = loadTypeScriptModule("./api.ts", {
+    fetch: async (url, init) => {
+      requests.push({ url, init });
+      return new Response(null, { status: 204 });
+    },
+    Response
+  });
+
+  await api.deleteDemo("demo/1?x");
+  await api.deleteAccount();
+
+  assert.equal(requests.length, 2);
+  // The id is one path segment, never a path or a query.
+  assert.equal(requests[0].url, "http://localhost:8000/demos/demo%2F1%3Fx");
+  assert.equal(requests[0].init.method, "DELETE");
+  assert.equal(requests[0].init.credentials, "include");
+  assert.equal(requests[0].init.body, undefined);
+  assert.equal(requests[1].url, "http://localhost:8000/auth/account");
+  assert.equal(requests[1].init.method, "DELETE");
+  assert.equal(requests[1].init.credentials, "include");
+  assert.deepEqual(JSON.parse(requests[1].init.body), { confirm: "delete-my-account" });
+}
+
+{
+  const api = loadTypeScriptModule("./api.ts", {
+    fetch: async () => new Response(JSON.stringify({ detail: { code: "account_deletion_unavailable", message: "no" } }), {
+      status: 409,
+      headers: { "Content-Type": "application/json" }
+    }),
+    Response
+  });
+
+  await assert.rejects(api.deleteAccount(), (error) => error.status === 409 && error.detailCode === "account_deletion_unavailable");
+}
+
+{
   const previousProvider = process.env.NEXT_PUBLIC_AUTH_PROVIDER;
   try {
     process.env.NEXT_PUBLIC_AUTH_PROVIDER = "steam";

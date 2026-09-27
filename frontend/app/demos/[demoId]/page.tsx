@@ -4,7 +4,7 @@ import dynamic from "next/dynamic";
 import Link from "next/link";
 import { X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 
 import { CoachingPanel } from "@/components/coaching/CoachingPanel";
 import { coachingCardId } from "@/components/coaching/CoachingEventCard";
@@ -13,7 +13,9 @@ import { AuthBoundary } from "@/components/auth/AuthBoundary";
 import { useAuth } from "@/components/auth/AuthProvider";
 import { SessionControls } from "@/components/auth/SessionControls";
 import { AppBrand } from "@/components/layout/AppBrand";
+import { ConfirmDialog } from "@/components/feedback/ConfirmDialog";
 import { ErrorBanner } from "@/components/feedback/ErrorBanner";
+import { SiteFooter } from "@/components/layout/SiteFooter";
 import {
   FirstPersonReplay,
   type FirstPersonReplayHandle
@@ -30,6 +32,7 @@ import {
   clearCoachingFeedback,
   createMockRenderJob,
   createRenderClipJob,
+  deleteDemo,
   getCoaching,
   getDemoStatus,
   getDemoVideo,
@@ -59,6 +62,7 @@ import {
   type DetailProcessingStep,
   type StatusFetchFailure
 } from "@/lib/demo-library";
+import { leaveLibraryNotice } from "@/lib/library-notice";
 import { mapDisplayName, tacticalRadarImagePaths, type TacticalMapLevelMode } from "@/lib/map-config";
 import { buildReplayDiagnostics } from "@/lib/replay-diagnostics";
 import { resolvePrivateMediaSource } from "@/lib/media-url";
@@ -152,6 +156,7 @@ export default function DemoDetailPage() {
 function DemoDetailContent() {
   const params = useParams<{ demoId: string }>();
   const demoId = params.demoId;
+  const router = useRouter();
   const { state: authState } = useAuth();
   const { devTools, renderClips } = authState.capabilities ?? NO_CAPABILITIES;
   const account = authState.account;
@@ -189,6 +194,11 @@ function DemoDetailContent() {
   const [tickClipRequesting, setTickClipRequesting] = useState(false);
   const [renderJobs, setRenderJobs] = useState<RenderJobStatus[]>([]);
   const [renderWorker, setRenderWorker] = useState<RenderWorkerStatus | null>(null);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  // Set before the delete request: polls stop and the 404s that follow stay quiet.
+  const [deleting, setDeleting] = useState(false);
+  const deletingRef = useRef(false);
   // A background render may update the demo's default video without changing the clip being reviewed.
   const replay = useMemo(() => loadedReplay
     ? { ...loadedReplay, video: reviewVideo(loadedReplay.video, renderJobs, selectedClip, demoId) }
@@ -251,6 +261,7 @@ function DemoDetailContent() {
       }
       return nextStatus;
     } catch (err) {
+      if (deletingRef.current) return null;
       // A 404 is final: deleted, another account's demo, or a mistyped link.
       if (requestFailureKind(err) === "not_found") {
         setStatusFailure("not_found");
@@ -404,7 +415,7 @@ function DemoDetailContent() {
 
   // No poll before the first status answer, none once processing is over, and
   // none for a demo that does not exist; a dropped connection backs off.
-  const statusPollDelay = (status === null && statusFailure === null) || statusFailure === "not_found" ||
+  const statusPollDelay = deleting || (status === null && statusFailure === null) || statusFailure === "not_found" ||
     (status?.status === "completed" && !status.ingestion?.active)
     ? null
     : statusFailure === "unreachable"
@@ -584,7 +595,9 @@ function DemoDetailContent() {
       setError((current) => (current?.source === "render" ? null : current));
       return true;
     } catch (err) {
-      setError({ source: "render", message: userFacingError(err, "刷新视频状态失败，稍后会自动重试。") });
+      if (!deletingRef.current) {
+        setError({ source: "render", message: userFacingError(err, "刷新视频状态失败，稍后会自动重试。") });
+      }
       return false;
     }
   }, [demoId]);
@@ -599,7 +612,7 @@ function DemoDetailContent() {
   }, [loadRenderState]);
   const refreshRenderOperator = useCallback(() => void refreshRenderOperatorState(), [refreshRenderOperatorState]);
 
-  usePoll(() => loadRenderState(), isRenderActiveStatus(videoStatus) || hasActiveRenderClipJob ? RENDER_POLL_MS : null);
+  usePoll(() => loadRenderState(), !deleting && (isRenderActiveStatus(videoStatus) || hasActiveRenderClipJob) ? RENDER_POLL_MS : null);
 
   // Tactical playback advances by the time that actually passed, once per animation frame.
   useEffect(() => {
@@ -1009,6 +1022,33 @@ function DemoDetailContent() {
     }
   }, [demoId]);
 
+  async function confirmDelete() {
+    const title = status?.name ?? `比赛 ${demoId.slice(0, 8)}`;
+    deletingRef.current = true;
+    setDeleting(true);
+    setDeleteError(null);
+    setPlaying(false);
+    try {
+      await deleteDemo(demoId);
+    } catch (err) {
+      // A 404 means it is already gone, which is what the player asked for.
+      if (requestFailureKind(err) !== "not_found") {
+        deletingRef.current = false;
+        setDeleting(false);
+        setDeleteError(userFacingError(err, "删除失败，请稍后再试。"));
+        return;
+      }
+    }
+    // Carried in memory, never in the URL: the name must not land in the address bar or history.
+    leaveLibraryNotice(`已永久删除「${title}」`);
+    router.replace("/dashboard");
+  }
+
+  const openDelete = () => {
+    setDeleteError(null);
+    setDeleteOpen(true);
+  };
+
   const knownStatus = statusFailure === "not_found" ? null : status;
   const pageTitle = statusFailure === "not_found"
     ? "找不到这场比赛"
@@ -1098,6 +1138,7 @@ function DemoDetailContent() {
               onRetryParse={() => void retryParse()}
               onRetryStatus={() => void refreshStatus()}
               onReloadReplay={() => void reloadReplay()}
+              onDelete={openDelete}
               technicalDetails={devTools && status ? <DetailSummary items={summaryItems} /> : null}
             />
           )
@@ -1273,12 +1314,38 @@ function DemoDetailContent() {
                   </section> : null}
                   {status ? <DetailSummary items={summaryItems} /> : null}
                   {detailDiagnostics ? <ReplayDiagnosticsPanel diagnostics={detailDiagnostics} /> : null}
+                  <button className="danger-button compact-button" type="button" onClick={openDelete}>
+                    删除这场比赛
+                  </button>
                 </div>
               ) : null}
             </details>
           </>
         )}
       </section>
+      <SiteFooter />
+
+      <ConfirmDialog
+        open={deleteOpen}
+        title="永久删除这场比赛？"
+        confirmLabel="永久删除"
+        busy={deleting}
+        busyLabel="正在删除…"
+        error={deleteError}
+        onConfirm={() => void confirmDelete()}
+        onCancel={() => {
+          setDeleteOpen(false);
+          setDeleteError(null);
+        }}
+      >
+        <p>「{pageTitle}」的这些内容会被永久删除：</p>
+        <ul>
+          <li>比赛文件 .dem</li>
+          <li>回放数据</li>
+          <li>复盘建议和你的评价</li>
+        </ul>
+        <p className="confirm-dialog-note">此操作无法撤销。</p>
+      </ConfirmDialog>
     </main>
   );
 }

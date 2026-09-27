@@ -35,14 +35,16 @@ alias dc='docker compose --env-file deploy/.env.production -f docker-compose.yml
 6. **配额**：保持默认（每人每天 10 份、同时 2 份在解析），`RENDER_CLIPS_ENABLED=0`。
 7. **备份照开**（第 6 步），放在 R2 上成本很低。
 8. **env 文件**：模板只需替换占位符，第 3 步的 `sed` 里域名写 `<name>.duckdns.org`。
+9. **隐私页**：`NEXT_PUBLIC_PRIVACY_CONTACT`（你的联系方式）必填，`deploy.sh` 在它为空时拒绝部署：同场的其他玩家从没被邀请过，只能通过它提出移除。`NEXT_PUBLIC_DATA_REGION`（VPS 所在地区，如"日本东京"）建议填上，不填时显示通用说明。两者都显示在公开的 `/privacy` 页面上。
 
 只给朋友用时**刻意跳过**，扩大内测前必须补上：
 
 - 指标和告警（现在只有容器日志和 `/health`）；
 - 数据库迁移演练；
 - 真实 demo 语料门禁（corpus gate，见 [2D 内测上线计划](rules_2d_beta_launch_v1.md)）；
-- 隐私政策 / 数据删除页面；
 - 替换成授权明确的雷达素材。
+
+隐私说明页和删除比赛、删除账户已经有了，见 [数据删除](data_deletion_v1.md)。
 
 ## 1. 准备资源（完整配置）
 
@@ -95,6 +97,8 @@ nano deploy/.env.production                # 替换所有 CHANGE_ME
 | `OBJECT_STORAGE_*` | artifacts 桶和应用 token |
 | `BACKUP_*` | backups 桶和备份 token |
 | `NEXT_PUBLIC_BETA_CONTACT_URL` | 可选；未受邀页面上"申请内测资格"的链接 |
+| `NEXT_PUBLIC_PRIVACY_CONTACT` | 必填（`deploy.sh` 检查）；显示在 `/privacy` 的隐私问题和删除请求联系方式。邮箱会变成 mailto 链接，`http(s)://` 网址会变成链接，其他内容原样显示为文字 |
+| `NEXT_PUBLIC_DATA_REGION` | 可选；显示在 `/privacy` 的服务器所在地区，如 `日本东京`。不填时显示"海外 VPS，具体地区由站长部署时选定" |
 
 整份文件存一份到密码管理器。丢了 `STEAM_CREDENTIAL_ENCRYPTION_KEY`，已保存的 Steam 比赛授权就无法解密；备份桶里不包含这份文件。
 
@@ -109,7 +113,7 @@ bash scripts/deploy/deploy.sh
 
 脚本会：检查 env 文件存在且没有占位符 → `git pull --ff-only` → 用 Caddy 镜像校验 `deploy/Caddyfile` → `dc build --pull` → `dc up -d`（api 启动失败时打印日志并停下）→ Caddyfile 有变化时重启 caddy → 最多等 300 秒（`DEPLOY_HEALTH_TIMEOUT_SECONDS`）直到 `https://<域名>/health` 返回 200 → 运行 `prod_smoke.sh` → 打印当前提交并追加到 `deploy/.deploy-history`。首次构建前端约需 5–10 分钟；证书签发要求 80 和 443 端口能从公网访问。
 
-路由（`deploy/Caddyfile`）：`/auth/steam/login`、`/auth/steam/callback`、`/auth/me`、`/auth/logout` 等后端认证路由、`/steam/*`、`/demos`、`/demos/<id>/…`、`/uploads/*`、`/coaching/*`、`/health`、`/render-worker/*`、`/render/*` 进 FastAPI；`PATCH /demos/<id>` 进 FastAPI，`GET /demos/<id>` 是 Next.js 复盘页；其余（`/`、`/dashboard`、`/auth/callback`、`/_next/*`、`/maps/*`）进 Next.js。只有 `/uploads/*` 放宽到 1100 MB 请求体，读写超时 2 小时。
+路由（`deploy/Caddyfile`）：`/auth/steam/login`、`/auth/steam/callback`、`/auth/me`、`/auth/logout`、`/auth/account` 等后端认证路由、`/steam/*`、`/demos`、`/demos/<id>/…`、`/uploads/*`、`/coaching/*`、`/health`、`/render-worker/*`、`/render/*` 进 FastAPI；`PATCH` 和 `DELETE /demos/<id>` 进 FastAPI，`GET /demos/<id>` 是 Next.js 复盘页；其余（`/`、`/dashboard`、`/account`、`/privacy`、`/auth/callback`、`/_next/*`、`/maps/*`）进 Next.js。只有 `/uploads/*` 放宽到 1100 MB 请求体，读写超时 2 小时。
 
 ## 5. 冒烟与手动 Steam 登录检查
 
@@ -117,15 +121,17 @@ bash scripts/deploy/deploy.sh
 bash scripts/deploy/prod_smoke.sh https://<域名>
 ```
 
-它检查：证书有效、HTTP 跳转 HTTPS、`/health` 返回 `{"status":"ok"}`、`/dashboard` 是 HTML 且带 HSTS 等安全头、`GET /demos/<id>` 由 Next.js 返回、匿名访问 API（`/demos`、`/demos/<id>/status`、`PATCH /demos/<id>`、`/uploads/demo`、`/auth/me`）都是 401、`/docs` 和 `/openapi.json` 是 404、`/auth/steam/login` 跳转到 `https://steamcommunity.com/openid/login` 并下发带 `Secure; HttpOnly` 的 `__Host-` 状态 cookie。
+它检查：证书有效、HTTP 跳转 HTTPS、`/health` 返回 `{"status":"ok"}`、`/dashboard` 是 HTML 且带 HSTS 等安全头、`GET /demos/<id>` 由 Next.js 返回、`GET /privacy` 是 200 的 HTML、匿名访问 API（`/demos`、`/demos/<id>/status`、`PATCH /demos/<id>`、`/uploads/demo`、`/auth/me`）都是 401、匿名 `DELETE /auth/account` 和 `DELETE /demos/<id>` 都由 FastAPI 返回 401 JSON（证明它们没有落到 Next.js）、`/docs` 和 `/openapi.json` 是 404、`/auth/steam/login` 跳转到 `https://steamcommunity.com/openid/login` 并下发带 `Secure; HttpOnly` 的 `__Host-` 状态 cookie。
 
-然后在浏览器里手动走一遍（脚本最后会打印同样的清单）：
+然后在浏览器里手动走一遍（脚本最后也会打印一份手动清单）：
 
 1. 受邀账号点"通过 Steam 登录"，回到 `/dashboard`。
 2. 不在名单里的账号登录后停在 `/auth/callback?error=not_invited`。
 3. 上传一份真实 `.dem`，状态走到完成。这一步同时验证 R2 写入（应用用条件写入 `If-None-Match`）。
 4. 打开复盘页：回放播放、切换回合、战术地图和建议卡片正常。
 5. 退出登录后，`/dashboard` 要求重新登录。
+6. 退出登录的状态下打开 `/privacy`：不需要登录，地区和联系方式是你配置的值，页脚有"与 Valve 无关联"声明。
+7. 在比赛库里用行菜单「删除比赛…」删掉第 3 步上传的那场，它从列表消失，今天的上传次数不变。首次部署时最好再用一个专门的受邀测试账号，在 `/account` 走一遍删除账户：该账号在另一个浏览器里的登录也要同时失效。
 
 需要带会话的完整脚本冒烟时，用 `scripts/cloud_preview_smoke.py`（要设 `AUTH_SESSION_COOKIE` 和 `SAMPLE_DEMO_PATH`，每次会占用该账号一次上传配额）。
 
@@ -145,6 +151,11 @@ systemctl list-timers cs2coach-backup.timer
 每次备份：`pg_dump -Fc` 到 `/var/backups/cs2coach/pg-<UTC>.dump`，确认非空且 `pg_restore --list` 能解析 → 上传到 `<备份桶>/postgres/` → 本地保留最新 14 份、桶里删除 30 天前的 → 把 artifacts 桶 `rclone sync` 到 `<备份桶>/artifacts/`，被删除或覆盖的对象挪到 `artifacts-replaced/<UTC>/`，30 天后清掉。任何一步失败都会打印 `BACKUP FAILED` 并以非零退出（`systemctl status` 会显示 failed）。
 
 不在备份里的：Redis（会话和队列，丢了只需重新登录）、Caddy 证书（会自动重签）、`deploy/.env.production`（自己存密码管理器）。备份桶如果支持版本控制、对象锁或生命周期规则，在存储商那边打开是更强的保护。
+
+**已删除数据在备份里的保留期**（`/privacy` 对用户这样承诺，改保留参数时要一起改）：
+- 用户删除比赛或账户后，数据库 dump 里的副本在桶里最多保留 30 天（`BACKUP_REMOTE_KEEP_DAYS`），本地最多保留最新 14 份（`BACKUP_LOCAL_KEEP`）。
+- 被删除的文件在下一次备份时从镜像挪到 `artifacts-replaced/<UTC>/`，30 天后清掉。
+- 打开版本控制或对象锁会让被删除的数据保留得更久，要同步更新隐私页的说法。
 
 ## 7. 恢复演练
 
@@ -166,9 +177,46 @@ dc exec -T postgres psql -U cs2coach -d cs2coach -c "select count(*) from demos"
 bash scripts/deploy/restore.sh <dump> --into-production --confirm-production-restore
 ```
 
-它会停掉 api 和 worker，先把当前库另存为 `/var/backups/cs2coach/pre-restore-<UTC>.dump`，把当前库**改名**为 `cs2coach_pre_restore_<UTC>`（不删除），再恢复到新建的 `cs2coach`，最后重新启动 api 和 worker。确认网站正常后再手动删除旧库。
+它会停掉 api 和 worker，先把当前库另存为 `/var/backups/cs2coach/pre-restore-<UTC>.dump`，把当前库**改名**为 `cs2coach_pre_restore_<UTC>`（不删除），再恢复到新建的 `cs2coach`，最后重新启动 api 和 worker。确认网站正常、并做完下面的"重做删除"后，再手动删除旧库。
 
 文件恢复需要手动用 rclone 把 `<备份桶>/artifacts/` 拷回 artifacts 桶。
+
+### 恢复生产库之后：重做删除，清理遗留
+
+从备份恢复，会把备份之后用户删除的比赛和账户带回来；数据库里的删除任务也回到了备份时的状态。`/privacy` 向用户承诺，恢复后会重新执行那之后的删除。所以恢复生产库之后必须做下面三步。
+
+1. **找出备份之后被删除的数据。** 改名保留的旧库 `cs2coach_pre_restore_<UTC>` 是恢复前一刻的状态。恢复后的库里有、旧库里没有的比赛和账户，就是备份之后被删除的：
+
+   ```bash
+   OLD=cs2coach_pre_restore_<UTC>
+   for q in "select id from demos" "select owner_id from accounts"; do
+     dc exec -T postgres psql -U cs2coach -d cs2coach -Atc "$q" | sort >/tmp/restored.txt
+     dc exec -T postgres psql -U cs2coach -d "$OLD" -Atc "$q" | sort >/tmp/before.txt
+     echo "== $q -- deleted after the backup:"; comm -23 /tmp/restored.txt /tmp/before.txt
+   done
+   rm -f /tmp/restored.txt /tmp/before.txt
+   ```
+
+   旧库损坏、无法查询时，只能从访问日志里找：`dc logs caddy | grep '"method":"DELETE"'` 里的 `DELETE /demos/<id>`。日志按大小轮转，可能不全；账户删除请求在日志里看不出是哪个账户。
+2. **重做这些删除。** 用运维命令代为删除，它走网站自己的删除流程，会同时清理存储并自动重试、让账户的会话失效；不要直接在 psql 里删行。把上一步列出的 id 传进去，先不带 `--yes` 看一眼，再加上 `--yes`：
+
+   ```bash
+   dc exec api python -m app.cli.delete_data demo <demo_id>... --yes
+   dc exec api python -m app.cli.delete_data account <owner_id>... --yes
+   ```
+
+   - 先删账户，再删剩下的比赛：账户删除会带走它名下的比赛，之后再删这些比赛只会报 `already gone` 或 `not found`。
+   - 删除时文件已经清掉了，所以这些比赛在删除前会显示为回放缺失，这不影响删除。
+   - 如果还用 rclone 拷回了文件，备份之后删除的文件也会一起回来，重做删除时会一并清掉。
+   - 命令的细节见 [数据删除](data_deletion_v1.md#代用户删除)。
+3. **30 天内删掉恢复遗留。** 它们是完整的旧库副本，不在自动保留规则里（本地保留规则只管 `pg-*.dump`）：
+
+   ```bash
+   rm /var/backups/cs2coach/pre-restore-<UTC>.dump
+   dc exec -T postgres psql -U cs2coach -d postgres -c 'DROP DATABASE "cs2coach_pre_restore_<UTC>"'
+   ```
+
+   演练用的临时库 `cs2coach_restore_check` 也要在对比完后删掉，`restore.sh` 会打印删除命令。
 
 ## 8. 更新
 
@@ -208,6 +256,8 @@ curl -i https://<域名>/health              # 依赖异常时返回 503 {"statu
 - **每天备份一次**：最坏丢失 24 小时的数据；Redis 不备份。
 - **没有 GPU 渲染机**：`RENDER_CLIPS_ENABLED=0`，第一人称片段入口隐藏。
 - **回滚不回退数据库结构**，见第 9 步。
-- **R2 兼容性要在真实部署上确认**：应用写对象时用条件写入，首次部署务必完成第 5 步的真实上传。
+- **R2 兼容性要在真实部署上确认**：应用写对象时用条件写入，首次部署务必完成第 5 步的真实上传。删除时的清理不带条件（列出后批量删除），第 5 步第 7 条的删除也顺带验证了这一点。
+- **删除追不回备份**：已删除的数据在备份里最多再保留 30 天；从备份恢复后要按第 7 步用 `python -m app.cli.delete_data` 重做删除。
+- **代用户删除**：第三方的移除请求、被移出邀请名单的用户的删除请求，都用同一个运维命令处理，见 [数据删除](data_deletion_v1.md#代用户删除)。移出邀请名单本身不删除数据。
 
-相关文档：[云端预览部署](cloud_preview_deploy_v1.md)、[部署准备](deployment_readiness_v1.md)、[2D 内测上线计划](rules_2d_beta_launch_v1.md)、[Configuration Reference](configuration_reference_v1.md)。
+相关文档：[云端预览部署](cloud_preview_deploy_v1.md)、[部署准备](deployment_readiness_v1.md)、[2D 内测上线计划](rules_2d_beta_launch_v1.md)、[数据删除](data_deletion_v1.md)、[Configuration Reference](configuration_reference_v1.md)。

@@ -14,6 +14,7 @@ The primary routes are:
 - `GET /auth/steam/callback`: validates and directly verifies the assertion, resolves the account, rotates any prior session, and redirects to the frontend callback.
 - `GET /auth/me`: returns only compact display metadata for the authenticated account. It never exposes `owner_id`. For a Steam account it also returns `account.steamId`, the signed-in viewer's own SteamID64, so Demo Detail can default the reviewed player to them; it is never another account's ID. Development and OIDC accounts omit it.
 - `POST /auth/logout`: revokes the Redis session and expires the session cookie.
+- `DELETE /auth/account`: production only. Deletes the signed-in account and all of its data, and ends every session of that account on every device (see [Account deletion](#account-deletion)).
 
 `GET /auth/login`, `GET /auth/oidc/callback`, and `GET /auth/session` remain compatibility routes. They are not a second enabled provider when `AUTH_PROVIDER=steam`.
 
@@ -45,15 +46,50 @@ Migration `2026071901_create_accounts_and_external_identities` creates:
 
 The schema enforces unique `(provider, subject)` and unique `(owner_id, provider)`. A verified Steam identity therefore belongs to exactly one account, and one account cannot silently acquire two different identities from the same provider. Steam profile names and avatars are display metadata only; they are never used to merge accounts.
 
-The migration is tracked in `app_schema_migrations` with a checksum and fails closed for unknown versions, changed checksums, or untracked account tables. PostgreSQL startup serializes API/worker schema upgrades with an advisory lock. Existing demo owner strings are preserved, and `demos.owner_id` intentionally does not gain an account foreign key so explicit development/test owners and legacy local data remain valid.
+The migration is tracked in `app_schema_migrations` with a checksum and fails closed for unknown versions, changed checksums, or untracked account tables. PostgreSQL startup serializes API/worker schema upgrades with an advisory lock. Existing demo owner strings are preserved, and `demos.owner_id` intentionally does not gain an account foreign key so explicit development/test owners and legacy local data remain valid. Deleting an `accounts` row therefore cascades to nothing the owner uploaded; account deletion removes demos, verdicts, and Steam rows explicitly.
 
 Phase 1 has no implicit account linking. A future multi-identity binding flow must require an authenticated account plus recent authentication of the new identity. If `(provider, subject)` already belongs to another owner, it must return a conflict and must never reassign or merge by display data.
 
 ## Profile enrichment
 
-`STEAM_WEB_API_KEY` is optional and server-only. When configured, the backend may call the official `ISteamUser/GetPlayerSummaries/v2` endpoint for a nickname and HTTPS avatar. Missing keys, private profiles, timeouts, rate limits, malformed responses, or a mismatched SteamID do not fail login; the UI falls back to `Steam account`.
+`STEAM_WEB_API_KEY` is server-only. Production requires it and refuses to start without a real key; development and test may leave it unset. The same key also authorizes the optional match-history calls (`docs/steam_match_sync_v1.md`).
 
-The application never asks for or stores a Steam password, Steam Guard code, Game Authentication Code, Match Sharing Code, or Steam browser cookie.
+With the key configured, every sign-in calls the official `ISteamUser/GetPlayerSummaries/v2` endpoint with the verified SteamID64:
+- The call happens before the allowlist check. An uninvited account's SteamID64 is therefore sent to Steam once, but nothing is stored for it.
+- The backend keeps only the persona name (normalized, at most 128 characters) and the avatar URL, and only when that URL is HTTPS on a Steam CDN host. Both are refreshed on every sign-in.
+- Profile URL, real name, country, and the rest of the response are discarded.
+- Private profiles, timeouts, rate limits, malformed responses, or a mismatched SteamID do not fail login; the UI falls back to `Steam account`.
+
+Sign-in never asks for or stores a Steam password, Steam Guard code, or Steam browser cookie. The optional Steam match-history link is a separate, user-initiated step (`docs/steam_match_sync_v1.md`). When a user connects it, the Game Authentication Code and Match Sharing Codes they submit, plus the sharing codes discovered later, **are** stored, AES-256-GCM encrypted, in `steam_connections` and `steam_matches`. Disconnecting deletes them, and so does deleting the account.
+
+## Account deletion
+
+`DELETE /auth/account` with the JSON body `{"confirm": "delete-my-account"}`:
+
+| Case | Response |
+| --- | --- |
+| Deleted | `204`. The response expires `__Host-cs2_session` with exactly the attributes logout uses. |
+| Missing or wrong confirmation | `400` `confirmation_required` |
+| No session | `401` |
+| `AUTH_MODE=development` or `test` | `409` `account_deletion_unavailable`. The local development owner has no account row, and one click must never wipe the local library; matches can still be deleted one by one. |
+
+In production the request passes the same session and exact-`Origin` checks as every other unsafe method. Caddy routes `/auth/account` to the API; `/account` is the Next.js "账户与数据" page.
+
+**What is deleted**
+- Every demo of the owner, through the single-match deletion path: rows, verdicts, and stored artifacts.
+- `coaching_feedback`, `steam_matches`, `steam_connections`, `external_identities`, and `accounts`.
+- Storage is purged after commit and retried through a durable outbox.
+
+**Sessions**
+- New session records carry `issuedAt` (milliseconds).
+- Deletion writes the owner revocation marker `auth:owner-revoked:{sha256(owner_id)}` before the database transaction commits. Its value is the current time in milliseconds, and its TTL is 86400 + 300 seconds.
+- Session resolution rejects and deletes any session of that owner whose `issuedAt` is missing or not later than the marker. Other devices therefore get `401` immediately, not after the session TTL.
+
+**Concurrent uploads and imports**: the upload commit and the Steam import commit re-check the account row inside their transaction. After deletion, a racing upload returns `401` `account_deleted` and leaves no row or object.
+
+**Signing in again**: the Steam identity mapping is gone, so a later sign-in with the same SteamID64 (if it is still on the allowlist) creates a new, empty account with a new random `owner_id`. To keep someone out, remove them from `STEAM_LOGIN_ALLOWLIST`.
+
+The full protocol, the retention of deleted data in backups and logs, and the test matrix are in [data_deletion_v1](data_deletion_v1.md).
 
 ## Configuration
 
@@ -70,7 +106,7 @@ The application never asks for or stores a Steam password, Steam Guard code, Gam
 | `AUTH_LOGIN_TTL_SECONDS` | `300` | Single-use login-attempt lifetime. |
 | `AUTH_CLOCK_SKEW_SECONDS` | `30` | Allowed future clock skew for the OpenID nonce. |
 | `STEAM_OPENID_NONCE_TTL_SECONDS` | `600` | Assertion freshness and replay-reservation window; must cover login TTL plus skew. |
-| `STEAM_WEB_API_KEY` | unset | Optional 32-character server-side key for profile enrichment only. |
+| `STEAM_WEB_API_KEY` | unset | 32-character server-side key for profile enrichment and the optional match-history calls. Required in production; optional in development/test. |
 | `STEAM_LOGIN_ALLOWLIST` | unset | Invite gate: comma-separated individual SteamID64s (at most 1000, unique), or `*` for every Steam account. Required in production with `AUTH_PROVIDER=steam`; development/test validate the format but never enforce it. |
 | `NEXT_PUBLIC_AUTH_PROVIDER` | `steam` | Public frontend provider selector; must equal `AUTH_PROVIDER`, contains no credential. |
 
@@ -78,6 +114,6 @@ OIDC variables are required only when `AUTH_PROVIDER=oidc`. `NEXT_PUBLIC_AUTH_PR
 
 ## Development compatibility and non-goals
 
-`AUTH_MODE=development` and `AUTH_MODE=test` retain the explicit `DEV_USER_ID` / `X-Dev-User-Id` harness. Production never falls back to that header or value. Development `/auth/me` reports a local account label without requiring an account row.
+`AUTH_MODE=development` and `AUTH_MODE=test` retain the explicit `DEV_USER_ID` / `X-Dev-User-Id` harness. Production never falls back to that header or value. Development `/auth/me` reports a local account label without requiring an account row; for the same reason `DELETE /auth/account` answers `409` there.
 
-This phase does not add Steam match credentials, match-history discovery, scheduled sync, Demo CDN access, Demo source providers, parser/replay/coaching changes, or Steam/CS2 automation. Real Steam callback interoperability, public-provider availability, and optional profile enrichment still require deployment smoke with an HTTPS registered origin; unit tests use controlled provider responses.
+This phase does not add Steam match credentials, match-history discovery, scheduled sync, Demo CDN access, Demo source providers, parser/replay/coaching changes, or Steam/CS2 automation. Real Steam callback interoperability, public-provider availability, and profile enrichment still require deployment smoke with an HTTPS registered origin; unit tests use controlled provider responses.

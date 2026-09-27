@@ -163,6 +163,27 @@ assert.equal(review.savePreferredPlayer("other", () => ({ getItem: storage.getIt
 assert.equal(review.readPreferredPlayer(() => ({ getItem: blocked, setItem: storage.setItem }), steamKey), "");
 assert.equal(review.savePreferredPlayer("other", () => null, steamKey), false);
 
+{
+  // Deleting an account forgets every player choice on this browser, and nothing else.
+  const kept = new Map([
+    [KEY, "{}"], [`${KEY}:steam:76561198000000001`, "{}"], [`${KEY}:oidc:someone`, "{}"],
+    ["cs2-coach.other-setting", "1"], [`${KEY}x`, "1"]
+  ]);
+  const enumerable = {
+    getItem: (key) => kept.get(key) ?? null,
+    setItem: (key, value) => kept.set(key, value),
+    removeItem: (key) => kept.delete(key),
+    get length() { return kept.size; },
+    key: (index) => [...kept.keys()][index] ?? null
+  };
+  review.clearPlayerPreferences(() => enumerable);
+  assert.deepEqual([...kept.keys()], ["cs2-coach.other-setting", `${KEY}x`]);
+  // Blocked or missing storage is not an error.
+  review.clearPlayerPreferences(blocked);
+  review.clearPlayerPreferences(() => null);
+  review.clearPlayerPreferences(() => ({ ...enumerable, removeItem: blocked }));
+}
+
 const panel = (saved, account, roster = players, player = null) => renderToStaticMarkup(React.createElement(PersonalReviewPanel, {
   savedIdentity: saved,
   match: review.resolveReviewIdentity(roster, review.reviewIdentityCandidates(saved, account)),

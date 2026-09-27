@@ -298,6 +298,21 @@ export function updateDemo(
   });
 }
 
+// Permanent: the match, its replay, suggestions and verdicts. A 404 means it is already gone.
+export function deleteDemo(demoId: string): Promise<void> {
+  return requestNoContent(`/demos/${encodeURIComponent(demoId)}`, { method: "DELETE" });
+}
+
+export const ACCOUNT_DELETION_CONFIRMATION = "delete-my-account";
+
+// Permanent: the account and all of its data; every session of it ends.
+export function deleteAccount(): Promise<void> {
+  return requestNoContent("/auth/account", {
+    method: "DELETE",
+    body: JSON.stringify({ confirm: ACCOUNT_DELETION_CONFIRMATION })
+  });
+}
+
 export function archiveDemo(demoId: string): Promise<DemoSummary> {
   return requestJson<DemoSummary>(`/demos/${demoId}/archive`, { method: "POST" });
 }

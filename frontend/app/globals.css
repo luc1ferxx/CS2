@@ -2138,6 +2138,92 @@ select:disabled {
   text-decoration: none;
 }
 
+/* The one irreversible entry, last in its menu: red text, no icon. */
+.menu-item.danger,
+.menu-item.danger:hover:not(:disabled) {
+  color: var(--danger-text);
+}
+
+/* --- Confirm dialog: a panel over a dimmed page, for irreversible actions only.
+   The panel keeps the pop shadow; the page behind it stays put. --- */
+.dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  overflow-y: auto;
+  padding: max(48px, 14vh) 16px 16px;
+  background: rgba(31, 35, 40, 0.45);
+}
+
+.panel.confirm-dialog {
+  width: min(440px, 100%);
+  box-shadow: var(--shadow-pop);
+}
+
+.confirm-dialog:focus {
+  outline: none;
+}
+
+.confirm-dialog-body {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+}
+
+.confirm-dialog-body :is(p, ul) {
+  margin: 0;
+}
+
+.confirm-dialog-body ul {
+  padding-left: 20px;
+}
+
+.confirm-dialog-note {
+  color: var(--ink-2);
+}
+
+.confirm-dialog-type {
+  display: grid;
+  gap: 4px;
+  color: var(--ink-2);
+  font-size: var(--step-sm);
+}
+
+.confirm-dialog-type input {
+  width: 100%;
+  max-width: 240px;
+}
+
+.confirm-dialog-error {
+  color: var(--danger-text);
+}
+
+.confirm-dialog-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+/* --- Site footer: the privacy link and the Valve line, 12 px grey under the page.
+   ink-2, not ink-3: ink-3 on the grey page is under 4.5:1. --- */
+.site-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 16px;
+  width: 100%;
+  max-width: 1320px;
+  margin: 0 auto;
+  padding: 0 16px 24px;
+  color: var(--ink-2);
+  font-size: 12px;
+  line-height: var(--leading-body);
+}
+
 /* --- Skeleton: static grey bars; no shimmer on page load --- */
 .skeleton-bar {
   display: block;
@@ -2225,6 +2311,14 @@ select:disabled {
   .page,
   .auth-stage {
     padding: 8px 8px 24px;
+  }
+
+  .site-footer {
+    padding: 0 8px 16px;
+  }
+
+  .dialog-backdrop {
+    padding: 48px 8px 8px;
   }
 
   .topbar {

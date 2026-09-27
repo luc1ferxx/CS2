@@ -37,6 +37,8 @@ Production credentials 绝不能进入 `NEXT_PUBLIC_*`、源码、日志、签�
 | `NEXT_PUBLIC_API_BASE_URL` | `http://localhost:8000` | frontend browser API/media URL |
 | `NEXT_PUBLIC_AUTH_PROVIDER` | `steam` | public frontend login label/path; must match server `AUTH_PROVIDER` |
 | `NEXT_PUBLIC_BETA_CONTACT_URL` | unset | optional `mailto:` or form URL shown as "申请内测资格" on the not-invited sign-in page; inlined at frontend build time (preview passes it as a build arg) |
+| `NEXT_PUBLIC_PRIVACY_CONTACT` | unset | contact shown on the public `/privacy` page for privacy questions and removal requests: an email becomes a `mailto:` link, an `http(s)://` URL a link, anything else plain text; required for the VPS production deploy (`scripts/deploy/deploy.sh` refuses to run without it); unset (local/preview builds) the page says there is no public contact; inlined at frontend build time (preview passes it as a build arg) |
+| `NEXT_PUBLIC_DATA_REGION` | unset | optional server region shown on `/privacy` (e.g. `日本东京`); unset shows "海外 VPS，具体地区由站长部署时选定"; inlined at frontend build time (preview passes it as a build arg) |
 
 ## 身份、会话与 owner 边界
 
@@ -140,7 +142,7 @@ Docker Compose 在容器内使用 service 名（`postgres`、`redis`），面向
 | `MAX_VIDEO_UPLOAD_BYTES` | `2147483648` | actual streamed dev/QA/worker video limit |
 | `MAX_REPLAY_ARTIFACT_BYTES` | `134217728` | replay JSON artifact limit |
 | `UPLOAD_CHUNK_BYTES` | `1048576` | bounded upload/read chunk size |
-| `DEMO_UPLOAD_DAILY_LIMIT` | `10` | API; 仅 production：每个 owner 在滚动 24 小时内（按 `Demo.created_at`，归档的也算）最多新建的 demo 数，超出时 `POST /uploads/demo` 返回 `429` `upload_daily_limit`，`Retry-After` 为窗口内对应那次上传移出窗口的秒数。范围 `0`..`1000`，`0` 表示不限 |
+| `DEMO_UPLOAD_DAILY_LIMIT` | `10` | API; 仅 production：每个 owner 在滚动 24 小时内（按上传账本 `upload_ledger` 计数：每次上传或 Steam 导入写一行，24 小时后清理；归档和永久删除的比赛都照样算）最多新建的 demo 数，超出时 `POST /uploads/demo` 返回 `429` `upload_daily_limit`，`Retry-After` 为窗口内对应那次上传移出窗口的秒数。范围 `0`..`1000`，`0` 表示不限 |
 | `DEMO_ACTIVE_PARSE_LIMIT` | `2` | API; 仅 production：每个 owner 同时处于 `queued`/`parsing`/`analyzing` 的 demo 上限，上传和解析重试超出时返回 `429` `active_parse_limit`（`Retry-After: 60`）。范围 `0`..`100`，`0` 表示不限 |
 | `PARSE_QUEUE_GLOBAL_LIMIT` | `50` | API; 仅 production：所有 owner 合计处于上述状态的 demo 上限（按数据库计数，不看 Redis 队列长度），上传和解析重试超出时返回 `503` `parse_queue_full`（`Retry-After: 60`）。范围 `0`..`100000`，`0` 表示不限 |
 | `ARTIFACT_STORAGE_ROOT` | `/data` | API, worker |

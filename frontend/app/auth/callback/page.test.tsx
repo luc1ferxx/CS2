@@ -21,7 +21,8 @@ function mockAuth(refreshSession: () => Promise<boolean>, state: AuthState = { s
     provider: "steam",
     refreshSession,
     signIn,
-    signOut
+    signOut,
+    markSignedOut: vi.fn()
   });
 }
 
@@ -45,8 +46,9 @@ describe("AuthCallbackPage", () => {
     expect(await screen.findByRole("heading", { name: "暂未开放" })).toBeInTheDocument();
     expect(screen.getByText("这个 Steam 账号还没有获得内测资格。")).toBeInTheDocument();
     expect(screen.getByText(/请先在 Steam 网站退出当前账号/)).toBeInTheDocument();
-    // No contact route is configured in tests, so none is offered.
-    expect(screen.queryByRole("link")).not.toBeInTheDocument();
+    // No contact route is configured in tests, so none is offered; the footer's privacy link is the only link.
+    expect(screen.queryByRole("link", { name: "申请内测资格" })).not.toBeInTheDocument();
+    expect(screen.getAllByRole("link").map((link) => link.textContent)).toEqual(["隐私说明"]);
     // Nothing signs in again on its own; switching accounts is the player's call.
     expect(refreshSession).not.toHaveBeenCalled();
     expect(signIn).not.toHaveBeenCalled();

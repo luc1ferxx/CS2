@@ -50,6 +50,9 @@ if [[ "$(stat -c '%a' "$ENV_FILE" 2>/dev/null || echo 600)" != "600" ]]; then
   log "WARNING: $ENV_FILE holds secrets; run: chmod 600 $ENV_FILE"
 fi
 
+# /privacy promises a contact for privacy questions and removal requests.
+[[ -n "$(env_get NEXT_PUBLIC_PRIVACY_CONTACT)" ]]   || die "NEXT_PUBLIC_PRIVACY_CONTACT must be set: /privacy shows it for privacy questions and removal requests"
+
 SITE_DOMAIN="$(env_get SITE_DOMAIN)"
 [[ "$SITE_DOMAIN" =~ ^[A-Za-z0-9.-]+$ ]] || die "SITE_DOMAIN must be a bare host name such as coach.example.com"
 BASE_URL="https://$SITE_DOMAIN"

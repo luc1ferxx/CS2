@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState, type ReactNode } from "react";
 
 import { useAuth } from "@/components/auth/AuthProvider";
@@ -46,6 +47,7 @@ export function AuthBoundary({ children }: { children: ReactNode }) {
         {signingIn && provider === "steam" ? (
           <p className="auth-note">
             将跳转到 Steam 官方页面（steamcommunity.com）登录。我们只会得到你的 Steam ID 和公开的昵称、头像，不会获得你的密码。
+            <Link className="auth-note-link" href="/privacy">隐私说明</Link>
           </p>
         ) : null}
         {state.status === "error" && state.message ? (

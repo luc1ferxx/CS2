@@ -17,14 +17,17 @@ import {
 import { DemFileHelp } from "@/components/upload/DemFileHelp";
 import { DemoUploader } from "@/components/upload/DemoUploader";
 import { AuthBoundary } from "@/components/auth/AuthBoundary";
+import { ConfirmDialog } from "@/components/feedback/ConfirmDialog";
 import { ErrorBanner } from "@/components/feedback/ErrorBanner";
 import { useAuth } from "@/components/auth/AuthProvider";
 import { SessionControls } from "@/components/auth/SessionControls";
 import { AppBrand } from "@/components/layout/AppBrand";
+import { SiteFooter } from "@/components/layout/SiteFooter";
 import { RecentSteamMatches } from "@/components/steam/RecentSteamMatches";
 import {
   archiveDemo,
   createMockUpload,
+  deleteDemo,
   getUploadQuota,
   isApiError,
   isUploadAbortError,
@@ -69,6 +72,7 @@ import {
   type DemoUploadOutcome,
   type DemoUploadSnapshot
 } from "@/lib/demo-upload";
+import { takeLibraryNotice } from "@/lib/library-notice";
 import { getTacticalMapConfig, mapDisplayName } from "@/lib/map-config";
 import {
   MAX_DEMO_UPLOAD_BYTES,
@@ -77,7 +81,7 @@ import {
   uploadQuotaSummary
 } from "@/lib/upload-limits";
 import { usePoll } from "@/lib/use-poll";
-import { userFacingError } from "@/lib/user-errors";
+import { requestFailureKind, userFacingError } from "@/lib/user-errors";
 import type { DemoProcessingStatus, DemoSummary } from "@/types/demo";
 
 const DEFAULT_FILTERS: DemoLibraryFilters = {
@@ -140,6 +144,10 @@ function DashboardContent() {
   const [uploadError, setUploadError] = useState<UploadFailure | null>(null);
   // Same for a refused parse retry: the in-flight demos behind the limit keep polling on.
   const [retryError, setRetryError] = useState<string | null>(null);
+  // The match waiting in the delete dialog, and a failed delete (outlives polling like the two above).
+  const [deleteTarget, setDeleteTarget] = useState<DemoSummary | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const [notice, setNotice] = useState<LibraryNotice | null>(null);
   const [importOptionsLoaded, setImportOptionsLoaded] = useState(false);
   const [quota, setQuota] = useState<UploadQuota | null>(null);
@@ -189,6 +197,12 @@ function DashboardContent() {
   useEffect(() => {
     void loadDemos();
   }, [loadDemos]);
+
+  // A line left by the page that sent the player here (a match deleted from its own page).
+  useEffect(() => {
+    const message = takeLibraryNotice();
+    if (message) setNotice({ kind: "message", message });
+  }, []);
 
   useEffect(() => {
     const selectors = pendingFocusRef.current;
@@ -506,6 +520,45 @@ function DashboardContent() {
     }
   }
 
+  async function handleDelete(demo: DemoSummary) {
+    const title = libraryDisplayTitle(demo, mapDisplayName).title;
+    const index = visibleDemos.findIndex((item) => item.id === demo.id);
+    const neighbour = visibleDemos[index + 1] ?? visibleDemos[index - 1] ?? null;
+    setDeleting(true);
+    setBusyDemoId(demo.id);
+    setDeleteError(null);
+    // A list request already in flight must not bring the row back.
+    invalidateLibraryLoads();
+    try {
+      await deleteDemo(demo.id);
+    } catch (err) {
+      // Already gone (another tab): that is the outcome the player asked for.
+      if (requestFailureKind(err) !== "not_found") {
+        invalidateLibraryLoads();
+        pendingFocusRef.current = [rowSelector(demo.id, ".lib-menu > summary")];
+        setDeleteError(userFacingError(err, `删除「${title}」失败，请重试。`));
+        setDeleteTarget(null);
+        setDeleting(false);
+        setBusyDemoId(null);
+        return;
+      }
+    }
+    invalidateLibraryLoads();
+    setDemos((current) => current.filter((item) => item.id !== demo.id));
+    if (renamingDemoId === demo.id) {
+      setRenamingDemoId(null);
+      setRenameValue("");
+      setRenameError(null);
+    }
+    // No link: the match no longer exists. This also replaces any notice that pointed at it.
+    setNotice({ kind: "message", message: `已永久删除「${title}」` });
+    pendingFocusRef.current = [...(neighbour ? [rowSelector(neighbour.id, ".lib-name a")] : []), UPLOAD_BUTTON];
+    setDeleteTarget(null);
+    setDeleting(false);
+    setBusyDemoId(null);
+    void refreshQuota();
+  }
+
   const uploadBusyLabel = upload
     ? upload.phase === "verifying"
       ? "校验中…"
@@ -530,6 +583,7 @@ function DashboardContent() {
           <ErrorBanner message={uploadError.message} onDismiss={() => setUploadError(null)} />
         ) : null}
         {retryError ? <ErrorBanner message={retryError} onDismiss={() => setRetryError(null)} /> : null}
+        {deleteError ? <ErrorBanner message={deleteError} onDismiss={() => setDeleteError(null)} /> : null}
         {/* With no rows, the ledger's own error row says it once. */}
         {error && demos.length > 0 ? (
           <ErrorBanner message={error} onRetry={() => void loadDemos()} onDismiss={() => setError(null)} />
@@ -721,6 +775,10 @@ function DashboardContent() {
                     onCancelRename={() => cancelRename(demo)}
                     onStartRename={() => startRename(demo)}
                     onArchive={() => void handleArchive(demo)}
+                    onDelete={() => {
+                      setDeleteError(null);
+                      setDeleteTarget(demo);
+                    }}
                     onRetryParse={() => void handleRetryParse(demo)}
                     onReupload={openUploadPicker}
                   />
@@ -759,6 +817,34 @@ function DashboardContent() {
           {importOptionsLoaded ? <RecentSteamMatches /> : null}
         </details>
       </div>
+      <SiteFooter />
+
+      <ConfirmDialog
+        open={deleteTarget !== null}
+        title="永久删除这场比赛？"
+        confirmLabel="永久删除"
+        busy={deleting}
+        busyLabel="正在删除…"
+        onConfirm={() => {
+          if (deleteTarget) void handleDelete(deleteTarget);
+        }}
+        onCancel={() => setDeleteTarget(null)}
+      >
+        {deleteTarget ? (
+          <>
+            <p>「{libraryDisplayTitle(deleteTarget, mapDisplayName).title}」的这些内容会被永久删除：</p>
+            <ul>
+              <li>比赛文件 .dem</li>
+              <li>回放数据</li>
+              <li>复盘建议和你的评价</li>
+            </ul>
+            <p className="confirm-dialog-note">此操作无法撤销。</p>
+            {typeof quota?.dailyLimit === "number" ? (
+              <p className="confirm-dialog-note">删除不会恢复今天的上传次数。</p>
+            ) : null}
+          </>
+        ) : null}
+      </ConfirmDialog>
     </main>
   );
 }
@@ -782,6 +868,7 @@ function LibraryRow({
   onCancelRename,
   onStartRename,
   onArchive,
+  onDelete,
   onRetryParse,
   onReupload
 }: {
@@ -797,6 +884,7 @@ function LibraryRow({
   onCancelRename: () => void;
   onStartRename: () => void;
   onArchive: () => void;
+  onDelete: () => void;
   onRetryParse: () => void;
   onReupload: () => void;
 }) {
@@ -950,6 +1038,17 @@ function LibraryRow({
               disabled={busy}
             >
               {demo.archived ? "恢复到比赛库" : "归档比赛"}
+            </button>
+            <button
+              className="menu-item danger"
+              type="button"
+              onClick={(event) => {
+                closeRecordMenu(event.currentTarget);
+                onDelete();
+              }}
+              disabled={busy}
+            >
+              删除比赛…
             </button>
           </div>
         </details>

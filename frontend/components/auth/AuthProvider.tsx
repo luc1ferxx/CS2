@@ -30,6 +30,8 @@ interface AuthContextValue {
   refreshSession: () => Promise<boolean>;
   signIn: (returnTo?: string) => void;
   signOut: () => Promise<void>;
+  // The session is already gone on the server (the account was deleted): show signed out, send nothing.
+  markSignedOut: () => void;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -89,9 +91,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  const markSignedOut = useCallback(() => dispatch({ type: "signedOut" }), []);
+
   const value = useMemo(
-    () => ({ state, provider, refreshSession, signIn, signOut }),
-    [provider, refreshSession, signIn, signOut, state]
+    () => ({ state, provider, refreshSession, signIn, signOut, markSignedOut }),
+    [markSignedOut, provider, refreshSession, signIn, signOut, state]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

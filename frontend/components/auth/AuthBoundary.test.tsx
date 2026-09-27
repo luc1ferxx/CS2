@@ -13,7 +13,7 @@ const refreshSession = vi.fn(async () => true);
 const signOut = vi.fn(async () => {});
 
 function mockAuth(state: AuthState, provider: "steam" | "oidc" = "steam") {
-  vi.mocked(useAuth).mockReturnValue({ state, provider, refreshSession, signIn, signOut });
+  vi.mocked(useAuth).mockReturnValue({ state, provider, refreshSession, signIn, signOut, markSignedOut: vi.fn() });
 }
 
 function renderBoundary() {
@@ -46,6 +46,11 @@ describe("AuthBoundary", () => {
     expect(screen.getByText("内测")).toBeInTheDocument();
     expect(screen.getByText(/上传 CS2 比赛录像（.dem）/)).toBeInTheDocument();
     expect(screen.getByText(/steamcommunity\.com.*不会获得你的密码/)).toBeInTheDocument();
+    // What is kept is one click away before signing in: next to the Steam note and in the footer.
+    const privacyLinks = screen.getAllByRole("link", { name: "隐私说明" });
+    expect(privacyLinks).toHaveLength(2);
+    for (const link of privacyLinks) expect(link).toHaveAttribute("href", "/privacy");
+    expect(screen.getByText(/本站与 Valve Corporation 无关联/)).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "通过 Steam 登录" }));
     expect(signIn).toHaveBeenCalledTimes(1);
   });

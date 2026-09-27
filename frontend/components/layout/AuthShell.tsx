@@ -1,9 +1,11 @@
 import type { ReactNode } from "react";
 
 import { AppBrand } from "@/components/layout/AppBrand";
+import { SiteFooter } from "@/components/layout/SiteFooter";
 
 // Sign-in, callback, not-invited, error and not-found pages: the app's own top
-// bar, then one panel with a header bar, so they read as the same product as the library.
+// bar, then one panel with a header bar, so they read as the same product as the
+// library; the privacy link and the Valve line underneath.
 export function AuthShell({ children, beta = false }: { children: ReactNode; beta?: boolean }) {
   return (
     <main className="auth-shell">
@@ -12,6 +14,7 @@ export function AuthShell({ children, beta = false }: { children: ReactNode; bet
         {beta ? <span className="auth-beta-tag">内测</span> : null}
       </header>
       <div className="auth-stage">{children}</div>
+      <SiteFooter />
     </main>
   );
 }

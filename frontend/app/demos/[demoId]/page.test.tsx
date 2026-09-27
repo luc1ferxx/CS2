@@ -7,6 +7,7 @@ import { useAuth } from "@/components/auth/AuthProvider";
 import * as api from "@/lib/api";
 import { buildRoundReviewModel } from "@/lib/round-review";
 import type { AuthAccount, AuthCapabilities } from "@/lib/auth";
+import { takeLibraryNotice } from "@/lib/library-notice";
 import { PLAYER_PREFERENCE_KEY } from "@/lib/personal-review";
 import {
   CT_ANCHOR_ID,
@@ -23,8 +24,12 @@ import {
 import type { CoachingFeedback } from "@/types/coaching";
 import type { ReplayData } from "@/types/replay";
 
+// One router object for the whole file: a fresh one per render would change the page's callbacks.
+const { router } = vi.hoisted(() => ({ router: { replace: vi.fn(), push: vi.fn() } }));
+
 vi.mock("next/navigation", () => ({
-  useParams: () => ({ demoId: "demo-1" })
+  useParams: () => ({ demoId: "demo-1" }),
+  useRouter: () => router
 }));
 
 vi.mock("@/components/auth/AuthProvider", () => ({ useAuth: vi.fn() }));
@@ -51,7 +56,8 @@ function mockAuth(capabilities: AuthCapabilities, account: AuthAccount = DEV_ACC
     provider: "steam",
     refreshSession: vi.fn(async () => true),
     signIn: vi.fn(),
-    signOut: vi.fn(async () => {})
+    signOut: vi.fn(async () => {}),
+    markSignedOut: vi.fn()
   });
 }
 
@@ -72,7 +78,8 @@ vi.mock("@/lib/api", async (importOriginal) => {
     saveVideoCalibration: vi.fn(),
     uploadDemoVideo: vi.fn(),
     saveCoachingFeedback: vi.fn(),
-    clearCoachingFeedback: vi.fn()
+    clearCoachingFeedback: vi.fn(),
+    deleteDemo: vi.fn()
   };
 });
 
@@ -741,6 +748,110 @@ describe("DemoDetailPage", () => {
     await waitFor(() => expect(document.title).toBe("Mock Match demo-1 - CS2 复盘"));
     unmount();
     expect(document.title).toBe("CS2 Demo Coach");
+  });
+
+  describe("deleting the match", () => {
+    afterEach(() => {
+      takeLibraryNotice();
+    });
+
+    it("confirms in a dialog from 高级工具, then returns to the library with a one-shot notice", async () => {
+      mockAuth({ devTools: false, renderClips: false });
+      vi.mocked(api.getDemoStatus).mockResolvedValue(demoStatus());
+      vi.mocked(api.getReplay).mockResolvedValue(replayData());
+      const request = deferred<void>();
+      vi.mocked(api.deleteDemo).mockReturnValue(request.promise);
+      const user = userEvent.setup();
+
+      render(<DemoDetailPage />);
+      await screen.findByRole("region", { name: "播放控制" });
+      await user.click(screen.getByText("高级工具"));
+      const opener = screen.getByRole("button", { name: "删除这场比赛" });
+      await user.click(opener);
+
+      const dialog = screen.getByRole("dialog", { name: "永久删除这场比赛？" });
+      expect(dialog).toHaveAttribute("aria-modal", "true");
+      expect(dialog).toHaveTextContent("「Mock Match demo-1」的这些内容会被永久删除");
+      expect(dialog).toHaveTextContent("此操作无法撤销。");
+      // The harmless choice has focus; Esc closes and hands focus back.
+      expect(within(dialog).getByRole("button", { name: "取消" })).toHaveFocus();
+      await user.keyboard("{Escape}");
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+      expect(opener).toHaveFocus();
+      expect(api.deleteDemo).not.toHaveBeenCalled();
+
+      await user.click(opener);
+      await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "永久删除" }));
+
+      expect(api.deleteDemo).toHaveBeenCalledWith("demo-1");
+      const busy = screen.getByRole("dialog");
+      expect(within(busy).getByRole("button", { name: "正在删除…" })).toBeDisabled();
+      expect(within(busy).getByRole("button", { name: "取消" })).toBeDisabled();
+
+      await act(async () => {
+        request.resolve();
+      });
+
+      expect(router.replace).toHaveBeenCalledWith("/dashboard");
+      // The name travels in memory, never in the address.
+      expect(window.location.href).not.toMatch(/Mock|deleted/);
+      expect(takeLibraryNotice()).toBe("已永久删除「Mock Match demo-1」");
+      expect(takeLibraryNotice()).toBeNull();
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    });
+
+    it("keeps a failed delete in the dialog and treats an already deleted match as deleted", async () => {
+      vi.mocked(api.getDemoStatus).mockResolvedValue(demoStatus());
+      vi.mocked(api.getReplay).mockResolvedValue(replayData());
+      vi.mocked(api.deleteDemo)
+        .mockRejectedValueOnce(new api.ApiError(500, "boom"))
+        .mockRejectedValueOnce(new api.ApiError(404, "Demo not found"));
+      const user = userEvent.setup();
+
+      render(<DemoDetailPage />);
+      await screen.findByRole("region", { name: "播放控制" });
+      await user.click(screen.getByText("高级工具"));
+      await user.click(screen.getByRole("button", { name: "删除这场比赛" }));
+      await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "永久删除" }));
+
+      const dialog = screen.getByRole("dialog");
+      expect(await within(dialog).findByRole("alert")).toHaveTextContent("服务暂时出错，请稍后重试。");
+      expect(router.replace).not.toHaveBeenCalled();
+
+      await user.click(within(dialog).getByRole("button", { name: "永久删除" }));
+
+      await waitFor(() => expect(router.replace).toHaveBeenCalledWith("/dashboard"));
+      expect(takeLibraryNotice()).toBe("已永久删除「Mock Match demo-1」");
+    });
+
+    it("offers deletion on a processing demo and stops polling once it starts", async () => {
+      vi.useFakeTimers();
+      vi.mocked(api.getDemoStatus).mockResolvedValue(parsingStatus());
+      vi.mocked(api.getReplay).mockRejectedValue(new api.ApiError(409, "Replay is not ready"));
+      const request = deferred<void>();
+      vi.mocked(api.deleteDemo).mockReturnValue(request.promise);
+
+      render(<DemoDetailPage />);
+      await flush();
+      expect(screen.getByRole("heading", { name: "正在处理这场比赛" })).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "删除这场比赛" }));
+      fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "永久删除" }));
+      await flush();
+      const calls = vi.mocked(api.getDemoStatus).mock.calls.length;
+
+      // The demo is going away: no status poll, so no 404 card or banner flashes before the redirect.
+      vi.mocked(api.getDemoStatus).mockRejectedValue(new api.ApiError(404, "Demo not found"));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(10_000);
+      });
+      expect(api.getDemoStatus).toHaveBeenCalledTimes(calls);
+      expect(screen.queryByRole("heading", { name: "找不到这场比赛" })).not.toBeInTheDocument();
+
+      await act(async () => {
+        request.resolve();
+      });
+      expect(router.replace).toHaveBeenCalledWith("/dashboard");
+    });
   });
 
   it("hides clip generation when render clips are off but still plays saved clips", async () => {

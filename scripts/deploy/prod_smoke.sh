@@ -116,6 +116,20 @@ else
   fail "GET /demos/{id} -> Next.js HTML" "HTTP $STATUS content-type '$(header content-type)'"
 fi
 
+# 5b. The privacy page is public Next.js HTML (no session needed).
+request GET "$BASE/privacy"
+if [[ "$STATUS" == "200" && "$(header content-type)" == text/html* ]]; then
+  pass "GET /privacy -> 200 HTML"
+else
+  fail "GET /privacy -> 200 HTML" "HTTP $STATUS content-type '$(header content-type)' $(curl_error)"
+fi
+# Other players in an uploaded .dem can only ask for a removal through this contact.
+if grep -q '本站没有公开联系方式' "$TMP/body"; then
+  fail "/privacy shows a contact" "built without NEXT_PUBLIC_PRIVACY_CONTACT; set it and redeploy"
+else
+  pass "/privacy shows a contact"
+fi
+
 # 6. API routes reject anonymous callers (proves they reached FastAPI).
 request GET "$BASE/demos"
 expect_status "anonymous GET /demos -> 401" 401
@@ -131,6 +145,20 @@ request POST "$BASE/uploads/demo" --data ''
 expect_status "anonymous POST /uploads/demo -> 401" 401
 request GET "$BASE/auth/me"
 expect_status "anonymous GET /auth/me -> 401" 401
+# Deletion routes: JSON 401 proves Caddy sent them to FastAPI, not Next.js
+# (the Next.js account page lives at /account, not /auth/account).
+request DELETE "$BASE/auth/account" -H 'Content-Type: application/json' --data '{"confirm":"delete-my-account"}'
+if [[ "$STATUS" == "401" && "$(header content-type)" == application/json* ]]; then
+  pass "anonymous DELETE /auth/account -> 401 from the API"
+else
+  fail "anonymous DELETE /auth/account -> 401 from the API" "HTTP $STATUS content-type '$(header content-type)'"
+fi
+request DELETE "$BASE/demos/$ZERO_DEMO"
+if [[ "$STATUS" == "401" && "$(header content-type)" == application/json* ]]; then
+  pass "anonymous DELETE /demos/{id} -> 401 from the API"
+else
+  fail "anonymous DELETE /demos/{id} -> 401 from the API" "HTTP $STATUS content-type '$(header content-type)'"
+fi
 
 # 7. Development surfaces stay hidden in production.
 request GET "$BASE/docs"
@@ -170,6 +198,8 @@ Manual checklist (real browser, real Steam accounts) -- $BASE
   [ ] Upload a real .dem on /dashboard; it moves to parsed/completed.
   [ ] Open the review (/demos/<id>): replay plays, rounds switch, map and coaching cards load.
   [ ] Sign out; /dashboard asks you to sign in again.
+  [ ] Signed out, /privacy opens with your region/contact and the Valve disclaimer in the footer.
+  [ ] Delete the uploaded test match from the row menu; it disappears and today's upload count stays.
 EOF
 
 ((FAILURES == 0))

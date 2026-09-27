@@ -15,6 +15,7 @@ RC QA validates that the demo-first review flow still works:
 7. Development Cloud Preview smoke creates a mock demo, opens replay/coaching data, creates a `render_clip` job, checks private-media projection, and prints development diagnostics.
 8. Optional sample `.dem` smoke proves fresh real-demo upload, Redis parse dispatch, replay storage, rules analysis, and map calibration/fallback metadata.
 9. Manual browser smoke verifies the dense Demo Library and Demo Detail review workflows on desktop and mobile.
+10. Permanent match deletion, production-only account deletion, and the public `/privacy` page behave as documented in `docs/data_deletion_v1.md`.
 
 ## Non-Goals
 
@@ -142,7 +143,8 @@ Use two independent Steam identities, A and B (or two identities from the explic
 For demos owned separately by A and B, exercise all of these surfaces:
 
 - Library list; status; replay; coaching; demo diagnostics.
-- Rename; archive; unarchive.
+- Rename; archive; unarchive; permanent delete (`DELETE /demos/{demo_id}`).
+- Account deletion (`DELETE /auth/account`), with dedicated throwaway invited accounts only.
 - Mock upload; real `.dem` upload; parser retry.
 - Video status; development/QA video upload; calibration.
 - Mock render; `render_clip`; render-job retry; render-job list.
@@ -157,6 +159,8 @@ Expected results:
 - Production ignores/rejects `X-Dev-User-Id`; a valid A session plus a B header remains A.
 - A copied private-media URL fails for B and anonymous sessions. Legacy `/media/videos/...`, traversal, another demo's storage reference, leaf or parent-directory symlinks, post-validation path replacement, and missing files return no foreign bytes or local/storage-key details.
 - Logout deletes the server-side Redis session and clears the cookie. Reusing the old cookie fails.
+- Deleting one of A's demos returns `204`, and a repeat returns `404`. B's attempt on A's demo returns `404`, and A's rows and objects are untouched. Afterwards the demo's rows, verdicts, and stored objects are gone. A linked Steam match is unlinked and importable again. A's daily upload count does not go down.
+- Account deletion needs the body `{"confirm":"delete-my-account"}`, otherwise it returns `400` `confirmation_required`. It returns `204` and expires the session cookie. A second session of the same account, opened earlier in another browser, then gets `401` on every route. An upload that commits after the deletion returns `401` `account_deleted` and leaves no row or object. B is unaffected.
 - Invalid signature or algorithm, issuer, audience, nonce, timestamps, missing required claims, unknown JWKS key, reused/mismatched state, and unsafe or oversized `return_to` inputs are denied or reduced to the safe dashboard target.
 - Unsafe cookie-authenticated mutations with a missing or untrusted `Origin` receive `403` and create no row, job, metadata, or artifact change; render-worker service calls remain on their independent credential boundary.
 - User-facing demo/replay/video payloads contain no `owner_id`, `storageKey`, unknown internal replay fields, `local://`, absolute local path, issuer, subject, or token; replay/source keys and replay `demoId` remain bound to the requested demo.
@@ -192,6 +196,19 @@ Open `/dashboard` in the target frontend and verify:
 - The replay's `生成这一刻的视频` button (and a coaching card's `生成视频`) creates a `render_clip` job. In `fallback` render-worker mode a local no-GPU run appears as `GPU worker not connected for render_clip`; in `external` mode an offline renderer instead shows as `render_worker.connected=false`, with the job left `queued` until `RENDER_CLIP_QUEUE_TIMEOUT_SECONDS` (default 30 min) elapses, after which the worker's queue sweep fails it as `RENDER_QUEUE_TIMED_OUT` so the retry button becomes usable.
 - `RenderOperatorPanel` shows latest job status, tick range, output, and compact errors. With `capabilities.renderClips=false` (production without `RENDER_CLIPS_ENABLED=1`) the clip buttons and this panel are hidden, and saved clips still play from `已保存的视频`.
 - Production beta: an uninvited Steam account lands on `/auth/callback?error=not_invited` showing `暂未开放` with a link back to `/` and no sign-in retry; an upload refused by a quota shows the Chinese limit copy (the daily limit includes the wait), which stays visible while the library polls.
+- `/privacy` opens signed out. It shows the configured region and contact, or the fallback text, and the not-affiliated-with-Valve line. The footer link and disclaimer appear on the dashboard, Demo Detail, `/account`, the sign-in wall, the callback and not-invited panels, and the error and 404 pages. The sign-in wall links to `隐私说明` next to its "Steam ID and public nickname/avatar" note.
+- Permanent match delete. Locally, delete only a mock demo you just created, never an existing demo of the default dev owner. Check both entry points:
+  - the Dashboard row menu `删除比赛…`;
+  - the Demo Detail `删除这场比赛` button under `高级工具`, or on a failed or processing state card.
+
+  For each, verify:
+  - The dialog lists what goes and says `此操作无法撤销。`. `删除不会恢复今天的上传次数。` appears when a daily limit exists.
+  - Focus moves into the dialog and is trapped there. Esc and `取消` return focus to the opener.
+  - After success the notice `已永久删除「…」` appears. The row does not come back on the next poll. Demo Detail returns to `/dashboard`, and the demo name or id is not in the URL.
+  - A failed request shows an error banner.
+- `/account` shows the nickname, `Steam` sign-in, and SteamID64, plus the data panel and its links. The account name in the top bar links there.
+  - Development shows no delete button and explains that account deletion needs Steam sign-in.
+  - Production, with a throwaway invited account: the delete button stays disabled until `删除账户` is typed exactly. Success shows `账户已删除` with links to `/privacy` and sign-in, and clears this browser's player preference. A second browser signed in as the same account is signed out on its next request.
 - The private `/demos/{demo_id}/media/video` source uses the session cookie, supports seek via `206`, and never falls back to `/media/videos/...`; missing/denied media preserves the synchronized 2D/mock shell.
 - Desktop and mobile widths do not show incoherent horizontal overflow, clipped controls, or current console errors.
 
@@ -219,3 +236,4 @@ For a release-candidate handoff, record:
 - Private media GET/HEAD/Range, copied/guessed URL, legacy static path, traversal, symlink, logout, and expiry results.
 - Manual browser smoke result, including callback/session-expired/sign-out behavior, desktop/mobile viewport coverage, screenshots, and known limitations.
 - Coarse `/health` status and proof that system `/diagnostics` is `404` in production while demo diagnostics remain owner-scoped.
+- Deletion results: match delete, the owner B `404`, double delete, the unchanged upload count, and the empty deletion outbox after about 35 minutes. For a production RC, also record the throwaway account deletion with its second-session `401`, and the `/privacy` region/contact as shown.

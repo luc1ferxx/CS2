@@ -11,6 +11,10 @@ export const PLAYER_PREFERENCE_KEY = "cs2-coach.player-preference.v1";
 interface PreferenceStorage {
   getItem: (key: string) => string | null;
   setItem: (key: string, value: string) => void;
+  removeItem: (key: string) => void;
+  // Enumeration, so every account's choice on this browser can be found (window.localStorage has both).
+  readonly length?: number;
+  key?: (index: number) => string | null;
 }
 
 export interface PlayerMatch {
@@ -130,6 +134,27 @@ export function savePreferredPlayer(
     return true;
   } catch {
     return false;
+  }
+}
+
+// Forgets every reviewed-player choice kept on this browser (any account's, plus the
+// development one). Used when an account is deleted; blocked storage is not an error.
+export function clearPlayerPreferences(getStorage: () => PreferenceStorage | null): void {
+  try {
+    const storage = getStorage();
+    if (!storage) return;
+    const keys = new Set<string>();
+    if (typeof storage.length === "number" && typeof storage.key === "function") {
+      for (let index = 0; index < storage.length; index += 1) {
+        const key = storage.key(index);
+        if (key === PLAYER_PREFERENCE_KEY || key?.startsWith(`${PLAYER_PREFERENCE_KEY}:`)) keys.add(key);
+      }
+    } else {
+      keys.add(PLAYER_PREFERENCE_KEY);
+    }
+    for (const key of keys) storage.removeItem(key);
+  } catch {
+    // Private mode or blocked site data: nothing was kept to clear.
   }
 }
 

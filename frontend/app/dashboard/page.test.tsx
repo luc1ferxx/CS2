@@ -6,6 +6,7 @@ import DashboardPage from "@/app/dashboard/page";
 import { useAuth } from "@/components/auth/AuthProvider";
 import * as api from "@/lib/api";
 import type { AuthCapabilities } from "@/lib/auth";
+import { leaveLibraryNotice } from "@/lib/library-notice";
 import { demoSummary, ingestion } from "@/lib/test-fixtures/review";
 
 vi.mock("@/components/auth/AuthProvider", () => ({ useAuth: vi.fn() }));
@@ -20,7 +21,8 @@ function mockAuth(capabilities: AuthCapabilities | undefined) {
     provider: "steam",
     refreshSession: vi.fn(async () => true),
     signIn: vi.fn(),
-    signOut: vi.fn(async () => {})
+    signOut: vi.fn(async () => {}),
+    markSignedOut: vi.fn()
   });
 }
 
@@ -41,7 +43,8 @@ vi.mock("@/lib/api", async (importOriginal) => {
     getUploadQuota: vi.fn(),
     updateDemo: vi.fn(),
     archiveDemo: vi.fn(),
-    retryDemoParse: vi.fn()
+    retryDemoParse: vi.fn(),
+    deleteDemo: vi.fn()
   };
 });
 
@@ -809,6 +812,102 @@ describe("DashboardPage", () => {
     expect(await screen.findByText("已恢复「Mock Match demo-1」")).toBeInTheDocument();
     expect(rowFor("Mock Match demo-1")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Mock Match demo-1" })).toHaveFocus();
+  });
+
+  it("deletes a match for good only after confirming, with no undo and focus on the next row", async () => {
+    const user = userEvent.setup();
+    const second = demoSummary({ id: "demo-2", name: "Second match" });
+    vi.mocked(api.listDemos).mockResolvedValue([demoSummary(), second]);
+    vi.mocked(api.getUploadQuota).mockResolvedValue({ ...NO_LIMITS, dailyLimit: 10, dailyUsed: 3 });
+    vi.mocked(api.deleteDemo).mockResolvedValueOnce(undefined);
+
+    render(<DashboardPage />);
+    await screen.findByText("（2 场）");
+    const menu = screen.getByLabelText("Mock Match demo-1 的更多操作");
+    await user.click(menu);
+    const item = within(rowFor("Mock Match demo-1")).getByRole("button", { name: "删除比赛…" });
+    expect(item).toHaveClass("menu-item", "danger");
+    await user.click(item);
+
+    const dialog = screen.getByRole("dialog", { name: "永久删除这场比赛？" });
+    expect(dialog).toHaveTextContent("「Mock Match demo-1」的这些内容会被永久删除");
+    expect(within(dialog).getAllByRole("listitem").map((entry) => entry.textContent)).toEqual([
+      "比赛文件 .dem", "回放数据", "复盘建议和你的评价"
+    ]);
+    expect(dialog).toHaveTextContent("此操作无法撤销。");
+    expect(dialog).toHaveTextContent("删除不会恢复今天的上传次数。");
+
+    // Cancelling changes nothing and returns focus to the row's menu.
+    await user.click(within(dialog).getByRole("button", { name: "取消" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(menu).toHaveFocus();
+    expect(api.deleteDemo).not.toHaveBeenCalled();
+
+    await user.click(menu);
+    await user.click(within(rowFor("Mock Match demo-1")).getByRole("button", { name: "删除比赛…" }));
+    const quotaCalls = vi.mocked(api.getUploadQuota).mock.calls.length;
+    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "永久删除" }));
+
+    expect(api.deleteDemo).toHaveBeenCalledWith("demo-1");
+    expect(await screen.findByText("已永久删除「Mock Match demo-1」")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Mock Match demo-1" })).not.toBeInTheDocument();
+    // Nothing to open or undo: the match is gone.
+    const notice = screen.getByText("已永久删除「Mock Match demo-1」").closest(".notice");
+    expect(notice).not.toBeNull();
+    expect(within(notice as HTMLElement).queryByRole("link")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "撤销" })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Second match" })).toHaveFocus();
+    await waitFor(() => expect(vi.mocked(api.getUploadQuota).mock.calls.length).toBeGreaterThan(quotaCalls));
+  });
+
+  it("focuses the upload button once the last match is deleted, and counts a 404 as deleted", async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.listDemos).mockResolvedValue([demoSummary()]);
+    vi.mocked(api.deleteDemo).mockRejectedValueOnce(new api.ApiError(404, "Demo not found"));
+
+    render(<DashboardPage />);
+    await screen.findByText("（1 场）");
+    await user.click(screen.getByLabelText("Mock Match demo-1 的更多操作"));
+    await user.click(within(rowFor("Mock Match demo-1")).getByRole("button", { name: "删除比赛…" }));
+    // No daily limit, no quota note.
+    expect(screen.getByRole("dialog")).not.toHaveTextContent("上传次数");
+    vi.mocked(api.listDemos).mockResolvedValue([]);
+    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "永久删除" }));
+
+    expect(await screen.findByText("已永久删除「Mock Match demo-1」")).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "上传 .dem" })).toHaveFocus();
+  });
+
+  it("keeps the row and shows its own banner when a delete fails", async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.listDemos).mockResolvedValue([demoSummary()]);
+    vi.mocked(api.deleteDemo).mockRejectedValueOnce(new api.ApiError(500, "boom"));
+
+    render(<DashboardPage />);
+    await screen.findByText("（1 场）");
+    await user.click(screen.getByLabelText("Mock Match demo-1 的更多操作"));
+    await user.click(within(rowFor("Mock Match demo-1")).getByRole("button", { name: "删除比赛…" }));
+    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "永久删除" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("服务暂时出错，请稍后重试。");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(rowFor("Mock Match demo-1")).toBeInTheDocument();
+    expect(screen.getByLabelText("Mock Match demo-1 的更多操作")).toHaveFocus();
+  });
+
+  it("shows the notice a deleted match's page left for the library, once", async () => {
+    vi.mocked(api.listDemos).mockResolvedValue([demoSummary()]);
+    leaveLibraryNotice("已永久删除「Old match」");
+
+    const { unmount } = render(<DashboardPage />);
+    expect(await screen.findByText("已永久删除「Old match」")).toBeInTheDocument();
+    unmount();
+
+    render(<DashboardPage />);
+    await screen.findByText("（1 场）");
+    expect(screen.queryByText("已永久删除「Old match」")).not.toBeInTheDocument();
   });
 
   it("cancels a rename with Escape and shows a failed save next to the field", async () => {

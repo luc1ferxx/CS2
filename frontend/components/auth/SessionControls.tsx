@@ -1,11 +1,12 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 
 import { useAuth } from "@/components/auth/AuthProvider";
 
-// The account as plain text at the right of the top bar, and a text link to sign out.
-export function SessionControls() {
+// The account name at the right of the top bar (a link to 账户与数据), and a text link to sign out.
+export function SessionControls({ current }: { current?: "account" }) {
   const { signOut, state } = useAuth();
   const [signingOut, setSigningOut] = useState(false);
   const account = state.account;
@@ -15,9 +16,14 @@ export function SessionControls() {
 
   return (
     <div className="session-controls">
-      <span className="account-name" title={accountTitle(displayName, account?.provider)}>
+      <Link
+        className="account-name"
+        href="/account"
+        title={accountTitle(displayName, account?.provider)}
+        aria-current={current === "account" ? "page" : undefined}
+      >
         {displayName}
-      </span>
+      </Link>
       {account?.provider !== "development" ? (
         <button
           className="topbar-link account-sign-out"

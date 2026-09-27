@@ -21,6 +21,8 @@ interface DemoStateCardProps {
   onRetryParse: () => void;
   onRetryStatus: () => void;
   onReloadReplay: () => void;
+  // Offered while the match cannot be reviewed (processing, failed, replay unavailable).
+  onDelete?: () => void;
   // Dev-only diagnostics, shown inside the collapsed technical details.
   technicalDetails?: ReactNode;
 }
@@ -68,7 +70,10 @@ export function ReviewSkeleton({ label }: { label: string }) {
 export function DemoStateCard(props: DemoStateCardProps) {
   const { state } = props;
   if (state.kind === "processing") {
-    return <ProcessingCard step={state.step} stale={state.stale} startedAt={state.startedAt} technicalDetails={props.technicalDetails} />;
+    return (
+      <ProcessingCard step={state.step} stale={state.stale} startedAt={state.startedAt}
+        onDelete={props.onDelete} technicalDetails={props.technicalDetails} />
+    );
   }
   if (state.kind === "failed" || state.kind === "replay_unavailable") {
     return <FailureCard {...props} state={state} />;
@@ -114,16 +119,18 @@ export function DemoStateCard(props: DemoStateCardProps) {
             {props.parseRetrying ? "正在重新处理…" : "重新处理"}
           </button>
         ) : null}
+        <DeleteLink onDelete={props.onDelete} />
       </div>
       {props.technicalDetails ? <TechnicalDetails>{props.technicalDetails}</TechnicalDetails> : null}
     </section>
   );
 }
 
-function ProcessingCard({ step, stale, startedAt, technicalDetails }: {
+function ProcessingCard({ step, stale, startedAt, onDelete, technicalDetails }: {
   step: Extract<CardState, { kind: "processing" }>["step"];
   stale: boolean;
   startedAt: string | null;
+  onDelete?: () => void;
   technicalDetails?: ReactNode;
 }) {
   const now = useNow(1000);
@@ -153,13 +160,14 @@ function ProcessingCard({ step, stale, startedAt, technicalDetails }: {
       ) : null}
       <div className="demo-state-actions">
         <Link href="/dashboard">返回我的比赛</Link>
+        <DeleteLink onDelete={onDelete} />
       </div>
       {technicalDetails ? <TechnicalDetails>{technicalDetails}</TechnicalDetails> : null}
     </section>
   );
 }
 
-function FailureCard({ state, parseRetrying, onRetryParse, technicalDetails }: DemoStateCardProps & { state: DetailFailureState }) {
+function FailureCard({ state, parseRetrying, onRetryParse, onDelete, technicalDetails }: DemoStateCardProps & { state: DetailFailureState }) {
   const retryFirst = state.next.action === "retry";
   const retryButton = state.retryable ? (
     <button className={`${retryFirst ? "primary-button" : "secondary-button"} compact-button`} type="button"
@@ -177,6 +185,7 @@ function FailureCard({ state, parseRetrying, onRetryParse, technicalDetails }: D
           <Link className="primary-button compact-button" href="/dashboard">去「我的比赛」重新上传</Link>
         )}
         {retryFirst ? <Link href="/dashboard">返回我的比赛</Link> : retryButton}
+        <DeleteLink onDelete={onDelete} />
       </div>
       <TechnicalDetails>
         <dl className="demo-state-facts">
@@ -187,6 +196,12 @@ function FailureCard({ state, parseRetrying, onRetryParse, technicalDetails }: D
       </TechnicalDetails>
     </section>
   );
+}
+
+function DeleteLink({ onDelete }: { onDelete?: () => void }) {
+  return onDelete ? (
+    <button className="text-button danger" type="button" onClick={onDelete}>删除这场比赛</button>
+  ) : null;
 }
 
 function TechnicalDetails({ children }: { children: ReactNode }) {

@@ -17,6 +17,12 @@
 - 判定是用户数据，**不改变规则输出**；规则仍是确定性的。
 - 例外：mock demo 的建议 id 每次生成都是随机的（`mock_replay_service.py`），所以对模拟比赛的判定不会跨重解析保留——它们只是 UI 冒烟数据。
 - 并发：同一条建议的两次判定同时到达时，唯一约束会拦下第二次插入，服务端把它当作更新处理；前端只落地仍与当前选择一致的响应，快速连点不会把界面退回旧判定。
+- **判定随比赛一起删除**：
+  - 永久删除一场比赛时，它的全部判定在同一个事务里删除，不保留匿名计数或其他残留；
+  - 删除账户时，这个 owner 的全部判定都会删除；
+  - 删除后，`GET /coaching/feedback/summary` 里对应的计数随之减少。用汇总调阈值时，要记得样本可能因为删除而变少。
+  - 软归档不影响判定。
+  - 协议见 [data_deletion_v1](data_deletion_v1.md)。
 
 ## 界面
 
@@ -30,13 +36,15 @@
 | 路由 | 说明 |
 | --- | --- |
 | `GET /demos/{demo_id}/coaching` | 每条事件附带当前 owner 自己的 `feedback`：`{ "verdict", "note", "updated_at" }` 或 `null` |
-| `PUT /demos/{demo_id}/coaching/{event_id}/feedback` | body `{ "verdict": "helpful" \| "irrelevant" \| "unsure", "note"?: string }`；事件不属于该 demo → `404`；非法 verdict / 过长 note → `422` |
+| `PUT /demos/{demo_id}/coaching/{event_id}/feedback` | body `{ "verdict": "helpful" \| "irrelevant" \| "unsure", "note"?: string }`；事件不属于该 demo，或比赛在保存过程中被删除 → `404`；非法 verdict / 过长 note → `422` |
 | `DELETE /demos/{demo_id}/coaching/{event_id}/feedback` | `204`，幂等 |
 | `GET /coaching/feedback/summary?demo_id=` | 当前 owner 全部（或指定）demo 的按规则汇总：`{ demo_count, total, rated, helpful, irrelevant, unsure, rules: [{ rule_id, total, rated, helpful, irrelevant, unsure }] }` |
 
 另一个 owner 对同一 demo/事件的任何操作都是 `404`，其判定也不会出现在他人的列表或汇总里。
 
 存储：`coaching_feedback` 表（`backend/app/models/coaching.py`），由 `Base.metadata.create_all` 在启动时创建；`(owner_id, event_id)` 唯一；`event_id` 有意不设外键（原因见上）。
+
+`demo_id` 外键带 `ON DELETE CASCADE`，但删除流程不依赖它：删除比赛时先显式删掉 `coaching_feedback`，再删 `coaching_events` 和 `demos`。SQLite 测试默认不检查外键，只靠级联在测试里会留下残行。
 
 ## 评估流程（四场比赛）
 

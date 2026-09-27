@@ -25,12 +25,14 @@
 
 | 场景 | 说明 |
 | --- | --- |
-| 比赛库 `/dashboard` | 上传 `.dem`（显示进度，可取消，可拖拽）、解析状态、失败原因与重新处理、搜索、按地图和状态筛选、排序、重命名、软归档 |
+| 比赛库 `/dashboard` | 上传 `.dem`（显示进度，可取消，可拖拽）、解析状态、失败原因与重新处理、搜索、按地图和状态筛选、排序、重命名、软归档；永久删除（需确认，不可撤销） |
 | 复盘工作区 `/demos/{id}` | 战术地图、回合条、时间轴、播放控制与键盘快捷键；地图、时间轴、回合和建议共用同一个时间与回合状态；复盘位置写入网址，刷新后可恢复 |
 | 个人复盘 | 默认用登录的 Steam 账号匹配比赛中的玩家（本地 development 模式默认匹配 xelex），也可切换成其他玩家；只列出该玩家的建议，按回合分组、回合内按严重程度排序，一键跳到最值得回看的一条 |
 | 建议 | 按回合分组；可按严重程度、规则和关键词筛选；"查看这一刻"跳到事件前几秒；每条建议可评价"有帮助 / 无关 / 判断不足" |
 | 建议评价 | 评价按事件 ID 保存，重新解析后仍然有效；按规则汇总的评价是调整规则阈值的依据，见 [coaching_feedback_v1](docs/coaching_feedback_v1.md) |
 | 第一人称片段 | 围绕某条建议或当前时刻创建短片段任务，由独立渲染机完成；生产环境默认关闭（`RENDER_CLIPS_ENABLED=0`）。默认 `RENDER_WORKER_MODE=fallback` 下，片段任务会立即以 `RENDER_WORKER_UNAVAILABLE` 失败；`external` 模式由操作者启用的 Windows 渲染机（CSDM + HLAE + FFmpeg，FFprobe 校验）完成 |
+| 账户与数据 `/account` | 账户信息、网站保存了哪些数据；删除账户及全部数据（只对 Steam 登录的真实账户开放，所有设备上的登录同时失效） |
+| 隐私说明 `/privacy` | 公开页面，不需要登录：保存什么、存在哪里、保存多久、删除后还剩什么；每个页面的页脚都有链接和"与 Valve 无关联"声明 |
 
 **明确不做**：
 - 不做 AI 聊天或模型生成的文字；
@@ -75,7 +77,7 @@ cd frontend && npm install && npm run dev
 浏览器 ── Next.js 15 前端（App Router）
             │
             ▼
-         FastAPI API ──── PostgreSQL   账号、Steam 身份、比赛元数据、任务、建议、评价
+         FastAPI API ──── PostgreSQL   账号、Steam 身份、比赛元数据、任务、建议、评价、上传账本、删除任务
             │        ├─── Redis        解析任务队列、登录会话
             │        └─── 对象存储     .dem 原文件、回放 JSON、视频（开发用本地目录，生产用私有 S3 兼容存储）
             ▼
@@ -122,21 +124,22 @@ PYTHONPATH=backend .venv/bin/python -m unittest discover backend/tests
 
 - **测试约定**：交互组件和页面状态的改动（加载、轮询、失败、重试）要附带同目录下的 `*.test.tsx`，用 mock 掉的 `@/lib/api` 挂载组件；测试数据放在 `frontend/lib/test-fixtures/review.ts`。
 - **手动检查**：界面改动还需要在浏览器里走一遍比赛库和复盘页，清单见 [release_candidate_qa_v1](docs/release_candidate_qa_v1.md)。
-- **更多命令**：常用 API 调用（上传、状态轮询、回放、建议、评价、渲染任务）见 [API Reference](docs/api_reference_v1.md) 和 `AGENTS.md`。
+- **更多命令**：常用 API 调用（上传、状态轮询、回放、建议、评价、删除、渲染任务）见 [API Reference](docs/api_reference_v1.md) 和 `AGENTS.md`。
 
 ## 配置
 
-完整列表（82 项）见 [Configuration Reference](docs/configuration_reference_v1.md)。最常用的：
+完整列表（84 项）见 [Configuration Reference](docs/configuration_reference_v1.md)。最常用的：
 
 | 变量 | 默认值 | 说明 |
 | --- | --- | --- |
 | `AUTH_MODE` | 未设置（必填） | `development` / `test` / `production` |
 | `AUTH_PROVIDER` | 未设置（production 必填） | `steam`，或兼容路径 `oidc` |
 | `STEAM_LOGIN_ALLOWLIST` | 未设置 | 内测邀请名单：逗号分隔的 Steam ID64，或 `*` 表示所有 Steam 账号；production + Steam 登录时必填。修改后需要重建 API 容器（`up -d`），`docker compose restart` 不会读取新值 |
-| `DEMO_UPLOAD_DAILY_LIMIT` / `DEMO_ACTIVE_PARSE_LIMIT` / `PARSE_QUEUE_GLOBAL_LIMIT` | `10` / `2` / `50` | 仅 production：每人滚动 24 小时上传数、每人同时处理中的比赛数、全站处理中的比赛数；`0` 表示不限 |
+| `DEMO_UPLOAD_DAILY_LIMIT` / `DEMO_ACTIVE_PARSE_LIMIT` / `PARSE_QUEUE_GLOBAL_LIMIT` | `10` / `2` / `50` | 仅 production：每人滚动 24 小时上传数（按上传账本计，删除比赛不退还）、每人同时处理中的比赛数、全站处理中的比赛数；`0` 表示不限 |
 | `RENDER_CLIPS_ENABLED` | `0` | 仅 production：为 `1` 时才开放生成和重试第一人称片段 |
 | `FRONTEND_PUBLIC_URL` / `BACKEND_PUBLIC_URL` | `http://localhost:3000` / `:8000` | production 必须是同源 HTTPS |
 | `NEXT_PUBLIC_API_BASE_URL` | `http://localhost:8000` | 浏览器访问 API 和媒体的地址 |
+| `NEXT_PUBLIC_PRIVACY_CONTACT` / `NEXT_PUBLIC_DATA_REGION` | 未设置 | 构建时写进前端，显示在 `/privacy`：隐私问题和删除请求的联系方式（邮箱、网址或文字；VPS 部署必填，`deploy.sh` 会检查）和服务器所在地区；未设置时分别说明"本站没有公开联系方式"和显示"海外 VPS，具体地区由站长部署时选定" |
 | `DATABASE_URL` / `REDIS_URL` | 本地默认值 | API 与 worker |
 | `ARTIFACT_STORAGE_BACKEND` / `OBJECT_STORAGE_BUCKET` | `local` / 未设置 | production 必须是 `s3` 和一个私有 bucket |
 | `STEAM_WEB_API_KEY` | 未设置 | 仅服务端使用，production 必填 |
@@ -178,7 +181,35 @@ PYTHONPATH=backend .venv/bin/python -m unittest discover backend/tests
 - **Steam 比赛授权**：与登录分离。Game Authentication Code 和分享码在服务端以 AES-256-GCM 加密保存，不会回传给浏览器。
 - **开发模式**：可以用 `X-Dev-User-Id` 模拟不同用户，这个请求头在 production 会被拒绝。
 
-细节见 [steam_auth_accounts_v1](docs/steam_auth_accounts_v1.md)、[production_auth_owner_private_media_v1](docs/production_auth_owner_private_media_v1.md) 和 [object_storage_safe_artifact_intake_v1](docs/object_storage_safe_artifact_intake_v1.md)。
+**隐私**：下面的事实与公开的 `/privacy` 页面（`frontend/app/privacy/page.tsx`）一致。改动数据的收集、保存或删除方式时，两边要一起改，同时更新 [data_deletion_v1](docs/data_deletion_v1.md)。
+
+- **范围**：邀请制的 CS2 比赛复盘网站，只做 2D 回放和规则建议。不使用 AI 大模型，没有广告，也没有统计分析。
+- **登录**：
+  - Steam 登录只返回 SteamID64，网站拿不到 Steam 密码。
+  - 服务器用 Steam Web API 读取公开昵称和头像地址并保存，每次登录更新。
+  - 未受邀的账号不会被保存，但登录时仍会向 Steam 查询一次公开资料。
+- **上传的比赛**：
+  - 原始 `.dem` 按原样保存（用于重新解析），另外保存解析出的回放数据和建议。
+  - `.dem` 里包含同场所有玩家的 SteamID64、游戏内昵称、位置和击杀记录，只对上传者本人可见。其他玩家如希望移除，可以联系站长。
+  - 另外保存的只有：用户对建议的评价（有帮助 / 无关 / 判断不足），以及改过的比赛名。
+- **Steam 比赛记录（可选）**：只有用户主动关联时才保存，内容是加密后的游戏验证码和比赛分享码。每次点"同步"才向 Valve 查询；断开关联即删除。
+- **Cookie 和浏览器存储**：
+  - 只有两个必需的 cookie：`__Host-cs2_session` 保持登录 1 小时，`__Host-cs2_steam_state` 只在登录过程中存在 5 分钟。没有统计或广告 cookie。
+  - localStorage 只存一项"你在比赛里选的玩家"偏好（含本人 SteamID64）。删除账户时在当前浏览器清除。
+- **日志**：服务器访问日志记录 IP 地址、浏览器标识和访问的页面地址（含搜索词），用于排查故障和防滥用。日志按大小轮转（每个服务最多约 50 MB），不按时间删除。
+- **存放位置和第三方**：
+  - 网站跑在一台海外 VPS 上，地区由 `NEXT_PUBLIC_DATA_REGION` 写在隐私页。比赛文件和备份在 Cloudflare R2 私有存储桶。
+  - 经手数据的第三方只有：VPS 服务商、Cloudflare（存储）、Valve/Steam（登录、公开资料、用户主动开启的比赛记录同步）、Let's Encrypt（只签发 HTTPS 证书）。不出售，也不共享给其他人。
+- **保存与删除**：
+  - 账户和比赛一直保存，直到用户删除；会话 1 小时后过期。
+  - 可以永久删除单场比赛（`DELETE /demos/{id}`），也可以在 `/account` 删除账户和全部数据（`DELETE /auth/account`，仅 production），所有设备上的登录同时失效。
+  - 删除立即作用于数据库和存储，存储清理失败会自动重试。每日备份里的副本最多再保留 30 天；从备份恢复后，站长会重做那之后的删除。
+  - 用户自己无法删除时（同场其他玩家的移除请求、已被移出邀请名单的用户），站长用运维命令 `python -m app.cli.delete_data` 代为删除，走同一套删除流程（见 [data_deletion_v1](docs/data_deletion_v1.md#代用户删除)）。
+  - 邀请名单（受邀者的 SteamID64）保存在服务器配置里，删除账户不会改动它；隐私页和"账户与数据"页都写明了。
+  - 删除比赛不会恢复当天的上传次数。
+- **与 Valve 无关联**：每个页面的页脚都写明"本站与 Valve Corporation 无关联。Counter-Strike、CS2 和 Steam 是 Valve 的商标。"隐私页的联系方式由 `NEXT_PUBLIC_PRIVACY_CONTACT` 配置。
+
+细节见 [steam_auth_accounts_v1](docs/steam_auth_accounts_v1.md)、[production_auth_owner_private_media_v1](docs/production_auth_owner_private_media_v1.md)、[object_storage_safe_artifact_intake_v1](docs/object_storage_safe_artifact_intake_v1.md) 和 [data_deletion_v1](docs/data_deletion_v1.md)。
 
 ## 已知限制
 
@@ -195,13 +226,15 @@ PYTHONPATH=backend .venv/bin/python -m unittest discover backend/tests
 - **单场失败比赛可以无限次重新处理**；Redis 客户端没有设置超时。
 - **解析器隔离还不完整**：只有超时和内存上限，还没有 CPU、磁盘和输出的限制。
 - **Steam 登录尚未在真实部署中验证**：真实 HTTPS 回调、publisher key 资格、Game Authentication Code 行为和限流，都还需要在一次真实部署上冒烟。
+- **删除追不回备份**：已删除的数据在备份里最多再保留 30 天。从备份恢复数据库会把备份之后删除的数据带回来，要按 [VPS 部署](docs/vps_deploy_v1.md) 第 7 步用 `python -m app.cli.delete_data` 重做这些删除。
+- **删除账户后可以重新注册**：仍在邀请名单里的 Steam 账号重新登录，会得到一个全新的空账户，上传次数也从零算起；要禁止此人登录，只能把他移出 `STEAM_LOGIN_ALLOWLIST`。移出名单不会删除他的数据，需要时先用运维命令代为删除。
 
 ## 路线图
 
 当前方向是**网站优先**：先以邀请制内测验证建议是否真的有用，Windows 桌面安装包暂缓（见 [desktop_distribution_v1](docs/desktop_distribution_v1.md)）。按顺序：
 
 1. 完成上线计划剩下的阶段：解析器资源隔离，数据库迁移，自动部署与回滚，监控告警，备份恢复；配置 HTTPS 入口，并在真实 HTTPS 部署上跑一次 Steam 登录冒烟。
-2. 支持真正删除比赛和账号，补上隐私条款；换成授权明确的雷达素材。
+2. ~~支持真正删除比赛和账号，补上隐私条款~~（已完成：永久删除比赛和账户、`/privacy` 隐私说明页，见 [data_deletion_v1](docs/data_deletion_v1.md)）；换成授权明确的雷达素材。
 3. 邀请少量玩家内测，用评价数据调整规则阈值、去重和排序；校准更多地图。
 4. 视内测反馈，再决定是否扩大开放、是否恢复第一人称片段。
 
@@ -216,6 +249,7 @@ PYTHONPATH=backend .venv/bin/python -m unittest discover backend/tests
 - [Steam Demo 导入](docs/steam_demo_import_v1.md)
 - [数据隔离与私有媒体](docs/production_auth_owner_private_media_v1.md)
 - [建议评价](docs/coaching_feedback_v1.md)
+- [数据删除与隐私](docs/data_deletion_v1.md)
 - [render-worker](render-worker/README.md)
 
 **上线与运维**：

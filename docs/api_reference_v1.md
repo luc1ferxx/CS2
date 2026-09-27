@@ -24,6 +24,7 @@ Production 的上传额度（`DEMO_UPLOAD_DAILY_LIMIT`、`DEMO_ACTIVE_PARSE_LIMI
 - `GET /auth/steam/callback`（不在 `STEAM_LOGIN_ALLOWLIST` 中的 Steam ID 会 `303` 到 `/auth/callback?error=not_invited`，不创建账号、不发 session，并撤销浏览器已有的 session）
 - `GET /auth/me`（Steam 账号额外返回登录者本人的 `account.steamId`，用于在比赛中默认定位本人；development/OIDC 不返回）
 - `POST /auth/logout`
+- `DELETE /auth/account`（body `{"confirm": "delete-my-account"}` → `204`，删除当前账户及全部数据，使该账户在所有设备上的会话失效，并按退出登录的属性让会话 cookie 过期；confirm 缺失或错误 → `400` `confirmation_required`；没有会话 → `401`；development/test → `409` `account_deletion_unavailable`。见 `docs/data_deletion_v1.md`）
 - `GET /auth/login`、`GET /auth/oidc/callback`、`GET /auth/session`（`AUTH_PROVIDER=oidc` / legacy frontend 兼容）
 - `GET /steam/connection`
 - `POST /steam/connection/credentials`
@@ -34,10 +35,11 @@ Production 的上传额度（`DEMO_UPLOAD_DAILY_LIMIT`、`DEMO_ACTIVE_PARSE_LIMI
 - `GET /demos`
 - `PATCH /demos/{demo_id}`
 - `POST /demos/{demo_id}/archive`
+- `DELETE /demos/{demo_id}`（永久删除比赛及其任务、建议、评价和存储文件，不可撤销：`204`；别人的或不存在的 id、重复删除 → `404`；Steam 导入的比赛只解除关联。见 `docs/data_deletion_v1.md`）
 - `GET /demos/{demo_id}/status`
 - `GET /demos/{demo_id}/diagnostics`
 - `POST /demos/{demo_id}/parse/retry`（production 受全站/个人处理中额度限制：`503` `parse_queue_full`、`429` `active_parse_limit`）
-- `GET /uploads/quota`（当前 owner 的上传额度：`{dailyLimit, dailyUsed, dailyResetSeconds, activeLimit, activeCount, maxUploadBytes}`；development/test 下各 limit 为 `null`；`Cache-Control: private, no-store`；仅供提示，上传时仍以 `POST /uploads/demo` 的检查为准，不报告全站 `PARSE_QUEUE_GLOBAL_LIMIT`）
+- `GET /uploads/quota`（当前 owner 的上传额度，每日已用次数来自上传账本，删除比赛不退还：`{dailyLimit, dailyUsed, dailyResetSeconds, activeLimit, activeCount, maxUploadBytes}`；development/test 下各 limit 为 `null`；`Cache-Control: private, no-store`；仅供提示，上传时仍以 `POST /uploads/demo` 的检查为准，不报告全站 `PARSE_QUEUE_GLOBAL_LIMIT`）
 - `POST /uploads/mock`（仅 development/test；production 返回 `404`）
 - `POST /uploads/demo`（production 受上传额度限制：`503` `parse_queue_full`、`429` `active_parse_limit` / `upload_daily_limit`、`503` `upload_quota_unavailable`）
 
