@@ -61,7 +61,24 @@ for (const mapName of SUPPORTED_TACTICAL_MAP_NAMES) {
   assert.ok(config, `${mapName} should have a tactical map config`);
   assert.equal(config.mapName, mapName);
   assert.ok(config.radarImagePath.startsWith(`/maps/${mapName}`));
-  assert.ok(["calibrated", "approximate"].includes(config.confidence));
+  // Radars are rendered from the nav mesh with each map's own transform, so every map is aligned by construction.
+  assert.equal(config.calibrated, true, `${mapName} radar is rendered with its transform`);
+  assert.equal(config.confidence, "calibrated");
+  assert.equal(config.source, "scripts/maps/build_radars.py");
+  assert.ok(!config.attribution.includes("rabume"), `${mapName} carries no third-party radar attribution`);
+}
+
+{
+  // Inferno and Anubis moved from approximate bounds to Valve's overview transforms.
+  assert.deepEqual(normalize(worldToRadarPercent("de_inferno", -2087, 3870)), { x: 0, y: 0, confidence: "calibrated" });
+  assert.deepEqual(normalize(worldToRadarPercent("de_inferno", -2087 + 4.9 * 1024, 3870 - 4.9 * 1024)),
+    { x: 100, y: 100, confidence: "calibrated" });
+  assert.deepEqual(normalize(worldToRadarPercent("de_anubis", -2796, 3328)), { x: 0, y: 0, confidence: "calibrated" });
+  assert.deepEqual(normalize(worldToRadarPercent("de_anubis", -2796 + 5.22 * 1024, 3328 - 5.22 * 1024)),
+    { x: 100, y: 100, confidence: "calibrated" });
+  // Mirage and Ancient keep their bounds; the corners map to the image corners.
+  assert.deepEqual(normalize(worldToRadarPercent("de_mirage", -3400, 1880)), { x: 0, y: 0, confidence: "calibrated" });
+  assert.deepEqual(normalize(worldToRadarPercent("de_ancient", 2170, -2890)), { x: 100, y: 100, confidence: "calibrated" });
 }
 
 {
@@ -93,7 +110,7 @@ for (const mapName of SUPPORTED_TACTICAL_MAP_NAMES) {
   const point = worldToRadarPercent("de_anubis", -999999, 999999);
   assert.ok(point.x >= 0 && point.x <= 100);
   assert.ok(point.y >= 0 && point.y <= 100);
-  assert.equal(point.confidence, "approximate");
+  assert.equal(point.confidence, "calibrated");
 }
 
 {

@@ -42,7 +42,7 @@ alias dc='docker compose --env-file deploy/.env.production -f docker-compose.yml
 - 指标和告警（现在只有容器日志和 `/health`）；
 - 数据库迁移演练；
 - 真实 demo 语料门禁（corpus gate，见 [2D 内测上线计划](rules_2d_beta_launch_v1.md)）；
-- 替换成授权明确的雷达素材。
+- 确认雷达图可以公开分发：第三方（MIT/GPL）雷达图已经换成本项目从 CS2 导航网格渲染的图（见 `frontend/public/maps/ATTRIBUTION.md`），但这些图由 Valve 的游戏数据派生，分发条款还没有单独确认。
 
 隐私说明页和删除比赛、删除账户已经有了，见 [数据删除](data_deletion_v1.md)。
 

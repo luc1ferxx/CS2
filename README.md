@@ -234,7 +234,7 @@ PYTHONPATH=backend .venv/bin/python -m unittest discover backend/tests
 当前方向是**网站优先**：先以邀请制内测验证建议是否真的有用，Windows 桌面安装包暂缓（见 [desktop_distribution_v1](docs/desktop_distribution_v1.md)）。按顺序：
 
 1. 完成上线计划剩下的阶段：解析器资源隔离，数据库迁移，自动部署与回滚，监控告警，备份恢复；配置 HTTPS 入口，并在真实 HTTPS 部署上跑一次 Steam 登录冒烟。
-2. ~~支持真正删除比赛和账号，补上隐私条款~~（已完成：永久删除比赛和账户、`/privacy` 隐私说明页，见 [data_deletion_v1](docs/data_deletion_v1.md)）；换成授权明确的雷达素材。
+2. ~~支持真正删除比赛和账号，补上隐私条款~~（已完成：永久删除比赛和账户、`/privacy` 隐私说明页，见 [data_deletion_v1](docs/data_deletion_v1.md)）；~~去掉第三方雷达图~~（已完成：原来的 MIT/GPL 第三方雷达图已换成本项目从 CS2 导航网格渲染的图，见 [scripts/maps](scripts/maps/README.md)）；这些图由 Valve 的游戏数据派生，能否公开分发还没有单独确认，扩大开放前要确认。
 3. 邀请少量玩家内测，用评价数据调整规则阈值、去重和排序；校准更多地图。
 4. 视内测反馈，再决定是否扩大开放、是否恢复第一人称片段。
 
@@ -282,4 +282,4 @@ PYTHONPATH=backend .venv/bin/python -m unittest discover backend/tests
 
 ## 致谢
 
-雷达图来自 [rabume/cs2-dma-radar](https://github.com/rabume/cs2-dma-radar)，该仓库将素材归属于 Lexogrine 的 CS2 React HUD（MIT）和 boltgolt 的 Boltobserv（GPL-3.0）。Nuke 的 overview 参数来自 [CS Demo Manager](https://github.com/akiver/cs-demo-manager)。详见 [ATTRIBUTION.md](frontend/public/maps/ATTRIBUTION.md)。公开上线前应换成授权明确的素材。
+雷达图由本项目用 [scripts/maps/build_radars.py](scripts/maps/README.md) 从运营者自己的 CS2 安装里的导航网格渲染，不含第三方或 Valve 的雷达美术素材，但图形由 Valve 的游戏数据派生，公开分发的条款尚未单独确认；导航网格的读取参考了 [awpy](https://github.com/pnxenopoulos/awpy)（MIT）。Nuke 的 overview 参数来自 [CS Demo Manager](https://github.com/akiver/cs-demo-manager)，Inferno 与 Anubis 的 overview 参数取自游戏 `game/csgo/pak01_dir.vpk` 里的 `resource/overviews`。详见 [ATTRIBUTION.md](frontend/public/maps/ATTRIBUTION.md)。

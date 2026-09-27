@@ -7,6 +7,8 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any, SupportsFloat, SupportsIndex, TypeGuard
 
+from app.parser.map_config import is_current_transform, legacy_radar_reprojection, map_metadata_for
+
 PARSER_EVENT_TYPES = {
     "kill",
     "death",
@@ -81,7 +83,7 @@ def normalize_video_identity(video: dict[str, Any]) -> dict[str, str]:
 
 def normalize_replay_contract(replay: dict[str, Any]) -> dict[str, Any]:
     raw = replay if isinstance(replay, dict) else {}
-    normalized = dict(raw)
+    normalized = _with_current_radar_transform(dict(raw))
     tick_rate = _positive_int_or_default(normalized.get("tickRate"), 64)
     rounds = _normalize_rounds(normalized.get("rounds"))
     frames = _normalize_frame_optional_fields(normalized.get("frames"))
@@ -107,6 +109,61 @@ def normalize_replay_contract(replay: dict[str, Any]) -> dict[str, Any]:
     normalized["contractVersion"] = _contract_version(raw)
     normalized["diagnostics"] = _replay_diagnostics(raw, normalized)
     return normalized
+
+
+def _with_current_radar_transform(replay: dict[str, Any]) -> dict[str, Any]:
+    """Bring the stored radar positions and map metadata of a supported map up to date.
+
+    Positions stored under the current transform are left alone, but the
+    display fields stored beside them (calibration, credit, source) are
+    refreshed from the map config, so a replay parsed before a map's radar was
+    re-rendered stops showing the old calibration label and credit. Positions
+    stored under an older transform are re-projected; those clamped to the old
+    image edge cannot be recovered and lose their x/y (the viewer then hides the
+    dot), counted in ``mapMetadata.legacyEdgePositionsHidden``. Unknown maps and
+    replays without stored metadata or transform are untouched. After one pass
+    the metadata carries the current transform and a second pass changes
+    nothing. Frames and events are copied, never mutated in place.
+    """
+    metadata = replay.get("mapMetadata")
+    map_name = replay.get("mapName")
+    if not isinstance(metadata, dict) or not isinstance(map_name, str):
+        return replay
+    if is_current_transform(map_name, metadata.get("transform")):
+        replay["mapMetadata"] = {**metadata, **map_metadata_for(map_name)}
+        return replay
+    convert = legacy_radar_reprojection(map_name, metadata.get("transform"))
+    if convert is None:
+        return replay
+    hidden = 0
+
+    def moved(point: Any) -> Any:
+        nonlocal hidden
+        if not isinstance(point, dict) or not _finite(point.get("x")) or not _finite(point.get("y")):
+            return point
+        converted = convert(float(point["x"]), float(point["y"]))
+        if converted is None:
+            hidden += 1
+            return {key: value for key, value in point.items() if key not in ("x", "y")}
+        return {**point, "x": converted[0], "y": converted[1]}
+
+    frames = replay.get("frames")
+    if isinstance(frames, list):
+        replay["frames"] = [
+            {
+                **frame,
+                **({"players": [moved(player) for player in frame["players"]]} if isinstance(frame.get("players"), list) else {}),
+                **({"bombState": moved(frame["bombState"])} if isinstance(frame.get("bombState"), dict) else {}),
+            } if isinstance(frame, dict) else frame
+            for frame in frames
+        ]
+    events = replay.get("events")
+    if isinstance(events, list):
+        replay["events"] = [moved(event) for event in events]
+    replay["mapMetadata"] = {**metadata, **map_metadata_for(map_name)}
+    if hidden:
+        replay["mapMetadata"]["legacyEdgePositionsHidden"] = hidden
+    return replay
 
 
 def normalize_replay_events(
@@ -318,6 +375,9 @@ def _replay_diagnostics(raw: dict[str, Any], normalized: dict[str, Any]) -> dict
     ]
     if "video" in raw and not isinstance(raw.get("video"), dict):
         degraded_fields.append("video")
+    metadata = normalized.get("mapMetadata")
+    if isinstance(metadata, dict) and (_optional_int(metadata.get("legacyEdgePositionsHidden")) or 0) > 0:
+        degraded_fields.append("legacyRadarEdgePositions")
 
     events = _dict_list(normalized.get("events"))
     family_counts = _event_family_counts(events)

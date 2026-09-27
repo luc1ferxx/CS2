@@ -1,0 +1,6 @@
+# Tooling for scripts/maps/build_radars.py only; not a runtime dependency of the app.
+# Pinned so the rendered radars stay byte-identical for the same CS2 install.
+numpy==2.5.3
+pillow==12.3.0
+shapely==2.1.2
+vpk==1.4.0

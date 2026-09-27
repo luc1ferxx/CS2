@@ -65,8 +65,12 @@ export const SUPPORTED_TACTICAL_MAP_NAMES = [
   "de_anubis"
 ] as const;
 
+// Every radar image is rendered by this project from the navigation mesh in the
+// operator's own CS2 install, with exactly the transform below, so positions line
+// up with the image by construction. See scripts/maps/build_radars.py.
 const ASSET_ATTRIBUTION =
-  "CS2 radar asset from rabume/cs2-dma-radar; source README attributes map assets to CS2 React HUD by Lexogrine and Boltobserv by boltgolt.";
+  "Radar rendered by this project from the CS2 navigation mesh with scripts/maps/build_radars.py; no third-party radar artwork.";
+const RADAR_SOURCE = "scripts/maps/build_radars.py";
 
 const TACTICAL_MAP_CONFIGS: Record<(typeof SUPPORTED_TACTICAL_MAP_NAMES)[number], TacticalMapConfig> = {
   de_dust2: {
@@ -76,7 +80,7 @@ const TACTICAL_MAP_CONFIGS: Record<(typeof SUPPORTED_TACTICAL_MAP_NAMES)[number]
     calibrated: true,
     confidence: "calibrated",
     attribution: ASSET_ATTRIBUTION,
-    source: "https://github.com/rabume/cs2-dma-radar",
+    source: RADAR_SOURCE,
     transform: {
       type: "overview",
       posX: -2476,
@@ -89,10 +93,10 @@ const TACTICAL_MAP_CONFIGS: Record<(typeof SUPPORTED_TACTICAL_MAP_NAMES)[number]
     mapName: "de_mirage",
     displayName: "Mirage",
     radarImagePath: "/maps/de_mirage_radar.png",
-    calibrated: false,
-    confidence: "approximate",
+    calibrated: true,
+    confidence: "calibrated",
     attribution: ASSET_ATTRIBUTION,
-    source: "https://github.com/rabume/cs2-dma-radar",
+    source: RADAR_SOURCE,
     transform: {
       type: "bounds",
       minX: -3400,
@@ -105,26 +109,27 @@ const TACTICAL_MAP_CONFIGS: Record<(typeof SUPPORTED_TACTICAL_MAP_NAMES)[number]
     mapName: "de_inferno",
     displayName: "Inferno",
     radarImagePath: "/maps/de_inferno_radar.png",
-    calibrated: false,
-    confidence: "approximate",
+    calibrated: true,
+    confidence: "calibrated",
     attribution: ASSET_ATTRIBUTION,
-    source: "https://github.com/rabume/cs2-dma-radar",
+    source: RADAR_SOURCE,
+    calibrationSource: "CS2 game/csgo/pak01_dir.vpk: resource/overviews/de_inferno.txt (pos_x, pos_y, scale)",
     transform: {
-      type: "bounds",
-      minX: -1120,
-      maxX: 3800,
-      minY: -2060,
-      maxY: 2920
+      type: "overview",
+      posX: -2087,
+      posY: 3870,
+      scale: 4.9,
+      imageSize: 1024
     }
   },
   de_ancient: {
     mapName: "de_ancient",
     displayName: "Ancient",
     radarImagePath: "/maps/de_ancient_radar.png",
-    calibrated: false,
-    confidence: "approximate",
+    calibrated: true,
+    confidence: "calibrated",
     attribution: ASSET_ATTRIBUTION,
-    source: "https://github.com/rabume/cs2-dma-radar",
+    source: RADAR_SOURCE,
     transform: {
       type: "bounds",
       minX: -2940,
@@ -143,7 +148,7 @@ const TACTICAL_MAP_CONFIGS: Record<(typeof SUPPORTED_TACTICAL_MAP_NAMES)[number]
     calibrated: true,
     confidence: "calibrated",
     attribution: ASSET_ATTRIBUTION,
-    source: "https://github.com/rabume/cs2-dma-radar",
+    source: RADAR_SOURCE,
     transform: {
       type: "overview",
       posX: -3453,
@@ -156,16 +161,17 @@ const TACTICAL_MAP_CONFIGS: Record<(typeof SUPPORTED_TACTICAL_MAP_NAMES)[number]
     mapName: "de_anubis",
     displayName: "Anubis",
     radarImagePath: "/maps/de_anubis_radar.png",
-    calibrated: false,
-    confidence: "approximate",
+    calibrated: true,
+    confidence: "calibrated",
     attribution: ASSET_ATTRIBUTION,
-    source: "https://github.com/rabume/cs2-dma-radar",
+    source: RADAR_SOURCE,
+    calibrationSource: "CS2 game/csgo/pak01_dir.vpk: resource/overviews/de_anubis.txt (pos_x, pos_y, scale)",
     transform: {
-      type: "bounds",
-      minX: -3300,
-      maxX: 1560,
-      minY: -3150,
-      maxY: 1850
+      type: "overview",
+      posX: -2796,
+      posY: 3328,
+      scale: 5.22,
+      imageSize: 1024
     }
   }
 };
