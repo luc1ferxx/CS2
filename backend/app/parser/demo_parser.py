@@ -178,7 +178,88 @@ def parse_demo_file(source_path: Path) -> dict[str, Any]:
         "kills": kills,
         "deaths": kills,
         "events": events,
+        # Not part of the replay contract: the worker folds it into the demo's
+        # match summary, and the normalizer never copies it into the replay blob.
+        "teamNames": parse_team_names(parser, team_name_sample_ticks(rounds)),
     }
+
+
+TEAM_NAME_MAX_LENGTH = 64
+
+
+def team_name_sample_ticks(rounds: Any) -> list[int]:
+    """A few in-round ticks to read clan names at: first, middle and last round.
+
+    One tick would do for a full match -- a clan name follows its team across
+    the half-time swap -- but a player who joins late only shows up later on.
+    Accepts parser rounds and stored replay rounds alike; junk yields [].
+    """
+    if not isinstance(rounds, list):
+        return []
+    usable = [item for item in rounds if isinstance(item, dict)]
+    ticks: list[int] = []
+    for item in (usable[:1] + usable[len(usable) // 2: len(usable) // 2 + 1] + usable[-1:]):
+        tick = _optional_int(item.get("freezeEndTick"))
+        if tick is None:
+            tick = _optional_int(item.get("startTick"))
+        if tick is not None and tick >= 0 and tick not in ticks:
+            ticks.append(tick)
+    return sorted(ticks)
+
+
+def parse_team_names(parser: Any, ticks: list[int]) -> dict[str, str]:
+    """Each player's clan (team) name, keyed by the same id the frames use.
+
+    Best effort: a parser without the `team_clan_name` prop, or a demo that
+    carries no clan names (matchmaking), yields {}. Never raises.
+    """
+    if not ticks:
+        return {}
+    try:
+        records = _records(parser.parse_ticks(["team_clan_name"], ticks=ticks))
+    except Exception:
+        return {}
+    names: dict[str, str] = {}
+    for record in sorted(records, key=lambda item: _optional_int(item.get("tick")) or 0):
+        steamid = record.get("steamid") or record.get("player_steamid") or record.get("name")
+        name = clean_team_name(record.get("team_clan_name"))
+        if steamid is None or name is None:
+            continue
+        names.setdefault(str(steamid), name)
+    return names
+
+
+def clean_team_name(value: Any) -> str | None:
+    """A displayable clan name, or None for missing/blank/non-string values."""
+    if not isinstance(value, str):
+        return None
+    name = " ".join(value.split())[:TEAM_NAME_MAX_LENGTH].strip()
+    return name or None
+
+
+def parse_team_names_file(source_path: Path, ticks: list[int]) -> dict[str, str]:
+    """Names-only read of a stored demo for the match summary backfill.
+
+    Opens the demo and reads one prop at a handful of ticks -- a fraction of a
+    full parse. Raises DemoParserError when the demo cannot be opened at all.
+    """
+    demo_path = _resolve_demo_path(source_path)
+    _validate_demo_file(demo_path)
+    try:
+        from demoparser2 import DemoParser
+    except ImportError as exc:
+        raise DemoParserError(
+            "demoparser2 is not installed in this environment",
+            error_code="UNSUPPORTED_PARSER_FORMAT",
+        ) from exc
+    try:
+        parser = DemoParser(str(demo_path))
+    except Exception as exc:
+        raise DemoParserError(
+            f"demoparser2 could not open the demo: {exc}",
+            error_code="INVALID_DEMO",
+        ) from exc
+    return parse_team_names(parser, ticks)
 
 
 def _resolve_demo_path(source_path: Path) -> Path:

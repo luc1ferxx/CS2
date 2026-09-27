@@ -1,7 +1,7 @@
 """Owner-scoped demo operations behind one entry point.
 
 `DemoService` is a facade: it owns the database session, the owner context and
-the artifact stores, and delegates every operation to one of eight components,
+the artifact stores, and delegates every operation to one of nine components,
 each a single responsibility in its own module:
 
     library       demo_library.py         list/search, read, rename, archive, status
@@ -12,6 +12,7 @@ each a single responsibility in its own module:
     replay        replay_blob.py          replay contract artifact and its video section
     video         video_registry.py       private video delivery and the manual MP4 bridge
     coaching      coaching_review.py      coaching suggestions and the owner's verdicts on them
+    summary       match_summary.py        stored match summary (score, team names) and its backfill
 
 Rules of the composition:
 
@@ -31,7 +32,7 @@ Rules of the composition:
   transitions return False instead; `gone.py` holds the shared detection.
 """
 
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from contextlib import AbstractContextManager, nullcontext
 from datetime import datetime
 from pathlib import Path
@@ -97,6 +98,7 @@ from app.services.demo_service.errors import (
     ReplayBlobUnavailableError,
 )
 from app.services.demo_service.gone import rows_missing
+from app.services.demo_service.match_summary import MatchSummaries, TeamNamesReader
 from app.services.demo_service.parse_lifecycle import ParseLifecycle
 from app.services.demo_service.render_lifecycle import RenderLifecycle
 from app.services.demo_service.render_worker_media import RenderWorkerMedia
@@ -128,6 +130,7 @@ class DemoService:
         self.replay = ReplayBlob(self)
         self.video = VideoRegistry(self)
         self.coaching = CoachingReview(self)
+        self.summary = MatchSummaries(self)
 
     @classmethod
     def for_internal(
@@ -335,8 +338,11 @@ class DemoService:
         events: list[dict[str, Any]],
         *,
         name: str | None = None,
+        team_names: Mapping[str, Any] | None = None,
     ) -> bool:
-        return self.parse.complete_parse_job(demo, job, replay, events, name=name)
+        return self.parse.complete_parse_job(
+            demo, job, replay, events, name=name, team_names=team_names,
+        )
 
     def fail_parse_job(
         self,
@@ -590,6 +596,18 @@ class DemoService:
 
     def coaching_feedback_summary(self, demo_id: str | None = None) -> CoachingFeedbackSummary:
         return self.coaching.coaching_feedback_summary(demo_id)
+
+    # -- MatchSummaries (match_summary.py) ----------------------------------------
+    def demo_ids_missing_match_summary(
+        self,
+        *,
+        limit: int,
+        exclude: Iterable[str] = (),
+    ) -> list[str]:
+        return self.summary.demo_ids_missing_summary(limit=limit, exclude=exclude)
+
+    def backfill_match_summary(self, demo_id: str, read_team_names: TeamNamesReader) -> bool:
+        return self.summary.backfill_match_summary(demo_id, read_team_names)
 
 __all__ = [
     "ACTIVE_DEMO_STATUSES",

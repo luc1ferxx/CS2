@@ -35,9 +35,9 @@ describe("RoundReviewPanel", () => {
     renderPanel();
     const rail = screen.getByRole("group", { name: "回合列表" });
     const [first, second] = within(rail).getAllByRole("button");
-    expect(first).toHaveAccessibleName("第 1 回合，输 · CT 获胜，1 条建议，阵亡，正在播放");
+    expect(first).toHaveAccessibleName("第 1 回合 CT 胜，输掉本回合，1 条建议，阵亡，正在播放");
     expect(first).toHaveClass("lost", "player-died");
-    expect(second).toHaveAccessibleName("第 2 回合，赢 · T 获胜，0 条建议");
+    expect(second).toHaveAccessibleName("第 2 回合 T 胜，赢下本回合，0 条建议");
     expect(second).toHaveClass("won");
   });
 
@@ -104,10 +104,38 @@ describe("RoundReviewPanel", () => {
     expect(props.onSelectRound).not.toHaveBeenCalled();
   });
 
+  it("draws how each round ended as an icon, says it in words and names the icons in the legend", () => {
+    const [first, second] = replayData().rounds;
+    renderPanel({
+      replay: replayData({
+        events: [death],
+        rounds: [{ ...first, winnerReason: "bomb_defused" }, { ...second, winnerReason: "bomb_exploded" }]
+      })
+    });
+    const [defused, exploded] = within(screen.getByRole("group", { name: "回合列表" })).getAllByRole("button");
+    expect(defused).toHaveAccessibleName("第 1 回合 CT 胜，拆除炸弹，输掉本回合，1 条建议，阵亡，正在播放");
+    expect(exploded).toHaveAccessibleName("第 2 回合 T 胜，炸弹爆炸，赢下本回合，0 条建议");
+    expect(exploded).toHaveAttribute("title", "第 2 回合 T 胜，炸弹爆炸，赢下本回合，0 次击杀，0 条建议");
+    // The icon sits in the side-coloured square and is hidden from assistive tech with it.
+    expect(defused.querySelector(".round-strip-fill[aria-hidden='true'] svg.round-strip-reason")).not.toBeNull();
+    expect(exploded.querySelector(".round-strip-fill svg.round-strip-reason")).not.toBeNull();
+    const legend = document.querySelector(".round-strip-head .round-strip-legend");
+    expect(legend).toHaveTextContent("T 胜CT 胜炸弹爆炸拆除炸弹全歼时间耗尽阵亡建议");
+    expect(legend?.querySelectorAll("svg.round-strip-legend-reason")).toHaveLength(4);
+  });
+
+  it("draws no icon for a round whose end reason is missing or unknown", () => {
+    const [first, second] = replayData().rounds;
+    renderPanel({ replay: replayData({ rounds: [first, { ...second, winnerReason: "surrender" }] }) });
+    const cells = within(screen.getByRole("group", { name: "回合列表" })).getAllByRole("button");
+    expect(cells.map((cell) => cell.querySelector(".round-strip-reason"))).toEqual([null, null]);
+    expect(cells[1]).toHaveAccessibleName("第 2 回合 T 胜，赢下本回合，0 条建议");
+  });
+
   it("leaves out outcome and personal jumps when nobody is being reviewed", () => {
     renderPanel({ selectedPlayerId: null, selectedPlayerName: null, coachingEvents: [] });
     const [first] = within(screen.getByRole("group", { name: "回合列表" })).getAllByRole("button");
-    expect(first).toHaveAccessibleName("第 1 回合，CT 获胜，0 条建议，正在播放");
+    expect(first).toHaveAccessibleName("第 1 回合 CT 胜，0 条建议，正在播放");
     expect(within(screen.getByRole("group", { name: "快速跳转" })).queryByRole("button", { name: /阵亡|个人首杀/ })).toBeNull();
   });
 });

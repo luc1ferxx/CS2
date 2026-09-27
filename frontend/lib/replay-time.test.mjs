@@ -11,7 +11,7 @@ const module = { exports: {} };
 vm.runInNewContext(outputText, { module, exports: module.exports });
 const {
   advanceReplayTick, tickToVideoTime, videoTimeToTick, videoPlaybackState, videoMediaIdentity,
-  formatRoundTime, roundTimeAt, roundPlaybackStartTick, findingLeadInTick
+  formatRoundTime, roundTimeAt, liveRoundTimeAt, roundPlaybackStartTick, findingLeadInTick
 } = module.exports;
 const xelexId = "76561198998266210";
 const video = {
@@ -62,6 +62,14 @@ assert.equal(roundPlaybackStartTick(round), 7832);
 assert.equal(roundPlaybackStartTick({ ...round, freezeEndTick: Number.NaN }), 326);
 assert.equal(roundPlaybackStartTick({ ...round, freezeEndTick: 20000 }), 326);
 assert.equal(roundPlaybackStartTick({ ...round, freezeEndTick: 100 }), 326);
+
+// Moments in stats lists count from freeze end: a half-time break before it never shows up.
+const afterHalfTime = { startTick: 97506, freezeEndTick: 111022, endTick: 118000 };
+assert.equal(liveRoundTimeAt(112829, afterHalfTime, 64), "0:28");
+assert.equal(roundTimeAt(112829, afterHalfTime, 64), "3:59");
+assert.equal(liveRoundTimeAt(100000, afterHalfTime, 64), "0:00", "Freeze time reads 0:00, never negative");
+assert.equal(liveRoundTimeAt(9112, { ...round, freezeEndTick: Number.NaN }, 64), "2:17", "No freeze end: counts from the start");
+assert.equal(liveRoundTimeAt(9112, undefined, 64), "0:00");
 
 // "查看这一刻" gets a 3 s lead-in, clamped to the playable part of the round.
 assert.equal(findingLeadInTick(11702, round, 64), 11702 - 192);

@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -29,6 +29,21 @@ class DemoIngestionStatus(BaseModel):
     failure: ParseFailureMetadata | None = None
 
 
+class MatchSummaryTeam(BaseModel):
+    key: Literal["A", "B"]
+    name: str | None = None
+    startSide: Literal["T", "CT"]
+    score: int = Field(ge=0)
+
+
+class MatchSummary(BaseModel):
+    """Final score of a completed demo; team A started T, team B started CT."""
+
+    teams: list[MatchSummaryTeam] = Field(min_length=2, max_length=2)
+    rounds: int = Field(ge=0)
+    version: int
+
+
 class DemoListItem(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -49,6 +64,7 @@ class DemoListItem(BaseModel):
     video_source: str | None = None
     latest_render_status: str | None = None
     ingestion: DemoIngestionStatus | None = None
+    matchSummary: MatchSummary | None = None
 
 
 class DemoStatus(BaseModel):
@@ -66,6 +82,7 @@ class DemoStatus(BaseModel):
     updated_at: datetime
     completed_at: datetime | None
     ingestion: DemoIngestionStatus | None = None
+    matchSummary: MatchSummary | None = None
 
 
 class DemoUpdate(BaseModel):

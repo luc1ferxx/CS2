@@ -467,7 +467,7 @@ describe("DemoDetailPage", () => {
     render(<DemoDetailPage />);
 
     expect(await screen.findByRole("heading", { name: "正在复盘 T Entry" })).toBeInTheDocument();
-    expect(document.querySelector(".detail-meta")).toHaveTextContent("1 条建议");
+    expect(document.querySelector(".match-banner-meta")).toHaveTextContent("1 条建议");
     expect(screen.getByRole("group", { name: /这条建议是否有帮助/ })).toBeInTheDocument();
     expect(screen.queryByRole("group", { name: "选择你在这场比赛中的玩家" })).not.toBeInTheDocument();
     expect(screen.queryByText(/xelex/)).not.toBeInTheDocument();
@@ -489,7 +489,7 @@ describe("DemoDetailPage", () => {
     expect(screen.queryByText(/xelex|未找到/)).not.toBeInTheDocument();
 
     // The empty coaching column hands focus to the picker instead of leaving a dead end.
-    await user.click(screen.getByRole("button", { name: "选择玩家" }));
+    await user.click(within(document.querySelector<HTMLElement>(".coaching-panel")!).getByRole("button", { name: "选择玩家" }));
     const picker = screen.getByRole("group", { name: "选择你在这场比赛中的玩家" });
     expect(within(picker).getByRole("button", { name: "T Entry" })).toHaveFocus();
 
@@ -916,7 +916,7 @@ describe("DemoDetailPage", () => {
       await screen.findByRole("region", { name: "播放控制" });
       expect(slider()).toHaveValue("164");
 
-      await user.click(screen.getByRole("button", { name: /^第 2 回合，/ }));
+      await user.click(screen.getByRole("button", { name: /^第 2 回合 / }));
       expect(slider()).toHaveValue("1064");
       await user.click(within(screen.getByRole("group", { name: "快速跳转" })).getByRole("button", { name: /^回合开始/ }));
       expect(slider()).toHaveValue("1000");
@@ -1143,5 +1143,119 @@ describe("DemoDetailPage", () => {
       expect(screen.getByRole("button", { name: "播放" })).toBeInTheDocument();
       expect(slider()).toHaveValue(pausedAt);
     });
+  });
+});
+
+describe("DemoDetailPage match header and first-person view (S9)", () => {
+  beforeEach(() => {
+    mockAuth({ devTools: true, renderClips: true });
+    vi.mocked(api.getCoaching).mockResolvedValue([coachingEvent()]);
+    vi.mocked(api.getRenderJobs).mockResolvedValue([]);
+    vi.mocked(api.getDemoVideo).mockResolvedValue(replayVideo());
+    vi.mocked(api.getReplay).mockResolvedValue(replayData());
+  });
+
+  afterEach(() => {
+    window.localStorage.clear();
+    window.history.replaceState(null, "", "/");
+  });
+
+  it("heads the review with the score, the stored team names and the reviewed player's team", async () => {
+    vi.mocked(api.getRenderWorkerStatus).mockResolvedValue(renderWorkerStatus({ connected: true, status: "connected" }));
+    vi.mocked(api.getDemoStatus).mockResolvedValue(demoStatus({
+      matchSummary: {
+        teams: [
+          { key: "A", name: "Alpha", startSide: "T", score: 1 },
+          { key: "B", name: "Bravo", startSide: "CT", score: 1 }
+        ],
+        rounds: 2,
+        version: 1
+      }
+    }));
+    await openReviewFor(T_ENTRY_ID);
+
+    const banner = document.querySelector<HTMLElement>(".match-banner")!;
+    // The score is computed from the replay; the summary only brings the names. A two-round match has one half.
+    // T Entry was picked to review; the development account's own player is not in this match.
+    expect(banner.querySelector(".visually-hidden")).toHaveTextContent(/^比分 Alpha（复盘中的队伍） 1 比 1 Bravo。上半场 Alpha T 1，Bravo CT 1。$/);
+    expect(banner).not.toHaveTextContent("你的队伍");
+    expect(banner.querySelector(".match-banner-board")).toHaveAttribute("aria-hidden", "true");
+    expect(within(banner).getByRole("heading", { level: 1 })).toHaveTextContent("Mock Match demo-1");
+    expect(banner.querySelector(".match-banner-meta")).toHaveTextContent(/地图\s*Inferno/);
+    const scoreboard = screen.getByRole("region", { name: "计分板" });
+    const reviewedRow = within(scoreboard).getByRole("row", { name: /T Entry 复盘中/ });
+    expect(reviewedRow).toHaveClass("selected");
+  });
+
+  it("marks the viewer's own team as theirs even while reviewing an opponent", async () => {
+    mockAuth({ devTools: false, renderClips: false }, steamAccount(T_ENTRY_ID));
+    vi.mocked(api.getDemoStatus).mockResolvedValue(demoStatus());
+    const user = userEvent.setup();
+    render(<DemoDetailPage />);
+    await screen.findByRole("heading", { name: "正在复盘 T Entry" });
+    const sentence = () => document.querySelector(".match-banner .visually-hidden");
+    expect(sentence()).toHaveTextContent(/^比分 队伍 A（你的队伍） 1 比 1 队伍 B。/);
+
+    await user.selectOptions(playerSelect(), CT_ANCHOR_ID);
+    await screen.findByRole("heading", { name: "正在复盘 CT Anchor" });
+    expect(sentence()).toHaveTextContent(/^比分 队伍 A（你的队伍） 1 比 1 队伍 B（复盘中的队伍）。/);
+  });
+
+  it("goes back to the map when play is pressed on the first-person explanation", async () => {
+    vi.mocked(api.getRenderWorkerStatus).mockResolvedValue(renderWorkerStatus());
+    vi.mocked(api.getDemoStatus).mockResolvedValue(demoStatus());
+    const user = await openReviewFor(T_ENTRY_ID);
+    const views = screen.getByRole("group", { name: "回放视图" });
+    await user.click(within(views).getByRole("button", { name: "第一人称" }));
+    await screen.findByRole("region", { name: "这一刻还没有第一人称视频" });
+
+    await user.click(screen.getByRole("button", { name: "播放" }));
+    expect(screen.queryByRole("region", { name: "这一刻还没有第一人称视频" })).toBeNull();
+    expect(within(views).getByRole("button", { name: "战术回放" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "暂停" })).toBeInTheDocument();
+  });
+
+  it("explains a missing first-person clip instead of offering a dead tab, and goes back to the map", async () => {
+    vi.mocked(api.getRenderWorkerStatus).mockResolvedValue(renderWorkerStatus());
+    vi.mocked(api.getDemoStatus).mockResolvedValue(demoStatus());
+    const user = await openReviewFor(T_ENTRY_ID);
+
+    const views = screen.getByRole("group", { name: "回放视图" });
+    const firstPerson = within(views).getByRole("button", { name: "第一人称" });
+    expect(firstPerson).toBeEnabled();
+    await user.click(firstPerson);
+
+    const explainer = await screen.findByRole("region", { name: "这一刻还没有第一人称视频" });
+    expect(firstPerson).toHaveAttribute("aria-pressed", "true");
+    expect(explainer).toHaveTextContent("第一人称视频要用录制电脑上的 CS2 真实录下来，每段约 20 秒。");
+    expect(await within(explainer).findByText("录制程序没有运行，暂时无法生成。可以先排队，录制程序启动后自动开始。")).toBeInTheDocument();
+    expect(explainer).toHaveTextContent("Start CS2 Coach.cmd");
+    // The toolbar button above still queues this moment; the explanation offers the same action.
+    expect(within(explainer).getByRole("button", { name: "生成这一刻的视频" })).toBeEnabled();
+    expect(document.querySelector(".review-main-canvas .replay-panel")).toBeNull();
+
+    await user.click(within(explainer).getByRole("button", { name: "返回战术回放" }));
+    expect(screen.queryByRole("region", { name: "这一刻还没有第一人称视频" })).toBeNull();
+    expect(within(views).getByRole("button", { name: "战术回放" })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("offers to generate this moment when the recorder runs, and points at clips saved elsewhere", async () => {
+    vi.mocked(api.getRenderWorkerStatus).mockResolvedValue(renderWorkerStatus({ connected: true, status: "connected" }));
+    vi.mocked(api.getDemoStatus).mockResolvedValue(demoStatus());
+    vi.mocked(api.getRenderJobs).mockResolvedValue([savedClipJob()]);
+    vi.mocked(api.createRenderClipJob).mockResolvedValue({ ...renderJob({ job_id: "job-new", tick_start: 164 }), video: replayVideo() });
+    const user = await openReviewFor(T_ENTRY_ID);
+
+    await user.click(within(screen.getByRole("group", { name: "回放视图" })).getByRole("button", { name: "第一人称" }));
+    const explainer = await screen.findByRole("region", { name: "这一刻还没有第一人称视频" });
+    expect(await within(explainer).findByText("可以现在生成这一刻的视频。")).toBeInTheDocument();
+
+    await user.click(within(explainer).getByRole("button", { name: "查看已保存的视频（1 段）" }));
+    const saved = document.getElementById("saved-clips") as HTMLDetailsElement;
+    expect(saved.open).toBe(true);
+    expect(saved.querySelector("summary")).toHaveFocus();
+
+    await user.click(within(explainer).getByRole("button", { name: "生成这一刻的视频" }));
+    expect(api.createRenderClipJob).toHaveBeenCalledTimes(1);
   });
 });

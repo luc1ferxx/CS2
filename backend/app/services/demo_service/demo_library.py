@@ -8,6 +8,7 @@ from app.services.demo_service._component import ServiceComponent
 from app.services.demo_service._helpers import _optional_str
 from app.services.demo_service.constants import DEMO_STATUS_ORDER, DEMO_STATUS_SEARCH_ALIASES
 from app.services.demo_service.gone import rows_missing
+from app.services.demo_service.match_summary import public_match_summary
 
 
 class DemoLibrary(ServiceComponent):
@@ -84,12 +85,16 @@ class DemoLibrary(ServiceComponent):
                 "video_source": _optional_str(video.get("source")),
                 "latest_render_status": latest_render_job.status if latest_render_job else None,
                 "ingestion": self._service.parse.demo_ingestion_status(demo),
+                "matchSummary": public_match_summary(getattr(demo, "match_summary", None)),
             }
         )
 
     def demo_status(self, demo: Demo) -> DemoStatus:
         return DemoStatus.model_validate(demo).model_copy(
-            update={"ingestion": self._service.parse.demo_ingestion_status(demo)}
+            update={
+                "ingestion": self._service.parse.demo_ingestion_status(demo),
+                "matchSummary": public_match_summary(getattr(demo, "match_summary", None)),
+            }
         )
 
     def get_demo(self, demo_id: str) -> Demo | None:

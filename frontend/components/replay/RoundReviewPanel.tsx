@@ -1,6 +1,6 @@
 "use client";
 
-import { X } from "lucide-react";
+import { Bomb, Clock, Scissors, Skull, X, type LucideIcon } from "lucide-react";
 import { Fragment, memo, useEffect, useMemo, useRef } from "react";
 
 import {
@@ -8,6 +8,7 @@ import {
   jumpTargetsForRound,
   type RoundReviewSummary
 } from "@/lib/round-review";
+import { ROUND_END_REASON_LABELS, roundEndReason, type RoundEndReason } from "@/lib/match-stats";
 import { formatRoundTime } from "@/lib/replay-time";
 import type { CoachingEvent } from "@/types/coaching";
 import type { ReplayData } from "@/types/replay";
@@ -50,14 +51,26 @@ function useRoundModel({ replay, coachingEvents, currentRoundNumber, selectedRou
   );
 }
 
+// How a round ended, drawn in its cell; "other" (unknown or missing) gets no icon.
+const ROUND_END_ICONS: Record<Exclude<RoundEndReason, "other">, LucideIcon> = {
+  bomb_exploded: Bomb,
+  bomb_defused: Scissors,
+  elimination: Skull,
+  time: Clock
+};
+
 /**
  * The match at a glance, and the way between rounds: one cell per round in the
- * winning side's colour, a gap where the teams swap sides, the reviewed
- * player's deaths and suggestion counts underneath.
+ * winning side's colour with an icon for how it ended, a gap where the teams swap
+ * sides, the reviewed player's deaths and suggestion counts underneath.
  */
 export const RoundStrip = memo(function RoundStrip(props: RoundStripProps) {
-  const { selectedRound, onSelectRound } = props;
+  const { replay, selectedRound, onSelectRound } = props;
   const model = useRoundModel(props);
+  const endReasons = useMemo(
+    () => new Map(replay.rounds.map((round) => [round.roundNumber, roundEndReason(round)])),
+    [replay.rounds]
+  );
   const trackRef = useRef<HTMLDivElement | null>(null);
   const roundButtonRefs = useRef(new Map<number, HTMLButtonElement>());
 
@@ -127,7 +140,10 @@ export const RoundStrip = memo(function RoundStrip(props: RoundStripProps) {
         <RoundStripLegend />
       </div>
       <div ref={trackRef} className="round-strip-track" role="group" aria-label="回合列表">
-        {model.rounds.map((round, roundIndex) => (
+        {model.rounds.map((round, roundIndex) => {
+          const reason = endReasons.get(round.roundNumber) ?? "other";
+          const ReasonIcon = reason === "other" ? null : ROUND_END_ICONS[reason];
+          return (
           <Fragment key={round.roundNumber}>
             {round.startsNewHalf && roundIndex > 0 ? (
               <span className="round-strip-half" aria-hidden="true" title="交换攻守" />
@@ -147,10 +163,12 @@ export const RoundStrip = memo(function RoundStrip(props: RoundStripProps) {
               aria-current={round.isCurrent ? "step" : undefined}
               aria-pressed={round.isSelected}
               tabIndex={round.isSelected ? 0 : -1}
-              aria-label={roundAriaLabel(round)}
-              title={`第 ${round.roundNumber} 回合：${outcomeText(round)}，${round.killCount} 次击杀，${round.coachingEventCount} 条建议${round.playerDeath.tick !== null ? "，阵亡" : ""}`}
+              aria-label={roundAriaLabel(round, reason)}
+              title={roundTitle(round, reason)}
             >
-              <span className="round-strip-fill" aria-hidden="true" />
+              <span className="round-strip-fill" aria-hidden="true">
+                {ReasonIcon ? <ReasonIcon className="round-strip-reason" size={14} strokeWidth={2.25} /> : null}
+              </span>
               <span className="round-strip-number">{round.roundNumber}</span>
               <span className="round-strip-marks" aria-hidden="true">
                 {round.playerDeath.tick !== null ? <X className="round-strip-death" size={13} strokeWidth={3} /> : null}
@@ -158,7 +176,8 @@ export const RoundStrip = memo(function RoundStrip(props: RoundStripProps) {
               </span>
             </button>
           </Fragment>
-        ))}
+          );
+        })}
       </div>
       {/* Phones have no room in the bar: the same legend, one line under the track. */}
       <RoundStripLegend below />
@@ -171,6 +190,10 @@ function RoundStripLegend({ below = false }: { below?: boolean }) {
     <p className={`round-strip-legend${below ? " round-strip-legend-below" : ""}`} aria-hidden="true">
       <span><i className="side-t" />T 胜</span>
       <span><i className="side-ct" />CT 胜</span>
+      {(Object.keys(ROUND_END_ICONS) as (keyof typeof ROUND_END_ICONS)[]).map((reason) => {
+        const Icon = ROUND_END_ICONS[reason];
+        return <span key={reason}><Icon size={12} strokeWidth={2.25} className="round-strip-legend-reason" />{ROUND_END_REASON_LABELS[reason]}</span>;
+      })}
       <span><X size={12} strokeWidth={3} className="round-strip-death" />阵亡</span>
       <span><b className="round-strip-legend-dot" />建议</span>
     </p>
@@ -259,16 +282,25 @@ function SuggestionMarks({ count }: { count: number }) {
   return <span className="round-strip-dots"><i /><b>{count}</b></span>;
 }
 
-function outcomeText(round: RoundReviewSummary): string {
-  if (round.playerOutcome === "won") return `赢 · ${round.winnerSide} 获胜`;
-  if (round.playerOutcome === "lost") return `输 · ${round.winnerSide} 获胜`;
-  return `${round.winnerSide} 获胜`;
+// "第 5 回合 T 胜，炸弹爆炸，赢下本回合": the winner, how the round ended, then the reviewed player's result.
+function outcomeParts(round: RoundReviewSummary, reason: RoundEndReason): string[] {
+  const parts = [`第 ${round.roundNumber} 回合 ${round.winnerSide} 胜`];
+  if (reason !== "other") parts.push(ROUND_END_REASON_LABELS[reason]);
+  if (round.playerOutcome === "won") parts.push("赢下本回合");
+  if (round.playerOutcome === "lost") parts.push("输掉本回合");
+  return parts;
 }
 
-function roundAriaLabel(round: RoundReviewSummary): string {
-  const parts = [`第 ${round.roundNumber} 回合`, outcomeText(round), `${round.coachingEventCount} 条建议`];
+function roundAriaLabel(round: RoundReviewSummary, reason: RoundEndReason): string {
+  const parts = [...outcomeParts(round, reason), `${round.coachingEventCount} 条建议`];
   if (round.playerDeath.tick !== null) parts.push("阵亡");
   if (round.isCurrent) parts.push("正在播放");
+  return parts.join("，");
+}
+
+function roundTitle(round: RoundReviewSummary, reason: RoundEndReason): string {
+  const parts = [...outcomeParts(round, reason), `${round.killCount} 次击杀`, `${round.coachingEventCount} 条建议`];
+  if (round.playerDeath.tick !== null) parts.push("阵亡");
   return parts.join("，");
 }
 

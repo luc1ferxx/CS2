@@ -92,6 +92,19 @@ export function roundTimeAt(tick: number, round: Pick<ReplayRound, "startTick"> 
   return formatRoundTime((tick - (round?.startTick ?? tick)) / rate);
 }
 
+/**
+ * "When in the live round" for lists of moments (deaths, opening duels): counted from the end
+ * of freeze time, so a half-time break or a long timeout before the round does not inflate it.
+ */
+export function liveRoundTimeAt(
+  tick: number,
+  round: Pick<ReplayRound, "startTick" | "freezeEndTick" | "endTick"> | null | undefined,
+  tickRate: number
+): string {
+  const rate = Number.isFinite(tickRate) && tickRate > 0 ? tickRate : 64;
+  return formatRoundTime((tick - (round ? roundPlaybackStartTick(round) : tick)) / rate);
+}
+
 /** First tick worth watching: the end of freeze time when the parser recorded a usable one. */
 export function roundPlaybackStartTick(round: Pick<ReplayRound, "startTick" | "freezeEndTick" | "endTick">): number {
   const freezeEnd = round.freezeEndTick;

@@ -23,11 +23,15 @@ import {
 import { ClipLibrary } from "@/components/replay/ClipLibrary";
 import { DemoStateCard, ReviewSkeleton } from "@/components/replay/DemoLoadState";
 import { DetailSummary } from "@/components/replay/DetailSummary";
+import { FirstPersonExplainer } from "@/components/replay/FirstPersonExplainer";
+import { MatchScoreBanner } from "@/components/replay/MatchScoreBanner";
 import { ReviewCommandBar } from "@/components/replay/ReviewCommandBar";
 import { ReplayViewer } from "@/components/replay/ReplayViewer";
 import { PLAYER_PICKER_ID, PersonalReviewPanel } from "@/components/replay/PersonalReviewPanel";
 import { RoundReviewPanel, RoundStrip } from "@/components/replay/RoundReviewPanel";
 import { Timeline } from "@/components/replay/Timeline";
+import { MatchAnalysis } from "@/components/stats/MatchAnalysis";
+import { Scoreboard } from "@/components/stats/Scoreboard";
 import {
   clearCoachingFeedback,
   createMockRenderJob,
@@ -64,6 +68,7 @@ import {
 } from "@/lib/demo-library";
 import { leaveLibraryNotice } from "@/lib/library-notice";
 import { mapDisplayName, tacticalRadarImagePaths, type TacticalMapLevelMode } from "@/lib/map-config";
+import { matchTeams, playerMatchStats, teamKeyOfPlayer } from "@/lib/match-stats";
 import { buildReplayDiagnostics } from "@/lib/replay-diagnostics";
 import { resolvePrivateMediaSource } from "@/lib/media-url";
 import { parseReviewPlace, reviewPlaceSearch } from "@/lib/replay-place";
@@ -172,7 +177,9 @@ function DemoDetailContent() {
   const [selectedRound, setSelectedRound] = useState(1);
   const [speed, setSpeed] = useState(1);
   const [playing, setPlaying] = useState(false);
-  const [viewMode, setViewMode] = useState<"auto" | "map">("auto");
+  // "auto" plays a clip when one covers the moment; "video" is the 第一人称 tab chosen on purpose,
+  // which explains itself when there is no clip instead of falling back to the map.
+  const [viewMode, setViewMode] = useState<"auto" | "map" | "video">("auto");
   const [mapLevelMode, setMapLevelMode] = useState<TacticalMapLevelMode>("auto");
   const [savedIdentity, setSavedIdentity] = useState("");
   const [preferenceSaved, setPreferenceSaved] = useState(true);
@@ -211,6 +218,7 @@ function DemoDetailContent() {
   const renderJobsSignatureRef = useRef<string | null>(null);
   const defaultVideoRef = useRef<ReplayVideo | null>(null);
   const stageRef = useRef<HTMLElement | null>(null);
+  const savedClipsRef = useRef<HTMLDetailsElement | null>(null);
   // The control the viewer pressed "查看这一刻" on, so "返回建议" can hand focus back to it.
   const findingOriginRef = useRef<HTMLElement | null>(null);
 
@@ -465,6 +473,17 @@ function DemoDetailContent() {
     () => replay?.players.find((player) => player.id === selectedPlayerId) ?? null,
     [replay?.players, selectedPlayerId]
   );
+  // Scores and the scoreboard are computed once per loaded replay (the index is cached by its arrays).
+  const matchSummaryTeams = status?.matchSummary?.teams;
+  const teams = useMemo(
+    () => (loadedReplay ? matchTeams(loadedReplay, matchSummaryTeams) : []),
+    [loadedReplay, matchSummaryTeams]
+  );
+  const scoreboardStats = useMemo(() => (loadedReplay ? playerMatchStats(loadedReplay) : []), [loadedReplay]);
+  const reviewedTeamKey = loadedReplay && selectedPlayerId ? teamKeyOfPlayer(loadedReplay, selectedPlayerId) : null;
+  // "你的队伍" follows the viewer's own identity, not whoever is being reviewed.
+  const yourPlayerId = preferredPlayerMatch.status === "matched" ? preferredPlayerMatch.player?.id ?? null : null;
+  const yourTeamKey = loadedReplay && yourPlayerId ? teamKeyOfPlayer(loadedReplay, yourPlayerId) : null;
   const videoUnavailable = Boolean(replay && (
     unavailableVideoIdentity === videoMediaIdentity(replay.video) ||
     (replay.video.url && !resolvePrivateMediaSource(replay.video.url))
@@ -472,7 +491,7 @@ function DemoDetailContent() {
   const videoPlayback = replay
     ? videoPlaybackState(replay.video, currentTick, selectedPlayerId, videoUnavailable)
     : "unavailable";
-  const videoDrivesClock = usesVideoClock(viewMode, videoPlayback);
+  const videoDrivesClock = usesVideoClock(viewMode === "map" ? "map" : "auto", videoPlayback);
   const personalEvents = useMemo(
     () => coachingForPlayer(events, selectedPlayer?.id ?? null),
     [events, selectedPlayer?.id]
@@ -540,6 +559,8 @@ function DemoDetailContent() {
   // Accounts without clip generation and without any saved video never see video controls.
   const hasAnyVideo = Boolean(replay?.video.url) || renderJobs.some((job) => playableClipVideo(job) !== null);
   const showVideoControls = renderClips || hasAnyVideo;
+  const showFirstPersonExplainer = showVideoControls && viewMode === "video" && !videoDrivesClock;
+  const firstPersonSelected = videoDrivesClock || showFirstPersonExplainer;
   const playableClipCount = useMemo(() => personalClips.filter((job) => playableClipVideo(job)).length, [personalClips]);
   const currentRoundNumber = useMemo(
     () => (replay ? findRoundNumberForTick(replay.rounds, currentTick) : null),
@@ -614,6 +635,19 @@ function DemoDetailContent() {
 
   usePoll(() => loadRenderState(), !deleting && (isRenderActiveStatus(videoStatus) || hasActiveRenderClipJob) ? RENDER_POLL_MS : null);
 
+  // The first-person explanation says whether the recorder is running; ask once when it opens.
+  const needsWorkerStatus = showFirstPersonExplainer && renderClips && renderWorker === null;
+  useEffect(() => {
+    if (!needsWorkerStatus) return;
+    let cancelled = false;
+    getRenderWorkerStatus()
+      .then((worker) => { if (!cancelled) setRenderWorker(worker); })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [needsWorkerStatus]);
+
   // Tactical playback advances by the time that actually passed, once per animation frame.
   useEffect(() => {
     if (!playing || !replay || !selectedRoundData || videoDrivesClock) {
@@ -671,11 +705,11 @@ function DemoDetailContent() {
   // and the memoized panels that receive them skip those frames.
   const latest = useRef({
     replay, renderJobs, selectedPlayerId, personalEvents, currentTick, playing, atRoundEnd, nextRoundData,
-    selectedRoundData, videoDrivesClock, previousFinding, nextFinding, focusedFinding
+    selectedRoundData, videoDrivesClock, previousFinding, nextFinding, focusedFinding, viewMode
   });
   latest.current = {
     replay, renderJobs, selectedPlayerId, personalEvents, currentTick, playing, atRoundEnd, nextRoundData,
-    selectedRoundData, videoDrivesClock, previousFinding, nextFinding, focusedFinding
+    selectedRoundData, videoDrivesClock, previousFinding, nextFinding, focusedFinding, viewMode
   };
 
   const seekToFinding = useCallback((tick: number, eventId?: string, origin?: FindingOrigin) => {
@@ -772,6 +806,8 @@ function DemoDetailContent() {
       setPlaying(false);
       return;
     }
+    // Play from the first-person explanation shows the map again: the replay never runs unseen.
+    if (state.viewMode === "video" && !state.videoDrivesClock) setViewMode("auto");
     // At the end of a round, Play carries on into the next one instead of stopping at once.
     if (state.atRoundEnd && state.nextRoundData && !state.videoDrivesClock) {
       playNextRound();
@@ -798,6 +834,35 @@ function DemoDetailContent() {
   }, [changeRound]);
 
   const toggleShortcuts = useCallback(() => setShortcutsOpen((open) => !open), []);
+
+  // Jumps from the 数据 section: the stage leaves the first-person explanation (a saved clip
+  // covering the moment still plays) and scrolls into view.
+  const jumpToTick = useCallback((tick: number) => {
+    setPlaying(false);
+    setViewMode((mode) => (mode === "video" ? "auto" : mode));
+    manualSeek(tick);
+    revealStage();
+  }, [manualSeek, revealStage]);
+
+  const jumpToRound = useCallback((roundNumber: number) => {
+    setViewMode((mode) => (mode === "video" ? "auto" : mode));
+    changeRound(roundNumber);
+    revealStage();
+  }, [changeRound, revealStage]);
+
+  const showFirstPerson = useCallback(() => {
+    // Without a clip here the stage explains itself; the replay should not run on unseen.
+    if (latest.current.replay && !latest.current.videoDrivesClock) setPlaying(false);
+    setViewMode("video");
+  }, []);
+
+  const showSavedClips = useCallback(() => {
+    const details = savedClipsRef.current;
+    if (!details) return;
+    details.open = true;
+    details.scrollIntoView({ behavior: scrollBehavior(), block: "start" });
+    details.querySelector<HTMLElement>("summary")?.focus({ preventScroll: true });
+  }, []);
 
   const saveIdentity = useCallback((identity: string) => {
     setSavedIdentity(identity.trim());
@@ -1061,6 +1126,26 @@ function DemoDetailContent() {
         : clipIsActive(currentTickClipJob) ? "视频生成中"
           : playableClipVideo(currentTickClipJob) ? "观看这一刻的视频" : "生成这一刻的视频";
   const focusedRound = focusedEvent ? replay?.rounds.find((round) => round.roundNumber === focusedEvent.round_number) : undefined;
+  // Memoized so the memoized score banner skips playback frames.
+  const hasReplay = Boolean(replay);
+  const personalEventCount = personalEvents.length;
+  const headerFacts = useMemo(() => (
+    <>
+      {hasReplay && selectedPlayer ? <span className="fact">{personalEventCount} 条建议</span>
+        : status?.status === "completed" ? (
+          <span className="fact" title="所有玩家合计；选择你的玩家后只显示你的建议">
+            <span className="fact-label">全场建议</span>{status.coaching_event_count}
+          </span>
+        ) : null}
+      {status?.archived ? <span className="fact">已归档</span> : null}
+      {/* "可以复盘" says nothing the workspace does not; it stays for screen readers only. */}
+      {knownStatus ? (
+        <span className={`status-badge ${knownStatus.status}${statusBadgeLabel(knownStatus, loadState) === demoStatusDisplayLabel("completed") ? " visually-hidden" : ""}`}>
+          {statusBadgeLabel(knownStatus, loadState)}
+        </span>
+      ) : null}
+    </>
+  ), [hasReplay, knownStatus, loadState, personalEventCount, selectedPlayer, status]);
 
   return (
     <main className="app-shell review-detail-shell review-app">
@@ -1080,29 +1165,31 @@ function DemoDetailContent() {
         </nav>
         {/* A missing or unreachable match has nothing to head: its state card carries the title. */}
         {loadState?.kind === "not_found" || loadState?.kind === "unreachable" ? null : (
-        <header className="panel review-header">
+        <header className={`panel review-header${replay ? " has-banner" : ""}`}>
+          {replay ? (
+            <MatchScoreBanner
+              title={pageTitle}
+              teams={teams}
+              mapName={mapDisplayName(knownStatus?.map_name ?? replay.mapName)}
+              date={status?.completed_at ?? null}
+              roundCount={replay.rounds.length}
+              yourTeamKey={yourTeamKey}
+              reviewedTeamKey={reviewedTeamKey}
+            >
+              {headerFacts}
+            </MatchScoreBanner>
+          ) : (
           <div className="panel-bar review-header-bar">
             <div className="detail-title">
               <h1 className="panel-bar-title">{pageTitle}</h1>
               {statusFailure === "not_found" || (!status && statusFailure) ? null : <div className="detail-meta facts">
                 {knownStatus ? <span className="fact"><span className="fact-label">地图</span><span className="detail-map">{mapDisplayName(knownStatus.map_name)}</span></span> : null}
                 <span className="fact">{status?.status === "completed" ? status.round_count : "—"} 回合</span>
-                {replay && selectedPlayer ? <span className="fact">{personalEvents.length} 条建议</span>
-                  : status?.status === "completed" ? (
-                    <span className="fact" title="所有玩家合计；选择你的玩家后只显示你的建议">
-                      <span className="fact-label">全场建议</span>{status.coaching_event_count}
-                    </span>
-                  ) : null}
-                {status?.archived ? <span className="fact">已归档</span> : null}
-                {/* "可以复盘" says nothing the workspace does not; it stays for screen readers only. */}
-                {knownStatus ? (
-                  <span className={`status-badge ${knownStatus.status}${statusBadgeLabel(knownStatus, loadState) === demoStatusDisplayLabel("completed") ? " visually-hidden" : ""}`}>
-                    {statusBadgeLabel(knownStatus, loadState)}
-                  </span>
-                ) : null}
+                {headerFacts}
               </div>}
             </div>
           </div>
+          )}
           {/* Beside the bar on wide screens (same grey), under it on phones; the first-run picker is the panel body. */}
           {replay ? (
             <PersonalReviewPanel
@@ -1158,12 +1245,12 @@ function DemoDetailContent() {
               <div className="panel-bar review-stage-toolbar">
                 {showVideoControls ? (
                   <div className="panel-bar-tabs review-view-switch" role="group" aria-label="回放视图">
-                    <button type="button" className={`panel-tab${videoDrivesClock ? "" : " selected"}`} aria-pressed={!videoDrivesClock} onClick={() => setViewMode("map")}>
+                    <button type="button" className={`panel-tab${firstPersonSelected ? "" : " selected"}`} aria-pressed={!firstPersonSelected} onClick={() => setViewMode("map")}>
                       战术回放
                     </button>
-                    <button type="button" className={`panel-tab${videoDrivesClock ? " selected" : ""}`} aria-pressed={videoDrivesClock} disabled={videoPlayback !== "active"}
-                      title={videoPlayback === "active" ? "观看这一时刻的第一人称视频" : "这一时刻还没有可播放的视频"}
-                      onClick={() => setViewMode("auto")}>
+                    {/* Always clickable: without a clip for this moment the stage explains why and what to do. */}
+                    <button type="button" className={`panel-tab${firstPersonSelected ? " selected" : ""}`} aria-pressed={firstPersonSelected}
+                      onClick={showFirstPerson}>
                       第一人称
                     </button>
                   </div>
@@ -1188,7 +1275,7 @@ function DemoDetailContent() {
                   </button>
                 </div>
               ) : null}
-              <div className={`review-main-canvas ${videoDrivesClock ? "showing-video" : "showing-map"}`}>
+              <div className={`review-main-canvas ${videoDrivesClock ? "showing-video" : showFirstPersonExplainer ? "showing-explainer" : "showing-map"}`}>
               {videoDrivesClock ? (
               <FirstPersonReplay
                 compact
@@ -1213,6 +1300,21 @@ function DemoDetailContent() {
                 onVideoDurationChange={setDetectedVideoDuration}
                 onVideoTimeChange={devTools && inspectorOpen ? setCurrentVideoTime : undefined}
               />
+              ) : showFirstPersonExplainer ? (
+                <FirstPersonExplainer
+                  canGenerate={renderClips}
+                  playerSelected={Boolean(selectedPlayerId)}
+                  workerOffline={renderWorkerOffline(renderWorker)}
+                  clipJob={currentTickClipJob}
+                  requestLabel={tickClipLabel}
+                  requesting={tickClipRequesting}
+                  savedClipCount={playableClipCount}
+                  devTools={devTools}
+                  onRequest={() => void requestRenderClipAtCurrentTick()}
+                  onChoosePlayer={revealPlayerPicker}
+                  onShowSavedClips={showSavedClips}
+                  onBackToMap={() => setViewMode("map")}
+                />
               ) : (
                 <ReplayViewer replay={scopedReplay ?? replay} currentTick={currentTick}
                   selectedPlayerId={selectedPlayerId} onSelectPlayer={selectPlayer} variant="featured"
@@ -1259,16 +1361,6 @@ function DemoDetailContent() {
               selectedRound={selectedRound}
               onSeek={manualSeek}
             />
-            {showVideoControls ? (
-              <details className="review-saved-clips">
-                <summary><span>已保存的视频</span>
-                  <span className="saved-clips-count">{playableClipCount} 段可观看</span>
-                  {hasActiveRenderClipJob ? <span role="status">有视频正在生成</span> : null}
-                </summary>
-                <ClipLibrary jobs={personalClips} playerName={selectedPlayer?.name ?? null} rounds={replay.rounds}
-                  canGenerate={renderClips} selectedJobId={replay.video.renderJobId ?? null} onPlay={playSavedClip} />
-              </details>
-            ) : null}
             </div>
               <CoachingPanel
                 key={selectedPlayer?.id ?? "no-player"}
@@ -1287,6 +1379,20 @@ function DemoDetailContent() {
                 onChoosePlayer={revealPlayerPicker}
               />
             </div>
+            {/* S9 数据 section (UI-B) */}
+            <MatchAnalysis replay={replay} player={selectedPlayer} onSeekTick={jumpToTick} onSelectRound={jumpToRound}
+              onChoosePlayer={revealPlayerPicker} />
+            <Scoreboard teams={teams} stats={scoreboardStats} reviewedPlayerId={selectedPlayerId} />
+            {showVideoControls ? (
+              <details className="review-saved-clips" id="saved-clips" ref={savedClipsRef}>
+                <summary><span>已保存的视频</span>
+                  <span className="saved-clips-count">{playableClipCount} 段可观看</span>
+                  {hasActiveRenderClipJob ? <span role="status">有视频正在生成</span> : null}
+                </summary>
+                <ClipLibrary jobs={personalClips} playerName={selectedPlayer?.name ?? null} rounds={replay.rounds}
+                  canGenerate={renderClips} selectedJobId={replay.video.renderJobId ?? null} onPlay={playSavedClip} />
+              </details>
+            ) : null}
             <details className="review-inspector" onToggle={(event) => setInspectorOpen(event.currentTarget.open)}>
               <summary><span>高级工具</span><small>{devTools ? "视频校准、生成记录与技术详情" : renderClips ? "视频生成状态与比赛信息" : "比赛信息"}</small></summary>
               {inspectorOpen ? (

@@ -12,6 +12,9 @@ every parse and must stay cheap to start. The import chain
 holds to that.
 
 Usage: python -m app.workers.parse_child --source <demo path> --output <json path>
+
+With `--team-names-ticks 1,2,3` it only reads each player's clan name at those
+ticks (the match summary backfill) and writes {"ok": true, "teamNames": {...}}.
 """
 
 from __future__ import annotations
@@ -22,7 +25,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from app.parser.demo_parser import DemoParserError, parse_demo_file
+from app.parser.demo_parser import DemoParserError, parse_demo_file, parse_team_names_file
 
 # Distinct from any signal-derived code so the parent can tell "the parser
 # reported a problem" apart from "the process died".
@@ -75,10 +78,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--source", required=True)
     parser.add_argument("--output", required=True)
     parser.add_argument("--memory-limit-bytes", type=int, default=0)
+    parser.add_argument("--team-names-ticks", default=None)
     args = parser.parse_args(argv)
 
     apply_memory_limit(args.memory_limit_bytes)
     output_path = Path(args.output)
+
+    if args.team_names_ticks is not None:
+        return _team_names_only(Path(args.source), args.team_names_ticks, output_path)
 
     try:
         parsed = parse_demo_file(Path(args.source))
@@ -123,6 +130,18 @@ def main(argv: list[str] | None = None) -> int:
         return EXIT_PARSE_ERROR
 
     _write(output_path, {"ok": True, "parsed": parsed})
+    return 0
+
+
+def _team_names_only(source: Path, raw_ticks: str, output_path: Path) -> int:
+    try:
+        ticks = sorted({int(value) for value in raw_ticks.split(",") if value.strip()})
+        team_names = parse_team_names_file(source, ticks)
+    except Exception as exc:
+        # Names are optional: the parent just stores the summary without them.
+        _write(output_path, {"ok": False, "errorCode": type(exc).__name__})
+        return EXIT_PARSE_ERROR
+    _write(output_path, {"ok": True, "teamNames": team_names})
     return 0
 
 

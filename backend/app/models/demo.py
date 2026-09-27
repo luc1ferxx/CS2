@@ -1,6 +1,7 @@
 from datetime import UTC, datetime
+from typing import Any
 
-from sqlalchemy import Boolean, DateTime, Integer, String
+from sqlalchemy import JSON, Boolean, DateTime, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -34,6 +35,13 @@ class Demo(Base):
         onupdate=utc_now,
     )
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # {"teams": [{"key", "name", "startSide", "score"}], "rounds", "version"}; see
+    # services/demo_service/match_summary.py. none_as_null so an unset summary is
+    # SQL NULL, which is what the backfill looks for.
+    match_summary: Mapped[dict[str, Any] | None] = mapped_column(
+        JSON(none_as_null=True),
+        nullable=True,
+    )
 
     jobs = relationship("DemoJob", back_populates="demo", cascade="all, delete-orphan")
     coaching_events = relationship(

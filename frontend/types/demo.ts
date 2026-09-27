@@ -30,6 +30,24 @@ export interface DemoIngestionStatus {
   failure: ParseFailureMetadata | null;
 }
 
+/**
+ * Final score stored on a completed demo (`matchSummary`, version 1). Team "A"
+ * started T, team "B" started CT; `name` is the demo's clan name or null.
+ * Absent on old API builds and on demos the backfill has not reached yet.
+ */
+export interface MatchSummaryTeam {
+  key: "A" | "B";
+  name: string | null;
+  startSide: "T" | "CT";
+  score: number;
+}
+
+export interface MatchSummary {
+  teams: MatchSummaryTeam[];
+  rounds: number;
+  version: number;
+}
+
 export interface DemoSummary {
   id: string;
   name: string;
@@ -48,6 +66,7 @@ export interface DemoSummary {
   video_source: string | null;
   latest_render_status: string | null;
   ingestion: DemoIngestionStatus | null;
+  matchSummary?: MatchSummary | null;
 }
 
 export interface DemoStatus {
@@ -63,4 +82,5 @@ export interface DemoStatus {
   updated_at: string;
   completed_at: string | null;
   ingestion: DemoIngestionStatus | null;
+  matchSummary?: MatchSummary | null;
 }

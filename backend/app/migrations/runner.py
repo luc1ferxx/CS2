@@ -361,6 +361,20 @@ def _create_deletion_outbox_and_upload_ledger_v1(connection: Connection) -> None
         )
 
 
+def _add_demo_match_summary_v1(connection: Connection) -> None:
+    # demos is created by Base.metadata.create_all, which runs after these
+    # migrations. On a fresh database the table does not exist yet and create_all
+    # adds the column from the model; only an existing table needs the ALTER.
+    inspector = inspect(connection)
+    if "demos" not in set(inspector.get_table_names()):
+        return
+    demo_columns = {column["name"] for column in inspector.get_columns("demos")}
+    if "match_summary" in demo_columns:
+        # create_all ran against this table before the migration was tracked.
+        return
+    connection.execute(text("ALTER TABLE demos ADD COLUMN match_summary JSON"))
+
+
 MIGRATIONS = (
     SchemaMigration(
         version="2026071901",
@@ -400,6 +414,12 @@ MIGRATIONS = (
             "backfill-last-24h-demos"
         ),
         upgrade=_create_deletion_outbox_and_upload_ledger_v1,
+    ),
+    SchemaMigration(
+        version="2026092701",
+        name="add_demo_match_summary",
+        checksum=_checksum("demo-match-summary-v1:nullable-json-column,no-backfill-in-migration"),
+        upgrade=_add_demo_match_summary_v1,
     ),
 )
 

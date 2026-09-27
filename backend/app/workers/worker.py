@@ -34,6 +34,7 @@ from app.services.demo_service import (
 from app.services.diagnostics import write_worker_heartbeat
 from app.services.mock_replay_service import build_mock_replay
 from app.services.storage import ArtifactStoreError, StorageKeyError
+from app.workers.match_summary_backfill import backfill_match_summaries
 from app.workers.parse_child import EXIT_PARSE_ERROR
 from app.workers.queue import ParseQueue, new_consumer_id
 
@@ -325,7 +326,14 @@ def process_real_parse_job(
         _fail_classified_parse_job(service, demo, job, exc, phase="normalization")
         return
 
-    service.complete_parse_job(demo, job, replay, events)
+    team_names = parsed.get("teamNames")
+    service.complete_parse_job(
+        demo,
+        job,
+        replay,
+        events,
+        team_names=team_names if isinstance(team_names, dict) else None,
+    )
 
 
 def process_mock_render_job(db: Session, demo: Demo, job: DemoJob) -> None:
@@ -652,6 +660,12 @@ def run_worker() -> None:
                 # hourly quarantine cleanup + upload ledger prune.
                 _run_backstop("deletion-drain", drain_deletion_outbox)
                 _run_backstop("storage-maintenance", run_hourly_storage_maintenance)
+                # Demos completed before match summaries existed (every 30 s,
+                # a few demos per pass; see match_summary_backfill).
+                _run_backstop(
+                    "match-summary-backfill",
+                    lambda: backfill_match_summaries(on_tick=tick),
+                )
                 continue
 
             try:

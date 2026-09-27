@@ -2,7 +2,7 @@
 
 import logging
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from contextlib import AbstractContextManager, nullcontext
 from datetime import datetime, timedelta
 from typing import Any
@@ -38,6 +38,7 @@ from app.services.demo_service.constants import (
 )
 from app.services.demo_service.errors import DemoDispatchError, DemoGoneError
 from app.services.demo_service.gone import row_identity, rows_missing
+from app.services.demo_service.match_summary import build_match_summary
 from app.services.demo_service.steam_match import SteamMatchParseState
 from app.services.storage import ArtifactStoreError
 
@@ -295,8 +296,12 @@ class ParseLifecycle(ServiceComponent):
         events: list[dict[str, Any]],
         *,
         name: str | None = None,
+        team_names: Mapping[str, Any] | None = None,
     ) -> bool:
         """Store the parse result; False when the demo was deleted meanwhile.
+
+        `team_names` (player id -> clan name, from the parser) only feeds the
+        match summary stored next to the replay.
 
         A deletion anywhere up to the commit must not resurrect anything: the
         rows roll back and the replay blob staged for them is removed. Should
@@ -320,6 +325,7 @@ class ParseLifecycle(ServiceComponent):
             demo.round_count = len(replay["rounds"])
             demo.coaching_event_count = len(events)
             demo.replay_storage_key = replay_storage_key
+            demo.match_summary = _match_summary_or_none(replay, team_names)
             demo.completed_at = utc_now()
             demo.error_message = None
 
@@ -670,6 +676,18 @@ class ParseLifecycle(ServiceComponent):
             # so the next pass tries again rather than the worker dying here.
             logger.warning("Could not redispatch parse job %s", job.id)
         return client
+
+
+def _match_summary_or_none(
+    replay: dict[str, Any],
+    team_names: Mapping[str, Any] | None,
+) -> dict[str, Any] | None:
+    # The summary is a library nicety; it must never cost the parse itself.
+    try:
+        return build_match_summary(replay, team_names)
+    except Exception:
+        logger.warning("match summary could not be computed", exc_info=True)
+        return None
 
 
 def _log_deleted_during_parse(demo_id: str | None, job_id: str | None) -> None:

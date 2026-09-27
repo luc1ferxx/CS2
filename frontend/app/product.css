@@ -889,3 +889,214 @@
 .privacy-section-body code { font-family: var(--font-mono); font-size: 12px; overflow-wrap: anywhere; }
 .privacy-updated { margin: 0; padding: 8px 12px; border-top: 1px solid var(--line-bold); color: var(--ink-2); font-size: var(--step-sm); }
 .auth-note-link { margin-left: 6px; }
+
+/* === S9 UI-A: score banner, round-end icons, 计分板, first-person explanation, library score (spec S9 A) ===
+   The banner is the one navy surface below the top bar: the final score large (the subject's own
+   vernacular), half scores in the colour of the side each team played. Everything else is S8 panels,
+   header bars and zebra tables. */
+/* Score banner: replaces the match bar once the replay is loaded; the reviewed player sits under it. */
+.review-app .review-header.has-banner { display: block; }
+.review-app .review-header.has-banner > .personal-review-panel { border-top: 1px solid var(--line-bold); border-radius: 0 0 2px 2px; }
+/* Side colours lifted for the navy band (T 7.5:1, CT 6.3:1 on --topbar). */
+.match-banner { --banner-t: #e8b04f; --banner-ct: #8fbbe8; --banner-rule: #3a4b5d; padding: 14px 16px 10px; border-radius: 2px 2px 0 0; background: var(--topbar); color: var(--topbar-text); }
+.review-header.has-banner:not(:has(> .personal-review-panel)) > .match-banner { border-radius: 2px; }
+/* A scoreline: each team's name and halves lean in towards the score. */
+.match-banner-board { display: grid; grid-template-columns: minmax(0, 1fr) auto auto auto minmax(0, 1fr); align-items: center; column-gap: 20px; }
+.match-banner-team { display: grid; gap: 5px; min-width: 0; }
+.match-banner-team.team-a { justify-items: end; text-align: right; }
+.match-banner-name-line { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; min-width: 0; }
+.match-banner-team.team-a .match-banner-name-line { flex-direction: row-reverse; }
+.match-banner-name { min-width: 0; color: var(--topbar-text); font-size: 22px; font-weight: 700; line-height: 1.2; overflow-wrap: anywhere; }
+.match-banner-mine { color: var(--topbar-muted); font-size: var(--step-sm); }
+.match-banner-halves { display: flex; flex-wrap: wrap; gap: 2px 16px; color: var(--topbar-muted); font-size: var(--step-sm); font-variant-numeric: tabular-nums; }
+.match-banner-team.team-a .match-banner-halves { justify-content: flex-end; }
+.match-banner-half-label { margin-right: 6px; }
+.match-banner-half-score { color: var(--topbar-text); font-weight: 700; }
+.match-banner-half-score.side-t { color: var(--banner-t); }
+.match-banner-half-score.side-ct { color: var(--banner-ct); }
+.match-banner-score { color: var(--topbar-muted); font-size: 44px; font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; }
+.match-banner-score.leading { color: var(--topbar-text); }
+.match-banner-colon { color: var(--topbar-muted); font-size: 30px; line-height: 1; }
+.match-banner-meta { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 16px; margin-top: 12px; padding-top: 8px; border-top: 1px solid var(--banner-rule); font-size: var(--step-sm); font-variant-numeric: tabular-nums; }
+.match-banner-meta:first-child { margin-top: 0; padding-top: 0; border-top: 0; }
+.match-banner-title { min-width: 0; margin: 0 4px 0 0; color: var(--topbar-text); font-size: var(--step-md); font-weight: 700; line-height: var(--leading-tight); overflow-wrap: anywhere; }
+.match-banner .fact { color: var(--topbar-text); }
+.match-banner .fact-label, .match-banner .status-badge { color: var(--topbar-muted); }
+
+/* 回合记录: how each round ended, as a small white icon inside its side-coloured square; the legend
+   names the icons in words (on phones it wraps under the track instead of scrolling). */
+.review-app .round-strip-fill { display: grid; place-items: center; color: #ffffff; }
+/* White on the gold T fill is 2.5:1; the dark icon reads at 6.5:1 (white on CT blue is 3.8:1). */
+.review-app .round-strip-cell.winner-t .round-strip-fill { color: var(--ink); }
+.review-app .round-strip-reason { display: block; }
+.review-app .round-strip-legend-reason { flex: none; color: var(--ink-2); }
+
+/* 计分板: one panel, a section per team under a bar tinted by its starting side; the damage bar is
+   drawn in that side's colour. Phones scroll the table inside the panel with the player column fixed. */
+.review-app .scoreboard { margin-top: 12px; }
+.scoreboard-team-bar { gap: 4px 12px; justify-content: flex-start; border-radius: 0; }
+.scoreboard-team + .scoreboard-team > .scoreboard-team-bar { border-top: 1px solid var(--line-bold); }
+.scoreboard-team-score { margin-left: auto; font-size: var(--step-lg); font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; }
+.scoreboard-team.start-t .scoreboard-team-score { color: var(--t-text); }
+.scoreboard-team.start-ct .scoreboard-team-score { color: var(--ct-text); }
+.scoreboard-scroll { overflow-x: auto; overscroll-behavior-inline: contain; scrollbar-width: thin; }
+.scoreboard-table { min-width: 660px; }
+.scoreboard-table tbody th[scope="row"] { position: sticky; left: 0; z-index: 1; height: 34px; padding: 4px 10px; border-bottom: 1px solid var(--line-subtle); background: var(--panel); color: var(--ink); font-size: var(--step-body); white-space: nowrap; }
+.scoreboard-table thead th:first-child { position: sticky; left: 0; z-index: 1; width: 29%; }
+/* Even columns: the numbers sit under their heads instead of drifting to the right edge. */
+.scoreboard-table thead th:not(:first-child) { width: 8%; }
+/* Just the figure and its bar; the spare width goes to the player column. */
+.scoreboard-table thead th.scoreboard-adr-head { width: 13%; }
+.scoreboard-table tbody tr:nth-child(even) > th { background: var(--row-alt); }
+.scoreboard-table tbody tr:hover > th { background: var(--row-hover); }
+.scoreboard-table tbody tr.selected > th { background: var(--row-selected); }
+.scoreboard-table tbody tr:last-child > th { border-bottom: 0; }
+.scoreboard-player-name { font-weight: 700; }
+.scoreboard-reviewing { margin-left: 8px; color: var(--link-hover); font-size: var(--step-sm); font-weight: 400; }
+.scoreboard-diff.plus { color: var(--ok-text); }
+.scoreboard-diff.minus { color: var(--danger-text); }
+.scoreboard-adr { white-space: nowrap; }
+.scoreboard-adr > .num { display: inline-block; min-width: 3.4em; }
+.scoreboard-adr-bar { display: inline-block; width: 72px; height: 6px; margin-right: 8px; background: var(--line-subtle); vertical-align: middle; }
+/* Gold on white is 2.5:1, so T bars get a 1 px edge in the darker T text colour (5.2:1). */
+.scoreboard-adr-bar > i { display: block; box-sizing: border-box; height: 100%; border: 1px solid var(--t-text); background: var(--t); }
+.scoreboard-team.start-ct .scoreboard-adr-bar > i { border: 0; }
+.scoreboard-team.start-ct .scoreboard-adr-bar > i { background: var(--ct); }
+
+/* 第一人称 with no clip for this moment: a white panel in the stage that says why and what to do. */
+.review-app .review-main-canvas.showing-explainer { background: var(--panel); }
+.first-person-explainer { display: grid; align-content: center; height: 100%; min-height: 260px; padding: 24px 28px; background: var(--panel); }
+.first-person-explainer-body { display: grid; justify-items: start; gap: 10px; max-width: 60ch; }
+.first-person-explainer-body p { margin: 0; font-size: var(--step-md); }
+.first-person-explainer-title { margin: 0; font-size: var(--step-lg); }
+.first-person-explainer-body .first-person-explainer-hint { color: var(--ink-2); font-size: var(--step-sm); }
+.first-person-explainer-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 18px; margin-top: 4px; }
+
+/* 我的比赛: the final score after the map, the colon lined up down the column; the higher score bold. */
+.lib-row { grid-template-columns: 26px minmax(0, 440px) 90px 64px 48px 64px 104px minmax(140px, 1fr) 118px; }
+.lib-row .c-score { text-align: right; }
+.lib-score { display: inline-grid; grid-template-columns: 2.2ch auto 2.2ch; column-gap: 3px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.lib-score > :first-child { text-align: right; }
+.lib-score > :last-child { text-align: left; }
+.lib-score > b { font-weight: 700; }
+.lib-score > span:not(:first-child, :last-child) { color: var(--ink-2); }
+@media (max-width: 1100px) {
+  .lib-row { grid-template-columns: 26px minmax(0, 1fr) 76px 58px 40px 60px 96px minmax(120px, 160px) 104px; }
+}
+@media (max-width: 760px) {
+  .lib-row > .c-score { order: 1; flex: none; text-align: left; }
+  .lib-row > .c-score.is-missing { display: none; }
+  .lib-score { display: inline; }
+  .lib-score > span:not(:first-child, :last-child) { color: inherit; }
+}
+@media (max-width: 700px) {
+  .match-banner { padding: 10px 12px 8px; }
+  .match-banner-board { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "a sa" "b sb"; row-gap: 10px; }
+  .match-banner-team.team-a { grid-area: a; justify-items: start; text-align: left; }
+  .match-banner-team.team-a .match-banner-name-line { flex-direction: row; }
+  .match-banner-team.team-a .match-banner-halves { justify-content: flex-start; }
+  .match-banner-score.score-a { grid-area: sa; }
+  .match-banner-score.score-b { grid-area: sb; }
+  .match-banner-team.team-b { grid-area: b; }
+  .match-banner-colon { display: none; }
+  .match-banner-name { font-size: 17px; }
+  .match-banner-score { font-size: 30px; }
+  .review-app .round-strip-legend-below { flex-wrap: wrap; row-gap: 2px; white-space: normal; }
+  .scoreboard-table { min-width: 620px; }
+  .scoreboard-table thead th:first-child { width: 128px; }
+  .first-person-explainer { padding: 16px; }
+}
+
+/* === S9 UI-B: 数据 section (spec S9 B) ===
+   One panel under the workspace: four cells in a 2×2 grid (stacked under 900 px), each with a light
+   grey sub-bar like the privacy sections. Charts are plain SVG/HTML on S8 tokens; the death map keeps
+   the dark radar canvas because the radar art is dark. Nothing animates. */
+.review-app .match-analysis { margin-top: 12px; }
+.match-analysis-empty { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; margin: 0; padding: 10px 12px; color: var(--ink-2); }
+.match-analysis-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.match-analysis-cell { min-width: 0; border-bottom: 1px solid var(--line-bold); }
+.match-analysis-cell:nth-child(odd) { border-right: 1px solid var(--line-bold); }
+.match-analysis-cell:nth-last-child(-n + 2) { border-bottom: 0; }
+.match-analysis-cell-bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 4px 12px; min-height: 30px; padding: 3px 12px; border-bottom: 1px solid var(--line-subtle); background: var(--row-alt); }
+.match-analysis-cell-bar h3 { margin: 0; font-size: var(--step-md); }
+.match-analysis-cell-meta { color: var(--ink-2); font-size: var(--step-sm); font-variant-numeric: tabular-nums; }
+.match-analysis-caption { margin: 0; padding: 8px 12px 0; color: var(--ink-2); font-size: var(--step-sm); font-variant-numeric: tabular-nums; }
+
+/* 阵亡位置: the radar with one red dot per death (each a button) over translucent discs that darken
+   where deaths repeat; the facts sit beside it, or under it when the cell is narrow. */
+.death-map { container-type: inline-size; }
+.death-map-body { display: grid; grid-template-columns: minmax(0, 340px) minmax(0, 1fr); align-items: start; gap: 12px 16px; padding: 10px 12px 12px; }
+.death-map-canvas { position: relative; aspect-ratio: 1 / 1; overflow: hidden; border-radius: var(--radius-control); background: var(--radar-bg); }
+.death-map-canvas > svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+.death-map-grid-line { stroke: var(--radar-line); }
+.death-map-halo { fill: var(--danger); opacity: 0.22; }
+.death-map-dot { position: absolute; width: 20px; height: 20px; margin: -10px 0 0 -10px; padding: 0; border: 0; border-radius: 50%; background: none; cursor: pointer; }
+.death-map-dot::after { content: ""; position: absolute; inset: 5px; border: 1.5px solid var(--radar-text); border-radius: 50%; background: var(--danger); }
+.death-map-dot:hover::after,
+.death-map-dot:focus-visible::after { inset: 3px; }
+.death-map-dot:focus-visible { outline: 2px solid var(--radar-text); outline-offset: 0; }
+.death-map-uncalibrated { position: absolute; left: 8px; bottom: 6px; color: var(--radar-text-2); font-size: var(--step-xs); }
+.death-map-notes { display: grid; align-content: start; gap: 8px; min-width: 0; }
+.death-map-facts { margin: 0; }
+.death-map-facts > div { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding: 5px 0; border-bottom: 1px solid var(--line-subtle); }
+.death-map-facts dt { color: var(--ink-2); font-size: var(--step-sm); }
+.death-map-facts dd { min-width: 0; margin: 0; font-variant-numeric: tabular-nums; text-align: right; overflow-wrap: anywhere; }
+.death-map-cluster,
+.death-map-empty { margin: 0; font-variant-numeric: tabular-nums; }
+.death-map-note { margin: 0; color: var(--ink-2); font-size: var(--step-sm); }
+.death-map-floors { display: flex; gap: 4px; }
+.death-map-floor { min-height: 22px; padding: 0 8px; border: 1px solid var(--control-line); border-radius: var(--radius-control); background: var(--panel); color: var(--ink-2); font-size: var(--step-sm); font-variant-numeric: tabular-nums; cursor: pointer; }
+.death-map-floor:hover { color: var(--ink); }
+.death-map-floor[aria-pressed="true"] { border-color: var(--ink-2); background: var(--row-selected); color: var(--ink); font-weight: 700; }
+@container (max-width: 520px) {
+  .death-map-body { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* 每回合击杀: bars in the side the player was on that round, a gap at each switch of sides,
+   a red mark under the rounds the player died in. Every bar is a button. */
+.kills-chart-legend { display: flex; flex-wrap: wrap; gap: 2px 12px; color: var(--ink-2); font-size: var(--step-sm); }
+.kills-chart-legend > span { display: inline-flex; align-items: center; gap: 4px; }
+.kills-chart-legend .swatch { display: inline-block; width: 10px; height: 10px; }
+.kills-chart-legend .swatch.side-t { box-sizing: border-box; border: 1px solid var(--t-text); background: var(--t); }
+.kills-chart-legend .swatch.side-ct { background: var(--ct); }
+.kills-chart-legend .swatch.died { height: 3px; background: var(--danger); }
+.kills-chart-frame { min-width: 0; margin: 6px 12px 10px; overflow: hidden; }
+.kills-chart-frame > svg { display: block; overflow: visible; }
+.kills-chart-grid { stroke: var(--line-subtle); stroke-width: 1; }
+.kills-chart-axis { stroke: var(--line-bold); stroke-width: 1; }
+.kills-chart-tick,
+.kills-chart-round { fill: var(--ink-2); font-family: var(--font-body); font-size: 11px; font-variant-numeric: tabular-nums; }
+.kills-chart-bar { cursor: pointer; outline: none; }
+.kills-chart-hit { fill: transparent; }
+.kills-chart-bar:hover .kills-chart-hit { fill: var(--row-hover); }
+.kills-chart-bar:focus-visible .kills-chart-hit { fill: var(--row-hover); stroke: var(--focus-ring); stroke-width: 2; }
+/* The gold T fill is 2.5:1 on white; its 1 px edge in the T text colour carries the shape. */
+.kills-chart-fill.side-t { fill: var(--t); stroke: var(--t-text); stroke-width: 1; }
+.kills-chart-fill.side-ct { fill: var(--ct); }
+.kills-chart-fill.side-unknown { fill: var(--ink-3); }
+.kills-chart-death { fill: var(--danger); }
+
+/* 开局对枪: the two counts, then one compact zebra row per duel. */
+.opening-duels-score { display: flex; flex-wrap: wrap; gap: 4px 24px; margin: 0; padding: 8px 12px; }
+.opening-duel-list { border-top: 1px solid var(--line-subtle); }
+.opening-duel-list > li { display: grid; grid-template-columns: 84px 20px minmax(0, 1fr) auto; align-items: center; gap: 8px; min-height: 30px; padding: 0 12px; }
+.opening-duel-opponent { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.opening-duel-time { color: var(--ink-2); }
+
+/* 道具: counts and per-round averages with neutral inline bars. */
+.utility-table { table-layout: fixed; }
+.utility-table thead th:first-child { width: 26%; }
+.utility-table thead th:nth-child(2),
+.utility-table thead th:nth-child(3) { width: 20%; }
+.utility-table :is(tbody, tfoot) th { height: 30px; padding: 4px 10px; border-bottom: 1px solid var(--line-subtle); background: transparent; color: var(--ink); font-size: var(--step-body); font-weight: 400; }
+.utility-table td { height: 30px; font-variant-numeric: tabular-nums; }
+.utility-table tfoot :is(th, td) { border-top: 1px solid var(--line-bold); border-bottom: 0; font-weight: 700; }
+/* Collapsed borders: the last body row's subtle line would win over the 合计 rule under 道具. */
+.utility-table tbody tr:last-child > th { border-bottom: 0; }
+.utility-bar { display: block; height: 8px; background: var(--ink-3); }
+
+@media (max-width: 900px) {
+  .match-analysis-grid { grid-template-columns: minmax(0, 1fr); }
+  .match-analysis-cell:nth-child(odd) { border-right: 0; }
+  .match-analysis-cell:nth-last-child(2) { border-bottom: 1px solid var(--line-bold); }
+}

@@ -128,6 +128,32 @@ describe("DashboardPage", () => {
     expect(within(rowFor("Ranked Mirage")).getByTitle("所有玩家合计；进入比赛后只显示你的玩家的建议")).toBeEmptyDOMElement();
   });
 
+  it("shows the stored final score after the map, the higher score bold, and a dash without one", async () => {
+    vi.mocked(api.listDemos).mockResolvedValue([
+      demoSummary({
+        matchSummary: {
+          teams: [
+            { key: "B", name: "Spirit", startSide: "CT", score: 11 },
+            { key: "A", name: "MOUZ", startSide: "T", score: 13 }
+          ],
+          rounds: 24,
+          version: 1
+        }
+      }),
+      parsingDemo()
+    ]);
+
+    render(<DashboardPage />);
+    await screen.findByText("（2 场）");
+
+    const score = rowFor("Mock Match demo-1").querySelector(".c-score");
+    // Team A (started T) first, whatever order the summary lists the teams in.
+    expect(score).toHaveTextContent(/^比分\s*13:11$/);
+    expect(score).toHaveAttribute("title", "MOUZ 13 : 11 Spirit");
+    expect(score?.querySelector("b")).toHaveTextContent("13");
+    expect(rowFor("Ranked Mirage").querySelector(".c-score")).toHaveTextContent(/^比分\s*—$/);
+  });
+
   it("creates a mock demo from the empty library and shows it", async () => {
     const user = userEvent.setup();
     const created = demoSummary({
@@ -773,7 +799,7 @@ describe("DashboardPage", () => {
     render(<DashboardPage />);
     await screen.findByText("（2 场）");
 
-    expect(within(rowFor("Ranked Mirage")).getByText("—")).toBeInTheDocument();
+    expect(rowFor("Ranked Mirage").querySelector(".c-rounds")).toHaveTextContent("—");
     expect(screen.getByText("1 场处理失败")).toBeInTheDocument();
     expect(screen.queryByText(/需要处理/)).not.toBeInTheDocument();
   });

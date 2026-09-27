@@ -32,11 +32,11 @@ Production 的上传额度（`DEMO_UPLOAD_DAILY_LIMIT`、`DEMO_ACTIVE_PARSE_LIMI
 - `POST /steam/sync`
 - `GET /steam/matches`
 - `POST /steam/matches/{match_id}/import`
-- `GET /demos`
+- `GET /demos`（每项带可选 `matchSummary`，见下方“比分摘要”）
 - `PATCH /demos/{demo_id}`
 - `POST /demos/{demo_id}/archive`
 - `DELETE /demos/{demo_id}`（永久删除比赛及其任务、建议、评价和存储文件，不可撤销：`204`；别人的或不存在的 id、重复删除 → `404`；Steam 导入的比赛只解除关联。见 `docs/data_deletion_v1.md`）
-- `GET /demos/{demo_id}/status`
+- `GET /demos/{demo_id}/status`（同样带可选 `matchSummary`）
 - `GET /demos/{demo_id}/diagnostics`
 - `POST /demos/{demo_id}/parse/retry`（production 受全站/个人处理中额度限制：`503` `parse_queue_full`、`429` `active_parse_limit`）
 - `GET /uploads/quota`（当前 owner 的上传额度，每日已用次数来自上传账本，删除比赛不退还：`{dailyLimit, dailyUsed, dailyResetSeconds, activeLimit, activeCount, maxUploadBytes}`；development/test 下各 limit 为 `null`；`Cache-Control: private, no-store`；仅供提示，上传时仍以 `POST /uploads/demo` 的检查为准，不报告全站 `PARSE_QUEUE_GLOBAL_LIMIT`）
@@ -219,6 +219,23 @@ Demo list/detail responses 包含：
 ```
 
 解析失败会保留 compact failure metadata，含 `errorCode`、`message`、`failedAt`、`updatedAt`、`retryable`、`attemptCount`。前端按 `errorCode` 显示中文原因（`frontend/lib/demo-library.ts` 的 `parseFailureCopy`），`message` 只留作技术信息。
+
+### 比分摘要（matchSummary）
+
+Demo list items 和 `GET /demos/{demo_id}/status` 带可选的 `matchSummary`（旧数据、未完成或无法判定双方的比赛为 `null`）：
+
+```json
+{
+  "teams": [
+    {"key": "A", "name": "MOUZ", "startSide": "T", "score": 13},
+    {"key": "B", "name": "Spirit", "startSide": "CT", "score": 11}
+  ],
+  "rounds": 24,
+  "version": 1
+}
+```
+
+队伍 = 首个有玩家帧的回合里同一阵营的玩家；A 队开局 T，B 队开局 CT。每回合各队的阵营取自该回合 `startTick`–`endTick` 之间的玩家帧（中场休息时回合仍带着已换边的帧，这些不算；没有帧时用该回合的击杀记录，仍无法判定就沿用最近一个已判定回合的阵营），不按回合号推断，所以半场和加时换边都算对；比分 = 该队所在阵营获胜的回合数。`name` 是 demo 里的战队名（`team_clan_name`，匹配赛通常没有 → `null`）。解析完成时写入 `demos.match_summary`；此前已完成的比赛由 worker 空闲时回填（每 30 秒最多 3 场：比分读已存 replay，战队名在 parse 子进程里只读源 `.dem` 的几个 tick；读不到名字就只存比分；从不改 replay）。计算在 `backend/app/services/demo_service/match_summary.py`，与前端 `frontend/lib/match-stats.ts` 的定义保持一致。
 
 ### Parser failure taxonomy
 

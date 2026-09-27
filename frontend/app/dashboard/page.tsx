@@ -743,6 +743,7 @@ function DashboardContent() {
                 <span className="c-thumb" />
                 <span className="c-name">比赛</span>
                 <span className="c-map">地图</span>
+                <span className="c-score">比分</span>
                 <span className="c-num c-rounds">回合</span>
                 <span className="c-num c-signals">全场建议</span>
                 <span className="c-date">上传时间</span>
@@ -960,6 +961,7 @@ function LibraryRow({
         )}
       </div>
       <div className="c-map">{mapDisplayName(demo.map_name)}</div>
+      <LibraryScore demo={demo} />
       <div className="c-num c-rounds num">
         <span className="lib-cell-label">回合</span>
         {completed ? demo.round_count : "—"}
@@ -1292,6 +1294,28 @@ function LibraryEmptyStateRow({
       </div>
     </div>
   );
+}
+
+// The stored final score, team A (started T) first; "—" until the summary exists.
+function LibraryScore({ demo }: { demo: DemoSummary }) {
+  const teams = demo.matchSummary?.teams ?? [];
+  const teamA = teams.find((team) => team.key === "A");
+  const teamB = teams.find((team) => team.key === "B");
+  if (!teamA || !teamB) {
+    return <div className="c-score is-missing"><span className="lib-cell-label">比分</span>—</div>;
+  }
+  return (
+    <div className="c-score" title={teamA.name && teamB.name ? `${teamA.name} ${teamA.score} : ${teamB.score} ${teamB.name}` : undefined}>
+      <span className="lib-cell-label">比分</span>
+      <span className="lib-score">
+        {scorePart(teamA.score, teamB.score)}<span>:</span>{scorePart(teamB.score, teamA.score)}
+      </span>
+    </div>
+  );
+}
+
+function scorePart(value: number, other: number) {
+  return value > other ? <b>{value}</b> : <span>{value}</span>;
 }
 
 function IngestionMeta({ demo, now }: { demo: DemoSummary; now: number }) {
