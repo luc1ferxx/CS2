@@ -1,6 +1,5 @@
 "use client";
 
-import { AlertTriangle, CheckCircle2, Clock3, RefreshCw, Wrench } from "lucide-react";
 import { memo } from "react";
 
 import type { RenderJobStatus, RenderWorkerStatus } from "@/lib/api";
@@ -48,38 +47,22 @@ export const RenderOperatorPanel = memo(function RenderOperatorPanel({
 
   return (
     <section className="panel render-operator-panel" aria-label="视频生成状态">
-      <div className="render-operator-header">
-        <div>
-          <h2>视频生成状态</h2>
-          <span>{jobCount > 0 ? `共 ${jobCount} 个视频片段任务` : "还没有视频片段任务"}</span>
-        </div>
+      <div className="panel-bar render-operator-header">
+        <h2 className="panel-bar-title">视频生成状态</h2>
+        <span className="panel-bar-meta">{jobCount > 0 ? `共 ${jobCount} 个视频片段任务` : "还没有视频片段任务"}</span>
         <button
           className="secondary-button compact-button"
           type="button"
           disabled={refreshing}
           onClick={onRefresh}
         >
-          <RefreshCw size={14} aria-hidden="true" />
           {refreshing ? "刷新中" : "刷新"}
         </button>
       </div>
 
       <div className="operator-state-row">
-        <span className={`operator-state-icon ${state.tone}`} aria-hidden="true">
-          {state.tone === "ready" ? (
-            <CheckCircle2 size={16} />
-          ) : state.tone === "failed" ? (
-            <AlertTriangle size={16} />
-          ) : state.tone === "waiting" ? (
-            <Clock3 size={16} />
-          ) : (
-            <Wrench size={16} />
-          )}
-        </span>
-        <div>
-          <strong>{state.label}</strong>
-          <p>{devTools && state.operatorAction ? state.operatorAction : state.nextAction}</p>
-        </div>
+        <strong className={`operator-state-label ${state.tone}`}>{state.label}</strong>
+        <p>{devTools && state.operatorAction ? state.operatorAction : state.nextAction}</p>
       </div>
 
       <dl className="operator-metadata-grid">
@@ -99,7 +82,7 @@ export const RenderOperatorPanel = memo(function RenderOperatorPanel({
           <>
             <div>
               <dt>任务</dt>
-              <dd>{latestJob ? `${latestJob.job_type} / ${latestJob.status} · ${latestJob.job_id.slice(0, 8)}` : "无"}</dd>
+              <dd>{latestJob ? `${latestJob.job_type} / ${latestJob.status}（${latestJob.job_id.slice(0, 8)}）` : "无"}</dd>
             </div>
             <div>
               <dt>Tick 范围</dt>

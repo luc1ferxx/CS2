@@ -1,6 +1,5 @@
 "use client";
 
-import { Play } from "lucide-react";
 import { memo } from "react";
 
 import type { RenderJobStatus } from "@/lib/api";
@@ -44,27 +43,25 @@ export const ClipLibrary = memo(function ClipLibrary({ jobs, playerName, rounds,
 
     return (
       <li key={job.job_id} className={`clip-library-item ${selected ? "selected" : ""}`}>
-        <div className="clip-library-coordinate">
-          <strong>{roundNumber ? `第 ${roundNumber} 回合` : "回合未知"}{offset !== null ? ` ${formatRoundTime(offset)}` : ""}</strong>
-          <span>{duration !== null ? `${Math.round(duration)} 秒视频` : "视频时长未知"}</span>
-          {job.error_message || job.error_code ? <small>{renderFailureMessage(job.error_code)}</small> : null}
-        </div>
-        <span className={`mini-pill clip-job-pill ${job.status}`} role="status">{label}</span>
+        <strong className="clip-library-place">{place}</strong>
+        <span className="clip-library-duration">{duration !== null ? `${Math.round(duration)} 秒视频` : "视频时长未知"}</span>
+        <span className={`status-text clip-job-status ${video ? "ok" : job.status === "failed" ? "failed" : "progress"}`} role="status">{label}</span>
         {video ? (
-          <button className="secondary-button compact-button" type="button" onClick={() => onPlay(job)}
+          <button className="text-button clip-library-play" type="button" onClick={() => onPlay(job)}
             aria-pressed={selected} aria-label={`${action}：${playerName ?? "玩家"} · ${place}`}>
-            <Play size={14} aria-hidden="true" />{action}
+            {action}
           </button>
         ) : null}
+        {job.error_message || job.error_code ? <small className="clip-library-error">{renderFailureMessage(job.error_code)}</small> : null}
       </li>
     );
   }
 
   return (
     <section className="panel clip-library" aria-label="已保存的第一人称视频">
-      <div className="clip-library-heading">
-        <h2>{playerName ? `${playerName} 的视频` : "第一人称视频"}</h2>
-        <span>{readyCount} 段可观看</span>
+      <div className="panel-bar clip-library-heading">
+        <h2 className="panel-bar-title">{playerName ? `${playerName} 的视频` : "第一人称视频"}</h2>
+        <span className="panel-bar-meta">{readyCount} 段可观看</span>
       </div>
       {jobs.length === 0 ? (
         <p className="clip-library-empty">
@@ -73,11 +70,11 @@ export const ClipLibrary = memo(function ClipLibrary({ jobs, playerName, rounds,
         </p>
       ) : (
         <>
-          {currentJobs.length > 0 ? <ul className="clip-library-list">{currentJobs.map(renderClip)}</ul> : null}
+          {currentJobs.length > 0 ? <ul className="data-rows clip-library-list">{currentJobs.map(renderClip)}</ul> : null}
           {historyJobs.length > 0 ? (
             <details className="clip-library-history">
               <summary>未完成与不可用的视频（{historyJobs.length}）</summary>
-              <ul className="clip-library-list">{historyJobs.map(renderClip)}</ul>
+              <ul className="data-rows clip-library-list">{historyJobs.map(renderClip)}</ul>
             </details>
           ) : null}
         </>

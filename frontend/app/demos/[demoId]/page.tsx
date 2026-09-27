@@ -2,7 +2,7 @@
 
 import dynamic from "next/dynamic";
 import Link from "next/link";
-import { ArrowLeft, Film, Map as MapIcon, Undo2, Video, X } from "lucide-react";
+import { X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 
@@ -226,7 +226,7 @@ function DemoDetailContent() {
   useEffect(() => {
     if (!documentTitleName) return;
     const previous = document.title;
-    const title = `${documentTitleName} · 复盘 · CS2 Demo Coach`;
+    const title = `${documentTitleName} - CS2 复盘`;
     document.title = title;
     return () => {
       if (document.title === title) document.title = previous;
@@ -1033,24 +1033,27 @@ function DemoDetailContent() {
 
       <section className="page">
         <p className="visually-hidden" aria-live="polite">{progressAnnouncement(sawProcessing, Boolean(replay), loadState)}</p>
-        <header className="review-header">
-          <div className="detail-top">
-            <Link className="ghost-button detail-back" href="/dashboard">
-              <ArrowLeft size={16} aria-hidden="true" />
-              我的比赛
-            </Link>
+        <nav className="review-breadcrumb" aria-label="当前位置">
+          <Link href="/dashboard">我的比赛</Link>
+          <span aria-hidden="true">›</span>
+          <span aria-current="page">{pageTitle}</span>
+        </nav>
+        {/* A missing or unreachable match has nothing to head: its state card carries the title. */}
+        {loadState?.kind === "not_found" || loadState?.kind === "unreachable" ? null : (
+        <header className="panel review-header">
+          <div className="panel-bar review-header-bar">
             <div className="detail-title">
-              <h1>{pageTitle}</h1>
-              {statusFailure === "not_found" || (!status && statusFailure) ? null : <div className="detail-meta">
-                {knownStatus ? <span className="detail-map">{mapDisplayName(knownStatus.map_name)}</span> : null}
-                <span>{status?.status === "completed" ? status.round_count : "—"} 回合</span>
-                {replay && selectedPlayer ? <span>{personalEvents.length} 条建议</span>
+              <h1 className="panel-bar-title">{pageTitle}</h1>
+              {statusFailure === "not_found" || (!status && statusFailure) ? null : <div className="detail-meta facts">
+                {knownStatus ? <span className="fact"><span className="fact-label">地图</span><span className="detail-map">{mapDisplayName(knownStatus.map_name)}</span></span> : null}
+                <span className="fact">{status?.status === "completed" ? status.round_count : "—"} 回合</span>
+                {replay && selectedPlayer ? <span className="fact">{personalEvents.length} 条建议</span>
                   : status?.status === "completed" ? (
-                    <span title="所有玩家合计；选择你的玩家后只显示你的建议">
-                      全场 {status.coaching_event_count} 条复盘线索{replay ? "，选择你的玩家后查看建议" : ""}
+                    <span className="fact" title="所有玩家合计；选择你的玩家后只显示你的建议">
+                      <span className="fact-label">全场建议</span>{status.coaching_event_count}
                     </span>
                   ) : null}
-                {status?.archived ? <span>已归档</span> : null}
+                {status?.archived ? <span className="fact">已归档</span> : null}
                 {/* "可以复盘" says nothing the workspace does not; it stays for screen readers only. */}
                 {knownStatus ? (
                   <span className={`status-badge ${knownStatus.status}${statusBadgeLabel(knownStatus, loadState) === demoStatusDisplayLabel("completed") ? " visually-hidden" : ""}`}>
@@ -1060,6 +1063,7 @@ function DemoDetailContent() {
               </div>}
             </div>
           </div>
+          {/* Beside the bar on wide screens (same grey), under it on phones; the first-run picker is the panel body. */}
           {replay ? (
             <PersonalReviewPanel
               key={savedIdentity}
@@ -1075,6 +1079,7 @@ function DemoDetailContent() {
             />
           ) : null}
         </header>
+        )}
 
         {statusFailure === "unreachable" && status ? (
           <ErrorBanner message="网络连接中断，正在自动重试…" retryLabel="立即重试" onRetry={() => void refreshStatus()} />
@@ -1108,39 +1113,38 @@ function DemoDetailContent() {
             />
             <div className="review-layout">
             <div className="review-main-column">
-            <section id="player" className="review-stage" aria-label="回放" tabIndex={-1} ref={stageRef}>
+            <section id="player" className="panel review-stage" aria-label="回放" tabIndex={-1} ref={stageRef}>
+              <div className="panel-bar review-stage-toolbar">
+                {showVideoControls ? (
+                  <div className="panel-bar-tabs review-view-switch" role="group" aria-label="回放视图">
+                    <button type="button" className={`panel-tab${videoDrivesClock ? "" : " selected"}`} aria-pressed={!videoDrivesClock} onClick={() => setViewMode("map")}>
+                      战术回放
+                    </button>
+                    <button type="button" className={`panel-tab${videoDrivesClock ? " selected" : ""}`} aria-pressed={videoDrivesClock} disabled={videoPlayback !== "active"}
+                      title={videoPlayback === "active" ? "观看这一时刻的第一人称视频" : "这一时刻还没有可播放的视频"}
+                      onClick={() => setViewMode("auto")}>
+                      第一人称
+                    </button>
+                  </div>
+                ) : <h2 className="panel-bar-title">战术回放</h2>}
+                {renderClips ? <button className="text-button review-clip-button" type="button"
+                  disabled={tickClipRequesting || clipIsActive(currentTickClipJob) || !selectedPlayerId}
+                  title={tickClipWorkerOffline ? RENDER_OFFLINE_DETAIL : undefined}
+                  onClick={() => void requestRenderClipAtCurrentTick()}>
+                  {tickClipLabel}
+                </button> : null}
+              </div>
               {findingStripOpen && focusedEvent ? (
                 <div className="review-finding-strip" role="status">
                   <span className="review-finding-strip-label">当前建议</span>
                   <strong>{coachingCopy(focusedEvent).title}</strong>
                   <small>第 {focusedEvent.round_number} 回合 <span className="review-finding-strip-time">{roundTimeAt(focusedEvent.tick_start, focusedRound, replay.tickRate)}</span></small>
                   <button type="button" className="text-button" onClick={returnToFinding}>
-                    <Undo2 size={14} aria-hidden="true" />{focusedFinding?.fromCard ? "返回建议" : "查看建议"}
+                    {focusedFinding?.fromCard ? "返回建议" : "查看建议"}
                   </button>
                   <button type="button" className="review-finding-strip-close" aria-label="收起当前建议" onClick={() => setFindingStripOpen(false)}>
                     <X size={14} aria-hidden="true" />
                   </button>
-                </div>
-              ) : null}
-              {showVideoControls ? (
-                <div className="review-stage-toolbar">
-                  <div className="review-view-switch" role="group" aria-label="回放视图">
-                    <button type="button" aria-pressed={!videoDrivesClock} onClick={() => setViewMode("map")}>
-                      <MapIcon size={16} aria-hidden="true" /> 战术回放
-                    </button>
-                    <button type="button" aria-pressed={videoDrivesClock} disabled={videoPlayback !== "active"}
-                      title={videoPlayback === "active" ? "观看这一时刻的第一人称视频" : "这一时刻还没有可播放的视频"}
-                      onClick={() => setViewMode("auto")}>
-                      <Film size={16} aria-hidden="true" /> 第一人称
-                    </button>
-                  </div>
-                  {renderClips ? <button className="secondary-button compact-button" type="button"
-                    disabled={tickClipRequesting || clipIsActive(currentTickClipJob) || !selectedPlayerId}
-                    title={tickClipWorkerOffline ? RENDER_OFFLINE_DETAIL : undefined}
-                    onClick={() => void requestRenderClipAtCurrentTick()}>
-                    <Video size={15} aria-hidden="true" />
-                    {tickClipLabel}
-                  </button> : null}
                 </div>
               ) : null}
               <div className={`review-main-canvas ${videoDrivesClock ? "showing-video" : "showing-map"}`}>
@@ -1198,9 +1202,10 @@ function DemoDetailContent() {
                 onToggleShortcuts={toggleShortcuts}
               />
             </section>
-            {showVideoControls && (videoUnavailable || videoPlayback !== "active") ? (
-              <div className="review-media-note" role="status">
-                <span>{videoUnavailable ? "视频暂时无法播放，已切换到战术回放。" : renderClips ? "当前时刻使用战术回放，可按需生成第一人称视频。" : "当前时刻使用战术回放。"}</span>
+            {/* Only when there is something to say: the video failed, or a saved one can be opened. */}
+            {showVideoControls && (videoUnavailable || (videoPlayback !== "active" && replay.video.url)) ? (
+              <div className={`review-media-note${videoUnavailable ? " is-error" : ""}`} role="status">
+                <span>{videoUnavailable ? "视频暂时无法播放，已切换到战术回放。" : "当前时刻使用战术回放。"}</span>
                 {replay.video.url && !videoUnavailable ? <button type="button" className="text-button" onClick={viewVideoClip}>打开已保存的视频</button> : null}
               </div>
             ) : null}
@@ -1215,7 +1220,7 @@ function DemoDetailContent() {
             />
             {showVideoControls ? (
               <details className="review-saved-clips">
-                <summary><Film size={16} aria-hidden="true" /><span>已保存的视频</span>
+                <summary><span>已保存的视频</span>
                   <span className="saved-clips-count">{playableClipCount} 段可观看</span>
                   {hasActiveRenderClipJob ? <span role="status">有视频正在生成</span> : null}
                 </summary>

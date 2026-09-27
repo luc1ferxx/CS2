@@ -57,8 +57,8 @@ describe("ReviewCommandBar", () => {
     const user = userEvent.setup();
     const { props, rerender } = renderBar();
     expect(screen.getByRole("group", { name: "建议导航" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "上一条" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "下一条" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "上一条建议" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "下一条建议" })).toBeDisabled();
 
     rerender(
       <ReviewCommandBar
@@ -67,8 +67,8 @@ describe("ReviewCommandBar", () => {
         nextFinding={coachingEvent({ id: "later" })}
       />
     );
-    await user.click(screen.getByRole("button", { name: "上一条" }));
-    await user.click(screen.getByRole("button", { name: "下一条" }));
+    await user.click(screen.getByRole("button", { name: "上一条建议" }));
+    await user.click(screen.getByRole("button", { name: "下一条建议" }));
     expect(props.onPreviousFinding).toHaveBeenCalledTimes(1);
     expect(props.onNextFinding).toHaveBeenCalledTimes(1);
   });

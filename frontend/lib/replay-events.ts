@@ -42,8 +42,9 @@ const FALLBACK_PRESENTATION: ParserEventPresentation = {
   shortLabel: "事"
 };
 
-// Damage floods the lane (hundreds per match); it stays on the map instead.
-const TIMELINE_HIDDEN_TYPES = new Set<string>(["damage"]);
+// Damage floods the lane (hundreds per match); it stays on the map instead. The round lane
+// above already marks the round's start and end.
+const TIMELINE_HIDDEN_TYPES = new Set<string>(["damage", "round_start", "round_end"]);
 
 const WEAPON_NAMES: Record<string, string> = {
   ak47: "AK-47", m4a1: "M4A4", m4a1_silencer: "M4A1-S", m4a1_silencer_off: "M4A1-S", awp: "AWP",
@@ -124,6 +125,32 @@ export function timelineParserEventMarkersForRound(
       side: killSide(event)
     }))
     .sort((left, right) => left.event.tick - right.event.tick);
+}
+
+/**
+ * Groups markers that would sit closer than `minGapPx` on a lane `laneWidthPx` wide, so they
+ * share one chip instead of hiding each other. A group is anchored at its first marker; a lane
+ * that has not been measured yet (width 0) keeps every marker on its own.
+ */
+export function clusterTimelineMarkers<T extends { leftPercent: number }>(
+  markers: T[],
+  laneWidthPx: number,
+  minGapPx: number
+): T[][] {
+  if (!(laneWidthPx > 0)) return markers.map((marker) => [marker]);
+  const groups: T[][] = [];
+  let anchorPx = Number.NEGATIVE_INFINITY;
+  for (const marker of markers) {
+    const x = (marker.leftPercent / 100) * laneWidthPx;
+    const last = groups[groups.length - 1];
+    if (last && x - anchorPx < minGapPx) {
+      last.push(marker);
+    } else {
+      groups.push([marker]);
+      anchorPx = x;
+    }
+  }
+  return groups;
 }
 
 export function recentMapParserEvents(

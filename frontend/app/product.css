@@ -1,924 +1,794 @@
 /* User-facing workspace. Developer panels keep their existing detailed layouts. */
-/* Both workspaces read the single token set in globals.css :root (spec S7);
-   no scoped palette here any more. */
+/* Page layout, top bar, headings, focus, buttons, inputs and status text are the
+   shared primitives in globals.css "S8 FOUNDATION (V-SHELL)"; nothing here re-scopes them. */
 .review-app,
 .library-app {
-  background: var(--bg);
+  background: var(--page);
   font-family: var(--font-body);
   font-size: var(--step-body);
   line-height: var(--leading-body);
 }
-
-:is(.review-app, .library-app) .page {
-  width: 100%;
-  max-width: 1560px;
-  margin: 0 auto;
-  padding: 24px 32px 40px;
-}
-:is(.review-app, .library-app) .topbar {
-  height: 60px;
-  min-height: 60px;
-  /* Brand and account line up with the page content once the page stops growing (1560px). */
-  padding: 0 max(32px, calc((100% - 1560px) / 2 + 32px));
-  background: var(--canvas);
-  background-image: none;
-  border-bottom: 1px solid var(--line);
-  box-shadow: none;
-}
-.library-app .topbar { padding: 0 max(32px, calc((100% - 1440px) / 2 + 32px)); }
-:is(.review-app, .library-app) .topbar::before,
-.library-app .archive-ledger::before,
-.library-app .archive-ledger::after { display: none; }
-:is(.review-app, .library-app) .brand {
-  gap: 10px;
-  font-family: var(--font-display);
-  font-size: var(--step-body);
-  font-weight: 600;
-  letter-spacing: 0;
-  text-transform: none;
-}
-:is(.review-app, .library-app) .brand-mark {
-  border: 0;
-  border-radius: var(--radius-control);
-  color: var(--on-chalk);
-  background: var(--chalk);
-  width: 28px;
-  height: 28px;
-}
-:is(.review-app, .library-app) h1 {
-  font-family: var(--font-display);
-  font-size: var(--step-lg);
-  line-height: var(--leading-tight);
-  letter-spacing: 0;
-  font-weight: 600;
-  margin: 0;
-}
-:is(.review-app, .library-app) h2 { font-family: var(--font-display); font-size: var(--step-md); font-weight: 600; line-height: var(--leading-tight); letter-spacing: 0; }
-:is(.review-app, .library-app) .workspace-kicker {
-  font-size: var(--step-sm);
-  font-weight: 500;
-  letter-spacing: 0;
-  color: var(--muted);
-  text-transform: none;
-  margin-bottom: 4px;
-}
-:is(.review-app, .library-app) :is(button, summary, a, input, select, [tabindex]):focus-visible {
-  outline: 2px solid var(--focus-ring);
-  outline-offset: 2px;
-}
-:is(.review-app, .library-app) :is(.primary-button, .secondary-button, .icon-button, .text-button) {
-  min-height: 38px;
-  border-radius: var(--radius-control);
-  font-family: var(--font-body);
-  font-size: var(--step-sm);
-  font-weight: 500;
-  line-height: var(--leading-tight);
-  letter-spacing: 0;
-  text-transform: none;
-  box-shadow: none;
-}
-/* Chalk primary: dark text on chalk, the one filled control per view. */
-:is(.review-app, .library-app) .primary-button {
-  background: var(--chalk);
-  border: 1px solid var(--chalk);
-  color: var(--on-chalk);
-  font-weight: 600;
-}
-:is(.review-app, .library-app) .primary-button:hover:not(:disabled) { background: #f8f6f1; border-color: #f8f6f1; }
-:is(.review-app, .library-app) .secondary-button {
-  background: transparent;
-  border: 1px solid var(--line-strong);
-  color: var(--text);
-}
-:is(.review-app, .library-app) .secondary-button:hover:not(:disabled) { background: var(--surface-2); border-color: var(--chalk-2); color: var(--text); }
-:is(.review-app, .library-app) .text-button { border: 0; background: transparent; color: var(--text); padding: 4px 8px; text-decoration: underline; text-decoration-color: var(--line-strong); text-underline-offset: 3px; }
-:is(.review-app, .library-app) .text-button:hover:not(:disabled) { text-decoration-color: var(--chalk); }
-:is(.review-app, .library-app) :is(button, input, select):disabled { opacity: .5; cursor: not-allowed; }
-:is(.review-app, .library-app) :is(input:not([type="range"]):not([type="checkbox"]), select) {
-  min-height: 38px;
-  border: 1px solid var(--line-strong);
-  border-radius: var(--radius-control);
-  background: var(--graphite);
-  color: var(--text);
-  font-size: var(--step-sm);
-}
-:is(.review-app, .library-app) :is(.mini-pill, .status-badge) {
-  border-radius: var(--radius-pill);
-  font-size: var(--step-xs);
-  line-height: 1.5;
-  letter-spacing: 0;
-  font-weight: 500;
-  text-transform: none;
-}
+:is(.review-app, .library-app) :is(button, input, select):disabled { cursor: not-allowed; }
 /* Demo page header, round strip, stage, transport and timeline: see the V-B1 section at the end. */
 /* Personal review bar and player picker: see the V-B2 section at the end. */
 /* Coaching column (kill-feed rows): see the V-B2 section at the end. */
 
-/* Library (dashboard) rules live in the "V-A" section at the end of this file. */
+/* Library (dashboard), upload and Steam import: see the "S8 V-LIB" section below. */
 
 /* Session check, error banners and the demo page before its workspace is ready. */
-.session-check-notice { min-height: 20px; margin: 0; color: var(--muted); font-size: 13px; }
-.error-banner { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; }
-.error-banner-actions { display: flex; align-items: center; gap: 6px; margin-left: auto; }
-.error-banner-actions .compact-button { min-height: 32px; }
-.error-banner-actions .icon-button { display: grid; place-items: center; width: 32px; min-height: 32px; padding: 0; border: 0; background: transparent; color: var(--muted); }
-/* Static placeholder bars: no shimmer on page load (spec S7 motion rule). */
-.skeleton-bar { display: block; width: 38%; height: 12px; border-radius: var(--radius-control); background: var(--slate-2); }
-.skeleton-bar.wide { width: 68%; }
-@keyframes skeleton-shimmer { from { background-position: 100% 0; } to { background-position: -100% 0; } }
-/* Review skeleton and the demo state cards: see the V-B1 section at the end. */
-
-@media (max-width: 1180px) {
-  :is(.review-app, .library-app) .topbar { padding: 0 20px; }
-  :is(.review-app, .library-app) .page { padding-left: 20px; padding-right: 20px; }
-}
-@media (max-width: 700px) {
-  :is(.review-app, .library-app) .topbar { padding: 0 16px; }
-  :is(.review-app, .library-app) .page { padding: 20px 16px 32px; }
-  :is(.review-app, .library-app) .brand { font-size: 13px; gap: 8px; }
-  :is(.review-app, .library-app) .account-chip { display: none; }
-  :is(.review-app, .library-app) h1 { font-size: 21px; }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  :is(.review-app, .library-app) *, :is(.review-app, .library-app) *::before, :is(.review-app, .library-app) *::after {
-    scroll-behavior: auto;
-    transition-duration: .01ms;
-    animation-duration: .01ms;
-  }
-}
+.session-check-notice { min-height: 20px; margin: 0; color: var(--ink-2); }
+/* ErrorBanner: message left; retry as a text link and a small square close at the right. */
+.error-banner { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 12px; }
+.error-banner > span { min-width: 0; overflow-wrap: anywhere; }
+.error-banner-actions { display: flex; align-items: center; gap: 12px; margin-left: auto; }
+/* Skeleton bars: static, see the S8 FOUNDATION in globals.css. Review skeleton and the demo state cards: see V-B1. */
 
 /* === B1: review core === moved into the "V-B1" section at the end of this file. */
 
 /* === B2: coaching === moved into the "V-B2" section at the end of this file. */
 
-/* === V-A: library, upload, auth, Steam, app shell (spec S7) === */
-/* Top bar stays one row (brand left, account right) down to phone width. */
-:is(.review-app, .library-app) .topbar { flex-direction: row; align-items: center; }
-:is(.review-app, .library-app) .topbar-actions { flex-wrap: nowrap; width: auto; }
-/* Account chip in the top bar: a line, not a tinted tile. */
-.account-chip { gap: 8px; padding: 3px 10px 3px 3px; border: 1px solid var(--line); border-radius: var(--radius-control); background: transparent; }
-.account-avatar { width: 24px; height: 24px; border: 0; border-radius: var(--radius-control); background-color: var(--slate-2); color: var(--muted); }
-.account-copy { line-height: 1.2; }
+/* === S8 V-LIB: library, upload, Steam import (spec S8 数据站风) ===
+   One panel "我的比赛（N 场）": the header bar holds the one primary button, the toolbar
+   sits under it, then the ledger as a dense zebra table. Panel, buttons, inputs, status
+   text, notices, menus and zebra rows are the shared primitives (globals.css "S8 FOUNDATION"). */
+.lib-page { display: flex; flex-direction: column; gap: 12px; }
+.lib-notices:empty { display: none; }
+.lib-notice { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; padding: 5px 6px 5px 12px; }
+.lib-notice-text { min-width: 0; overflow-wrap: anywhere; }
+.lib-notice-close { margin-left: auto; }
 
-/* Auth, callback, not-invited, error and not-found: top bar, then one quiet panel.
-   The icon sits beside the heading instead of in its own boxed tile. */
-.auth-shell { display: flex; flex-direction: column; min-height: 100vh; padding: 0; place-items: initial; background: var(--graphite); }
-.auth-shell .auth-topbar { position: static; flex-direction: row; align-items: center; justify-content: flex-start; gap: 12px; height: 60px; min-height: 60px; padding: 0 32px; border-bottom: 1px solid var(--line); background: var(--graphite); backdrop-filter: none; }
-.auth-shell .brand { gap: 10px; font-family: var(--font-display); font-size: var(--step-body); font-weight: 600; }
-.auth-shell .brand-mark { width: 28px; height: 28px; border: 0; }
-.auth-beta-tag { padding: 0 6px; border: 1px solid var(--line-strong); border-radius: var(--radius-pill); color: var(--muted); font-size: var(--step-xs); line-height: 1.6; }
-.auth-stage { display: grid; flex: 1; align-content: start; justify-items: center; padding: clamp(40px, 14vh, 136px) 16px 48px; }
-.auth-panel { grid-template-columns: 20px minmax(0, 1fr); column-gap: 12px; row-gap: 20px; width: min(500px, 100%); padding: 28px; border: 1px solid var(--line); border-radius: var(--radius-panel); background: var(--slate); box-shadow: none; }
-.auth-panel > * { grid-column: 2; }
-.auth-panel > .auth-icon { display: block; grid-column: 1; grid-row: 1; width: 20px; height: 20px; margin-top: 3px; border: 0; background: none; color: var(--muted); }
-.auth-panel h1 { font-size: var(--step-lg); line-height: var(--leading-tight); }
-.auth-panel p { max-width: 40em; margin-top: 10px; color: var(--muted); font-size: var(--step-body); line-height: var(--leading-body); }
-.auth-panel p.auth-note { padding-left: 10px; border-left: 2px solid var(--line-strong); color: var(--muted); font-size: var(--step-sm); }
-.auth-panel details { margin-top: 12px; color: var(--muted); font-size: var(--step-sm); }
-.auth-panel details > summary { cursor: pointer; }
-.auth-panel-actions { gap: 8px; }
-.auth-panel :is(.primary-button, .secondary-button) { min-height: 40px; padding: 0 16px; font-size: var(--step-body); }
+/* Header bar: 我的比赛（N 场）, then what is still running, then 示例比赛 / 上传 .dem on the right. */
+.lib-head { justify-content: flex-start; }
+.lib-count { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 12px; margin: 0 0 0 -12px; font-variant-numeric: tabular-nums; }
+.lib-count > span:first-child { color: var(--ink); font-size: var(--step-md); font-weight: 700; }
+.lib-count-failed { color: var(--danger-text); }
+.lib-upload-hint { color: var(--ink-2); font-size: var(--step-sm); }
+/* A spent quota is a limit, not an error: neutral text under the bar. */
+.lib-quota { margin: 0; padding: 6px 10px; border-bottom: 1px solid var(--line-subtle); color: var(--ink-2); }
 
-/* Library page header: title, one chalk upload button, where to find a .dem. */
-.library-app .page { max-width: 1440px; padding-top: 28px; }
-.library-app .library-page-header { display: flex; flex-direction: row; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 16px 24px; margin: 0 0 20px; padding: 0 0 20px; border-bottom: 1px solid var(--line); }
-.library-app .page-subtitle { margin: 6px 0 0; color: var(--muted); font-size: var(--step-body); }
-.library-app .upload-actions { display: flex; align-items: flex-start; gap: 8px; }
-.library-app .upload-action-stack { display: grid; justify-items: center; gap: 6px; }
-.library-app .upload-action-stack button { min-width: 148px; min-height: 40px; padding: 0 18px; font-size: var(--step-body); }
-.library-app .upload-action-stack > span { color: var(--muted-2); font-size: var(--step-xs); font-weight: 400; }
-.library-app .library-dem-help { margin-top: 12px; color: var(--muted); font-size: var(--step-sm); }
-.library-app .library-dem-help > summary { display: inline-flex; align-items: center; gap: 6px; min-height: 28px; list-style: none; cursor: pointer; color: var(--muted); text-decoration: underline; text-decoration-color: var(--line-strong); text-underline-offset: 3px; }
-.library-app .library-dem-help > summary::-webkit-details-marker { display: none; }
-.library-app .library-dem-help > summary:hover { color: var(--text); }
-.library-app .library-dem-help ul { display: grid; gap: 6px; max-width: 62ch; margin: 8px 0 0; padding-left: 18px; line-height: var(--leading-body); text-align: left; }
-/* A spent quota is a limit, not an error: neutral text with a line. */
-.library-app .library-quota-note { margin: 0 0 16px; padding: 4px 0 4px 10px; border-left: 2px solid var(--line-strong); color: var(--text); font-size: var(--step-sm); }
+/* Toolbar: search, map, filters; where to find a .dem and 刷新 at the right. */
+.lib-toolbar { position: relative; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; padding: 7px 10px; border-bottom: 1px solid var(--line-bold); }
+.lib-search { flex: 0 1 300px; min-width: 0; }
+.lib-select { min-width: 110px; }
+.lib-filters, .lib-help, .lib-menu { position: relative; }
+:is(.lib-filters, .lib-help, .lib-menu, .lib-steam) > summary { list-style: none; cursor: pointer; }
+:is(.lib-filters, .lib-help, .lib-menu, .lib-steam) > summary::-webkit-details-marker { display: none; }
+.lib-filters-on { color: var(--link); }
+/* 筛选与排序 matches the search box and map select beside it. */
+.lib-toolbar .compact-button:not(.text-button) { min-height: 28px; }
+.lib-filter-pop { position: absolute; top: calc(100% + 4px); left: 0; z-index: 40; display: grid; gap: 10px; width: 280px; padding: 10px 12px 12px; }
+.lib-field { display: grid; gap: 3px; }
+.lib-field > span:first-child { color: var(--ink-2); font-size: var(--step-sm); }
+.lib-field-row { display: flex; gap: 6px; }
+.lib-field-row .lib-select { flex: 1; }
+.lib-check { display: flex; align-items: center; gap: 6px; }
+.lib-filter-pop > .text-button { justify-self: start; }
+.lib-toolbar-end { display: flex; align-items: center; gap: 16px; margin-left: auto; }
+.lib-help > summary { color: var(--link); }
+.lib-help > summary:hover { color: var(--link-hover); text-decoration: underline; }
+.lib-help ul { display: grid; gap: 4px; max-width: 64ch; margin: 4px 0 0; padding-left: 18px; color: var(--ink-2); }
+.lib-help-pop ul { position: absolute; top: calc(100% + 4px); right: 0; z-index: 40; width: min(440px, calc(100vw - 24px)); margin: 0; padding: 8px 12px 8px 28px; color: var(--ink); }
 
-/* Toolbar: search, map, then filters and refresh at the right. */
-.library-app .library-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 0 12px; padding: 0; border: 0; background: none; overflow: visible; }
-.library-app .library-search { display: flex; flex: 1 1 280px; align-items: center; gap: 8px; max-width: 440px; min-height: 38px; padding: 0 10px; border: 1px solid var(--line-strong); border-radius: var(--radius-control); background: var(--graphite); color: var(--muted); box-shadow: none; }
-.library-app .library-search:focus-within { outline: 2px solid var(--focus-ring); outline-offset: 2px; box-shadow: none; }
-.library-app .library-search input[type="search"] { flex: 1; min-width: 0; min-height: 36px; padding: 0; border: 0; background: transparent; }
-.library-app .library-search input[type="search"]:focus-visible { outline: none; }
-.library-app .library-controls > .library-filter { display: flex; min-width: 0; }
-.library-app .library-controls > .library-filter > span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
-.library-app .library-filter select { min-width: 132px; padding: 0 8px; }
-.library-app .library-more-filters { position: relative; margin-left: auto; }
-.library-app .library-more-filters > summary { display: inline-flex; align-items: center; gap: 8px; list-style: none; cursor: pointer; }
-.library-app .library-more-filters > summary::-webkit-details-marker { display: none; }
-.library-app .library-filter-active { padding: 0 5px; border-radius: var(--radius-pill); background: var(--slate-2); color: var(--text); font-size: var(--step-xs); }
-.library-app .library-filter-options { position: absolute; top: calc(100% + 6px); right: 0; z-index: 25; display: grid; gap: 12px; width: 300px; padding: 16px; border: 1px solid var(--line-strong); border-radius: var(--radius-panel); background: var(--slate); box-shadow: var(--shadow-pop); }
-.library-app .library-filter-options .library-filter { display: grid; gap: 6px; }
-.library-app .library-filter-options .library-filter > span { color: var(--muted); font-size: var(--step-xs); }
-.library-app .include-archived-toggle { display: flex; align-items: center; gap: 8px; min-height: 36px; padding: 0; border: 0; background: none; color: var(--text); font-size: var(--step-sm); }
-.library-app .library-count-summary { display: flex; flex-wrap: wrap; gap: 4px 20px; margin: 0 0 10px; color: var(--muted); font-size: var(--step-sm); font-variant-numeric: tabular-nums; }
-.library-app .library-attention-count { color: var(--danger-text); }
+/* Ledger: column heads, then zebra rows (.data-rows). Numbers right-aligned and tabular. */
+.lib-table { position: relative; }
+/* The name column stops at 440 px so the facts sit near it; the spare width goes to the status. */
+.lib-row { position: relative; display: grid; grid-template-columns: 26px minmax(0, 440px) 90px 48px 64px 104px minmax(140px, 1fr) 118px; column-gap: 12px; align-items: center; min-height: 36px; padding: 3px 10px; }
+.lib-row-head { min-height: 28px; padding-block: 0; border-bottom: 1px solid var(--line-bold); color: var(--ink-2); font-size: var(--step-sm); }
+.lib-row .c-num { text-align: right; }
+.lib-row :is(.c-map, .c-date) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lib-row .c-date { padding-left: 12px; color: var(--ink-2); }
+.lib-row-head .c-date { color: inherit; }
+.lib-cell-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+/* The match's radar, small: a row is recognisable before its name is read. */
+.lib-thumb { width: 26px; height: 26px; border-radius: var(--radius-control); background: var(--radar-bg) center / cover no-repeat; }
+.lib-name { display: grid; min-width: 0; line-height: 1.35; }
+.lib-name > a,
+.lib-name-text { overflow: hidden; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+.lib-name-text { color: var(--ink); }
+.lib-file { display: flex; gap: 10px; min-width: 0; color: var(--ink-3); font-size: var(--step-sm); white-space: nowrap; }
+.lib-file > span { overflow: hidden; text-overflow: ellipsis; }
+.lib-archived { flex: none; color: var(--ink-2); }
+.lib-row .c-state { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 8px; min-width: 0; }
+.lib-meta { display: inline-flex; flex-wrap: wrap; gap: 0 8px; color: var(--ink-2); font-size: var(--step-sm); font-variant-numeric: tabular-nums; }
+.lib-video { color: var(--ink-2); font-size: var(--step-sm); }
+.lib-reason { flex-basis: 100%; margin: 0; color: var(--ink-2); font-size: var(--step-sm); line-height: 1.4; }
+.lib-row .c-actions { display: flex; align-items: center; justify-content: flex-end; gap: 12px; white-space: nowrap; }
+.lib-menu[open] > summary { background: var(--row-alt); }
+.lib-menu-items { position: absolute; top: calc(100% + 3px); right: 0; z-index: 20; display: grid; min-width: 140px; padding: 3px 0; }
+.lib-menu-items .menu-item { width: 100%; }
+.lib-row:has(.lib-menu[open]) { z-index: 30; }
+.lib-rename { display: flex; align-items: center; gap: 10px; }
+.lib-rename input { flex: 1; min-width: 0; }
+.lib-rename-error { margin: 2px 0 0; color: var(--danger-text); font-size: var(--step-sm); }
 
-/* Notices: a slate step with a left mark (chalk; red when the upload failed). */
-.library-app .library-notice-region:empty { display: none; }
-.library-app .library-notice { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 0 12px; padding: 6px 6px 6px 14px; border: 1px solid var(--line); border-left: 2px solid var(--chalk); border-radius: var(--radius-panel); background: var(--slate); color: var(--text); font-size: var(--step-sm); }
-.library-app .library-notice.failed { border-color: var(--line); border-left-color: var(--danger); background: var(--slate); }
-.library-app .library-notice-actions { display: flex; flex: none; align-items: center; gap: 6px; }
-.library-app .library-notice .icon-button { display: grid; place-items: center; width: 32px; min-height: 32px; padding: 0; border: 0; background: transparent; color: var(--muted); }
+/* Upload in progress: a ledger row with a thin blue track; verifying holds it full. */
+.lib-progress-facts { display: flex; flex-wrap: wrap; gap: 0 10px; color: var(--ink-2); font-size: var(--step-sm); font-variant-numeric: tabular-nums; }
+.lib-progress-pct { color: var(--ink); }
+.lib-progress { height: 3px; margin: 2px 0 1px; overflow: hidden; background: var(--line-subtle); }
+.lib-progress > span { display: block; height: 100%; background: var(--link); transition: width var(--motion); }
+.lib-progress.verifying > span { background: var(--ink-3); }
+.lib-drop { position: absolute; inset: 0; z-index: 35; display: grid; place-items: center; border: 2px dashed var(--link); background: var(--row-selected); color: var(--link-hover); font-weight: 700; pointer-events: none; }
+.lib-rows > .lib-skel-row { background: none; pointer-events: none; }
+.lib-skel-row .skeleton-bar { display: block; width: 70%; }
+.lib-skel-row .c-name .skeleton-bar { width: 40%; }
+.lib-skel-row .c-num .skeleton-bar { margin-left: auto; }
+.lib-skel-row .lib-thumb { background: var(--row-alt); }
 
-/* Ledger: one slate panel, rows split by 1px lines, a radar thumbnail first.
-   Only a failed row carries a mark (red); ready and processing rows stay neutral. */
-.library-app .archive-ledger { position: relative; overflow: visible; border: 1px solid var(--line); border-radius: var(--radius-panel); background: var(--slate); }
-.library-app :is(.archive-ledger-head, .archive-record) { display: grid; grid-template-columns: 48px minmax(0, 1fr) 104px 76px 150px 176px 184px; grid-template-areas: "thumb identity map rounds signals state actions"; column-gap: 16px; align-items: center; min-width: 0; }
-.library-app .archive-ledger-head { min-height: 36px; padding: 0 16px; border: 0; border-bottom: 1px solid var(--line); border-radius: var(--radius-panel) var(--radius-panel) 0 0; background: none; color: var(--muted-2); font-size: var(--step-xs); font-weight: 500; line-height: 36px; }
-.library-app .archive-ledger-head > .ledger-head-thumb { grid-area: thumb; }
-.library-app .archive-ledger-head > .ledger-head-identity { grid-area: identity; }
-.library-app .archive-ledger-head > .ledger-head-map { grid-area: map; }
-.library-app .archive-ledger-head > .ledger-head-rounds { grid-area: rounds; }
-.library-app .archive-ledger-head > .ledger-head-signals { grid-area: signals; }
-.library-app .archive-ledger-head > .ledger-head-state { grid-area: state; }
-.library-app .archive-ledger-head > .ledger-head-actions { grid-area: actions; justify-self: end; }
-.library-app .archive-record { position: relative; min-height: 72px; padding: 12px 16px; border: 0; border-bottom: 1px solid var(--line); background: none; }
-.library-app .archive-record:last-child { border-bottom: 0; }
-.library-app .archive-record:hover { background: var(--slate-2); }
-.library-app .archive-record::before { top: 0; bottom: 0; left: -1px; width: 2px; background: transparent; }
-.library-app .archive-record.failed::before { background: var(--danger); }
-.library-app .archived-row { opacity: 1; }
-.library-app .archive-record:has(.library-record-menu[open]) { z-index: 30; }
-.library-app :is(.archive-record-identity, .archive-record-map, .archive-record-rounds, .archive-record-signals, .archive-record-state, .archive-record-actions) { min-width: 0; padding: 0; border: 0; background: none; }
-.library-app .archive-record-identity { grid-area: identity; }
-.library-app .archive-record-map { grid-area: map; }
-.library-app .archive-record-rounds { grid-area: rounds; }
-.library-app .archive-record-signals { grid-area: signals; }
-.library-app .archive-record-state { grid-area: state; display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
-.library-app .archive-record-actions { grid-area: actions; display: flex; justify-content: flex-end; }
-.library-app .library-map-thumb { display: grid; grid-area: thumb; place-items: center; width: 48px; height: 48px; border: 1px solid var(--line); border-radius: var(--radius-control); background-color: var(--graphite); background-position: center; background-repeat: no-repeat; background-size: 100%; color: var(--muted-2); }
-/* The radar art is dark blue-grey; lifted to a chalk silhouette so the map shape reads at 48px. */
-.library-app .library-map-thumb[style] { filter: grayscale(1) brightness(1.7) contrast(1.05); }
-.library-app .library-map-thumb.upload-thumb { color: var(--text); }
-.library-app .demo-name { display: grid; min-width: 0; }
-.library-app .demo-name > span:first-child { overflow: hidden; font-size: var(--step-body); font-weight: 600; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
-.library-app .demo-name a:hover { text-decoration: underline; text-decoration-color: var(--line-strong); text-underline-offset: 3px; }
-.library-app .demo-name > span:nth-child(2) { overflow: hidden; margin-top: 1px; color: var(--muted-2); font-size: var(--step-xs); text-overflow: ellipsis; white-space: nowrap; }
-.library-app .demo-name > .archived-label { justify-self: start; margin-top: 4px; padding: 0 6px; border: 1px solid var(--line-strong); border-radius: var(--radius-pill); color: var(--muted); font-size: var(--step-xs); }
-.library-app .archive-record-date { display: flex; flex-wrap: wrap; gap: 2px 12px; margin-top: 3px; color: var(--muted-2); font-size: var(--step-xs); font-variant-numeric: tabular-nums; }
-.library-app .archive-record-map-inline { display: none; }
-.library-app .map-anchor { padding: 0; border: 0; background: none; color: var(--text); font-size: var(--step-sm); font-weight: 500; }
-.library-app .library-round-count { color: var(--muted); font-size: var(--step-xs); font-variant-numeric: tabular-nums; }
-.library-app .library-round-count strong { color: var(--text); font-family: var(--font-display); font-size: var(--step-md); font-weight: 600; line-height: 1; }
-.library-app .library-clue-count { color: var(--muted); font-size: var(--step-sm); font-variant-numeric: tabular-nums; }
-.library-app .library-clue-count strong { color: var(--text); font-weight: 600; }
-.library-app .library-readiness { display: grid; justify-items: start; gap: 4px; min-width: 0; }
-.library-app .status-badge { white-space: nowrap; }
-.library-app .library-ingestion-meta { display: flex; flex-wrap: wrap; gap: 0 10px; margin: 0; color: var(--muted-2); font-size: var(--step-xs); font-variant-numeric: tabular-nums; }
-.library-app .library-failure-reason { max-width: 30ch; margin: 0; color: var(--muted); font-size: var(--step-xs); line-height: 1.45; }
-.library-app .library-render-pill { padding: 0; border: 0; background: none; color: var(--muted-2); font-size: var(--step-xs); }
-.library-app .library-retry-button { margin-top: 2px; }
-.library-app .library-actions { display: flex; flex-wrap: nowrap; align-items: center; justify-content: flex-end; gap: 6px; }
-.library-app .library-actions > * { flex: none; white-space: nowrap; }
-.library-app .archive-record-actions .compact-button { min-height: 32px; padding: 0 12px; font-size: var(--step-sm); }
-.library-app .library-record-menu { position: relative; }
-.library-app .library-record-menu > summary { display: grid; place-items: center; width: 32px; height: 32px; min-height: 32px; padding: 0; border: 1px solid transparent; border-radius: var(--radius-control); background: none; color: var(--muted); list-style: none; cursor: pointer; }
-.library-app .library-record-menu > summary::-webkit-details-marker { display: none; }
-.library-app .library-record-menu > summary:hover,
-.library-app .library-record-menu[open] > summary { border-color: var(--line-strong); color: var(--text); }
-.library-app .library-record-menu-items { position: absolute; top: calc(100% + 4px); right: 0; z-index: 20; display: grid; gap: 2px; min-width: 168px; padding: 6px; border: 1px solid var(--line-strong); border-radius: var(--radius-panel); background: var(--slate); box-shadow: var(--shadow-pop); }
-.library-app .library-record-menu-items button { justify-content: flex-start; width: 100%; border: 0; background: none; }
-.library-app .library-record-menu-items button:hover:not(:disabled) { background: var(--slate-2); }
-.library-app .rename-form { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 6px; }
-.library-app .rename-form .icon-button { display: grid; place-items: center; width: 32px; min-width: 32px; min-height: 32px; padding: 0; }
-.library-app .rename-error { margin: 4px 0 0; color: var(--danger-text); font-size: var(--step-xs); }
+/* Empty, fetch-failed and no-result states: a plain paragraph and links inside the panel. */
+.lib-empty { display: grid; justify-items: start; gap: 6px; padding: 12px 12px 14px; }
+.lib-empty > p { max-width: 72ch; margin: 0; color: var(--ink-2); }
+.lib-empty.is-error { border-left: 3px solid var(--danger); }
+.lib-empty-actions { display: flex; flex-wrap: wrap; gap: 4px 18px; }
 
-/* Upload in progress: a ledger row with a 3px chalk track; verifying holds it full. */
-.library-app .archive-record.uploading { min-height: 72px; }
-.library-app .upload-progress-facts .upload-progress-percent { color: var(--text); font-weight: 600; }
-.library-app .upload-progress-track { height: 3px; margin-top: 8px; overflow: hidden; border-radius: 0; background: var(--line); }
-.library-app .upload-progress-track > span { display: block; height: 100%; background: var(--chalk); transition: width 150ms linear; }
-.library-app .upload-progress-track.verifying > span { background: var(--chalk-2); animation: none; }
-.library-app .library-drop-overlay { position: absolute; inset: 0; z-index: 35; display: flex; align-items: center; justify-content: center; gap: 10px; border: 2px dashed var(--chalk-2); border-radius: var(--radius-panel); background: rgba(27, 29, 32, 0.94); color: var(--text); font-size: var(--step-body); font-weight: 600; pointer-events: none; }
-.library-app .library-skeleton-row { pointer-events: none; }
-.library-app .library-skeleton-row:hover { background: none; }
-.library-app .library-skeleton-row > div { display: grid; align-content: center; gap: 8px; }
+/* Steam import: a normal panel whose header bar is the disclosure, collapsed by default. */
+.lib-steam > .lib-head { border-bottom-color: transparent; border-radius: 2px; }
+.lib-steam[open] > .lib-head { border-bottom-color: var(--line-bold); border-radius: 2px 2px 0 0; }
+.lib-head-name { font-size: var(--step-md); font-weight: 700; }
+.lib-steam-note { color: var(--ink-2); font-size: var(--step-sm); }
+.lib-steam-toggle { margin-left: auto; color: var(--link); font-size: var(--step-sm); }
+.lib-steam-toggle::after { content: "展开"; }
+.lib-steam[open] .lib-steam-toggle::after { content: "收起"; }
+.lib-steam > .lib-head:hover .lib-steam-toggle { color: var(--link-hover); text-decoration: underline; }
+.stm-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; padding: 7px 10px; border-bottom: 1px solid var(--line-subtle); }
+.stm-bar h2 { margin: 0; font-size: var(--step-body); font-weight: 700; }
+.stm-state { color: var(--ink-2); white-space: nowrap; }
+.stm-state.ready { color: var(--ok-text); }
+.stm-state.danger { color: var(--danger-text); }
+.stm-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px; margin-left: auto; }
+.stm-intro { max-width: 80ch; margin: 0; padding: 8px 10px 0; color: var(--ink-2); }
+.stm-message { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; margin: 8px 10px 0; }
+.stm-loading { margin: 0; padding: 10px; color: var(--ink-2); }
+.stm-layout { display: grid; grid-template-columns: minmax(240px, 320px) minmax(0, 1fr); gap: 12px 20px; padding: 10px; }
+.stm-sub { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 10px; margin: 0 0 6px; font-size: var(--step-body); font-weight: 700; }
+.stm-sub > span { color: var(--ink-2); font-size: var(--step-sm); font-weight: 400; }
+.stm-facts { margin: 0; border-top: 1px solid var(--line-subtle); }
+.stm-facts > div { display: flex; justify-content: space-between; gap: 12px; padding: 4px 0; border-bottom: 1px solid var(--line-subtle); }
+.stm-facts dt { color: var(--ink-2); }
+.stm-facts dd { margin: 0; font-variant-numeric: tabular-nums; }
+.stm-warning { margin: 8px 0 0; color: var(--danger-text); }
+.stm-note { display: flex; flex-wrap: wrap; gap: 4px 12px; margin: 8px 0 0; color: var(--ink-2); }
+.stm-form { display: grid; gap: 8px; margin-top: 10px; }
+.stm-form-head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 12px; margin: 0; }
+.stm-form label { display: grid; gap: 3px; }
+.stm-form label > span,
+.stm-form-note { margin: 0; color: var(--ink-2); font-size: var(--step-sm); }
+.stm-form-actions { display: flex; align-items: center; gap: 16px; }
+.stm-empty { color: var(--ink-2); }
+.stm-empty p { margin: 2px 0 0; }
+.stm-table { border: 1px solid var(--line-bold); border-radius: var(--radius-panel); }
+.stm-row { display: grid; grid-template-columns: minmax(0, 1fr) 96px 88px 110px; column-gap: 12px; align-items: center; min-height: 34px; padding: 3px 10px; }
+.stm-row-head { min-height: 28px; padding-block: 0; border-bottom: 1px solid var(--line-bold); color: var(--ink-2); font-size: var(--step-sm); }
+.stm-match { display: grid; min-width: 0; }
+.stm-match > span { color: var(--ink-3); font-size: var(--step-sm); }
+.stm-match > .stm-match-error { color: var(--danger-text); }
+.stm-row time { color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.stm-row-action { text-align: right; }
+.stm-row-action > span { color: var(--ink-2); font-size: var(--step-sm); }
+.stm-footer { display: grid; gap: 2px; padding: 7px 10px; border-top: 1px solid var(--line-subtle); color: var(--ink-2); font-size: var(--step-sm); }
+.stm-footer p { margin: 0; }
 
-/* Empty, error and no-result states: left-aligned inside the ledger, no grid wash. */
-.library-app .library-empty-state { display: grid; justify-items: start; gap: 16px; min-height: 0; padding: 28px 24px 32px; border: 0; background: none; color: var(--muted); text-align: left; }
-.library-app .library-empty-state.error { box-shadow: inset 2px 0 0 var(--danger); }
-.library-app .library-empty-state strong { color: var(--text); font-family: var(--font-display); font-size: var(--step-md); font-weight: 600; }
-.library-app .library-empty-state p { max-width: 60ch; margin: 6px 0 0; font-size: var(--step-body); line-height: var(--leading-body); }
-.library-app .library-empty-state .library-dem-help { justify-self: start; margin-top: 0; }
-.library-app .library-empty-actions { display: flex; flex-wrap: wrap; justify-content: flex-start; gap: 8px; }
-.library-app .library-empty-actions .compact-button { min-height: 36px; padding: 0 14px; font-size: var(--step-sm); }
-
-/* Steam import: a quiet disclosure under the ledger. */
-.library-app .library-import-options { margin-top: 24px; border: 0; border-top: 1px solid var(--line); color: var(--muted); font-size: var(--step-sm); }
-.library-app .library-import-options > summary { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 2px 12px; min-height: 48px; padding: 8px 0; list-style: none; cursor: pointer; }
-.library-app .library-import-options > summary::-webkit-details-marker { display: none; }
-.library-app .library-import-options > summary > span:first-child { color: var(--text); font-weight: 500; }
-.library-app .library-import-options > summary > span:nth-child(2) { color: var(--muted-2); font-size: var(--step-xs); }
-.library-app .library-import-options > summary > svg { margin-left: auto; color: var(--muted); }
-.library-app .library-import-options[open] > summary > svg { transform: rotate(180deg); }
-.library-app .library-import-options .steam-match-sync { margin: 4px 0 0; }
-.steam-match-sync { border: 1px solid var(--line); border-radius: var(--radius-panel); background: var(--slate); }
-.steam-sync-header { border-bottom-color: var(--line); background: none; }
-.steam-sync-title-row h2 { font-size: var(--step-md); }
-.steam-state-pill { border: 1px solid var(--line-strong); border-radius: var(--radius-pill); background: none; color: var(--muted); font-size: var(--step-xs); letter-spacing: 0; text-transform: none; }
-.steam-state-pill:is(.waiting, .active) { border-color: var(--line-strong); background: none; color: var(--muted); }
-.steam-state-pill.ready { border-color: var(--line-strong); background: var(--slate-2); color: var(--text); }
-.steam-state-pill.danger { border-color: var(--danger); background: none; color: var(--danger-text); }
-.steam-sync-message { border-bottom-color: var(--line); border-left: 2px solid var(--chalk); background: none; color: var(--text); }
-.steam-sync-message:is(.danger, .success) { border-color: var(--line); background: none; color: var(--text); }
-.steam-sync-message.danger { border-left: 2px solid var(--danger); }
-.steam-sync-message.success { border-left: 2px solid var(--chalk); }
-.steam-matches-pane { border-left-color: var(--line); }
-:is(.steam-pane-heading span, .steam-connection-meta dt, .steam-source-label, .steam-schedule-label, .steam-connection-warning, .steam-match-list-head) { font-size: var(--step-xs); letter-spacing: 0; text-transform: none; }
-.steam-connection-meta div { border-color: var(--line); border-radius: var(--radius-control); background: var(--graphite); }
-:is(.steam-credentials-form, .steam-credentials-saved) { border-top-color: var(--line); }
-.steam-credentials-form input { border-color: var(--line-strong); border-radius: var(--radius-control); background: var(--graphite); }
-.steam-credentials-form input:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; box-shadow: none; }
-.steam-matches-empty { border: 1px solid var(--line); border-radius: var(--radius-panel); }
-.steam-match-list { border-color: var(--line); border-radius: var(--radius-panel); background: var(--slate); }
-.steam-match-list-head { border-bottom-color: var(--line); background: none; color: var(--muted-2); }
-.steam-match-record { border-bottom-color: var(--line); font-variant-numeric: tabular-nums; }
-.steam-match-record:hover { background: var(--slate-2); }
-.steam-match-record > div:first-child .steam-match-import-error { color: var(--danger-text); }
-.steam-sync-footer { border-top-color: var(--line); background: none; color: var(--muted-2); }
-/* Nothing under 12px; body copy at 13px. */
-:is(.steam-sync-header p, .steam-sync-message, .steam-connection-warning, .steam-credentials-heading strong, .steam-credentials-form input, .steam-credentials-saved, .steam-import-boundary, .steam-matches-empty p, .steam-match-record > div:first-child strong) { font-size: var(--step-sm); }
-:is(.steam-state-pill, .steam-schedule-label, .steam-connection-meta dd, .steam-credentials-heading a, .steam-credentials-form label, .steam-credentials-form > p, .steam-import-boundary .compact-button, .steam-match-list-head, .steam-match-demo-action > span, .steam-match-demo-action .compact-button, .steam-sync-footer) { font-size: var(--step-xs); }
-/* "Manual upload only" is a limit, not T-side: a neutral line, no gold. */
-.steam-import-boundary { border-left: 2px solid var(--line-strong); background: var(--graphite); color: var(--muted); }
-/* In the library the disclosure already names the panel; its kicker and source label repeat it. */
-.library-app .library-import-options :is(.steam-sync-header .workspace-kicker, .steam-source-label) { display: none; }
-
-/* Laptop: the clue column goes first. */
-@media (max-width: 1180px) {
-  .library-app :is(.archive-ledger-head, .archive-record) { grid-template-columns: 48px minmax(0, 1fr) 96px 72px 168px 176px; grid-template-areas: "thumb identity map rounds state actions"; }
-  .library-app :is(.archive-record-signals, .archive-ledger-head > .ledger-head-signals) { display: none; }
+/* Laptop: narrower fixed columns. */
+@media (max-width: 1100px) {
+  .lib-row { grid-template-columns: 26px minmax(0, 1fr) 76px 40px 60px 96px minmax(120px, 160px) 104px; column-gap: 10px; }
 }
-/* Tablet: map and rounds join the date line under the name. */
-@media (max-width: 900px) {
-  .library-app :is(.archive-ledger-head, .archive-record) { grid-template-columns: 44px minmax(0, 1fr) 150px auto; grid-template-areas: "thumb identity state actions"; }
-  .library-app :is(.archive-record-map, .archive-record-rounds, .archive-ledger-head > .ledger-head-map, .archive-ledger-head > .ledger-head-rounds) { display: none; }
-  .library-app .archive-record-map-inline { display: contents; }
-  .library-app .library-map-thumb { width: 44px; height: 44px; }
-}
-/* Phone: name on its own line; status and actions share the second. */
-@media (max-width: 640px) {
-  .library-app .page { padding: 20px 16px 32px; }
-  .library-app .library-page-header { flex-direction: column; align-items: stretch; }
-  .library-app .upload-actions { display: grid; grid-template-columns: repeat(auto-fit, minmax(0, 1fr)); width: 100%; }
-  .library-app .upload-action-stack button { width: 100%; min-width: 0; }
-  .library-app .library-search { flex-basis: 100%; max-width: none; }
-  /* Anchored to the whole controls row, so the popover spans it inside the gutter. */
-  .library-app .library-controls { position: relative; }
-  .library-app .library-more-filters { position: static; }
-  .library-app .library-filter-options { left: 0; right: 0; width: auto; }
-  .library-app .archive-ledger-head { display: none; }
-  .library-app .archive-record { grid-template-columns: 40px minmax(0, 1fr) auto; grid-template-areas: "thumb identity identity" "thumb state actions"; row-gap: 10px; column-gap: 12px; align-items: start; padding: 14px 12px; }
-  .library-app .library-map-thumb { width: 40px; height: 40px; }
-  .library-app .archive-record-actions { align-self: center; }
-  .library-app .archive-record-actions .library-actions { flex-direction: row; width: auto; }
-  .library-app .archive-record-actions .library-actions .compact-button { flex: none; width: auto; font-size: var(--step-sm); }
-  .library-app .library-notice { flex-direction: row; align-items: center; }
-  .library-app .library-notice .compact-button { width: auto; }
-  .library-app .archive-record:has(.rename-form) .archive-record-identity { grid-column: 2 / -1; }
-  .library-app .demo-name > span:nth-child(2):not(.archived-label) { display: none; }
-  .library-app .archive-record-identity .demo-name > span:first-child { display: -webkit-box; overflow: hidden; white-space: normal; overflow-wrap: anywhere; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
-  .library-app .library-empty-state { padding: 24px 16px 28px; }
-  .library-app .library-notice { flex-wrap: wrap; }
-  .auth-shell .auth-topbar { padding: 0 16px; }
-  .auth-stage { padding-top: 32px; }
-  .auth-panel { padding: 20px 18px; }
+/* Phone: stacked rows. Name (+ file name) and actions, then one meta line of labelled fields;
+   the status joins that line only when it says something ("可以复盘" is the default, so it is
+   left to screen readers). */
+@media (max-width: 760px) {
+  .lib-table > .lib-row-head { display: none; }
+  .lib-row { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 12px; padding: 7px 8px 7px 44px; }
+  .lib-row > .lib-thumb { position: absolute; top: 8px; left: 8px; }
+  .lib-row > .c-name { flex: 1 1 calc(100% - 132px); min-width: 0; }
+  .lib-row > .c-actions { flex: none; margin-left: auto; }
+  .lib-row > :is(.c-map, .c-num, .c-date, .c-state) { order: 1; flex: none; text-align: left; }
+  .lib-row > .c-state { flex: 0 1 auto; }
+  .lib-row > .c-date { padding-left: 0; }
+  .lib-row > :empty:not(.lib-thumb),
+  .lib-row.is-composed > :is(.c-map, .c-rounds) { display: none; }
+  .lib-row .lib-cell-label { position: static; width: auto; height: auto; margin-right: 4px; overflow: visible; clip: auto; color: var(--ink-2); }
+  .lib-row .c-state > .status-text.ok,
+  .lib-row > .c-state:has(> .status-text.ok:only-child) { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  .lib-name > a { white-space: normal; overflow-wrap: anywhere; }
+  /* Controls that share a row share a height: 28 px, like the search box and the map select. */
+  :is(.lib-head, .lib-row) .compact-button:not(.text-button) { min-height: 28px; }
+  .lib-row .icon-button.compact-button { width: 28px; }
+  .lib-search { flex-basis: 100%; }
+  .lib-toolbar .lib-select { min-width: 0; }
+  .lib-toolbar-end { gap: 12px; }
+  .lib-steam-note { display: none; }
+  .lib-filters { position: static; }
+  .lib-filter-pop { right: 10px; left: 10px; width: auto; }
+  /* Both popovers anchor to the toolbar on phones, so neither runs off the screen. */
+  .lib-help { position: static; }
+  .lib-help-pop ul { left: 10px; right: 10px; width: auto; }
+  .stm-layout { grid-template-columns: minmax(0, 1fr); }
+  .stm-row-head { display: none; }
+  .stm-row { grid-template-columns: minmax(0, 1fr) auto; row-gap: 2px; padding: 6px 10px; }
+  .stm-row > .stm-state { grid-column: 2; grid-row: 1; justify-self: end; }
+  .stm-row > .stm-row-action { grid-column: 2; grid-row: 2; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .library-app .upload-progress-track > span { transition: none; }
+  .lib-progress > span { transition: none; }
 }
 
-/* === V-B2: coaching column, personal review bar, 高级工具 panels (spec S7) === */
-/* Personal review bar: who is being reviewed, the counts, and the way to switch. */
-.review-app .personal-review-panel { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-start; gap: 8px 16px; margin: 0 0 12px; padding: 0; border: 0; border-radius: 0; background: none; box-shadow: none; }
-.review-app .personal-review-heading { display: flex; flex: 1 1 auto; flex-wrap: wrap; align-items: center; justify-content: flex-start; gap: 6px 20px; min-width: 0; }
+/* === V-B2 / S8 V-COACH: coaching column, personal review bar, saved clips, 高级工具 (spec S8 数据站风) === */
+/* Personal review: plain text at the right of the match header bar — who is being
+   reviewed, how many to look at first, one secondary button and a text-link menu. */
+.review-app .personal-review-panel { position: relative; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; min-width: 0; margin: 0; padding: 0; border: 0; border-radius: 0; background: none; box-shadow: none; }
+.review-app .personal-review-heading { display: flex; flex: 1 1 auto; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 4px 14px; min-width: 0; }
 .review-app .personal-review-heading > div { min-width: 0; }
-.review-app .personal-review-heading h2 { display: flex; align-items: baseline; gap: 8px; min-width: 0; margin: 0; color: var(--chalk-2); font-family: var(--font-body); font-size: var(--step-body); font-weight: 500; line-height: var(--leading-tight); white-space: nowrap; }
-/* My player in chalk, as on the map; a long name is cut, the full name is in its title. */
-.review-app .personal-review-name { min-width: 0; max-width: 22ch; overflow: hidden; color: var(--chalk); font-family: var(--font-display); font-size: var(--step-md); font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
-.review-app .personal-review-status { max-width: 68ch; margin: 4px 0 0; color: var(--chalk-2); font-size: var(--step-sm); line-height: var(--leading-body); }
-.review-app .personal-review-metrics { display: flex; flex-wrap: wrap; gap: 4px 16px; color: var(--chalk-2); font-size: var(--step-sm); }
-.review-app .personal-review-metrics span { display: inline-flex; align-items: baseline; gap: 4px; }
-.review-app .personal-review-metrics strong { display: inline; color: var(--chalk); font-family: var(--font-display); font-size: var(--step-body); font-weight: 600; font-variant-numeric: tabular-nums; }
-.review-app .personal-first-finding { margin: 0 0 0 auto; }
+.review-app .personal-review-heading h2 { display: flex; align-items: baseline; gap: 6px; min-width: 0; margin: 0; color: var(--ink-2); font-family: var(--font-body); font-size: var(--step-body); font-weight: 400; line-height: var(--leading-tight); white-space: nowrap; }
+/* Nobody picked yet: the heading is the question the picker below answers. */
+.review-app .personal-review-panel:has(.personal-player-picker) .personal-review-heading { justify-content: flex-start; }
+.review-app .personal-review-panel:has(.personal-player-picker) .personal-review-heading h2 { color: var(--ink); font-weight: 700; white-space: normal; }
+.review-app .personal-review-name { min-width: 0; max-width: 20ch; overflow: hidden; color: var(--ink); font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+.review-app .personal-review-status { max-width: 68ch; margin: 2px 0 0; color: var(--ink-2); font-size: var(--step-sm); line-height: var(--leading-body); }
+.review-app .personal-review-metrics { display: flex; flex-wrap: wrap; gap: 2px 12px; color: var(--ink-2); font-size: var(--step-sm); font-variant-numeric: tabular-nums; }
+/* The match header already says "N 条建议"; the count stays for screen readers and tests' text. */
+.review-app .personal-review-metrics .personal-review-count { display: none; }
+.review-app .personal-first-finding { min-height: 24px; margin: 0; padding: 0 10px; font-size: var(--step-sm); }
 .review-app .personal-review-settings { position: static; }
-.review-app .personal-review-settings > summary { display: inline-flex; align-items: center; gap: 6px; min-height: 36px; padding: 0 8px; border-radius: var(--radius-control); color: var(--chalk-2); font-size: var(--step-sm); cursor: pointer; list-style: none; }
+.review-app .personal-review-settings > summary { display: inline-flex; align-items: center; min-height: 26px; color: var(--link); font-size: var(--step-sm); cursor: pointer; list-style: none; }
 .review-app .personal-review-settings > summary::-webkit-details-marker { display: none; }
-.review-app .personal-review-settings > summary:hover { background: var(--slate-2); color: var(--chalk); }
-.review-app .personal-review-chevron { transition: transform var(--motion); }
-.review-app .personal-review-settings[open] { flex-basis: 100%; }
-.review-app .personal-review-settings[open] .personal-review-chevron { transform: rotate(180deg); }
-.review-app .personal-review-controls { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 16px; margin-top: 8px; padding: 14px 16px; border: 1px solid var(--line); border-radius: var(--radius-panel); background: var(--slate); }
+.review-app .personal-review-settings > summary:hover { color: var(--link-hover); text-decoration: underline; }
+/* The settings open as a menu under the bar, not as a new row pushing the page down. */
+.review-app .personal-review-popover { position: absolute; top: calc(100% + 4px); right: 0; z-index: 30; width: min(560px, calc(100vw - 16px)); padding: 10px 12px; text-align: left; }
+.review-app .personal-review-controls { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px 16px; margin: 0; padding: 0; border: 0; background: none; }
 .review-app .personal-review-controls form,
-.review-app .personal-player-select { flex: 1 1 260px; min-width: 0; }
-.review-app .personal-review-controls label { display: block; margin-bottom: 6px; color: var(--chalk-2); font-size: var(--step-xs); }
-.review-app .personal-review-controls small { display: block; margin-top: 6px; color: var(--danger-text); font-size: var(--step-xs); }
+.review-app .personal-player-select { flex: 1 1 220px; min-width: 0; }
+.review-app .personal-review-controls label { display: block; margin-bottom: 4px; color: var(--ink-2); font-size: var(--step-sm); }
+.review-app .personal-review-controls small { display: block; margin-top: 4px; color: var(--danger-text); font-size: var(--step-sm); }
 .review-app .personal-identity-input,
-.review-app .personal-player-select-row { display: flex; gap: 8px; }
+.review-app .personal-player-select-row { display: flex; gap: 6px; }
 .review-app .personal-identity-input input,
-.review-app .personal-player-select-row select { flex: 1; min-width: 0; width: 100%; padding: 0 10px; }
+.review-app .personal-player-select-row select { flex: 1; min-width: 0; width: 100%; }
 .review-app .personal-identity-input button,
-.review-app .personal-player-select-row button { flex-shrink: 0; }
-.review-app .personal-review-settings > .personal-review-status { margin-top: 8px; font-size: var(--step-xs); }
-/* Player picker: the roster by side, each name marked with its side color. */
-.review-app .personal-player-picker { flex-basis: 100%; display: grid; gap: 8px; min-width: 0; padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--radius-panel); background: var(--slate); }
-.review-app .personal-player-picker-side { display: flex; align-items: flex-start; gap: 12px; min-width: 0; }
-.review-app .personal-player-picker-label { flex: 0 0 26px; padding-top: 7px; color: var(--chalk-2); font-family: var(--font-display); font-size: var(--step-sm); font-weight: 700; }
-.review-app .personal-player-picker-side.side-t .personal-player-picker-label { color: var(--t); }
-.review-app .personal-player-picker-side.side-ct .personal-player-picker-label { color: var(--ct); }
-.review-app .personal-player-picker-chips { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; }
-.review-app .personal-player-picker .personal-player-chip { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; min-height: 34px; padding: 0 12px; overflow: hidden; border: 1px solid var(--line-bold); border-radius: var(--radius-control); background: transparent; color: var(--chalk); font-size: var(--step-sm); font-weight: 500; text-overflow: ellipsis; text-transform: none; white-space: nowrap; }
-.review-app .personal-player-picker-side.side-t .personal-player-chip { box-shadow: inset 2px 0 var(--t); }
-.review-app .personal-player-picker-side.side-ct .personal-player-chip { box-shadow: inset 2px 0 var(--ct); }
-.review-app .personal-player-picker .personal-player-chip:hover { background: var(--slate-2); }
-.review-app .personal-player-picker .personal-player-chip.active { border-color: var(--chalk); background: var(--slate-2); }
-.review-app .personal-player-chip small { color: var(--chalk-3); font-size: var(--step-xs); font-variant-numeric: tabular-nums; }
+.review-app .personal-player-select-row button { flex-shrink: 0; min-height: 28px; }
+.review-app .personal-review-popover > .personal-review-status { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line-subtle); font-size: var(--step-sm); }
+/* Player picker: a small two-row table, the side named in its tinted cell. */
+.review-app .personal-player-picker { flex-basis: 100%; display: grid; min-width: 0; margin-top: 4px; border: 1px solid var(--line-bold); border-radius: var(--radius-panel); background: var(--panel); text-align: left; }
+.review-app .personal-player-picker-side { display: grid; grid-template-columns: 88px minmax(0, 1fr); min-width: 0; }
+.review-app .personal-player-picker-side + .personal-player-picker-side { border-top: 1px solid var(--line-subtle); }
+.review-app .personal-player-picker-label { display: flex; align-items: center; padding: 6px 10px; font-size: var(--step-sm); font-weight: 700; }
+.review-app .personal-player-picker-side.side-t .personal-player-picker-label { background: var(--t-soft); color: var(--t-text); }
+.review-app .personal-player-picker-side.side-ct .personal-player-picker-label { background: var(--ct-soft); color: var(--ct-text); }
+.review-app .personal-player-picker-chips { display: flex; flex-wrap: wrap; gap: 0 18px; min-width: 0; padding: 3px 10px; }
+/* Each name is a text link; the names that match a saved identity are bold. */
+.review-app .personal-player-picker .personal-player-chip { display: inline-flex; align-items: baseline; gap: 4px; max-width: 100%; min-height: 26px; padding: 0; overflow: hidden; border: 0; border-radius: 0; background: none; color: var(--link); font-family: var(--font-body); font-size: var(--step-body); font-weight: 400; line-height: 26px; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+.review-app .personal-player-picker .personal-player-chip:hover { color: var(--link-hover); text-decoration: underline; }
+.review-app .personal-player-picker .personal-player-chip.active { font-weight: 700; }
+.review-app .personal-player-chip small { color: var(--ink-3); font-size: var(--step-sm); font-variant-numeric: tabular-nums; }
 
-/* Coaching column: one quiet slate panel. */
-.review-app .coaching-panel { position: sticky; top: 80px; display: flex; flex-direction: column; width: auto; min-width: 0; min-height: 300px; max-height: calc(100dvh - 108px); overflow: hidden; border: 1px solid var(--line); border-radius: var(--radius-panel); background: var(--slate); box-shadow: none; }
-.review-app .coaching-panel .coaching-header { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: baseline; gap: 4px 12px; padding: 14px 16px 10px; border: 0; background: none; }
-.review-app .coaching-panel .coaching-header h2 { margin: 0; font-size: var(--step-md); }
-.review-app .coaching-header-round { color: var(--chalk-2); font-family: var(--font-display); font-size: var(--step-sm); font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
-.review-app .coaching-panel .coaching-header-meta { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 14px; margin: 0; color: var(--chalk-2); font-size: var(--step-xs); font-variant-numeric: tabular-nums; }
-.review-app .coaching-header-player { min-width: 0; max-width: 16ch; overflow: hidden; color: var(--chalk); font-size: var(--step-sm); font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
-.review-app .coaching-count { font-family: var(--font-display); font-weight: 600; font-variant-numeric: tabular-nums; }
-/* Scope: a two-way segmented control. */
-.review-app .coaching-panel .coaching-round-scope { display: grid; grid-template-columns: 1fr 1fr; gap: 0; margin: 0 16px 10px; padding: 0; overflow: hidden; border: 1px solid var(--line); border-radius: var(--radius-control); }
-.review-app .coaching-panel .coaching-round-scope button { min-height: 34px; padding: 0 10px; border: 0; border-radius: 0; background: transparent; color: var(--chalk-2); font-size: var(--step-sm); font-weight: 500; }
-.review-app .coaching-panel .coaching-round-scope button + button { border-left: 1px solid var(--line); }
-.review-app .coaching-panel .coaching-round-scope button:hover { color: var(--chalk); }
-.review-app .coaching-panel .coaching-round-scope button[aria-pressed="true"] { background: var(--slate-2); color: var(--chalk); }
-.review-app .coaching-panel .coaching-round-scope button:focus-visible { outline-offset: -2px; }
-/* Filters: collapsed behind one quiet line. */
-.review-app .coaching-panel .coaching-filter-toggle { margin: 0; padding: 0 16px; border-top: 1px solid var(--line); }
-.review-app .coaching-panel .coaching-filter-toggle > summary { display: flex; align-items: center; gap: 6px; min-height: 36px; color: var(--chalk-2); font-size: var(--step-xs); cursor: pointer; list-style: none; }
+/* Coaching column: a .panel whose .panel-bar holds the round scope. */
+/* Sticky under the 40 px top bar with a 12 px gap; the panel ends where its rows end. */
+.review-app .coaching-panel { position: sticky; top: 52px; display: flex; flex-direction: column; width: auto; min-height: 0; max-height: calc(100dvh - 64px); overflow: hidden; }
+.review-app .coaching-panel .coaching-header { flex: none; flex-wrap: nowrap; padding-right: 8px; }
+.review-app .coaching-count { font-variant-numeric: tabular-nums; }
+/* 当前回合 / 全部回合: two joined secondary buttons. */
+.review-app .coaching-panel .coaching-round-scope { display: inline-flex; margin: 0; padding: 0; border: 0; }
+.review-app .coaching-panel .coaching-round-scope button { min-height: 24px; margin: 0; padding: 0 8px; border: 1px solid var(--control-line); border-radius: 0; background: var(--panel); color: var(--ink); font-family: var(--font-body); font-size: var(--step-sm); font-weight: 400; white-space: nowrap; cursor: pointer; }
+.review-app .coaching-panel .coaching-round-scope button:first-child { border-radius: var(--radius-control) 0 0 var(--radius-control); }
+.review-app .coaching-panel .coaching-round-scope button + button { margin-left: -1px; border-radius: 0 var(--radius-control) var(--radius-control) 0; }
+.review-app .coaching-panel .coaching-round-scope button:hover { background: var(--row-alt); }
+.review-app .coaching-panel .coaching-round-scope button[aria-pressed="true"] { position: relative; border-color: var(--link); background: var(--row-selected); font-weight: 700; }
+.review-app .coaching-panel .coaching-round-scope button:focus-visible { position: relative; z-index: 1; outline-offset: 1px; }
+/* Toolbar: whose suggestions, which round, how many rated; 筛选建议 is a text link
+   pinned right whose filters open in the flow below it. */
+.review-app .coaching-panel .coaching-toolbar { position: relative; display: flex; flex: none; flex-wrap: wrap; align-items: center; gap: 6px 12px; min-height: 30px; padding: 5px 10px; border-bottom: 1px solid var(--line-subtle); }
+.review-app .coaching-panel .coaching-header-meta { display: flex; flex: 1 1 auto; flex-wrap: wrap; gap: 0 12px; min-width: 0; margin: 0; padding-right: 74px; color: var(--ink-2); font-size: var(--step-sm); line-height: 20px; font-variant-numeric: tabular-nums; }
+.review-app .coaching-header-player { min-width: 0; max-width: 16ch; overflow: hidden; color: var(--ink); font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+.review-app .coaching-panel .coaching-filter-toggle { margin: 0; padding: 0; border: 0; }
+.review-app .coaching-panel .coaching-filter-toggle[open] { flex-basis: 100%; }
+.review-app .coaching-panel .coaching-filter-toggle > summary { position: absolute; top: 5px; right: 10px; color: var(--link); font-size: var(--step-sm); line-height: 20px; white-space: nowrap; cursor: pointer; list-style: none; }
 .review-app .coaching-panel .coaching-filter-toggle > summary::-webkit-details-marker { display: none; }
-.review-app .coaching-panel .coaching-filter-toggle > summary:hover { color: var(--chalk); }
-.review-app .coaching-filter-active { color: var(--chalk); font-weight: 600; }
-.review-app .coaching-filter-chevron { margin-left: auto; transition: transform var(--motion); }
-.review-app .coaching-filter-toggle[open] .coaching-filter-chevron { transform: rotate(180deg); }
-.review-app .coaching-panel .coaching-controls { display: grid; gap: 8px; padding: 0 0 12px; border: 0; background: none; }
-.review-app .coaching-panel .coaching-search { position: relative; display: block; min-height: 0; padding: 0; border: 0; background: none; }
-.review-app .coaching-panel .coaching-search > svg { position: absolute; top: 50%; left: 10px; color: var(--chalk-3); transform: translateY(-50%); pointer-events: none; }
-.review-app .coaching-panel .coaching-search input { width: 100%; min-width: 0; padding: 0 10px 0 32px; }
-.review-app .coaching-panel .severity-filter { display: flex; flex-wrap: wrap; gap: 4px; }
-.review-app .coaching-panel .filter-button { display: inline-flex; align-items: center; gap: 6px; min-width: 0; min-height: 30px; padding: 0 10px; border: 1px solid var(--line); border-radius: var(--radius-control); background: transparent; color: var(--chalk-2); font-size: var(--step-xs); font-weight: 500; }
-.review-app .coaching-panel .filter-button:hover { color: var(--chalk); }
-.review-app .coaching-panel .filter-button[aria-pressed="true"] { border-color: var(--line-bold); background: var(--slate-2); color: var(--chalk); }
-/* The filter doubles as the legend for the rows' severity mark. */
-.review-app .coaching-severity-mark { flex: none; width: 2px; height: 12px; background: var(--sev-mark, var(--line-bold)); }
-.review-app .rule-filter-select { width: 100%; padding: 0 10px; }
-.review-app .coaching-panel .coaching-controls .text-button { justify-self: start; min-height: 28px; font-size: var(--step-xs); }
+.review-app .coaching-panel .coaching-filter-toggle > summary:hover { color: var(--link-hover); text-decoration: underline; }
+.review-app .coaching-filter-active { color: var(--ink-2); }
+.review-app .coaching-panel .coaching-controls { display: grid; gap: 6px; margin: 0; padding: 2px 0 4px; border: 0; background: none; }
+.review-app .coaching-panel .coaching-search,
+.review-app .coaching-panel .rule-filter-select { width: 100%; min-width: 0; min-height: 28px; padding: 0 8px; border: 1px solid var(--control-line); border-radius: var(--radius-control); background: var(--panel); color: var(--ink); font-size: var(--step-body); }
+.review-app .coaching-panel .coaching-search::placeholder { color: var(--ink-3); }
+.review-app .coaching-panel .severity-filter { display: flex; flex-wrap: wrap; gap: 4px; margin: 0; padding: 0; border: 0; }
+.review-app .coaching-panel .filter-button { display: inline-flex; align-items: center; gap: 6px; min-width: 0; min-height: 26px; padding: 0 8px; border: 1px solid var(--control-line); border-radius: var(--radius-control); background: var(--panel); color: var(--ink); font-size: var(--step-sm); font-weight: 400; cursor: pointer; }
+.review-app .coaching-panel .filter-button:hover { background: var(--row-alt); }
+.review-app .coaching-panel .filter-button[aria-pressed="true"] { border-color: var(--link); background: var(--row-selected); font-weight: 700; }
+/* The severity filter doubles as the legend for the rows' left mark. */
+.review-app .coaching-severity-mark { flex: none; width: 3px; height: 12px; background: var(--sev-mark, var(--line-bold)); }
+
+/* The column's .text-button links at 12px on a 20px line; grey, not faded, when not available. */
+.review-app .coaching-link { display: inline; font-size: var(--step-sm); line-height: 20px; text-align: left; white-space: nowrap; }
+.review-app .coaching-link:disabled { color: var(--ink-3); opacity: 1; cursor: default; }
+
 /* The list scrolls inside the panel on desktop. */
-.review-app .coaching-panel .coaching-body { display: block; flex: 1; min-height: 0; max-height: none; padding: 0; overflow: auto; scrollbar-width: thin; scrollbar-color: var(--line-bold) transparent; }
+.review-app .coaching-panel .coaching-body { display: block; flex: 1; min-height: 0; max-height: none; margin: 0; padding: 0; overflow: auto; }
 .review-app .coaching-panel .coaching-round-group { display: block; margin: 0; padding: 0; border: 0; background: none; }
 .review-app .coaching-panel .coaching-round-group.selected { background: none; }
-.review-app .coaching-panel .coaching-round-header { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; min-height: 36px; padding: 0 16px; border: 0; border-top: 1px solid var(--line); border-radius: 0; background: var(--slate); color: var(--chalk-2); text-align: left; cursor: pointer; }
-.review-app .coaching-panel .coaching-round-header:hover { color: var(--chalk); }
-.review-app .coaching-panel .coaching-round-header-copy { display: flex; align-items: baseline; gap: 10px; }
-.review-app .coaching-panel .coaching-round-header strong { color: inherit; font-family: var(--font-display); font-size: var(--step-sm); font-weight: 600; font-variant-numeric: tabular-nums; }
-.review-app .coaching-panel .coaching-round-group.selected .coaching-round-header strong { color: var(--chalk); }
-.review-app .coaching-panel .coaching-round-header small { color: var(--chalk-3); font-size: var(--step-xs); }
+/* 全部回合: each round is a collapsible group row. */
+.review-app .coaching-panel .coaching-round-header { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; justify-content: flex-start; gap: 8px; width: 100%; min-height: 28px; margin: 0; padding: 0 10px; border: 0; border-bottom: 1px solid var(--line-bold); border-radius: 0; background: var(--panel); color: var(--ink); font-family: var(--font-body); font-size: var(--step-sm); text-align: left; cursor: pointer; }
+.review-app .coaching-panel .coaching-round-header:hover { background: var(--row-hover); }
+.review-app .coaching-panel .coaching-round-header strong { color: inherit; font-size: var(--step-sm); font-weight: 700; font-variant-numeric: tabular-nums; }
+.review-app .coaching-panel .coaching-round-header small { color: var(--ink-2); font-size: var(--step-sm); }
+.review-app .coaching-round-toggle { flex: none; width: 10px; color: var(--ink-2); font-weight: 700; text-align: center; }
 .review-app .coaching-panel .coaching-round-header:focus-visible { outline-offset: -2px; }
-.review-app .coaching-panel .coaching-round-events { display: block; padding: 0; }
+.review-app .coaching-panel .coaching-round-events { display: block; margin: 0; padding: 0; }
 
-/* A suggestion is a kill-feed row: m:ss, then who died to whom and what the rule
-   found; the guidance, actions and verdicts hang under it. Severity is only the
-   left mark: chalk for 优先回看, grey for 值得留意, a line for 细节建议. */
-.review-app .coaching-panel .event-card.coaching-feed-row { position: relative; display: grid; grid-template-columns: auto minmax(0, 1fr); column-gap: 12px; align-items: baseline; margin: 0; padding: 12px 16px 8px 14px; border: 0; border-top: 1px solid var(--line); border-left: 2px solid var(--sev-mark); border-radius: 0; background: transparent; box-shadow: none; transform: none; }
-.review-app .coaching-panel :is(.coaching-feed-row, .filter-button.severity-low) { --sev-mark: var(--line-bold); }
-.review-app .coaching-panel :is(.coaching-feed-row.medium, .filter-button.severity-medium) { --sev-mark: var(--chalk-2); }
-.review-app .coaching-panel :is(.coaching-feed-row.high, .coaching-feed-row.critical, .filter-button.severity-high) { --sev-mark: var(--chalk); }
-.review-app .coaching-panel .event-card.coaching-feed-row:hover { background: transparent; }
-/* At the playhead: one surface step up. */
-.review-app .coaching-panel .event-card.coaching-feed-row.active { background: var(--slate-2); box-shadow: none; }
-.review-app .coaching-panel .event-card.coaching-feed-row.inspected { background: transparent; box-shadow: none; }
-.review-app .coaching-panel .event-card.coaching-feed-row.active.inspected { background: var(--slate-2); }
+/* A suggestion is a table row: m:ss | the finding (names in side colours) | 查看这一刻.
+   The second line holds 查看依据, 生成视频 and the verdict question, quieter; what to do next
+   shows only on the selected row (or with its evidence open), so the other rows stay two lines. Severity is the
+   3 px left mark: red 优先回看, T gold 值得留意, a grey line for the rest. */
+.review-app .coaching-panel .event-card.coaching-feed-row { position: relative; display: grid; grid-template-columns: 30px minmax(0, 1fr) auto; column-gap: 8px; align-items: baseline; margin: 0; padding: 6px 8px 5px 7px; border: 0; border-left: 3px solid var(--sev-mark); border-bottom: 1px solid var(--line-subtle); border-radius: 0; background: var(--panel); box-shadow: none; transform: none; }
+.review-app .coaching-panel :is(.coaching-feed-row, .filter-button.severity-low, .filter-button.severity-info) { --sev-mark: var(--line-bold); }
+.review-app .coaching-panel :is(.coaching-feed-row.medium, .filter-button.severity-medium) { --sev-mark: var(--t); }
+.review-app .coaching-panel :is(.coaching-feed-row.high, .coaching-feed-row.critical, .filter-button.severity-high, .filter-button.severity-critical) { --sev-mark: var(--danger); }
+.review-app .coaching-panel .coaching-round-events > .coaching-feed-row:nth-child(even) { background: var(--row-alt); }
+.review-app .coaching-panel .coaching-round-events > .coaching-feed-row:hover { background: var(--row-hover); }
+/* At the playhead: the selected row. */
+.review-app .coaching-panel .coaching-round-events > .coaching-feed-row.active { background: var(--row-selected); }
 .review-app .coaching-panel .event-card:focus { outline: none; }
 .review-app .coaching-panel .event-card:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
-.review-app .coaching-feed-clock { min-width: 2.4em; color: var(--chalk-2); font-family: var(--font-display); font-size: var(--step-body); font-weight: 600; line-height: 1.45; font-variant-numeric: tabular-nums; white-space: nowrap; }
-.review-app .coaching-feed-row.active .coaching-feed-clock { color: var(--chalk); }
-.review-app .coaching-panel .coaching-feed-line { min-width: 0; margin: 0; overflow: visible; color: var(--chalk); font-family: var(--font-body); font-size: var(--step-body); font-weight: 500; line-height: 1.45; letter-spacing: 0; text-overflow: clip; text-transform: none; white-space: normal; }
-/* killer ✕ victim on a dark strip, as in the CS2 kill feed; names in their side color. */
-.review-app .coaching-feed-kill { display: inline-flex; align-items: baseline; gap: 6px; max-width: 100%; margin: 0 8px 2px 0; padding: 0 6px; overflow: hidden; border-radius: var(--radius-pill); background: var(--graphite); font-family: var(--font-display); font-weight: 600; white-space: nowrap; vertical-align: baseline; }
-.review-app .coaching-feed-player { min-width: 0; max-width: 14ch; overflow: hidden; text-overflow: ellipsis; }
-.review-app .coaching-feed-player.side-t { color: var(--t); }
-.review-app .coaching-feed-player.side-ct { color: var(--ct); }
-.review-app .coaching-feed-player.side-unknown { color: var(--chalk); }
-.review-app .coaching-feed-player.reviewed { font-weight: 700; }
+.review-app .coaching-feed-clock { grid-column: 1; grid-row: 1; color: var(--ink-2); font-size: var(--step-sm); line-height: 20px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.review-app .coaching-feed-main { grid-column: 2; grid-row: 1; min-width: 0; }
+.review-app .coaching-panel .coaching-feed-line { min-width: 0; margin: 0; overflow: visible; color: var(--ink); font-family: var(--font-body); font-size: var(--step-body); font-weight: 400; line-height: 20px; letter-spacing: 0; text-overflow: clip; text-transform: none; white-space: normal; }
+/* killer ✕ victim, names in their side colour, then the finding. */
+.review-app .coaching-feed-kill { display: inline-flex; align-items: baseline; gap: 4px; max-width: 100%; margin: 0 6px 0 0; padding: 0; overflow: hidden; border-radius: 0; background: none; white-space: nowrap; vertical-align: baseline; }
+.review-app .coaching-feed-player { min-width: 0; max-width: 14ch; overflow: hidden; font-weight: 700; text-overflow: ellipsis; }
+.review-app .coaching-feed-player.side-t { color: var(--t-text); }
+.review-app .coaching-feed-player.side-ct { color: var(--ct-text); }
+.review-app .coaching-feed-player.side-unknown { color: var(--ink); }
 /* The reviewed player's death: the one red mark in the row. */
-.review-app .coaching-feed-cross { flex: none; color: var(--danger); font-family: var(--font-body); font-size: var(--step-sm); font-weight: 700; }
+.review-app .coaching-feed-cross { flex: none; color: var(--danger); font-size: var(--step-sm); font-weight: 700; }
 .review-app .coaching-feed-finding { overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
-.review-app .coaching-feed-body { grid-column: 2; min-width: 0; }
-.review-app .coaching-panel .coaching-card-guidance { max-width: 60ch; margin: 4px 0 0; color: var(--chalk-2); font-size: var(--step-sm); line-height: var(--leading-body); }
-.review-app .coaching-panel .event-card-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 10px 0 0; padding: 0; border: 0; }
-.review-app .coaching-panel .event-card-actions .compact-button { gap: 6px; min-height: 32px; margin: 0; padding: 0 10px; font-size: var(--step-xs); }
-.review-app .coaching-panel .event-card-actions .ghost-button { color: var(--chalk-2); }
-.review-app .coaching-panel .event-card-actions .ghost-button:not(:disabled):hover { color: var(--chalk); }
-.review-app .coaching-panel .event-card-actions .generate-clip-button { margin: 0; }
-/* Verdicts and 查看依据: available, but a step quieter than the row. */
-.review-app .coaching-panel .event-card-actions .coaching-evidence-toggle { margin-left: auto; }
-.review-app .coaching-panel .coaching-feedback { display: flex; flex-wrap: wrap; align-items: center; gap: 2px; margin: 4px 0 0; }
-.review-app .coaching-panel .coaching-feedback > span { margin-right: 4px; color: var(--chalk-3); font-size: var(--step-xs); }
-.review-app .coaching-verdict { min-height: 28px; padding: 0 7px; border: 1px solid transparent; border-radius: var(--radius-control); background: transparent; color: var(--chalk-3); font-size: var(--step-xs); font-weight: 500; cursor: pointer; }
-.review-app .coaching-verdict:hover { color: var(--chalk); }
-.review-app .coaching-verdict[aria-pressed="true"] { border-color: var(--line-bold); background: var(--slate-2); color: var(--chalk); }
+.review-app .coaching-panel .coaching-card-guidance { max-width: 62ch; margin: 1px 0 0; color: var(--ink-2); font-size: var(--step-sm); line-height: 18px; }
+.review-app .coaching-panel .coaching-feed-row:not(.active, .inspected) .coaching-card-guidance { display: none; }
+.review-app .coaching-panel .event-card-actions { grid-column: 3; grid-row: 1; display: flex; align-items: baseline; margin: 0; padding: 0; border: 0; }
+.review-app .coaching-panel .event-card-actions .locate-tick-button { font-size: var(--step-body); }
+.review-app .coaching-feed-body { grid-column: 2 / -1; min-width: 0; }
+.review-app .coaching-feed-meta { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 10px; margin: 2px 0 0; color: var(--ink-3); font-size: var(--step-sm); }
+.review-app .coaching-panel .coaching-evidence-toggle,
+.review-app .coaching-verdict { display: inline; min-height: 0; margin: 0; padding: 0; border: 0; border-radius: 0; background: none; color: var(--ink-3); font-family: var(--font-body); font-size: var(--step-sm); font-weight: 400; line-height: 20px; cursor: pointer; }
+.review-app .coaching-panel .coaching-evidence-toggle:hover,
+.review-app .coaching-verdict:hover { color: var(--link-hover); text-decoration: underline; }
+.review-app .coaching-panel .coaching-feedback { display: inline-flex; flex-wrap: wrap; align-items: baseline; gap: 0 3px; margin: 0; }
+.review-app .coaching-panel .coaching-feedback > span:first-child { margin-right: 2px; color: var(--ink-3); }
+.review-app .coaching-verdict-divider { color: var(--line-bold); }
+.review-app .coaching-verdict[aria-pressed="true"] { color: var(--ink); font-weight: 700; }
 .review-app .coaching-feedback[aria-busy="true"] .coaching-verdict { cursor: progress; }
-.review-app .coaching-panel .coaching-evidence-toggle { display: inline-flex; align-items: center; gap: 4px; min-height: 28px; margin: 0; padding: 0 4px; border: 0; border-radius: var(--radius-control); background: none; color: var(--chalk-3); font-size: var(--step-xs); cursor: pointer; }
-.review-app .coaching-panel .coaching-evidence-toggle:hover { color: var(--chalk); }
-.review-app .coaching-evidence-toggle svg { transition: transform var(--motion); }
-.review-app .coaching-evidence-toggle[aria-expanded="true"] svg { transform: rotate(180deg); }
-.review-app .coaching-feedback-status { margin: 4px 0 0; color: var(--danger-text); font-size: var(--step-xs); line-height: var(--leading-body); }
+.review-app .coaching-feedback-status { margin: 2px 0 0; color: var(--danger-text); font-size: var(--step-sm); line-height: var(--leading-body); }
 .review-app .coaching-feedback-status:empty { margin: 0; }
-.review-app .coaching-feedback-status .text-button { min-height: 24px; margin-left: 6px; padding: 0 4px; font-size: var(--step-xs); }
-/* 查看依据: labelled fields, not pills. */
-.review-app .coaching-panel .event-ledger-inspector { display: grid; gap: 10px; margin: 8px 0 4px; padding: 10px 0 0; border: 0; border-top: 1px solid var(--line); background: transparent; font-size: var(--step-sm); }
+.review-app .coaching-feedback-status .coaching-link { margin-left: 6px; }
+/* ink-3 is only 4.5:1 on white, zebra and hover rows; on the selected row the quiet line moves to ink-2. */
+.review-app .coaching-panel .coaching-feed-row.active :is(.coaching-feed-meta, .coaching-evidence-toggle, .coaching-verdict, .coaching-feedback > span:first-child, .coaching-technical-details) { color: var(--ink-2); }
+.review-app .coaching-panel .coaching-feed-row.active .coaching-verdict[aria-pressed="true"] { color: var(--ink); }
+/* 查看依据: a white definition list inside the row. */
+.review-app .coaching-panel .event-ledger-inspector { display: grid; gap: 8px; margin: 6px 0 3px; padding: 8px 10px; border: 1px solid var(--line-subtle); border-radius: var(--radius-control); background: var(--panel); font-size: var(--step-sm); }
 .review-app .coaching-panel .event-ledger-inspector p { margin: 0; font-size: var(--step-sm); line-height: var(--leading-body); }
-.review-app .coaching-inspector-title { color: var(--chalk); font-weight: 600; }
-.review-app .coaching-panel .coaching-card-facts { color: var(--chalk-2); font-variant-numeric: tabular-nums; }
-.review-app .coaching-panel .coaching-guidance { padding: 0; border: 0; }
-.review-app .coaching-panel .coaching-guidance strong { color: var(--chalk-2); font-size: var(--step-xs); font-weight: 600; }
-.review-app .coaching-panel .coaching-guidance p { margin: 2px 0 0; color: var(--chalk-2); }
-.review-app .coaching-panel :is(.coaching-inspector-facts, .event-ledger-inspector .event-evidence) { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 4px 12px; margin: 0; font-size: var(--step-xs); }
+.review-app .coaching-inspector-title { color: var(--ink); font-weight: 700; }
+.review-app .coaching-panel .coaching-card-facts { color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.review-app .coaching-panel .coaching-guidance { margin: 0; padding: 0; border: 0; }
+.review-app .coaching-panel .coaching-guidance strong { color: var(--ink); font-size: var(--step-sm); font-weight: 700; }
+.review-app .coaching-panel .coaching-guidance p { margin: 2px 0 0; color: var(--ink-2); }
+.review-app .coaching-panel :is(.coaching-inspector-facts, .event-ledger-inspector .event-evidence) { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 3px 12px; margin: 0; font-size: var(--step-sm); }
 .review-app .coaching-panel :is(.coaching-inspector-facts > div, .event-evidence-chip) { display: contents; }
-.review-app .coaching-panel :is(.coaching-inspector-facts, .event-evidence) dt { color: var(--chalk-3); font-weight: 400; }
-.review-app .coaching-panel :is(.coaching-inspector-facts, .event-evidence) dd { min-width: 0; margin: 0; color: var(--chalk); font-weight: 400; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
-.review-app .coaching-clip-error { color: var(--danger-text); font-size: var(--step-xs); }
-.review-app .coaching-panel .coaching-technical-details { margin: 0; color: var(--chalk-3); font-size: var(--step-xs); }
-.review-app .coaching-panel .coaching-technical-details > summary { display: flex; align-items: center; min-height: 28px; cursor: pointer; }
-.review-app .coaching-panel .coaching-technical-details p { margin: 6px 0 0; color: var(--chalk-2); font-size: var(--step-xs); overflow-wrap: anywhere; }
+.review-app .coaching-panel :is(.coaching-inspector-facts, .event-evidence) dt { color: var(--ink-3); font-weight: 400; }
+.review-app .coaching-panel :is(.coaching-inspector-facts, .event-evidence) dd { min-width: 0; margin: 0; color: var(--ink); font-weight: 400; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.review-app .coaching-clip-error { color: var(--danger-text); font-size: var(--step-sm); }
+.review-app .coaching-panel .coaching-technical-details { margin: 0; color: var(--ink-3); font-size: var(--step-sm); }
+.review-app .coaching-panel .coaching-technical-details > summary { display: inline-flex; align-items: center; min-height: 20px; color: var(--link); cursor: pointer; }
+.review-app .coaching-panel .coaching-technical-details p { margin: 6px 0 0; color: var(--ink-2); font-size: var(--step-sm); overflow-wrap: anywhere; }
 .review-app .coaching-panel .coaching-technical-details .event-evidence { margin-top: 6px; }
-/* The active card steps up to slate-2, where chalk-3 is 4.07:1; secondary labels move to chalk-2 (5.25:1). */
-.review-app .coaching-panel .coaching-feed-row.active :is(.coaching-feedback > span, .coaching-technical-details) { color: var(--chalk-2); }
-.review-app .coaching-panel .coaching-feed-row.active :is(.coaching-inspector-facts, .event-evidence) dt { color: var(--chalk-2); }
-.review-app .coaching-panel .coaching-feed-row.active :is(.coaching-verdict, .coaching-evidence-toggle) { color: var(--chalk-2); }
-.review-app .coaching-panel .coaching-feed-row.active :is(.coaching-verdict, .coaching-evidence-toggle):is(:hover, [aria-pressed="true"]) { color: var(--chalk); }
 /* True technical IDs, so monospace is right here and only here. */
-.review-app .coaching-panel .coaching-technical-details .event-evidence dd { font-family: var(--font-mono); font-size: var(--step-xs); }
-.review-app .coaching-panel .coaching-empty-state { display: grid; justify-items: start; gap: 10px; margin: 0; padding: 16px; border: 0; border-top: 1px solid var(--line); border-radius: 0; background: none; color: var(--chalk-2); font-size: var(--step-sm); line-height: var(--leading-body); text-align: left; }
-.review-app .coaching-panel .coaching-empty-state p { max-width: 40ch; margin: 0; }
+.review-app .coaching-panel .coaching-technical-details .event-evidence dd { font-family: var(--font-mono); font-size: var(--step-sm); }
+.review-app .coaching-panel .coaching-empty-state { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 14px; margin: 0; padding: 10px; border: 0; border-radius: 0; background: none; color: var(--ink-2); font-size: var(--step-body); line-height: var(--leading-body); text-align: left; }
+.review-app .coaching-panel .coaching-empty-state p { flex-basis: 100%; max-width: 36em; margin: 0; }
+.review-app .coaching-panel .coaching-empty-state .coaching-link { font-size: var(--step-body); }
 
-/* 高级工具: the panels sit on graphite inside the slate disclosure; fields are
-   label-over-value pairs on 1 px lines, states in chalk, failures in red. */
-.review-app .review-inspector :is(.render-operator-panel, .video-setup-panel, .replay-diagnostics-panel) { display: grid; align-content: start; gap: 12px; margin: 0; padding: 14px 16px; border: 1px solid var(--line); border-radius: var(--radius-panel); background: var(--graphite); box-shadow: none; }
-/* The render and calibration panels share one graphite box, split by a line. */
-.review-app .review-inspector .review-support-bay { margin: 0; overflow: hidden; border: 1px solid var(--line); border-radius: var(--radius-panel); background: var(--graphite); }
-.review-app .review-inspector .review-support-bay > :is(.render-operator-panel, .video-setup-panel) { border: 0; border-radius: 0; background: none; }
-.review-app .review-inspector .review-support-bay > :is(.render-operator-panel, .video-setup-panel):not(:last-child) { border-right: 1px solid var(--line); }
-.review-app .review-inspector :is(.render-operator-header, .video-setup-header, .replay-diagnostics-header) { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 8px 12px; margin: 0; padding: 0; border: 0; }
-.review-app .review-inspector :is(.render-operator-header, .video-setup-header, .replay-diagnostics-header) h2 { margin: 0; font-size: var(--step-body); }
-.review-app .review-inspector :is(.render-operator-header, .video-setup-header) span,
-.review-app .review-inspector .replay-diagnostics-header p { display: block; margin: 4px 0 0; color: var(--chalk-2); font-size: var(--step-xs); letter-spacing: 0; text-transform: none; }
-.review-app .review-inspector .replay-contract-version { border: 1px solid var(--line-bold); background: transparent; color: var(--chalk-2); font-variant-numeric: tabular-nums; }
-.review-app .review-inspector .replay-contract-version.current { color: var(--chalk); }
-.review-app .review-inspector :is(.operator-metadata-grid, .video-metadata-grid, .replay-diagnostics-grid) { display: grid; grid-template-columns: repeat(auto-fill, minmax(128px, 1fr)); gap: 0 16px; margin: 0; }
-.review-app .review-inspector :is(.operator-metadata-grid, .video-metadata-grid) > div,
-.review-app .review-inspector .diagnostic-metric { min-width: 0; padding: 8px 0; border: 0; border-top: 1px solid var(--line); border-radius: 0; background: none; }
-.review-app .review-inspector :is(.operator-metadata-grid, .video-metadata-grid) dt,
-.review-app .review-inspector .diagnostic-metric span { display: block; margin: 0; color: var(--chalk-3); font-size: var(--step-xs); font-weight: 400; letter-spacing: 0; text-transform: none; }
-.review-app .review-inspector :is(.operator-metadata-grid, .video-metadata-grid) dd,
-.review-app .review-inspector .diagnostic-metric strong { display: block; min-width: 0; margin: 2px 0 0; color: var(--chalk); font-family: var(--font-body); font-size: var(--step-sm); font-weight: 400; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
-.review-app .review-inspector .diagnostic-metric.active strong { color: var(--chalk-2); }
-.review-app .review-inspector .diagnostic-metric.ready strong { color: var(--chalk); }
-.review-app .review-inspector .diagnostic-metric.failed strong { color: var(--danger-text); }
-.review-app .review-inspector .replay-diagnostics-warnings { display: grid; gap: 4px; margin: 0; padding: 0; list-style: none; }
-.review-app .review-inspector .replay-diagnostics-warnings li { padding: 2px 0 2px 10px; border: 0; border-left: 2px solid var(--line-bold); border-radius: 0; background: none; color: var(--chalk-2); font-size: var(--step-xs); line-height: var(--leading-body); }
-.review-app .review-inspector .operator-state-row { display: flex; align-items: flex-start; gap: 10px; margin: 0; padding: 0; border: 0; background: none; }
-/* Mirror check: the state icon lost its boxed tile; the icon and its color carry the state. */
-.review-app .review-inspector .operator-state-icon { display: block; flex: none; width: auto; height: auto; margin-top: 1px; padding: 0; border: 0; border-radius: 0; background: none; color: var(--chalk-3); }
-.review-app .review-inspector .operator-state-icon.ready { color: var(--chalk); }
-.review-app .review-inspector .operator-state-icon.waiting { color: var(--chalk-2); }
-.review-app .review-inspector .operator-state-icon.failed { color: var(--danger-text); }
-.review-app .review-inspector .operator-state-row strong { color: var(--chalk); font-size: var(--step-sm); font-weight: 600; }
-.review-app .review-inspector .operator-state-row p { margin: 2px 0 0; color: var(--chalk-2); font-size: var(--step-xs); line-height: var(--leading-body); }
-.review-app .review-inspector :is(.operator-error, .setup-error) { padding: 4px 0 4px 10px; border: 0; border-left: 2px solid var(--danger); border-radius: 0; background: none; color: var(--danger-text); font-size: var(--step-xs); line-height: var(--leading-body); }
-.review-app .review-inspector .setup-message { padding: 0; border: 0; background: none; color: var(--chalk-2); font-size: var(--step-xs); }
-.review-app .review-inspector .calibration-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 8px 12px; }
-.review-app .review-inspector .calibration-grid label { display: grid; gap: 4px; }
-.review-app .review-inspector .calibration-grid span { color: var(--chalk-3); font-size: var(--step-xs); letter-spacing: 0; text-transform: none; }
-.review-app .review-inspector .setup-input { width: 100%; min-width: 0; padding: 0 8px; font-variant-numeric: tabular-nums; }
-.review-app .review-inspector .calibration-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 0; }
-/* Match facts strip (比赛信息): the same label-over-value pairs. */
-.review-app .review-inspector .detail-summary-strip { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 0 16px; margin: 0; padding: 4px 16px 10px; border: 1px solid var(--line); border-radius: var(--radius-panel); background: var(--graphite); box-shadow: none; }
-.review-app .review-inspector .detail-summary-item { display: grid; align-content: start; gap: 2px; min-width: 0; padding: 8px 0; border: 0; border-top: 1px solid var(--line); border-radius: 0; background: none; }
-.review-app .review-inspector .detail-summary-item span { color: var(--chalk-3); font-size: var(--step-xs); letter-spacing: 0; text-transform: none; }
-.review-app .review-inspector .detail-summary-item strong { min-width: 0; color: var(--chalk); font-family: var(--font-body); font-size: var(--step-sm); font-weight: 400; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
-.review-app .review-inspector .detail-summary-item small { color: var(--chalk-3); font-size: var(--step-xs); overflow-wrap: anywhere; }
-.review-app .review-inspector .detail-summary-item.danger strong { color: var(--danger-text); }
-.review-app .review-inspector .detail-summary-item:is(.good, .warning) strong { color: var(--chalk); }
+/* 已保存的视频: a panel whose summary is the header bar; the clips are a zebra table. */
+.review-app .review-saved-clips { margin: 12px 0 0; border: 1px solid var(--line-bold); border-radius: var(--radius-panel); background: var(--panel); box-shadow: none; }
+.review-app .review-saved-clips > summary { display: flex; align-items: center; gap: 12px; min-height: 34px; padding: 0 10px; border-radius: var(--radius-panel); background: var(--panel-head); color: var(--ink); font-size: var(--step-md); font-weight: 700; cursor: pointer; list-style: none; }
+.review-app .review-saved-clips[open] > summary { border-bottom: 1px solid var(--line-bold); border-radius: var(--radius-panel) var(--radius-panel) 0 0; }
+.review-app .review-saved-clips > summary::-webkit-details-marker { display: none; }
+.review-app .review-saved-clips > summary > span:not(:first-of-type) { color: var(--ink-2); font-size: var(--step-sm); font-weight: 400; }
+.review-app .review-saved-clips .saved-clips-count { margin-left: auto; font-variant-numeric: tabular-nums; }
+/* Collapsed panels say so, like the Steam panel on the library. */
+.review-app :is(.review-saved-clips, .review-inspector) > summary::after { content: "展开"; flex: none; color: var(--link); font-size: var(--step-sm); font-weight: 400; }
+.review-app :is(.review-saved-clips, .review-inspector)[open] > summary::after { content: "收起"; }
+.review-app :is(.review-saved-clips, .review-inspector) > summary:hover::after { color: var(--link-hover); text-decoration: underline; }
+.review-app .review-inspector > summary::after { margin-left: auto; }
+/* Inside 已保存的视频 the summary is the bar: the library drops its own frame and heading. */
+.review-app .review-saved-clips .clip-library { border: 0; border-radius: 0; }
+.review-app .review-saved-clips .clip-library-heading { display: none; }
+.review-app .clip-library-empty { margin: 0; padding: 10px; color: var(--ink-2); font-size: var(--step-body); }
+/* Rows are .data-rows (zebra, hover, .selected): place | length | status | 观看视频. */
+.review-app .clip-library-item { display: grid; grid-template-columns: minmax(0, 1fr) auto auto 72px; align-items: baseline; column-gap: 16px; min-height: 32px; padding: 6px 10px; }
+.review-app .clip-library-place { min-width: 0; font-weight: 400; font-variant-numeric: tabular-nums; }
+.review-app .clip-library-duration { color: var(--ink-2); font-size: var(--step-sm); font-variant-numeric: tabular-nums; }
+.review-app .clip-job-status { font-size: var(--step-sm); }
+.review-app .clip-library-play { grid-column: 4; justify-self: end; }
+.review-app .clip-library-error { grid-column: 1 / -1; color: var(--danger-text); font-size: var(--step-sm); }
+.review-app .clip-library-history { margin: 0; }
+.review-app .clip-library-history > summary { display: flex; align-items: center; min-height: 30px; padding: 0 10px; color: var(--link); font-size: var(--step-sm); cursor: pointer; }
+.review-app .clip-library-history > summary:hover { color: var(--link-hover); text-decoration: underline; }
+
+/* 高级工具: the disclosure is a panel whose summary is the header bar; inside it every
+   tool is its own small panel with a header bar and a plain label | value table. */
+.review-app .review-inspector { margin: 12px 0 0; padding: 0; border: 1px solid var(--line-bold); border-radius: var(--radius-panel); background: var(--panel); box-shadow: none; }
+.review-app .review-inspector > summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 34px; padding: 0 10px; border: 0; border-radius: var(--radius-panel); background: var(--panel-head); color: var(--ink); cursor: pointer; list-style: none; }
+.review-app .review-inspector[open] > summary { border-bottom: 1px solid var(--line-bold); border-radius: var(--radius-panel) var(--radius-panel) 0 0; }
+.review-app .review-inspector > summary::-webkit-details-marker { display: none; }
+.review-app .review-inspector > summary > span { color: var(--ink); font-size: var(--step-md); font-weight: 700; letter-spacing: 0; text-transform: none; }
+/* The caption stays for screen readers; the panel title says enough. */
+.review-app .review-inspector > summary small { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.review-app .review-inspector-content { display: grid; gap: 10px; margin: 0; padding: 10px; }
+.review-app .review-inspector-content > .compact-button { justify-self: start; }
+.review-app .review-inspector .review-support-bay { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 360px), 1fr)); align-items: start; gap: 10px; margin: 0; padding: 0; overflow: visible; border: 0; border-radius: 0; background: none; }
+.review-app .review-inspector .review-support-bay > * { min-width: 0; margin: 0; padding: 0; border: 0; }
+/* Each tool is a .panel with a .panel-bar: title, a grey note beside it, the action at the right. */
+.review-app :is(.render-operator-panel, .video-setup-panel, .replay-diagnostics-panel, .detail-summary-strip) { display: block; margin: 0; padding: 0; overflow: hidden; border: 1px solid var(--line-bold); border-radius: var(--radius-panel); background: var(--panel); }
+.review-app .review-inspector .review-support-bay > :is(.render-operator-panel, .video-setup-panel) { border: 1px solid var(--line-bold); }
+.review-app :is(.render-operator-header, .video-setup-header, .replay-diagnostics-header) { justify-content: flex-start; padding: 3px 8px 3px 10px; }
+.review-app :is(.render-operator-header, .video-setup-header) > :is(button, label),
+.review-app .replay-contract-version { margin-left: auto; }
+.review-app .replay-contract-version { font-variant-numeric: tabular-nums; }
+.review-app .replay-contract-version.legacy { color: var(--danger-text); }
+.review-app .replay-diagnostics-state { margin: 0; padding: 6px 10px; border-bottom: 1px solid var(--line-subtle); color: var(--ink-2); font-size: var(--step-sm); }
+/* label | value rows, zebra, numbers tabular. */
+.review-app :is(.operator-metadata-grid, .video-metadata-grid, .replay-diagnostics-grid) { display: grid; grid-template-columns: 1fr; gap: 0; margin: 0; padding: 0; }
+.review-app :is(.operator-metadata-grid, .video-metadata-grid) > div,
+.review-app .diagnostic-metric,
+.review-app .detail-summary-item { display: grid; grid-template-columns: 96px minmax(0, 1fr); align-items: baseline; column-gap: 12px; min-width: 0; min-height: 30px; margin: 0; padding: 5px 10px; border: 0; border-bottom: 1px solid var(--line-subtle); border-radius: 0; background: var(--panel); }
+.review-app :is(.operator-metadata-grid, .video-metadata-grid) > div:nth-child(even),
+.review-app .diagnostic-metric:nth-child(even),
+.review-app .detail-summary-item:nth-child(odd) { background: var(--row-alt); }
+.review-app :is(.operator-metadata-grid, .video-metadata-grid) > div:last-child,
+.review-app .diagnostic-metric:last-child,
+.review-app .detail-summary-item:last-child { border-bottom: 0; }
+.review-app :is(.operator-metadata-grid, .video-metadata-grid) dt,
+.review-app :is(.diagnostic-metric, .detail-summary-item) > span { margin: 0; color: var(--ink-2); font-size: var(--step-sm); font-weight: 400; letter-spacing: 0; text-transform: none; }
+.review-app :is(.operator-metadata-grid, .video-metadata-grid) dd,
+.review-app :is(.diagnostic-metric, .detail-summary-item) > strong { min-width: 0; margin: 0; color: var(--ink); font-family: var(--font-body); font-size: var(--step-body); font-weight: 400; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.review-app .detail-summary-item > small { grid-column: 2; color: var(--ink-2); font-size: var(--step-sm); overflow-wrap: anywhere; }
+.review-app .diagnostic-metric.ready > strong,
+.review-app .detail-summary-item.good > strong { color: var(--ok-text); }
+.review-app .diagnostic-metric.failed > strong,
+.review-app .detail-summary-item.danger > strong { color: var(--danger-text); }
+.review-app .replay-diagnostics-warnings { display: grid; gap: 0; margin: 0; padding: 0; border-top: 1px solid var(--line-subtle); list-style: none; }
+.review-app .replay-diagnostics-warnings li { margin: 6px 10px; padding: 0 0 0 8px; border: 0; border-left: 3px solid var(--t); border-radius: 0; background: none; color: var(--ink); font-size: var(--step-sm); line-height: var(--leading-body); }
+/* Render state: plain coloured text, no icon. */
+.review-app .operator-state-row { display: block; margin: 0; padding: 6px 10px; border: 0; border-bottom: 1px solid var(--line-subtle); background: none; }
+.review-app .operator-state-label { color: var(--ink); font-size: var(--step-body); font-weight: 700; }
+.review-app .operator-state-label.ready { color: var(--ok-text); }
+.review-app .operator-state-label.failed { color: var(--danger-text); }
+.review-app .operator-state-row p { margin: 2px 0 0; color: var(--ink-2); font-size: var(--step-sm); line-height: var(--leading-body); }
+.review-app :is(.operator-error, .setup-error) { margin: 8px 10px; padding: 2px 0 2px 8px; border: 0; border-left: 3px solid var(--danger); border-radius: 0; background: none; color: var(--danger-text); font-size: var(--step-sm); line-height: var(--leading-body); }
+.review-app .video-setup-panel .setup-message { margin: 8px 10px; padding: 0; border: 0; background: none; color: var(--ink-2); font-size: var(--step-sm); }
+.review-app .video-setup-panel .calibration-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 8px 10px; min-width: 0; padding: 8px 10px 0; }
+.review-app .video-setup-panel .calibration-grid label { display: grid; gap: 2px; }
+.review-app .video-setup-panel .calibration-grid span { color: var(--ink-2); font-size: var(--step-sm); letter-spacing: 0; text-transform: none; }
+.review-app .video-setup-panel .setup-input { width: 100%; min-width: 0; min-height: 28px; padding: 0 8px; border: 1px solid var(--control-line); border-radius: var(--radius-control); background: var(--panel); color: var(--ink); font-size: var(--step-body); font-variant-numeric: tabular-nums; }
+.review-app .video-setup-panel .calibration-actions { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; padding: 8px 10px 10px; }
+.review-app .video-setup-panel .calibration-actions button { min-height: 28px; }
 
 @media (max-width: 1000px) {
   .review-app .coaching-panel { position: static; min-height: 0; max-height: none; }
   .review-app .coaching-panel .coaching-body { max-height: none; overflow: visible; }
   .review-app .coaching-panel .coaching-round-header { position: static; }
-  .review-app .personal-review-metrics span:not(:first-child) { display: none; }
-}
-@media (max-width: 980px) {
-  .review-app .review-inspector .review-support-bay > :is(.render-operator-panel, .video-setup-panel):not(:last-child) { border-right: 0; border-bottom: 1px solid var(--line); }
 }
 @media (max-width: 700px) {
-  .review-app .personal-review-panel { gap: 8px 12px; }
-  .review-app .personal-review-heading { gap: 6px 12px; }
-  .review-app .personal-first-finding { width: auto; margin: 0; }
-  .review-app .personal-review-settings { margin-left: -8px; }
-  .review-app .personal-review-controls { padding: 12px; }
+  .review-app .personal-review-heading { justify-content: flex-start; gap: 4px 12px; }
   .review-app .personal-review-controls form,
   .review-app .personal-player-select { flex-basis: 100%; }
-  .review-app .coaching-panel .coaching-header { padding: 12px 12px 8px; }
-  .review-app .coaching-panel .coaching-round-scope { margin: 0 12px 8px; }
-  .review-app .coaching-panel .coaching-filter-toggle { padding: 0 12px; }
-  .review-app .coaching-panel .event-card.coaching-feed-row { column-gap: 10px; padding: 12px 12px 8px 10px; }
-  .review-app .coaching-panel .coaching-card-guidance { font-size: 14px; }
-  .review-app .coaching-panel .coaching-empty-state { padding: 14px 12px; }
+  .review-app .personal-player-picker-side { grid-template-columns: 76px minmax(0, 1fr); }
+  .review-app .personal-review-popover { right: auto; left: 0; width: min(560px, calc(100vw - 32px)); }
+  .review-app .coaching-panel .coaching-feed-line { font-size: var(--step-md); line-height: 21px; }
+  .review-app .coaching-panel .event-card.coaching-feed-row { padding: 8px 8px 7px 6px; column-gap: 8px; }
+  .review-app .clip-library-item { grid-template-columns: minmax(0, 1fr) auto; row-gap: 2px; }
+  .review-app .clip-library-duration { grid-column: 1; grid-row: 2; }
+  .review-app .clip-job-status { grid-column: 2; grid-row: 1; justify-self: end; }
+  .review-app .clip-library-play { grid-column: 2; grid-row: 2; }
+  .review-app :is(.operator-metadata-grid, .video-metadata-grid) > div,
+  .review-app .diagnostic-metric,
+  .review-app .detail-summary-item { grid-template-columns: 88px minmax(0, 1fr); }
 }
 @media (pointer: coarse) {
-  .review-app :is(.coaching-verdict, .coaching-evidence-toggle) { min-height: 36px; }
-  .review-app .coaching-panel .event-card-actions .compact-button { min-height: 38px; }
-}
-@media (prefers-reduced-motion: reduce) {
-  .review-app :is(.coaching-evidence-toggle svg, .coaching-filter-chevron, .personal-review-chevron) { transition: none; }
+  .review-app :is(.coaching-link, .coaching-verdict, .coaching-panel .coaching-evidence-toggle, .clip-library-play) { display: inline-flex; align-items: center; min-height: 32px; }
+  .review-app .coaching-panel .coaching-round-scope button { min-height: 32px; }
 }
 
-/* === V-B1: review stage (spec S7) === */
-/* Header line: the way back, the match, its map and size; the reviewed player sits on the right. */
-.review-app .page { padding-top: 16px; }
-.review-app .review-header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 24px; margin: 0 0 16px; }
-.review-app .detail-top { display: flex; flex: 1 1 520px; flex-direction: row; flex-wrap: wrap; justify-content: flex-start; align-items: center; gap: 4px 12px; min-width: 0; margin: 0; padding: 0; border: 0; }
-.review-app .detail-back { flex: none; min-height: 32px; margin-left: -8px; padding: 0 8px; color: var(--chalk-2); }
-.review-app .detail-back:hover { color: var(--chalk); }
-.review-app .detail-title { display: flex; flex: 1 1 auto; flex-direction: row; flex-wrap: wrap; align-items: baseline; gap: 2px 18px; min-width: 0; }
-.review-app .detail-title h1 { min-width: 0; margin: 0; font-size: var(--step-lg); line-height: var(--leading-tight); letter-spacing: 0; overflow-wrap: anywhere; }
-.review-app .detail-meta { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 14px; margin: 0; color: var(--chalk-2); font-size: var(--step-sm); font-variant-numeric: tabular-nums; }
-.review-app .detail-meta > span:not(.status-badge) { display: inline; min-height: 0; padding: 0; border: 0; color: inherit; font-family: inherit; font-size: inherit; }
-.review-app .detail-meta > .detail-map { color: var(--chalk); font-weight: 500; }
-.review-app .detail-meta > .status-badge { align-self: center; }
-.review-app .review-header > .personal-review-panel { flex: 0 1 auto; min-width: 0; margin: 0; padding: 0; }
+/* === V-B1 / S8 V-STAGE: review stage (spec S8, 数据站风) === */
+/* Breadcrumb, then the match bar: name and plain facts on the left, the reviewed player on the right. */
+.review-app .page { padding-top: 10px; }
+.review-app .review-breadcrumb { display: flex; align-items: baseline; gap: 6px; min-width: 0; margin: 0 0 8px; color: var(--ink-2); font-size: var(--step-sm); }
+.review-app .review-breadcrumb a { flex: none; color: var(--link); text-decoration: none; }
+.review-app .review-breadcrumb a:hover { color: var(--link-hover); text-decoration: underline; }
+.review-app .review-breadcrumb [aria-current] { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The bar and the reviewed player share one grey row (the player wraps under it on narrow screens);
+   before anyone is picked, the question and the picker are the panel body, on white. */
+.review-app .review-header { display: flex; flex-wrap: wrap; margin: 0 0 12px; }
+.review-app .review-header > .review-header-bar { flex: 1 1 420px; min-width: 0; border-radius: 2px 0 0 2px; }
+.review-app .review-header:not(:has(> .personal-review-panel)) > .review-header-bar { border-radius: 2px; }
+.review-app .review-header > .personal-review-panel { flex: 1 1 auto; min-width: 0; padding: 4px 10px; border-radius: 0 2px 2px 0; background: var(--panel-head); }
+.review-app .review-header:has(.personal-player-picker) > .review-header-bar { flex-basis: 100%; border-radius: 2px 2px 0 0; }
+.review-app .review-header > .personal-review-panel:has(.personal-player-picker) { flex-basis: 100%; padding: 8px 10px 10px; border-top: 1px solid var(--line-bold); border-radius: 0 0 2px 2px; background: var(--panel); }
+.review-app .review-header-bar { flex-wrap: wrap; justify-content: flex-start; height: auto; min-height: 33px; padding: 4px 10px; gap: 4px 20px; border-bottom: 0; }
+.review-app .detail-title { display: flex; flex: 1 1 420px; flex-wrap: wrap; align-items: baseline; gap: 2px 18px; min-width: 0; }
+.review-app .detail-title h1 { min-width: 0; margin: 0; font-size: 16px; line-height: var(--leading-tight); overflow-wrap: anywhere; }
+.review-app .detail-meta { margin: 0; color: var(--ink); font-size: var(--step-sm); font-variant-numeric: tabular-nums; }
+.review-app .detail-meta .fact-label { margin-right: 4px; }
 
-/* Round strip: the page's spine. Each cell is filled with the side that won the round; the reviewed
-   player's lost rounds keep the winner's colour but step back. Deaths and suggestions sit underneath. */
-.review-app .round-strip { margin: 0 0 16px; }
-.review-app .round-strip-track { display: flex; align-items: stretch; gap: 3px; padding: 4px 4px 6px; margin: -4px -4px 0; overflow-x: auto; overscroll-behavior-inline: contain; scrollbar-width: thin; scrollbar-color: var(--line-bold) transparent; }
-.review-app .round-strip-cell { position: relative; display: grid; flex: 1 0 40px; grid-template-rows: 40px 18px; min-width: 40px; max-width: 76px; padding: 0; border: 0; border-radius: var(--radius-control); background: transparent; color: var(--chalk); cursor: pointer; }
-.review-app .round-strip-number { display: grid; place-items: center; border-radius: var(--radius-control) var(--radius-control) 0 0; background: var(--slate-2); font-family: var(--font-display); font-size: 20px; font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; }
-.review-app .round-strip-cell.winner-t .round-strip-number { background: var(--t); color: var(--on-chalk); }
-.review-app .round-strip-cell.winner-ct .round-strip-number { background: var(--ct); color: var(--on-chalk); }
-.review-app .round-strip-cell.lost.winner-t .round-strip-number { background: var(--t-soft); color: var(--t); box-shadow: inset 0 0 0 1px rgba(227, 163, 59, 0.5); }
-.review-app .round-strip-cell.lost.winner-ct .round-strip-number { background: var(--ct-soft); color: var(--ct); box-shadow: inset 0 0 0 1px rgba(93, 159, 214, 0.5); }
-.review-app .round-strip-marks { display: flex; align-items: center; justify-content: center; gap: 5px; border-radius: 0 0 var(--radius-control) var(--radius-control); background: var(--slate); }
+/* 回合记录: one small square per round in the winning side's colour, its number under it, my death and
+   the suggestion count under that; a gap where the teams swap sides. The selected round is outlined in ink. */
+.review-app .round-strip { margin: 0 0 12px; }
+.review-app .round-strip-head { gap: 12px; }
+.review-app .round-strip-legend { display: flex; flex-wrap: wrap; gap: 2px 14px; margin: 0; color: var(--ink-2); font-size: var(--step-xs); }
+.review-app .round-strip-legend span { display: inline-flex; align-items: center; gap: 5px; }
+.review-app .round-strip-legend i { width: 10px; height: 10px; }
+.review-app .round-strip-legend i.side-t { background: var(--t); }
+.review-app .round-strip-legend i.side-ct { background: var(--ct); }
+.review-app .round-strip-legend-dot { width: 4px; height: 4px; border-radius: 50%; background: var(--ink); }
+.review-app .round-strip-legend-below { display: none; }
+.review-app .round-strip-track { display: flex; align-items: stretch; gap: 2px; padding: 8px 10px 6px; overflow-x: auto; overscroll-behavior-inline: contain; scroll-padding-inline: 10px; scrollbar-width: thin; scrollbar-color: var(--line-bold) transparent; }
+.review-app .round-strip-cell { display: grid; flex: 0 0 30px; grid-template-rows: 24px 17px 12px; justify-items: center; align-items: end; width: 30px; min-height: 0; padding: 3px 0 2px; border: 0; border-radius: var(--radius-control); background: transparent; color: var(--ink-2); font: inherit; cursor: pointer; }
+.review-app .round-strip-fill { width: 24px; height: 24px; background: var(--line-bold); }
+.review-app .round-strip-cell.winner-t .round-strip-fill { background: var(--t); }
+.review-app .round-strip-cell.winner-ct .round-strip-fill { background: var(--ct); }
+.review-app .round-strip-number { font-size: var(--step-xs); line-height: 1; font-variant-numeric: tabular-nums; }
+.review-app .round-strip-marks { display: flex; align-items: center; justify-content: center; gap: 2px; height: 12px; }
 .review-app .round-strip-death { flex: none; color: var(--danger); }
-.review-app .round-strip-dots { display: inline-flex; align-items: center; gap: 2px; color: var(--chalk); }
+.review-app .round-strip-dots { display: inline-flex; align-items: center; gap: 2px; color: var(--ink); }
 .review-app .round-strip-dots i { width: 4px; height: 4px; border-radius: 50%; background: currentColor; }
-.review-app .round-strip-dots b { margin-left: 1px; font-size: 11px; font-weight: 600; line-height: 1; font-variant-numeric: tabular-nums; }
-.review-app .round-strip-cell:hover .round-strip-marks { background: var(--slate-2); }
-.review-app .round-strip-cell.selected::after { content: ""; position: absolute; inset: 0; border: 2px solid var(--chalk); border-radius: var(--radius-control); pointer-events: none; }
-.review-app .round-strip-cell:focus-visible { outline-offset: 2px; }
-.review-app .round-strip-half { flex: none; width: 2px; margin: 4px 5px 0; border-radius: 1px; background: var(--chalk-3); }
-.review-app .round-strip.empty .round-review-empty { display: flex; flex-wrap: wrap; gap: 4px 10px; margin: 0; color: var(--chalk-2); font-size: var(--step-sm); }
-/* The selected round, under the stage: who won it and jumps to its key moments. */
-.review-app .round-detail-panel { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 20px; margin-top: 12px; padding: 10px 12px; border: 1px solid var(--line-subtle); border-radius: var(--radius-panel); background: var(--slate); }
-.review-app .round-detail-head { display: flex; align-items: baseline; gap: 10px; }
-.review-app .round-detail-title { margin: 0; font-size: var(--step-md); font-variant-numeric: tabular-nums; white-space: nowrap; }
-.review-app .round-detail-winner { font-size: var(--step-sm); font-weight: 600; white-space: nowrap; }
-.review-app .round-detail-winner.side-t { color: var(--t); }
-.review-app .round-detail-winner.side-ct { color: var(--ct); }
-/* Mirror check: the outcome word lost its outlined box; the winner's colour beside it already carries the weight. */
-.review-app .round-detail-outcome { color: var(--chalk); font-size: var(--step-sm); font-weight: 600; }
-.review-app .round-detail-outcome.lost { color: var(--chalk-2); }
-.review-app .round-detail-count { color: var(--chalk-2); font-size: var(--step-sm); white-space: nowrap; }
-.review-app .round-quick-jumps { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; padding: 0; }
-.review-app .round-ribbon-jump { display: inline-flex; align-items: center; gap: 6px; min-height: 32px; padding: 0 10px; border: 1px solid var(--line-subtle); border-radius: var(--radius-control); background: transparent; color: var(--chalk); font-size: var(--step-sm); font-weight: 500; }
-.review-app .round-ribbon-jump:not(:disabled):hover { border-color: var(--line-bold); background: var(--slate-2); color: var(--chalk); }
-.review-app .round-ribbon-jump svg { color: var(--chalk-2); }
-.review-app .round-ribbon-jump small { color: var(--chalk-2); font-size: var(--step-xs); font-variant-numeric: tabular-nums; }
-.review-app .round-ribbon-jump:disabled { opacity: .45; }
-.review-app .round-review-details { flex-basis: 100%; margin: -4px 0 0; }
-.review-app .round-review-details > summary { display: inline-flex; align-items: center; min-height: 28px; color: var(--chalk-2); font-size: var(--step-xs); cursor: pointer; }
-.review-app .round-review-scope { margin: 4px 0 0; color: var(--chalk-2); font-size: var(--step-xs); }
-.review-app .round-ribbon-metrics { display: flex; flex-wrap: wrap; gap: 8px 28px; margin: 8px 0 2px; }
+.review-app .round-strip-dots b { margin-left: 1px; font-size: 11px; font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; }
+.review-app .round-strip-cell:hover { background: var(--row-hover); }
+.review-app .round-strip-cell.selected .round-strip-fill { outline: 2px solid var(--ink); outline-offset: 1px; }
+.review-app .round-strip-cell.selected .round-strip-number { color: var(--ink); font-weight: 700; }
+.review-app .round-strip-cell:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
+.review-app .round-strip-half { flex: none; width: 1px; margin: 0 7px; background: var(--control-line); }
+.review-app .round-strip.empty .round-review-empty { display: flex; flex-wrap: wrap; gap: 4px 10px; margin: 0; padding: 10px 12px; color: var(--ink-2); font-size: var(--step-sm); }
+/* The selected round, under the stage: who won it, then its key moments as links with their clock. */
+.review-app .round-detail-panel { margin-top: 12px; }
+.review-app .round-detail-head { justify-content: flex-start; gap: 12px; }
+.review-app .round-detail-title { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.review-app .round-detail-winner { font-size: var(--step-sm); font-weight: 700; white-space: nowrap; }
+.review-app .round-detail-winner.side-t { color: var(--t-text); }
+.review-app .round-detail-winner.side-ct { color: var(--ct-text); }
+.review-app .round-detail-outcome { color: var(--ink-2); font-size: var(--step-sm); white-space: nowrap; }
+.review-app .round-detail-count { color: var(--ink-2); font-size: var(--step-sm); white-space: nowrap; }
+/* Key moments: a tidy grid of label link + m:ss, not a run of inline links. */
+.review-app .round-quick-jumps { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 0 16px; margin: 0; padding: 6px 12px 2px; }
+.review-app .round-ribbon-jump { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; min-width: 0; min-height: 26px; padding: 0; border: 0; border-bottom: 1px solid var(--line-subtle); background: none; color: var(--link); font: inherit; font-size: var(--step-body); text-align: left; cursor: pointer; }
+.review-app .round-ribbon-jump:not(:disabled):hover span { color: var(--link-hover); text-decoration: underline; }
+.review-app .round-ribbon-jump small { color: var(--ink-2); font-size: var(--step-xs); font-variant-numeric: tabular-nums; }
+.review-app .round-ribbon-jump:disabled { color: var(--ink-3); cursor: default; }
+.review-app .round-review-details { padding: 0 12px 8px; }
+.review-app .round-review-details > summary { display: inline-flex; align-items: center; min-height: 24px; color: var(--link); font-size: var(--step-xs); }
+.review-app .round-review-scope { margin: 4px 0 0; color: var(--ink-2); font-size: var(--step-xs); }
+.review-app .round-ribbon-metrics { display: flex; flex-wrap: wrap; gap: 6px 28px; margin: 6px 0 2px; }
 .review-app .round-ribbon-metric { display: grid; gap: 2px; min-width: 0; padding: 0; border: 0; }
-.review-app .round-ribbon-metric dt { color: var(--chalk-2); font-size: var(--step-xs); }
-.review-app .round-ribbon-metric dd { margin: 0; color: var(--chalk); font-size: var(--step-sm); font-variant-numeric: tabular-nums; }
+.review-app .round-ribbon-metric dt { color: var(--ink-2); font-size: var(--step-xs); }
+.review-app .round-ribbon-metric dd { margin: 0; color: var(--ink); font-size: var(--step-body); font-variant-numeric: tabular-nums; }
 
-/* Workspace: stage and suggestions side by side; the stage is one slate panel with a graphite map. */
-.review-app .review-layout { display: grid; grid-template-columns: minmax(0, 1fr) 370px; align-items: start; gap: 20px; }
+/* Workspace: the stage and the suggestions side by side. The stage is one white panel: a header bar with
+   the view tabs, the dark radar canvas with the rosters beside it, the timeline, then the transport strip. */
+.review-app .review-layout { display: grid; grid-template-columns: minmax(0, 1fr) 380px; align-items: start; gap: 12px; }
 .review-app .review-main-column { min-width: 0; }
-.review-app .review-stage { display: flex; flex-direction: column; overflow: hidden; border: 1px solid var(--line-subtle); border-radius: var(--radius-panel); background: var(--slate); scroll-margin-top: 76px; }
+.review-app .review-stage { display: flex; flex-direction: column; overflow: hidden; scroll-margin-top: 52px; }
 .review-app .review-stage:focus { outline: none; }
 .review-app .review-stage:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
-.review-app .review-stage-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 6px 8px; border-bottom: 1px solid var(--line-subtle); }
-.review-app .review-view-switch { display: flex; gap: 2px; padding: 2px; border: 1px solid var(--line-subtle); border-radius: var(--radius-control); }
-.review-app .review-view-switch button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 30px; padding: 0 10px; border: 0; border-radius: 2px; background: transparent; color: var(--chalk-2); font-size: var(--step-sm); font-weight: 500; white-space: nowrap; }
-.review-app .review-view-switch button[aria-pressed="true"] { background: var(--slate-2); color: var(--chalk); }
-.review-app .review-stage-toolbar > .secondary-button { min-height: 32px; }
-.review-app .review-main-canvas { position: relative; min-width: 0; height: clamp(250px, calc(100dvh - 500px), 500px); overflow: hidden; background: var(--graphite); }
-@media (min-width: 1001px) {
-  .review-app .review-main-canvas { height: clamp(340px, calc(100dvh - 400px), 600px); }
-}
-.review-app .review-main-canvas .first-person-panel { height: 100%; margin: 0; padding: 0; border: 0; border-radius: 0; background: var(--graphite); }
-.review-app .review-main-canvas .first-person-viewport { height: 100%; min-height: 0; aspect-ratio: auto; background: #101113; }
+.review-app .review-stage-toolbar { gap: 10px; }
+.review-app .review-view-switch .panel-tab:disabled { opacity: 0.55; cursor: not-allowed; }
+.review-app .review-clip-button { font-size: var(--step-sm); white-space: nowrap; }
+/* Sized by the column's width so the square radar fills it on laptops; on a short screen the
+   transport scrolls into view instead of the radar shrinking. */
+.review-app .review-main-canvas { position: relative; min-width: 0; height: clamp(440px, calc((100vw - 460px) * 0.62), 620px); overflow: hidden; background: var(--radar-bg); }
+.review-app .review-main-canvas .first-person-panel { height: 100%; margin: 0; padding: 0; border: 0; border-radius: 0; background: var(--radar-bg); }
+.review-app .review-main-canvas .first-person-viewport { height: 100%; min-height: 0; aspect-ratio: auto; border: 0; border-radius: 0; background: var(--radar-bg); }
 .review-app .review-main-canvas .first-person-video { width: 100%; height: 100%; object-fit: contain; }
 .review-app .first-person-hud { pointer-events: none; }
-.review-app .hud-chip { border: 1px solid var(--line-subtle); border-radius: var(--radius-pill); background: rgba(27, 29, 32, 0.86); color: var(--chalk); font-size: var(--step-xs); }
-.review-app .review-main-canvas .replay-panel { display: flex; flex-direction: column; height: 100%; min-height: 0; margin: 0; padding: 8px 10px; border: 0; border-radius: 0; background: var(--graphite); }
-.review-app .review-main-canvas .map-frame { flex: 1; min-height: 0; height: auto; aspect-ratio: auto; border: 0; border-radius: 0; background: var(--graphite); }
-.review-app .review-main-canvas .map-frame > svg { position: absolute; inset: 0; width: 100%; height: 100%; min-height: 0; aspect-ratio: auto; }
-.review-app :is(.radar-map-frame, .fallback-map-frame) { background: var(--graphite); }
+.review-app .first-person-loading { position: absolute; inset: 0; display: grid; place-items: center; margin: 0; color: var(--radar-text-2); font-size: var(--step-sm); pointer-events: none; }
+.review-app .hud-chip { gap: 4px; padding: 2px 6px; border: 1px solid var(--radar-line); border-radius: var(--radius-control); background: var(--radar-panel); color: var(--radar-text); font-size: var(--step-xs); box-shadow: none; }
+.review-app .render-status-overlay { border: 1px solid var(--radar-line); border-left: 3px solid var(--link); border-radius: var(--radius-panel); background: var(--radar-panel); color: var(--radar-text); box-shadow: none; }
+.review-app .render-status-overlay.failed { border-left-color: var(--danger); }
+.review-app .render-status-overlay > span { color: var(--radar-text-2); font-size: var(--step-xs); font-weight: 400; letter-spacing: 0; text-transform: none; }
+.review-app .render-status-overlay p { color: var(--radar-text-2); }
+.review-app .video-progress { background: var(--radar-line); }
+.review-app .video-progress span { background: var(--radar-text); }
+.review-app .review-main-canvas .replay-panel { display: grid; grid-template-columns: minmax(0, 1fr) 216px; height: 100%; min-height: 0; margin: 0; padding: 0; border: 0; border-radius: 0; background: var(--radar-bg); box-shadow: none; }
+.review-app .review-main-canvas .map-frame { position: relative; display: block; min-height: 0; height: 100%; aspect-ratio: auto; padding: 0; border: 0; border-radius: 0; background: var(--radar-bg); }
+.review-app .review-main-canvas .map-frame > svg { position: absolute; inset: 8px; width: calc(100% - 16px); height: calc(100% - 16px); min-height: 0; aspect-ratio: auto; }
+.review-app :is(.radar-map-frame, .fallback-map-frame) { background: var(--radar-bg); }
 
-/* Map overlays: quiet graphite chips over the radar. */
-.review-app .map-overlay-bar { position: absolute; top: 8px; right: 8px; z-index: 3; display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 4px 12px; max-width: calc(100% - 184px); padding: 4px 10px; border: 1px solid var(--line-subtle); border-radius: var(--radius-control); background: rgba(27, 29, 32, 0.9); color: var(--chalk-2); font-size: var(--step-xs); }
-.review-app .map-overlay-bar .viewer-map-name { color: var(--chalk); font-family: var(--font-display); font-size: var(--step-sm); font-weight: 600; }
-.review-app .map-overlay-bar small { font-size: var(--step-xs); }
-.review-app .map-calibration-pill { padding: 0 6px; border: 1px solid var(--line-bold); border-radius: var(--radius-pill); background: transparent; color: var(--chalk-2); font-size: var(--step-xs); }
-.review-app .map-floor-control { display: flex; align-items: center; gap: 6px; }
-.review-app .map-floor-control .speed-select { min-height: 28px; }
-.review-app .map-roster-toggle { display: none; align-items: center; gap: 5px; min-height: 28px; padding: 0 8px; border: 1px solid var(--line-subtle); border-radius: var(--radius-control); background: transparent; color: var(--chalk); font-size: var(--step-xs); white-space: nowrap; }
-.review-app .map-roster-toggle[aria-expanded="true"] { border-color: var(--chalk-2); background: var(--slate-2); }
-.review-app .map-highlight-card { position: absolute; right: 10px; bottom: 10px; z-index: 3; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; max-width: calc(100% - 20px); padding: 6px 6px 6px 10px; border: 1px solid var(--line-bold); border-radius: var(--radius-panel); background: rgba(27, 29, 32, 0.95); box-shadow: var(--shadow-pop); font-size: var(--step-sm); }
-.review-app .map-highlight-card small { color: var(--chalk-2); font-size: var(--step-xs); }
-.review-app .map-highlight-side { font-family: var(--font-display); font-size: var(--step-sm); font-weight: 700; }
+/* Map overlays: small radar-panel chips over the canvas. */
+.review-app .map-overlay-bar { position: absolute; top: 8px; right: 8px; z-index: 3; display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 4px 12px; max-width: calc(100% - 16px); padding: 3px 8px; border: 1px solid var(--radar-line); border-radius: var(--radius-control); background: var(--radar-panel); color: var(--radar-text-2); font-size: var(--step-xs); box-shadow: none; }
+.review-app .map-overlay-bar [data-testid="bomb-status"] { color: var(--radar-text); }
+/* The match bar already names the map. */
+.review-app .review-main-canvas .viewer-map-name { display: none; }
+.review-app .map-overlay-bar small { color: var(--radar-text-2); font-size: var(--step-xs); }
+.review-app .map-calibration-pill { padding: 0; border: 0; background: none; color: var(--radar-text-2); font-size: var(--step-xs); }
+.review-app .map-floor-control { display: flex; align-items: center; gap: 6px; color: var(--radar-text-2); }
+.review-app .map-floor-control select { height: 24px; min-height: 24px; padding: 0 4px; border: 1px solid var(--radar-line); background: var(--radar-bg); color: var(--radar-text); font-size: var(--step-xs); }
+.review-app .map-floor-control [data-testid="map-floor-label"] { color: var(--radar-text); }
+.review-app .map-highlight-card { position: absolute; right: 8px; bottom: 8px; z-index: 3; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; max-width: calc(100% - 16px); padding: 4px 4px 4px 10px; border: 1px solid var(--radar-line); border-radius: var(--radius-panel); background: var(--radar-panel); color: var(--radar-text); box-shadow: none; font-size: var(--step-body); }
+.review-app .map-highlight-card small { color: var(--radar-text-2); font-size: var(--step-xs); }
+.review-app .map-highlight-side { font-weight: 700; }
 .review-app .map-highlight-side.side-t { color: var(--t); }
 .review-app .map-highlight-side.side-ct { color: var(--ct); }
-.review-app .map-highlight-card .compact-button { min-height: 30px; padding: 0 10px; font-size: var(--step-xs); }
-.review-app .map-highlight-close { display: grid; place-items: center; width: 30px; height: 30px; padding: 0; border: 0; border-radius: var(--radius-control); background: transparent; color: var(--chalk-2); }
-.review-app .map-empty-state { border: 1px solid var(--line-subtle); border-radius: var(--radius-panel); background: rgba(27, 29, 32, 0.92); }
+.review-app .map-highlight-close { display: grid; place-items: center; width: 24px; height: 24px; padding: 0; border: 0; border-radius: var(--radius-control); background: transparent; color: var(--radar-text-2); }
+.review-app .map-highlight-close:hover { background: var(--radar-line); color: var(--radar-text); }
+.review-app .map-empty-state { border: 1px solid var(--radar-line); border-radius: var(--radius-panel); background: var(--radar-panel); color: var(--radar-text); box-shadow: none; }
+.review-app .map-empty-state span { color: var(--radar-text-2); }
 /* The map's own svg sizing must not reach the icons in its overlays. */
 .review-app .map-frame :is(.map-overlay-bar, .map-highlight-card) svg { position: static; width: 14px; height: 14px; min-height: 0; aspect-ratio: auto; flex: none; }
 
-/* Roster: T gold and CT blue for the sides, the reviewed player in chalk. */
-.review-app .review-main-canvas .player-list { position: absolute; top: 10px; left: 10px; right: auto; bottom: auto; width: 164px; max-height: calc(100% - 20px); grid-template-columns: minmax(0, 1fr); gap: 6px; overflow: auto; pointer-events: auto; scrollbar-width: thin; }
-.review-app .side-roster { overflow: hidden; border: 1px solid var(--line-subtle); border-radius: var(--radius-control); background: rgba(27, 29, 32, 0.9); }
-.review-app .review-main-canvas .side-roster h3 { margin: 0; padding: 4px 8px; border-bottom: 1px solid var(--line-subtle); color: var(--chalk-2); font-family: var(--font-body); font-size: var(--step-xs); font-weight: 500; }
-.review-app .roster-side { font-family: var(--font-display); font-weight: 700; }
-.review-app .side-roster.side-t .roster-side { color: var(--t); }
-.review-app .side-roster.side-ct .roster-side { color: var(--ct); }
-.review-app .review-main-canvas .roster-row { grid-template-columns: 16px minmax(0, 1fr) 26px; gap: 6px; padding: 0 8px; color: var(--chalk); font-size: var(--step-xs); }
-.review-app .roster-row.dead { color: var(--chalk-3); text-decoration: none; }
+/* Rosters: two small tables beside the map, header bars tinted by side, zebra rows, HP right-aligned. */
+.review-app .review-main-canvas .player-list { position: static; inset: auto; display: grid; grid-template-columns: minmax(0, 1fr); align-content: start; gap: 8px; width: auto; max-height: none; min-height: 0; padding: 8px; overflow: auto; border-left: 1px solid var(--line-bold); background: var(--panel); pointer-events: auto; scrollbar-width: thin; }
+.review-app .side-roster { overflow: hidden; border: 1px solid var(--line-bold); border-radius: var(--radius-panel); background: var(--panel); box-shadow: none; }
+.review-app .side-roster .roster-head { height: 26px; min-height: 26px; padding: 0 8px; }
+.review-app .side-roster .roster-head .panel-bar-title { font-size: var(--step-sm); }
+.review-app .side-roster .roster-head > span { color: var(--ink-2); font-size: var(--step-xs); }
+.review-app .roster-side { font-weight: 700; }
+.review-app .review-main-canvas .roster-row { display: grid; grid-template-columns: 18px minmax(0, 1fr) 30px; align-items: center; gap: 6px; min-height: 26px; padding: 0 8px; border-top: 1px solid var(--line-subtle); background: var(--panel); color: var(--ink); font-size: var(--step-sm); }
+.review-app .review-main-canvas .roster-row:nth-child(odd) { background: var(--row-alt); }
+.review-app .review-main-canvas .roster-row:hover { background: var(--row-hover); }
+.review-app .review-main-canvas .roster-row.reviewed { background: var(--row-selected); }
+.review-app .roster-row.dead { color: var(--ink-3); text-decoration: none; }
 .review-app .roster-row.dead .roster-name { text-decoration: line-through; }
-.review-app .roster-row.reviewed { box-shadow: inset 2px 0 var(--chalk); }
-.review-app .roster-index { display: grid; place-items: center; width: 16px; height: 16px; border-radius: 50%; color: var(--on-chalk); font-family: var(--font-display); font-size: 11px; font-weight: 700; }
+/* Numbered side dots, the same numbers as on the map. */
+.review-app .roster-index { display: grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; color: var(--ink); font-size: var(--step-xs); font-weight: 700; line-height: 1; }
 .review-app .roster-index.side-t { background: var(--t); }
-.review-app .roster-index.side-ct { background: var(--ct); }
+.review-app .roster-index.side-ct { background: var(--ct-text); color: var(--on-link); }
 .review-app .roster-name { min-width: 0; min-height: 24px; padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.review-app .roster-row.reviewed .roster-name { font-weight: 600; }
-.review-app .roster-name[aria-pressed="true"] { text-decoration: underline; text-underline-offset: 3px; }
-.review-app .roster-floor, .review-app .roster-reviewed-tag { color: var(--chalk-2); font-size: 11px; font-weight: 400; }
-.review-app .roster-hp { color: var(--chalk-2); text-align: right; font-variant-numeric: tabular-nums; }
+.review-app .roster-name:hover { color: var(--link); text-decoration: underline; }
+.review-app .roster-row.reviewed .roster-name { font-weight: 700; }
+.review-app .roster-name[aria-pressed="true"] { color: var(--link); }
+.review-app .roster-floor, .review-app .roster-reviewed-tag { color: var(--ink-2); font-size: var(--step-xs); font-weight: 400; }
+.review-app .roster-hp { color: var(--ink); text-align: right; font-variant-numeric: tabular-nums; }
 
-/* Map marks (SVG). Side colours for players and kills; the reviewed player is ringed in chalk. */
-.map-player-body { stroke: var(--graphite); stroke-width: 0.7px; }
+/* Map marks (SVG) on the radar canvas: side colours for players and kills, my player ringed in radar text. */
+.map-player-body { stroke: var(--radar-bg); stroke-width: 0.7px; }
 .map-player-dot.side-t .map-player-body { fill: var(--t); }
 .map-player-dot.side-ct .map-player-body { fill: var(--ct); }
-.map-player-index { fill: var(--graphite); font-family: var(--font-display); font-size: 3.6px; font-weight: 700; }
-.map-player-reviewed { fill: none; stroke: var(--chalk); stroke-width: 1.1px; }
-.map-player-dot.reviewed .map-player-body { stroke: var(--chalk); stroke-width: 0.6px; }
-.map-player-highlight { fill: none; stroke: var(--chalk-2); stroke-width: 0.6px; stroke-dasharray: 1.2 0.8; }
-.map-player-dead { stroke: var(--chalk); stroke-width: 0.8px; }
-.review-app .map-player-name { fill: var(--chalk); stroke: var(--graphite); stroke-width: 0.9px; paint-order: stroke; font-family: var(--font-body); font-size: 3.1px; font-weight: 600; }
-.map-bomb-marker rect { fill: var(--chalk); stroke: var(--graphite); stroke-width: 0.6px; }
-.map-bomb-marker circle { fill: none; stroke: var(--chalk); stroke-width: 0.5px; }
-.review-app .parser-map-event circle { fill: var(--slate-2); stroke: var(--line-bold); stroke-width: 0.5px; }
-.review-app .parser-map-event text { fill: var(--chalk); font-size: 2.9px; font-weight: 700; }
-.review-app .parser-map-event.side-t circle { fill: var(--t); stroke: var(--graphite); }
-.review-app .parser-map-event.side-ct circle { fill: var(--ct); stroke: var(--graphite); }
-.review-app .parser-map-event.own-kill circle { fill: var(--chalk); stroke: var(--graphite); }
-.review-app .parser-map-event.own-death circle { fill: var(--danger); stroke: var(--graphite); }
-.review-app .parser-map-event:is(.side-t, .side-ct, .own-kill, .own-death) text { fill: var(--graphite); }
+.map-player-index { fill: var(--radar-bg); font-family: var(--font-body); font-size: 3.6px; font-weight: 700; }
+.map-player-reviewed { fill: none; stroke: var(--radar-text); stroke-width: 1.1px; }
+.map-player-dot.reviewed .map-player-body { stroke: var(--radar-text); stroke-width: 0.6px; }
+.map-player-highlight { fill: none; stroke: var(--radar-text-2); stroke-width: 0.6px; stroke-dasharray: 1.2 0.8; }
+.map-player-dead { stroke: var(--radar-text); stroke-width: 0.8px; }
+.review-app .map-player-name { fill: var(--radar-text); stroke: var(--radar-bg); stroke-width: 0.9px; paint-order: stroke; font-family: var(--font-body); font-size: 3.1px; font-weight: 700; }
+.map-bomb-marker rect { fill: var(--radar-text); stroke: var(--radar-bg); stroke-width: 0.6px; }
+.map-bomb-marker circle { fill: none; stroke: var(--danger); stroke-width: 0.5px; }
+.review-app .parser-map-event circle { fill: var(--radar-panel); stroke: var(--radar-line); stroke-width: 0.5px; }
+.review-app .parser-map-event text { fill: var(--radar-text); font-size: 2.9px; font-weight: 700; }
+.review-app .parser-map-event.side-t circle { fill: var(--t); stroke: var(--radar-bg); }
+.review-app .parser-map-event.side-ct circle { fill: var(--ct); stroke: var(--radar-bg); }
+.review-app .parser-map-event.own-kill circle { fill: var(--radar-text); stroke: var(--radar-bg); }
+.review-app .parser-map-event.own-death circle { fill: var(--danger); stroke: var(--radar-bg); }
+.review-app .parser-map-event:is(.side-t, .side-ct, .own-kill) text { fill: var(--radar-bg); }
+/* No radar art for this map: the same radar palette, drawn. */
+.fallback-map-ground { fill: var(--radar-bg); }
+.fallback-map-grid { stroke: var(--radar-panel); }
+.fallback-map-floor { fill: var(--radar-panel); stroke: var(--radar-line); }
+.fallback-map-lane { fill: var(--radar-line); opacity: 0.55; }
+.fallback-map-site { fill: none; stroke: var(--radar-line); }
+.fallback-map-text { fill: var(--radar-text-2); }
 
-/* "当前建议" strip: what is being watched, and the way back to its card. */
-.review-app .review-finding-strip { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 10px; padding: 4px 6px 4px 12px; border-bottom: 1px solid var(--line-subtle); background: var(--chalk-soft); box-shadow: inset 2px 0 var(--chalk); font-size: var(--step-sm); }
-.review-app .review-finding-strip-label { color: var(--chalk-2); font-size: var(--step-xs); }
-.review-app .review-finding-strip strong { min-width: 0; font-weight: 600; overflow-wrap: anywhere; }
-.review-app .review-finding-strip small { color: var(--chalk-2); font-size: var(--step-xs); }
+/* "当前建议" strip: what is being watched, and the way back to its card (an info notice). */
+.review-app .review-finding-strip { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 10px; padding: 3px 4px 3px 9px; border-bottom: 1px solid var(--line-bold); border-left: 3px solid var(--link); background: var(--panel); font-size: var(--step-body); }
+.review-app .review-finding-strip-label { color: var(--ink-2); font-size: var(--step-xs); }
+.review-app .review-finding-strip strong { min-width: 0; font-weight: 700; overflow-wrap: anywhere; }
+.review-app .review-finding-strip small { color: var(--ink-2); font-size: var(--step-xs); }
 .review-app .review-finding-strip-time { font-variant-numeric: tabular-nums; }
-.review-app .review-finding-strip .text-button { display: inline-flex; align-items: center; gap: 4px; min-height: 32px; margin-left: auto; }
-.review-app .review-finding-strip-close { display: grid; place-items: center; width: 32px; height: 32px; padding: 0; border: 0; border-radius: var(--radius-control); background: transparent; color: var(--chalk-2); }
+.review-app .review-finding-strip .text-button { margin-left: auto; }
+.review-app .review-finding-strip-close { display: grid; place-items: center; width: 24px; height: 24px; padding: 0; border: 0; border-radius: var(--radius-control); background: transparent; color: var(--ink-2); }
+.review-app .review-finding-strip-close:hover { background: var(--row-alt); color: var(--ink); }
 
-/* Timeline: one quiet band. Kills in the killer's side colour, the reviewed player's own kill in chalk,
-   their death in red; suggestions as chalk ticks; freeze time hatched. */
-.review-app .timeline-panel { min-height: 0; margin: 0; padding: 8px 12px 2px; border: 0; border-top: 1px solid var(--line-subtle); border-radius: 0; background: var(--slate); }
+/* Timeline on white: kills in the killer's side colour (mine outlined in ink), my death in red, events
+   too close to tell apart as one chip with their count, suggestions marked by severity; freeze time a
+   grey block; the playhead in ink. */
+.review-app .timeline-panel { min-height: 0; margin: 0; padding: 6px 10px 2px; border: 0; border-top: 1px solid var(--line-bold); border-radius: 0; background: var(--panel); box-shadow: none; }
 .review-app .timeline-heading { display: none; }
 .review-app .timeline-lane-stack { grid-template-columns: 34px minmax(0, 1fr); gap: 8px; min-height: 0; }
 .review-app :is(.timeline-lane-labels, .timeline-lane-tracks) { grid-template-rows: repeat(3, 24px); }
 .review-app .timeline-lane-labels { width: 34px; border: 0; background: none; }
-.review-app .timeline-lane-label { height: 24px; padding: 0; border: 0; color: var(--chalk-3); font-size: var(--step-xs); font-weight: 500; }
+.review-app .timeline-lane-label { height: 24px; padding: 0; border: 0; color: var(--ink-2); font-size: var(--step-xs); font-weight: 400; }
 .review-app .timeline-lane-label small { display: none; }
-.review-app .timeline-lane-track { height: 24px; border: 0; }
-.review-app .round-lane::before { content: ""; position: absolute; top: 5px; bottom: 5px; left: 0; width: var(--timeline-freeze-end, 0%); border-radius: 2px; background: repeating-linear-gradient(135deg, rgba(238, 234, 226, 0.07) 0 3px, transparent 3px 7px); pointer-events: none; }
+.review-app .timeline-lane-track { height: 24px; border: 0; background: none; }
+.review-app .round-lane::before { content: ""; position: absolute; top: 6px; bottom: 6px; left: 0; width: var(--timeline-freeze-end, 0%); background: var(--line-subtle); pointer-events: none; }
 .review-app .round-duration-track { left: 36px; right: 36px; height: 1px; background: var(--line-bold); }
-.review-app .round-boundary-marker { min-width: 32px; min-height: 24px; padding: 0 4px; border-radius: 2px; background: var(--slate); color: var(--chalk-2); font-size: var(--step-xs); }
-.review-app .round-boundary-marker:hover { color: var(--chalk); }
-.review-app .timeline-current-spine { width: 1px; background: var(--chalk); box-shadow: none; }
-.review-app .timeline-current-spine span { top: 3px; left: 5px; padding: 1px 5px; border-radius: 2px; background: var(--graphite); color: var(--chalk); font-family: var(--font-display); font-size: var(--step-xs); font-weight: 600; }
-.review-app .timeline-lane-track .parser-event-marker { display: grid; place-items: center; width: 18px; height: 16px; padding: 0; border: 0; border-radius: 2px; background: var(--slate-2); color: var(--chalk-2); box-shadow: 0 0 0 1px var(--slate); font-size: 10px; font-weight: 600; line-height: 1; }
-.review-app .timeline-lane-track .parser-event-marker.side-t { background: var(--t); color: var(--on-chalk); }
-.review-app .timeline-lane-track .parser-event-marker.side-ct { background: var(--ct); color: var(--on-chalk); }
-.review-app .timeline-lane-track .parser-event-marker.own-kill { background: var(--chalk); color: var(--on-chalk); }
-.review-app .timeline-lane-track .parser-event-marker.own-death { background: var(--danger); color: var(--on-chalk); }
-/* The reviewed player's own kills, and above all their death, stay on top of neighbouring markers. */
-.review-app .timeline-lane-track .parser-event-marker.own-kill { z-index: 1; }
-.review-app .timeline-lane-track .parser-event-marker.own-death { z-index: 2; }
+.review-app .round-boundary-marker { min-width: 32px; min-height: 24px; padding: 0 4px; border: 0; border-radius: var(--radius-control); background: var(--panel); color: var(--link); font-size: var(--step-xs); box-shadow: none; }
+.review-app .round-boundary-marker:hover { color: var(--link-hover); text-decoration: underline; }
+.review-app .timeline-current-spine { width: 1px; background: var(--ink); box-shadow: none; }
+/* Mirror check: the playhead keeps its line only; the transport right under it already shows the clock. */
+.review-app .timeline-current-spine span { display: none; }
+.review-app .timeline-lane-track .parser-event-marker { display: grid; place-items: center; width: 18px; height: 16px; padding: 0; border: 0; border-radius: var(--radius-control); background: var(--panel); color: var(--ink-2); box-shadow: inset 0 0 0 1px var(--control-line), 0 0 0 1px var(--panel); font-size: 11px; font-weight: 700; line-height: 1; }
+.review-app .timeline-lane-track .parser-event-marker.side-t { background: var(--t); color: var(--ink); box-shadow: 0 0 0 1px var(--panel); }
+.review-app .timeline-lane-track .parser-event-marker.side-ct { background: var(--ct-text); color: var(--on-link); box-shadow: 0 0 0 1px var(--panel); }
+.review-app .timeline-lane-track .parser-event-marker.own-kill { box-shadow: inset 0 0 0 2px var(--ink), 0 0 0 1px var(--panel); }
+.review-app .timeline-lane-track .parser-event-marker.cluster { background: var(--panel); color: var(--ink); box-shadow: inset 0 0 0 1px var(--ink-2), 0 0 0 1px var(--panel); font-variant-numeric: tabular-nums; }
+.review-app .timeline-lane-track .parser-event-marker.cluster.has-own-kill { box-shadow: inset 0 0 0 2px var(--ink), 0 0 0 1px var(--panel); }
+.review-app .timeline-lane-track .parser-event-marker.cluster.has-own-death { color: var(--danger-text); box-shadow: inset 0 0 0 2px var(--danger), 0 0 0 1px var(--panel); }
+.review-app .timeline-lane-track .parser-event-marker.own-death { background: var(--danger); color: var(--on-link); box-shadow: 0 0 0 1px var(--panel); }
+/* My own kills, and above all my death, stay on top of neighbouring markers. */
+.review-app .timeline-lane-track .parser-event-marker:is(.own-kill, .has-own-kill) { z-index: 1; }
+.review-app .timeline-lane-track .parser-event-marker:is(.own-death, .has-own-death) { z-index: 2; }
 .review-app .timeline-lane-track :is(.event-marker, .parser-event-marker):is(:hover, :focus-visible) { z-index: 4; }
-.review-app .timeline-lane-track .event-marker { width: 6px; height: 16px; padding: 0; border: 0; border-radius: 1px; background: var(--chalk); box-shadow: 0 0 0 2px var(--slate); }
-.review-app .timeline-lane-track .event-marker.medium { background: var(--chalk-2); }
-.review-app .timeline-lane-track .event-marker:is(.low, .info) { background: var(--slate); box-shadow: inset 0 0 0 1.5px var(--chalk-2), 0 0 0 2px var(--slate); }
-.review-app .timeline-lane-track :is(.event-marker, .parser-event-marker) { transition: transform var(--motion); }
+.review-app .timeline-lane-track .event-marker { width: 6px; height: 16px; padding: 0; border: 0; border-radius: 1px; background: var(--danger); box-shadow: 0 0 0 2px var(--panel); }
+.review-app .timeline-lane-track .event-marker.medium { background: var(--t); }
+.review-app .timeline-lane-track .event-marker:is(.low, .info) { background: var(--ink-3); }
 .review-app .timeline-lane-track :is(.event-marker, .parser-event-marker):focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 /* Hit areas of at least 24 × 24 that stay inside their 24px lane. */
 .review-app :is(.event-marker, .parser-event-marker)::before { content: ""; position: absolute; inset: -4px -5px; }
 .review-app .event-marker::before { inset: -4px -9px; }
-.review-app .timeline-scrubber { padding: 0; border: 0; }
-.review-app .timeline-panel input[type="range"] { display: block; width: 100%; height: 16px; margin: 6px 0 0; accent-color: var(--chalk); }
-/* The scrubber: played part in chalk, the rest a line; a hard stop, not a gradient wash. */
+.review-app .timeline-scrubber { padding: 0; border: 0; background: none; }
+.review-app .timeline-panel input[type="range"] { display: block; width: 100%; height: 16px; margin: 4px 0 2px; accent-color: var(--ink); }
+/* The scrubber: played part in ink-2, the rest a line, a hard stop between them. */
 .review-app .timeline-slider { -webkit-appearance: none; appearance: none; background: transparent; cursor: pointer; }
-.review-app .timeline-slider::-webkit-slider-runnable-track { height: 4px; border-radius: 2px; background: linear-gradient(to right, var(--chalk) var(--timeline-current-tick, 0%), var(--line-bold) var(--timeline-current-tick, 0%)); }
-.review-app .timeline-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; margin-top: -5px; border: 2px solid var(--slate); border-radius: 50%; background: var(--chalk); }
+.review-app .timeline-slider::-webkit-slider-runnable-track { height: 4px; border-radius: 2px; background: linear-gradient(to right, var(--ink-2) var(--timeline-current-tick, 0%), var(--line-bold) var(--timeline-current-tick, 0%)); }
+.review-app .timeline-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 12px; height: 12px; margin-top: -4px; border: 2px solid var(--panel); border-radius: 50%; background: var(--ink); box-shadow: 0 0 0 1px var(--ink); }
 .review-app .timeline-slider::-moz-range-track { height: 4px; border-radius: 2px; background: var(--line-bold); }
-.review-app .timeline-slider::-moz-range-progress { height: 4px; border-radius: 2px; background: var(--chalk); }
-.review-app .timeline-slider::-moz-range-thumb { width: 10px; height: 10px; border: 2px solid var(--slate); border-radius: 50%; background: var(--chalk); }
+.review-app .timeline-slider::-moz-range-progress { height: 4px; border-radius: 2px; background: var(--ink-2); }
+.review-app .timeline-slider::-moz-range-thumb { width: 8px; height: 8px; border: 2px solid var(--panel); border-radius: 50%; background: var(--ink); }
 .review-app .timeline-slider:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 @media (pointer: coarse) {
   .review-app .timeline-panel input[type="range"] { height: 32px; }
   .review-app .roster-name { min-height: 32px; }
 }
 
-/* Transport: play and the round clock on the left, suggestion stepping on the right. */
-.review-app .review-command-bar { position: static; display: flex; flex-direction: row; flex-wrap: wrap; justify-content: flex-start; align-items: center; gap: 8px 12px; min-height: 52px; margin: 0; padding: 6px 12px 8px; border: 0; border-radius: 0; background: var(--slate); box-shadow: none; backdrop-filter: none; }
+/* Transport: a light toolbar strip. Play, seek, speed and the round clock left; suggestion stepping right. */
+.review-app .review-command-bar { position: static; display: flex; flex-direction: row; flex-wrap: wrap; justify-content: flex-start; align-items: center; gap: 6px 10px; min-height: 40px; margin: 0; padding: 5px 10px; border: 0; border-top: 1px solid var(--line-bold); border-radius: 0; background: var(--row-alt); box-shadow: none; backdrop-filter: none; }
 .review-app .review-command-actions { display: flex; flex: none; flex-wrap: nowrap; align-items: center; gap: 4px; width: auto; }
-.review-app .coordinate-play-button { gap: 6px; min-height: 34px; margin: 0 2px; padding: 0 14px; }
-.review-app .review-seek-button { justify-content: center; width: 34px; min-height: 34px; padding: 0; color: var(--chalk-2); }
-.review-app .review-seek-button:hover { color: var(--chalk); }
-.review-app .review-speed-control { display: inline-flex; align-items: center; gap: 6px; margin-left: 6px; color: var(--chalk-2); font-size: var(--step-xs); }
-.review-app .review-speed-control .speed-select { min-width: 62px; min-height: 32px; }
-.review-app .review-clock { margin-left: 10px; color: var(--chalk); font-family: var(--font-display); font-size: var(--step-md); font-weight: 600; line-height: 1; white-space: nowrap; font-variant-numeric: tabular-nums; }
-.review-app .review-clock span { color: var(--chalk-3); font-weight: 500; }
+.review-app .review-command-bar .icon-button { color: var(--ink); }
+.review-app .review-seek-button { width: auto; min-width: 34px; padding: 0 6px; font-size: var(--step-sm); font-variant-numeric: tabular-nums; }
+.review-app .review-speed-control { display: inline-flex; align-items: center; gap: 6px; margin-left: 8px; color: var(--ink-2); font-size: var(--step-xs); }
+.review-app .review-speed-control select { width: auto; min-width: 58px; height: 28px; min-height: 28px; font-size: var(--step-body); font-weight: 400; }
+.review-app .review-clock { margin-left: 10px; color: var(--ink); font-size: var(--step-body); font-weight: 400; line-height: 1; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.review-app .review-clock strong { font-weight: 700; }
+.review-app .review-clock span { color: var(--ink-2); font-weight: 400; }
 .review-app .review-command-coordinate { display: none; min-width: 0; }
 .review-app .review-transport-readouts { display: flex; flex-wrap: wrap; gap: 4px 12px; }
 .review-app .review-transport-readout { display: block; min-width: 0; padding: 0; border: 0; }
 .review-app .review-transport-readout small { display: none; }
-.review-app .review-transport-readout strong { color: var(--chalk-2); font-family: var(--font-body); font-size: var(--step-xs); font-weight: 500; }
+.review-app .review-transport-readout strong { color: var(--ink-2); font-size: var(--step-xs); font-weight: 400; }
 .review-app .review-finding-navigation { display: flex; gap: 4px; margin-left: auto; }
-.review-app .review-finding-navigation .compact-button { min-height: 34px; padding: 0 10px; }
-.review-app .review-shortcuts-button { justify-content: center; width: 34px; min-height: 34px; padding: 0; color: var(--chalk-2); }
-.review-app .review-shortcuts { flex-basis: 100%; display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 4px 16px; margin: 0; padding: 8px 0 2px; border-top: 1px solid var(--line-subtle); color: var(--chalk-2); font-size: var(--step-xs); }
+.review-app .review-shortcuts { flex-basis: 100%; display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 2px 16px; margin: 0; padding: 6px 0 2px; border-top: 1px solid var(--line-subtle); color: var(--ink-2); font-size: var(--step-xs); }
 .review-app .review-shortcuts div { display: flex; gap: 8px; }
-.review-app .review-shortcuts dt { min-width: 96px; color: var(--chalk); font-variant-numeric: tabular-nums; }
+.review-app .review-shortcuts dt { min-width: 96px; color: var(--ink); font-variant-numeric: tabular-nums; }
 .review-app .review-shortcuts dd { margin: 0; }
 
 /* Under the stage: media note, saved videos, advanced tools. */
-.review-app .review-media-note { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 8px 0 0; color: var(--chalk-2); font-size: var(--step-xs); }
-.review-app :is(.review-saved-clips, .review-inspector) { margin-top: 12px; border: 1px solid var(--line-subtle); border-radius: var(--radius-panel); background: var(--slate); }
-.review-app .review-inspector > summary > span { color: var(--chalk); font-size: var(--step-sm); font-weight: 500; }
-.review-app :is(.review-saved-clips, .review-inspector) > summary { display: flex; flex-direction: row; justify-content: flex-start; align-items: center; gap: 10px; min-height: 44px; padding: 8px 12px; color: var(--chalk); font-size: var(--step-sm); font-weight: 500; text-align: left; cursor: pointer; }
-.review-app .saved-clips-count { margin-left: auto; color: var(--chalk-2); font-size: var(--step-xs); }
-.review-app .review-inspector > summary small { margin-left: auto; color: var(--chalk-2); font-size: var(--step-xs); }
-.review-app .review-inspector-content { padding: 4px 12px 16px; }
-.review-app .clip-library { padding: 4px 12px 12px; border: 0; background: none; }
-.review-app .clip-library-item { padding: 10px 0; border: 0; border-top: 1px solid var(--line-subtle); border-radius: 0; background: none; }
-.review-app .clip-library-item.selected { box-shadow: inset 2px 0 var(--chalk); padding-left: 10px; }
-.review-app .clip-library-coordinate strong { font-size: var(--step-sm); }
-.review-app .clip-library-coordinate span { color: var(--chalk-2); font-size: var(--step-xs); }
-.review-app .clip-library-history { margin-top: 12px; color: var(--chalk-2); font-size: var(--step-xs); }
-.review-app .clip-library-history summary { min-height: 36px; cursor: pointer; }
-/* Inside 已保存的视频 the summary already gives the count; the library heading only names the player. */
-.review-app .review-saved-clips .clip-library-heading > span { display: none; }
-.review-app .review-saved-clips .clip-library-heading h2 { color: var(--chalk-2); font-family: var(--font-body); font-size: var(--step-sm); font-weight: 500; }
+.review-app .review-media-note { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 14px; margin: 12px 0 0; padding: 6px 10px; border: 1px solid var(--line-bold); border-left: 3px solid var(--link); border-radius: var(--radius-panel); background: var(--panel); color: var(--ink); }
+.review-app .review-media-note.is-error { border-left-color: var(--danger); }
+/* 已保存的视频 and 高级工具: see the V-B2 section. */
 
-/* Loading: the workspace's own shapes, static. */
-.review-app .review-skeleton-strip { display: flex; gap: 3px; margin: 0 0 16px; overflow: hidden; }
-.review-app .review-skeleton-strip span { flex: 1 0 40px; height: 58px; border-radius: var(--radius-control); background: var(--slate); }
-.review-app .review-skeleton-canvas { display: grid; place-items: center; }
-.review-app .review-skeleton-canvas p { margin: 0; color: var(--chalk-2); font-size: var(--step-sm); }
-.review-app .review-skeleton-transport { display: grid; gap: 12px; padding: 16px 12px; border-top: 1px solid var(--line-subtle); }
+/* Loading: the workspace's own panels, static grey bars. */
+.review-app .review-skeleton-strip { margin: 0 0 12px; }
+.review-app .review-skeleton-cells { display: flex; gap: 2px; padding: 11px 10px 35px; overflow: hidden; }
+.review-app .review-skeleton-cells span { flex: 0 0 24px; height: 24px; margin-right: 6px; background: var(--row-alt); }
+.review-app .review-skeleton-canvas { display: grid; place-items: center; background: var(--row-alt); }
+.review-app .review-skeleton-canvas p { margin: 0; color: var(--ink-2); font-size: var(--step-sm); }
+.review-app .review-skeleton-transport { display: grid; gap: 10px; padding: 12px 10px; border-top: 1px solid var(--line-bold); }
 .review-app .review-skeleton-transport .skeleton-bar.wide { width: 100%; height: 8px; }
 .review-app .review-skeleton-transport .skeleton-bar:not(.wide) { width: 30%; height: 20px; }
-.review-app .review-skeleton-coaching { display: grid; align-content: start; gap: 14px; min-height: 320px; padding: 16px; border: 1px solid var(--line-subtle); border-radius: var(--radius-panel); background: var(--slate); }
-.review-app .review-skeleton-card { display: grid; gap: 10px; padding-top: 14px; border-top: 1px solid var(--line-subtle); }
+.review-app .review-skeleton-coaching { display: grid; align-content: start; min-height: 320px; padding: 0; }
+.review-app .review-skeleton-card { display: grid; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--line-subtle); }
 
-/* Processing, failure and not-found cards on the demo page. */
-.demo-state-card { display: grid; gap: 14px; max-width: 760px; padding: 20px 22px; border: 1px solid var(--line-subtle); border-radius: var(--radius-panel); background: var(--slate); }
-.demo-state-card.failed { box-shadow: inset 2px 0 var(--danger); }
+/* Processing, failure and not-found panels on the demo page: a header bar, then plain text and links. */
+.demo-state-card { display: grid; gap: 10px; max-width: 760px; padding: 0 0 12px; }
+.demo-state-card > :not(.panel-bar) { margin-inline: 12px; }
+.demo-state-card > :first-child:not(.panel-bar) { margin-top: 12px; }
+.demo-state-card.failed { border-left: 3px solid var(--danger); }
 .demo-state-card p { margin: 0; }
-.demo-state-heading { display: flex; align-items: flex-start; gap: 12px; }
-.demo-state-heading > svg { flex: none; margin-top: 2px; color: var(--chalk-2); }
-.demo-state-card.failed .demo-state-heading > svg { color: var(--danger-text); }
-.demo-state-heading h2 { margin: 0; font-size: var(--step-md); }
-.demo-state-heading p { margin-top: 4px; color: var(--chalk-2); font-size: var(--step-sm); line-height: var(--leading-body); }
-.demo-progress-steps { display: flex; gap: 6px; margin: 0; padding: 0; list-style: none; }
-.demo-progress-steps li { display: flex; flex: 1; align-items: center; gap: 8px; min-width: 0; padding: 8px 12px; border: 1px solid var(--line-subtle); border-radius: var(--radius-control); background: transparent; color: var(--chalk-3); font-size: var(--step-sm); }
-.demo-progress-steps li[data-state="done"] { color: var(--chalk-2); }
-.demo-progress-steps li[data-state="current"] { border-color: var(--chalk-2); background: var(--slate-2); color: var(--chalk); }
-.demo-progress-marker { display: grid; flex: none; place-items: center; width: 20px; height: 20px; border: 1px solid currentColor; border-radius: 50%; font-family: var(--font-display); font-size: var(--step-xs); }
-.demo-state-meta { color: var(--chalk-2); font-size: var(--step-xs); font-variant-numeric: tabular-nums; }
-.demo-state-warning { padding-left: 10px; box-shadow: inset 2px 0 var(--chalk-2); color: var(--chalk); font-size: var(--step-sm); }
-.demo-state-hint { color: var(--chalk-2); font-size: var(--step-sm); }
-.demo-state-actions { display: flex; flex-wrap: wrap; gap: 8px; }
-.demo-state-technical summary { display: flex; align-items: center; min-height: 32px; color: var(--chalk-2); font-size: var(--step-xs); cursor: pointer; }
+.demo-state-heading p { color: var(--ink); font-size: var(--step-body); line-height: var(--leading-body); }
+.demo-progress-steps { display: flex; margin: 0; padding: 0; border: 1px solid var(--line-bold); list-style: none; }
+.demo-progress-steps li { display: flex; flex: 1; align-items: center; gap: 8px; min-width: 0; padding: 6px 10px; color: var(--ink-3); font-size: var(--step-body); }
+.demo-progress-steps li + li { border-left: 1px solid var(--line-subtle); }
+.demo-progress-steps li[data-state="done"] { color: var(--ok-text); }
+.demo-progress-steps li[data-state="current"] { background: var(--row-selected); color: var(--ink); font-weight: 700; }
+.demo-progress-marker { display: grid; flex: none; place-items: center; width: 18px; height: 18px; border: 1px solid currentColor; border-radius: 50%; font-size: var(--step-xs); font-weight: 400; }
+.demo-state-meta { color: var(--ink-2); font-size: var(--step-xs); font-variant-numeric: tabular-nums; }
+.demo-state-warning { padding: 6px 10px; border: 1px solid var(--line-bold); border-left: 3px solid var(--t); color: var(--ink); font-size: var(--step-body); }
+.demo-state-hint { color: var(--ink-2); font-size: var(--step-sm); }
+.demo-state-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
+.demo-state-technical summary { display: inline-flex; align-items: center; min-height: 24px; color: var(--link); font-size: var(--step-xs); }
 .demo-state-facts { display: flex; flex-wrap: wrap; gap: 6px 20px; margin: 4px 0 12px; font-size: var(--step-xs); }
 .demo-state-facts div { display: flex; gap: 8px; }
-.demo-state-facts dt { color: var(--chalk-2); }
+.demo-state-facts dt { color: var(--ink-2); }
 .demo-state-facts dd { margin: 0; font-family: var(--font-mono); overflow-wrap: anywhere; }
 
 /* Wide: more room for the suggestions. Laptop: the stage keeps the width. */
@@ -926,19 +796,12 @@
   .review-app .review-layout { grid-template-columns: minmax(0, 1fr) 400px; }
 }
 @media (max-width: 1180px) {
-  .review-app .review-layout { grid-template-columns: minmax(0, 1fr) 330px; gap: 16px; }
-  .review-app .review-stage-toolbar { gap: 6px; }
-  .review-app .review-view-switch button { padding: 0 8px; font-size: var(--step-xs); }
+  .review-app .review-layout { grid-template-columns: minmax(0, 1fr) 330px; }
+  .review-app .review-main-canvas .replay-panel { grid-template-columns: minmax(0, 1fr) 184px; }
   .review-app .review-speed-control > span { display: none; }
 }
-@media (min-width: 1001px) and (max-height: 820px) {
-  .review-app .review-header { margin-bottom: 12px; }
-  .review-app .detail-title h1 { font-size: var(--step-md); }
-  .review-app .round-strip { margin-bottom: 12px; }
-  .review-app .round-strip-cell { grid-template-rows: 34px 16px; }
-  .review-app .round-strip-number { font-size: var(--step-md); }
-}
-/* One column: the suggestions follow the stage directly (visual order only; the DOM is unchanged). */
+/* One column: the suggestions follow the stage directly (visual order only; the DOM is unchanged);
+   the rosters move under the map, side by side. */
 @media (max-width: 1000px) {
   .review-app .review-layout { grid-template-columns: minmax(0, 1fr); }
   .review-app .review-main-column { display: contents; }
@@ -946,37 +809,42 @@
   .review-app .review-main-column > .review-stage { order: 1; }
   .review-app .review-layout > .coaching-panel { order: 2; }
   .review-app .review-main-column > :is(.review-media-note, .round-detail-panel, .review-saved-clips) { margin: 0; }
-  .review-app .review-main-canvas { width: 100%; height: auto; aspect-ratio: 16 / 9; min-height: 300px; max-height: 520px; }
-  .review-app .review-main-canvas > :is(.first-person-panel, .replay-panel) { position: absolute; inset: 0; }
+  .review-app .review-main-canvas { width: 100%; height: auto; }
+  .review-app .review-main-canvas.review-skeleton-canvas { height: min(360px, 72svh); }
+  /* The reviewed player moves out of the grey bar into the panel body, so the bar stays one bar. */
+  .review-app .review-header > .review-header-bar { flex-basis: 100%; border-radius: 2px 2px 0 0; }
+  .review-app .review-header > .personal-review-panel { flex-basis: 100%; padding: 6px 10px; border-top: 1px solid var(--line-bold); border-radius: 0 0 2px 2px; background: var(--panel); }
+  .review-app .review-header .personal-review-heading { justify-content: flex-start; }
+  .review-app .review-main-canvas.showing-video { aspect-ratio: 16 / 9; min-height: 240px; max-height: 520px; }
+  .review-app .review-main-canvas.showing-video > .first-person-panel { position: absolute; inset: 0; }
+  .review-app .review-main-canvas .replay-panel { grid-template-columns: minmax(0, 1fr); height: auto; }
+  .review-app .review-main-canvas .map-frame { height: auto; aspect-ratio: 1 / 1; max-height: min(560px, 72svh); }
+  .review-app .review-main-canvas .player-list { grid-template-columns: repeat(2, minmax(0, 1fr)); border-top: 1px solid var(--line-bold); border-left: 0; }
 }
-/* Phone: the strip scrolls sideways, a square map with names one tap away, the round and player kept
-   in the transport because the header has scrolled away by then. */
+/* Phone: the round history scrolls inside its panel, a square map with the rosters under it, and the
+   round and player kept in the transport because the header has scrolled away by then. */
 @media (max-width: 700px) {
-  .review-app .page { padding-left: 16px; padding-right: 16px; }
-  .review-app .review-header { gap: 8px; margin-bottom: 12px; }
-  .review-app .detail-top { flex-wrap: wrap; flex-basis: 100%; gap: 2px 12px; }
-  .review-app .detail-back { flex-basis: 100%; justify-content: flex-start; align-self: flex-start; min-height: 32px; }
-  .review-app .detail-title h1 { font-size: var(--step-md); }
-  .review-app .round-strip { margin: 0 -16px 12px; }
-  .review-app .round-strip-track { margin: -4px 0 0; padding: 4px 16px 6px; scroll-padding-inline: 16px; }
-  .review-app .round-strip-cell { flex: 0 0 40px; }
-  .review-app .review-skeleton-strip span { flex: 0 0 40px; }
-  .review-app .review-stage { border-radius: var(--radius-panel); }
-  .review-app .review-main-canvas { min-height: 235px; }
-  .review-app .review-main-canvas.showing-map { aspect-ratio: 1 / 1; min-height: 0; max-height: 72svh; }
-  .review-app .review-main-canvas .replay-panel { padding: 6px; }
-  .review-app .review-stage-toolbar { flex-wrap: wrap; gap: 4px; }
-  .review-app .review-stage-toolbar > .secondary-button { min-height: 34px; padding: 0 9px; font-size: var(--step-xs); }
-  .review-app .review-view-switch button { padding: 0 7px; }
-  .review-app .review-main-canvas .player-list { display: none; }
-  .review-app .review-main-canvas .player-list.roster-open { display: grid; top: 46px; left: 6px; width: min(220px, calc(100% - 12px)); max-height: calc(100% - 52px); }
-  .review-app .map-overlay-bar { top: 6px; right: 6px; max-width: calc(100% - 12px); padding: 4px 6px 4px 8px; }
+  .review-app .review-header-bar { padding: 4px 8px; }
+  .review-app .detail-title h1 { font-size: 15px; }
+  .review-app .round-strip-head .round-strip-legend { display: none; }
+  .review-app .round-strip-legend-below { display: flex; flex-wrap: nowrap; gap: 12px; padding: 0 8px 6px; white-space: nowrap; }
+  .review-app .round-strip-track { padding-inline: 8px; scroll-padding-inline: 8px; }
+  .review-app .review-main-canvas .player-list { gap: 6px; padding: 6px; }
+  .review-app .review-main-canvas .roster-row { grid-template-columns: 18px minmax(0, 1fr) 26px; gap: 4px; padding: 0 6px; }
+  .review-app .side-roster .roster-head { padding: 0 6px; }
+  .review-app .side-roster .roster-head > span { display: none; }
+  .review-app .map-overlay-bar { top: 6px; right: 6px; max-width: calc(100% - 12px); padding: 3px 6px; }
   .review-app .map-overlay-bar small, .review-app .map-overlay-bar .map-calibration-pill { display: none; }
-  .review-app .map-roster-toggle { display: inline-flex; }
   .review-app .map-player-name { font-size: 4px; }
-  .review-app .timeline-panel { padding: 6px 10px 0; }
-  .review-app .timeline-lane-track .parser-event-marker { pointer-events: none; }
-  .review-app .review-command-bar { padding: 6px 10px 10px; }
+  .review-app .timeline-panel { padding: 6px 8px 0; }
+  /* Too narrow for glyphs: each event (or group) is a 3 px tick in its colour, not tappable here. */
+  .review-app .timeline-lane-track .parser-event-marker { width: 3px; height: 12px; border-radius: 0; background: var(--ink-3); box-shadow: none; font-size: 0; pointer-events: none; }
+  .review-app .timeline-lane-track .parser-event-marker.side-t { background: var(--t); }
+  .review-app .timeline-lane-track .parser-event-marker.side-ct { background: var(--ct); }
+  .review-app .timeline-lane-track .parser-event-marker:is(.own-kill, .has-own-kill) { height: 18px; box-shadow: none; }
+  .review-app .timeline-lane-track .parser-event-marker.has-own-kill { background: var(--ink); }
+  .review-app .timeline-lane-track .parser-event-marker:is(.own-death, .has-own-death) { height: 18px; background: var(--danger); box-shadow: none; }
+  .review-app .review-command-bar { padding: 6px 8px; }
   .review-app .review-command-actions { width: 100%; }
   .review-app .review-speed-control { margin-left: 2px; }
   .review-app .review-speed-control > span { display: none; }
@@ -985,14 +853,10 @@
   .review-app .review-transport-readouts { flex-wrap: nowrap; justify-content: flex-start; }
   .review-app .review-transport-readout, .review-app .review-transport-readout:last-child { flex: 0 1 auto; max-width: none; overflow: hidden; }
   .review-app .review-finding-navigation { order: 4; width: auto; }
-  .review-app .review-finding-navigation .compact-button { flex: none; }
+  .review-app .review-finding-navigation .secondary-button { flex: none; }
   .review-app .review-shortcuts-button { display: none; }
-  .review-app .review-media-note { flex-wrap: wrap; }
-  .review-app .review-inspector > summary small { display: none; }
   .review-app .review-support-bay { grid-template-columns: minmax(0, 1fr); }
-  .review-app .round-detail-panel { gap: 8px 12px; }
-  .review-app .round-quick-jumps { flex-wrap: nowrap; width: 100%; overflow-x: auto; scrollbar-width: none; }
-  .review-app .round-ribbon-jump { flex: none; }
-  .demo-state-card { padding: 18px 16px; }
+  .review-app .round-quick-jumps { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 0 14px; }
   .demo-progress-steps { flex-direction: column; }
+  .demo-progress-steps li + li { border-top: 1px solid var(--line-subtle); border-left: 0; }
 }

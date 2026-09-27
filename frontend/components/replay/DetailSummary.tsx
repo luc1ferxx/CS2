@@ -11,7 +11,7 @@ const LABELS: Record<string, string> = {
   Map: "地图",
   Calibration: "地图校准",
   Rounds: "回合",
-  Coaching: "全场复盘线索",
+  Coaching: "全场建议",
   Parser: "处理状态",
   Media: "视频",
   Render: "视频生成"
@@ -56,6 +56,7 @@ export function detailSummaryValue(label: string, value: string): string {
 export const DetailSummary = memo(function DetailSummary({ items }: { items: DetailSummaryItem[] }) {
   return (
     <section className="detail-summary-strip" aria-label="比赛状态摘要">
+      {items.length > 0 ? <div className="panel-bar detail-summary-title"><h2 className="panel-bar-title">比赛信息</h2></div> : null}
       {items.map((item) => (
         <div className={`detail-summary-item ${item.tone ?? "default"}`} key={item.label}>
           <span>{detailSummaryLabel(item.label)}</span>

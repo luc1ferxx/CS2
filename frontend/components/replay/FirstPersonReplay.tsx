@@ -1,13 +1,14 @@
 "use client";
 
-import { Crosshair, RadioTower, Video } from "lucide-react";
+import { Crosshair } from "lucide-react";
 import {
   forwardRef,
   useCallback,
   useEffect,
   useImperativeHandle,
   useMemo,
-  useRef
+  useRef,
+  useState
 } from "react";
 
 import { useAuth } from "@/components/auth/AuthProvider";
@@ -79,6 +80,8 @@ export const FirstPersonReplay = forwardRef<FirstPersonReplayHandle, FirstPerson
 }: FirstPersonReplayProps, ref) {
   const { refreshSession } = useAuth();
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  // The media whose first frame has arrived; until then the canvas says it is loading.
+  const [loadedMedia, setLoadedMedia] = useState<string | null>(null);
   const lastSyncedTickRef = useRef<number | null>(null);
   const pendingSeekTickRef = useRef<number | null>(null);
   const feedbackAllowedRef = useRef(false);
@@ -248,12 +251,10 @@ export const FirstPersonReplay = forwardRef<FirstPersonReplayHandle, FirstPerson
               disabled={Boolean(replay.video.povSteamId && !recordedPlayer)}
               title={`观看 ${povLabel}`}
             >
-              <Video size={14} />
               观看{recordedPlayer?.name ? ` ${recordedPlayer.name} ` : ""}视频
             </button>
           ) : null}
           <span className={`mini-pill video-status-pill ${replay.video.status}`}>
-            <Video size={13} />
             {isMockVideoPlaceholder(replay.video) ? "战术回放" : statusLabel(replay.video.status)}
           </span>
           {latestRenderClipJob && isRenderActiveStatus(latestRenderClipJob.status) ? (
@@ -271,7 +272,6 @@ export const FirstPersonReplay = forwardRef<FirstPersonReplayHandle, FirstPerson
             disabled={clipJobBusy || !renderClipPlayerSelected}
             title={clipWorkerOffline ? RENDER_OFFLINE_DETAIL : tickClipReady ? "观看当前时刻已保存的视频" : "生成当前时刻的第一人称视频，完成后可重复观看"}
           >
-            <Video size={14} aria-hidden="true" />
             {renderClipRequesting ? "正在提交…" : tickClipReady ? "观看这一刻的视频" : clipWorkerOffline ? RENDER_OFFLINE_LABEL : isRenderActiveStatus(currentTickClipJob?.status) ? statusLabel(currentTickClipJob?.status ?? "queued") : "生成这一刻的视频"}
           </button> : null}
           {showDevActions ? <button
@@ -309,6 +309,7 @@ export const FirstPersonReplay = forwardRef<FirstPersonReplayHandle, FirstPerson
               }
               seekVideoToTick(currentTick);
             }}
+            onLoadedData={() => setLoadedMedia(mediaIdentity)}
             onTimeUpdate={(event) => {
               publishVideoTime(event.currentTarget.currentTime);
             }}
@@ -322,19 +323,15 @@ export const FirstPersonReplay = forwardRef<FirstPersonReplayHandle, FirstPerson
           )
         )}
 
-        <div className="first-person-hud">
-          {activeVideoSource && !replay.video.povSteamId ? (
+        {/* Round, speed and play state are in the round strip and the transport; only the warning stays on the footage. */}
+        {activeVideoSource && !replay.video.povSteamId ? (
+          <div className="first-person-hud">
             <span className="hud-chip">视角未确认</span>
-          ) : null}
-          {frame ? (
-            <span className="hud-chip">
-              <RadioTower size={13} />
-              第 {frame.roundNumber} 回合
-            </span>
-          ) : null}
-          <span className="hud-chip">{speed}x</span>
-          <span className="hud-chip">{playing ? "播放中" : "已暂停"}</span>
-        </div>
+          </div>
+        ) : null}
+        {activeVideoSource && loadedMedia !== mediaIdentity ? (
+          <p className="first-person-loading">视频加载中…</p>
+        ) : null}
         <RenderStatusOverlay
           video={replay.video}
           mediaUnavailable={mediaUnavailable || invalidMediaReference}

@@ -82,7 +82,7 @@ describe("RenderOperatorPanel", () => {
     const operator = screen.getAllByRole("region", { name: "视频生成状态" })[1];
     expect(operator).toHaveTextContent("prepare-job");
     expect(operator).toHaveTextContent("400 - 1040");
-    expect(operator).toHaveTextContent("render_clip / rendering · job-rend");
+    expect(operator).toHaveTextContent("render_clip / rendering（job-rend）");
   });
 
   it("reports a rendered, playable clip as completed", () => {

@@ -1,7 +1,6 @@
 "use client";
 
-import { ChevronDown, Crosshair, Play, Video } from "lucide-react";
-import { memo } from "react";
+import { Fragment, memo } from "react";
 
 import type { EvidenceSummaryItem, FeedbackSaveState, ReviewEvent } from "@/lib/coaching-review";
 import type { RenderJobStatus } from "@/lib/api";
@@ -70,43 +69,35 @@ export const CoachingEventCard = memo(function CoachingEventCard({
       aria-label={copy.title}
     >
       <span className="coaching-feed-clock" title={locationLabel ?? roundLabel}>{clock ?? roundLabel}</span>
-      <h3 className="event-title coaching-feed-line">
-        {feed.died ? (
-          <span className="coaching-feed-kill">
-            {feed.killer ? <><span className={`coaching-feed-player ${otherSide}`}>{feed.killer}</span><span className="visually-hidden"> 击杀 </span></> : <span className="visually-hidden">阵亡：</span>}
-            <span className="coaching-feed-cross" aria-hidden="true">✕</span>
-            <span className={`coaching-feed-player reviewed ${ownSide}`}>{event.player_name}</span>
-          </span>
-        ) : null}
-        <span className="coaching-feed-finding">{finding}</span>
-        <span className="visually-hidden">，{coachingSeverityLabel(event.severity)}</span>
-      </h3>
+      <div className="coaching-feed-main">
+        <h3 className="event-title coaching-feed-line">
+          {feed.died ? (
+            <span className="coaching-feed-kill">
+              {feed.killer ? <><span className={`coaching-feed-player ${otherSide}`}>{feed.killer}</span><span className="visually-hidden"> 击杀 </span></> : <span className="visually-hidden">阵亡：</span>}
+              <span className="coaching-feed-cross" aria-hidden="true">✕</span>
+              <span className={`coaching-feed-player reviewed ${ownSide}`}>{event.player_name}</span>
+            </span>
+          ) : null}
+          <span className="coaching-feed-finding">{finding}</span>
+          <span className="visually-hidden">，{coachingSeverityLabel(event.severity)}</span>
+        </h3>
+        {/* What to do next: shown on the row at the playhead or with its evidence open, not on every row. */}
+        <p className="coaching-card-guidance">{copy.guidance}</p>
+      </div>
+
+      <div className="event-card-actions">
+        <button
+          className="text-button coaching-link locate-tick-button"
+          type="button"
+          onClick={() => onSeek(event.tick_start, event.id)}
+          aria-label={`查看这一刻：${copy.title}`}
+        >
+          查看这一刻
+        </button>
+      </div>
 
       <div className="coaching-feed-body">
-        <p className="coaching-card-guidance">{copy.guidance}</p>
-
-        <div className="event-card-actions">
-          <button
-            className="secondary-button compact-button locate-tick-button"
-            type="button"
-            onClick={() => onSeek(event.tick_start, event.id)}
-            aria-label={`查看这一刻：${copy.title}`}
-          >
-            <Crosshair size={14} aria-hidden="true" />
-            查看这一刻
-          </button>
-          {onGenerateClip ? (
-            <button
-              className="ghost-button compact-button generate-clip-button"
-              type="button"
-              onClick={() => onGenerateClip(event)}
-              disabled={clipBusy}
-              title={clipReady ? "播放已保存的视频" : clipFailed ? "重新生成这段视频" : "首次生成后保存，之后可以直接重播"}
-            >
-              {clipReady ? <Play size={14} aria-hidden="true" /> : <Video size={14} aria-hidden="true" />}
-              {clipLabel}
-            </button>
-          ) : null}
+        <div className="coaching-feed-meta">
           <button
             className="coaching-evidence-toggle"
             type="button"
@@ -116,31 +107,42 @@ export const CoachingEventCard = memo(function CoachingEventCard({
             aria-label={`${inspected ? "收起" : "查看"}依据：${copy.title}`}
           >
             {inspected ? "收起依据" : "查看依据"}
-            <ChevronDown size={14} aria-hidden="true" />
           </button>
-        </div>
-
-        <div className="coaching-feedback" role="group" aria-label={`这条建议是否有帮助：${copy.title}`}
-          aria-busy={feedbackState?.status === "saving" ? true : undefined}>
-          <span>对你有帮助吗</span>
-          {VERDICTS.map((verdict) => (
+          {onGenerateClip ? (
             <button
-              key={verdict}
-              className={`coaching-verdict ${currentVerdict === verdict ? "active" : ""}`}
+              className="text-button coaching-link generate-clip-button"
               type="button"
-              aria-pressed={currentVerdict === verdict}
-              onClick={() => onFeedback(event, currentVerdict === verdict ? null : verdict)}
+              onClick={() => onGenerateClip(event)}
+              disabled={clipBusy}
+              title={clipReady ? "播放已保存的视频" : clipFailed ? "重新生成这段视频" : "首次生成后保存，之后可以直接重播"}
             >
-              {COACHING_VERDICT_LABELS[verdict]}
+              {clipLabel}
             </button>
-          ))}
+          ) : null}
+          <div className="coaching-feedback" role="group" aria-label={`这条建议是否有帮助：${copy.title}`}
+            aria-busy={feedbackState?.status === "saving" ? true : undefined}>
+            <span>对你有帮助吗</span>
+            {VERDICTS.map((verdict, index) => (
+              <Fragment key={verdict}>
+                {index > 0 ? <span className="coaching-verdict-divider" aria-hidden="true">/</span> : null}
+                <button
+                  className={`coaching-verdict ${currentVerdict === verdict ? "active" : ""}`}
+                  type="button"
+                  aria-pressed={currentVerdict === verdict}
+                  onClick={() => onFeedback(event, currentVerdict === verdict ? null : verdict)}
+                >
+                  {COACHING_VERDICT_LABELS[verdict]}
+                </button>
+              </Fragment>
+            ))}
+          </div>
         </div>
         {/* Always mounted so a failed save is announced where the player tapped. */}
         <p className="coaching-feedback-status" role="status">
           {feedbackFailed ? (
             <>
               <span>评价没有保存。</span>
-              <button className="text-button" type="button" onClick={() => onFeedback(event, feedbackState.verdict)}>重新保存</button>
+              <button className="text-button coaching-link" type="button" onClick={() => onFeedback(event, feedbackState.verdict)}>重新保存</button>
             </>
           ) : null}
         </p>

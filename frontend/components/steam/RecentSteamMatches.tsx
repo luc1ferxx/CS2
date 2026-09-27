@@ -1,17 +1,6 @@
 "use client";
 
 import Link from "next/link";
-import {
-  Clock3,
-  Download,
-  ExternalLink,
-  FileUp,
-  Link2,
-  Loader2,
-  RefreshCcw,
-  ShieldCheck,
-  Unplug
-} from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 
 import {
@@ -251,26 +240,16 @@ export function RecentSteamMatches() {
   }
 
   return (
-    <section className="steam-match-sync" aria-labelledby="recent-steam-matches-title">
-      <header className="steam-sync-header">
-        <div>
-          <span className="workspace-kicker">Steam 比赛记录</span>
-          <div className="steam-sync-title-row">
-            <h2 id="recent-steam-matches-title">最近的 Steam 比赛</h2>
-            {connectionDisplay ? (
-              <span className={`steam-state-pill ${connectionDisplay.statusTone}`}>
-                {connectionDisplay.statusLabel}
-              </span>
-            ) : null}
-          </div>
-          <p>
-            连接后可以同步你在官方匹配中的比赛记录。当前版本还不能自动下载比赛录像，要复盘请手动上传 .dem 文件。
-          </p>
-        </div>
-        <div className="steam-sync-actions">
+    <section className="stm" aria-labelledby="recent-steam-matches-title">
+      <div className="stm-bar">
+        <h2 id="recent-steam-matches-title">最近的 Steam 比赛</h2>
+        {connectionDisplay ? (
+          <span className={`stm-state ${connectionDisplay.statusTone}`}>{connectionDisplay.statusLabel}</span>
+        ) : null}
+        <div className="stm-actions">
           {credentialsConfigured && !showCredentialsForm ? (
             <button
-              className="secondary-button compact-button"
+              className="text-button"
               type="button"
               disabled={busyAction !== null}
               onClick={() => {
@@ -279,87 +258,77 @@ export function RecentSteamMatches() {
                 setNotice(null);
               }}
             >
-              <ShieldCheck size={14} />
               更换授权码
             </button>
           ) : null}
           <button
-            className="secondary-button compact-button"
+            className="text-button"
             type="button"
             disabled={busyAction !== null}
             onClick={() => void handleRefresh()}
           >
-            <RefreshCcw size={14} className={busyAction === "refresh" ? "spin-icon" : ""} />
-            刷新
-          </button>
-          <button
-            className="primary-button compact-button"
-            type="button"
-            disabled={!canSync}
-            onClick={() => void handleSync()}
-          >
-            {busyAction === "sync" ? (
-              <Loader2 size={14} className="spin-icon" />
-            ) : (
-              <Link2 size={14} />
-            )}
-            {busyAction === "sync" ? "同步中…" : "立即同步"}
+            {busyAction === "refresh" ? "刷新中…" : "刷新"}
           </button>
           {connected ? (
             <button
-              className="secondary-button compact-button steam-disconnect-button"
+              className="text-button danger"
               type="button"
               disabled={busyAction !== null}
               onClick={() => void handleDisconnect()}
             >
-              <Unplug size={14} />
               {busyAction === "disconnect" ? "正在断开…" : "断开连接"}
             </button>
           ) : null}
-        </div>
-      </header>
-
-      {loadError ? (
-        <div className="steam-sync-message danger" role="alert">
-          <span>{loadError}</span>
           <button
             className="secondary-button compact-button"
+            type="button"
+            disabled={!canSync}
+            onClick={() => void handleSync()}
+          >
+            {busyAction === "sync" ? "同步中…" : "立即同步"}
+          </button>
+        </div>
+      </div>
+      <p className="stm-intro">
+        连接后可以同步你在官方匹配中的比赛记录。
+      </p>
+
+      {loadError ? (
+        <div className="notice error stm-message" role="alert">
+          <span>{loadError}</span>
+          <button
+            className="text-button"
             type="button"
             disabled={busyAction !== null}
             onClick={() => void handleRefresh()}
           >
-            <RefreshCcw size={14} />
             重试
           </button>
         </div>
       ) : null}
       {actionError ? (
-        <div className="steam-sync-message danger" role="alert">{actionError}</div>
+        <div className="notice error stm-message" role="alert">{actionError}</div>
       ) : null}
       {notice ? (
-        <div className="steam-sync-message success" aria-live="polite">{notice}</div>
+        <div className="notice stm-message" aria-live="polite">{notice}</div>
       ) : null}
 
       {initialLoading && !connection ? (
-        <div className="steam-sync-loading" aria-live="polite">
-          <Loader2 size={16} className="spin-icon" />
-          正在读取 Steam 连接和最近的比赛…
-        </div>
+        <p className="stm-loading" aria-live="polite">正在读取 Steam 连接和最近的比赛…</p>
       ) : (
-        <div className="steam-sync-layout">
-          <div className="steam-connection-pane">
-            <div className="steam-pane-heading">
-              <div>
-                <span>连接</span>
-                <strong>{connectionDisplay?.statusLabel ?? "暂时无法读取"}</strong>
-              </div>
-              <span className="steam-schedule-label">
-                {connectionDisplay?.scheduledSyncEnabled ? "已开启定时同步" : "未开启定时同步"}
+        <div className="stm-layout">
+          <div className="stm-conn">
+            <h3 className="stm-sub">
+              连接
+              <span>
+                {connectionDisplay
+                  ? connectionDisplay.scheduledSyncEnabled ? "已开启定时同步" : "未开启定时同步"
+                  : "暂时无法读取"}
               </span>
-            </div>
+            </h3>
 
             {connectionDisplay ? (
-              <dl className="steam-connection-meta">
+              <dl className="stm-facts">
                 <div>
                   <dt>上次同步</dt>
                   <dd>{formatSteamDate(connectionDisplay.lastSyncCompletedAt)}</dd>
@@ -376,42 +345,37 @@ export function RecentSteamMatches() {
             ) : null}
 
             {connectionDisplay?.errorMessage ? (
-              <p className="steam-connection-warning">{connectionDisplay.errorMessage}</p>
+              <p className="stm-warning">{connectionDisplay.errorMessage}</p>
             ) : null}
 
             {connectionDisplay?.demoImportMessage ? (
-              <div className="steam-import-boundary">
+              <p className="stm-note">
                 <span>{connectionDisplay.demoImportMessage}</span>
                 {connectionDisplay.manualUploadSupported ? (
-                  <button
-                    className="secondary-button compact-button"
-                    type="button"
-                    onClick={openManualUpload}
-                  >
-                    <FileUp size={13} />
+                  <button className="text-button" type="button" onClick={openManualUpload}>
                     手动上传 .dem
                   </button>
                 ) : null}
-              </div>
+              </p>
             ) : null}
 
             {connection === null ? (
-              <p className="steam-connection-warning">
+              <p className="stm-warning">
                 暂时无法读取连接状态，请先刷新，再填写或更换授权码。
               </p>
             ) : showCredentialsForm ? (
-              <form className="steam-credentials-form" onSubmit={handleSaveCredentials}>
-                <div className="steam-credentials-heading">
+              <form className="stm-form" onSubmit={handleSaveCredentials}>
+                <p className="stm-form-head">
                   <strong>{credentialsConfigured ? "更换授权" : "连接比赛记录"}</strong>
                   <a
+                    className="text-button"
                     href="https://help.steampowered.com/zh-cn/wizard/HelpWithGameIssue/?appid=730&issueid=128"
                     target="_blank"
                     rel="noreferrer"
                   >
                     在 Steam 获取授权码
-                    <ExternalLink size={12} />
                   </a>
-                </div>
+                </p>
                 <label>
                   <span>游戏验证码（Game Authentication Code）</span>
                   <input
@@ -436,25 +400,20 @@ export function RecentSteamMatches() {
                     required
                   />
                 </label>
-                <p>
+                <p className="stm-form-note">
                   两个授权码只发送到服务器加密保存，不会再显示在页面上，也不会存进浏览器，只用来读取比赛记录。
                 </p>
-                <div className="steam-credentials-actions">
+                <div className="stm-form-actions">
                   <button
-                    className="primary-button compact-button"
+                    className="secondary-button compact-button"
                     type="submit"
                     disabled={busyAction !== null || !gameAuthCode.trim() || !initialMatchSharingCode.trim()}
                   >
-                    {busyAction === "save" ? (
-                      <Loader2 size={14} className="spin-icon" />
-                    ) : (
-                      <ShieldCheck size={14} />
-                    )}
                     {busyAction === "save" ? "正在保存…" : "保存连接"}
                   </button>
                   {credentialsConfigured ? (
                     <button
-                      className="secondary-button compact-button"
+                      className="text-button"
                       type="button"
                       disabled={busyAction !== null}
                       onClick={() => {
@@ -469,38 +428,30 @@ export function RecentSteamMatches() {
                 </div>
               </form>
             ) : (
-              <p className="steam-credentials-saved">
-                <ShieldCheck size={14} />
-                授权已在服务器加密保存，这个页面不会显示授权码。
-              </p>
+              <p className="stm-note">授权已在服务器加密保存，这个页面不会显示授权码。</p>
             )}
           </div>
 
-          <div className="steam-matches-pane">
-            <div className="steam-pane-heading">
-              <div>
-                <span>已发现的比赛</span>
-                <strong>最近 {matchDisplays.length} 场</strong>
-              </div>
-              <span className="steam-source-label">Steam 比赛记录</span>
-            </div>
+          <div className="stm-matches">
+            <h3 className="stm-sub">
+              已发现的比赛
+              <span>最近 {matchDisplays.length} 场</span>
+            </h3>
 
             {matchDisplays.length === 0 ? (
-              <div className="steam-matches-empty">
-                <Clock3 size={17} />
-                <div>
-                  <strong>还没有发现比赛</strong>
-                  <p>保存两个授权码后点「立即同步」。随时都可以手动上传 .dem 文件。</p>
-                </div>
+              <div className="stm-empty">
+                <strong>还没有发现比赛</strong>
+                <p>保存两个授权码后点「立即同步」。随时都可以手动上传 .dem 文件。</p>
               </div>
             ) : (
-              <div className="steam-match-list" role="list">
-                <div className="steam-match-list-head" aria-hidden="true">
+              <div className="stm-table">
+                <div className="stm-row stm-row-head" aria-hidden="true">
                   <span>比赛</span>
                   <span>发现时间</span>
                   <span>状态</span>
-                  <span>操作</span>
+                  <span />
                 </div>
+                <div className="data-rows" role="list">
                 {matchDisplays.map((match) => {
                   const importAction = steamMatchImportAction(
                     match.status,
@@ -517,8 +468,8 @@ export function RecentSteamMatches() {
                     match.playersLabel
                   ].filter((value): value is string => value !== null);
                   return (
-                    <article className="steam-match-record" key={match.id} role="listitem">
-                      <div>
+                    <article className="stm-row" key={match.id} role="listitem">
+                      <div className="stm-match">
                         <strong>{match.mapName ? mapDisplayName(match.mapName) : "比赛记录"}</strong>
                         <span>
                           {parserSummary.length > 0
@@ -526,42 +477,29 @@ export function RecentSteamMatches() {
                             : match.sourceLabel}
                         </span>
                         {match.errorMessage ? (
-                          <span className="steam-match-import-error">{match.errorMessage}</span>
+                          <span className="stm-match-error">{match.errorMessage}</span>
                         ) : null}
                       </div>
                       <time dateTime={match.discoveredAt}>{formatSteamDate(match.discoveredAt)}</time>
-                      <span className={`steam-state-pill ${match.statusTone}`}>
-                        {match.statusLabel}
-                      </span>
-                      <div className="steam-match-demo-action">
+                      <span className={`stm-state ${match.statusTone}`}>{match.statusLabel}</span>
+                      <div className="stm-row-action">
                         {match.demoHref && match.status === "ready" ? (
-                          <Link className="secondary-button compact-button" href={match.demoHref}>
-                            <ExternalLink size={13} />
+                          <Link className="text-button" href={match.demoHref}>
                             进入复盘
                           </Link>
                         ) : importAction.enabled ? (
                           <button
-                            className="secondary-button compact-button"
+                            className="text-button"
                             type="button"
                             disabled={importingMatchId !== null || busyAction !== null}
                             onClick={() => void handleImport(match.id)}
                           >
-                            {isImporting ? (
-                              <Loader2 size={13} className="spin-icon" />
-                            ) : (
-                              <Download size={13} />
-                            )}
                             {isImporting ? "正在开始…" : importAction.label}
                           </button>
                         ) : connectionDisplay?.manualUploadSupported &&
                           !connectionDisplay.demoImportAvailable &&
                           !match.demoId ? (
-                          <button
-                            className="secondary-button compact-button"
-                            type="button"
-                            onClick={openManualUpload}
-                          >
-                            <FileUp size={13} />
+                          <button className="text-button" type="button" onClick={openManualUpload}>
                             手动上传 .dem
                           </button>
                         ) : (
@@ -571,20 +509,15 @@ export function RecentSteamMatches() {
                     </article>
                   );
                 })}
+                </div>
               </div>
             )}
           </div>
         </div>
       )}
 
-      <footer className="steam-sync-footer">
-        <span>
-          <FileUp size={13} />
-          手动上传 .dem 始终可用；同步比赛记录不需要自动下载录像。
-        </span>
-        <span>
-          断开连接会删除已保存的授权码和比赛记录，已导入的比赛会保留在比赛库中。
-        </span>
+      <footer className="stm-footer">
+        <p>断开连接会删除已保存的授权码和比赛记录，已导入的比赛会保留在比赛库中。</p>
       </footer>
     </section>
   );

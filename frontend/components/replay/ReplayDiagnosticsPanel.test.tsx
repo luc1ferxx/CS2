@@ -19,7 +19,7 @@ describe("ReplayDiagnosticsPanel", () => {
     expect(panel).toHaveTextContent("位置帧4");
     expect(panel).toHaveTextContent("建议1");
     expect(panel).toHaveTextContent("解析事件0");
-    expect(panel).toHaveTextContent("视频生成未生成");
+    expect(panel).toHaveTextContent("回放内视频未生成");
   });
 
   it("flags a normalized legacy contract and shows its warnings", () => {

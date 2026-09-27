@@ -1,6 +1,5 @@
 "use client";
 
-import { ChevronDown, Search, SlidersHorizontal } from "lucide-react";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
@@ -134,62 +133,59 @@ export const CoachingPanel = memo(function CoachingPanel({
   }
 
   return (
-    <aside className="coaching-panel review-queue" aria-label="重点建议">
-      <div className="coaching-header">
-        <h2>重点建议</h2>
-        <span className="coaching-header-round">第 {selectedRound} 回合</span>
+    <aside className="panel coaching-panel" aria-label="重点建议">
+      <div className="panel-bar coaching-header">
+        <h2 className="panel-bar-title">重点建议</h2>
+        <div className="coaching-round-scope" role="group" aria-label="建议回合范围">
+          <button className={scope === "current" ? "active" : ""} type="button" aria-pressed={scope === "current"} onClick={() => changeScope("current")}>
+            当前回合{selectedGroup ? <span className="coaching-count"> {selectedGroup.events.length} 条</span> : null}
+          </button>
+          <button className={scope === "all" ? "active" : ""} type="button" aria-pressed={scope === "all"} onClick={() => changeScope("all")}>
+            全部回合<span className="coaching-count"> {reviewModel.filteredCount} 条</span>
+          </button>
+        </div>
+      </div>
+
+      <div className="coaching-toolbar">
         {selectedPlayerName ? (
           <p className="coaching-header-meta">
             <strong className="coaching-header-player" title={selectedPlayerName}>{selectedPlayerName}</strong>
-            <span>{reviewModel.totalCount} 条建议</span>
+            <span className="coaching-header-round">第 {selectedRound} 回合</span>
             {progress.total > 0 ? <span>已评价 {progress.rated}/{progress.total}</span> : null}
           </p>
-        ) : <p className="coaching-header-meta">结合比赛画面，回看每次选择</p>}
-      </div>
-
-      <div className="coaching-round-scope" role="group" aria-label="建议回合范围">
-        <button className={scope === "current" ? "active" : ""} type="button" aria-pressed={scope === "current"} onClick={() => changeScope("current")}>
-          当前回合{selectedGroup ? <span className="coaching-count"> {selectedGroup.events.length} 条</span> : null}
-        </button>
-        <button className={scope === "all" ? "active" : ""} type="button" aria-pressed={scope === "all"} onClick={() => changeScope("all")}>
-          全部回合<span className="coaching-count"> {reviewModel.filteredCount} 条</span>
-        </button>
-      </div>
-
-      <details className="coaching-filter-toggle">
-        <summary><SlidersHorizontal size={14} aria-hidden="true" />筛选建议{hasFilters ? <span className="coaching-filter-active">已筛选</span> : null}<ChevronDown className="coaching-filter-chevron" size={14} aria-hidden="true" /></summary>
-        <div className="coaching-controls">
-          <label className="coaching-search">
-            <Search size={15} aria-hidden="true" />
-            <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索建议、玩家或依据" aria-label="搜索建议" />
-          </label>
-          {severityOptions.length > 1 ? (
-            <div className="severity-filter" role="group" aria-label="重要程度">
-              <button className={`filter-button ${severity === "all" ? "active" : ""}`} type="button" aria-pressed={severity === "all"} onClick={() => setSeverity("all")}>全部<span className="coaching-count"> {events.length}</span></button>
-              {severityOptions.map((option) => (
-                <button key={option.value} className={`filter-button severity-${option.value} ${severity === option.value ? "active" : ""}`} type="button" aria-pressed={severity === option.value} onClick={() => setSeverity(option.value)}>
-                  <span className="coaching-severity-mark" aria-hidden="true" />{coachingSeverityLabel(option.value)}<span className="coaching-count"> {option.count}</span>
-                </button>
+        ) : <p className="coaching-header-meta"><span className="coaching-header-round">第 {selectedRound} 回合</span></p>}
+        <details className="coaching-filter-toggle">
+          <summary>筛选建议{hasFilters ? <span className="coaching-filter-active">（已筛选）</span> : null}</summary>
+          <div className="coaching-controls">
+            <input className="coaching-search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索建议、玩家或依据" aria-label="搜索建议" />
+            {severityOptions.length > 1 ? (
+              <div className="severity-filter" role="group" aria-label="重要程度">
+                <button className={`filter-button ${severity === "all" ? "active" : ""}`} type="button" aria-pressed={severity === "all"} onClick={() => setSeverity("all")}>全部<span className="coaching-count"> {events.length}</span></button>
+                {severityOptions.map((option) => (
+                  <button key={option.value} className={`filter-button severity-${option.value} ${severity === option.value ? "active" : ""}`} type="button" aria-pressed={severity === option.value} onClick={() => setSeverity(option.value)}>
+                    <span className="coaching-severity-mark" aria-hidden="true" />{coachingSeverityLabel(option.value)}<span className="coaching-count"> {option.count}</span>
+                  </button>
+                ))}
+              </div>
+            ) : null}
+            <select className="rule-filter-select" value={rule} onChange={(event) => setRule(event.target.value as RuleFilter)} aria-label="建议类型">
+              <option value="all">全部建议类型</option>
+              {reviewModel.availableRules.map((availableRule) => (
+                <option key={availableRule.id} value={availableRule.id}>{availableRule.label}（{availableRule.count}）</option>
               ))}
-            </div>
-          ) : null}
-          <select className="rule-filter-select" value={rule} onChange={(event) => setRule(event.target.value as RuleFilter)} aria-label="建议类型">
-            <option value="all">全部建议类型</option>
-            {reviewModel.availableRules.map((availableRule) => (
-              <option key={availableRule.id} value={availableRule.id}>{availableRule.label}（{availableRule.count}）</option>
-            ))}
-          </select>
-          {hasFilters ? <button className="text-button" type="button" onClick={clearFilters}>清除筛选</button> : null}
-        </div>
-      </details>
+            </select>
+            {hasFilters ? <button className="text-button coaching-link" type="button" onClick={clearFilters}>清除筛选</button> : null}
+          </div>
+        </details>
+      </div>
 
       <div className="coaching-body">
         {visibleGroups.length === 0 ? (
           <div className="coaching-empty-state">
             <p>{reviewModel.totalCount === 0 ? selectedPlayerName === null ? "选择你在这场比赛中的玩家后，这里会列出对应的建议。" : "暂未发现值得回看的时刻，可以直接观看比赛。没有建议不代表每次选择都正确。" : hasFilters && reviewModel.filteredCount === 0 ? "没有符合筛选条件的建议。" : "这一回合暂无建议，可以查看其他回合。"}</p>
-            {selectedPlayerName === null && onChoosePlayer ? <button className="secondary-button compact-button" type="button" onClick={onChoosePlayer}>选择玩家</button> : null}
-            {scope === "current" && reviewModel.filteredCount > 0 ? <button className="secondary-button compact-button" type="button" onClick={() => changeScope("all")}>查看其他回合的 {reviewModel.filteredCount} 条建议</button> : null}
-            {hasFilters ? <button className="text-button" type="button" onClick={clearFilters}>清除筛选</button> : null}
+            {selectedPlayerName === null && onChoosePlayer ? <button className="text-button coaching-link" type="button" onClick={onChoosePlayer}>选择玩家</button> : null}
+            {scope === "current" && reviewModel.filteredCount > 0 ? <button className="text-button coaching-link" type="button" onClick={() => changeScope("all")}>查看其他回合的 {reviewModel.filteredCount} 条建议</button> : null}
+            {hasFilters ? <button className="text-button coaching-link" type="button" onClick={clearFilters}>清除筛选</button> : null}
           </div>
         ) : visibleGroups.map((roundGroup) => {
           const expanded = scope === "current" || expandedRoundNumbers.has(roundGroup.roundNumber);
@@ -198,8 +194,8 @@ export const CoachingPanel = memo(function CoachingPanel({
             <section key={roundGroup.roundNumber} className={`coaching-round-group ${roundGroup.roundNumber === selectedRound ? "selected" : ""}`} aria-label={`第 ${roundGroup.roundNumber} 回合建议`}>
               {scope === "all" ? (
                 <button className="coaching-round-header" type="button" onClick={() => toggleRound(roundGroup.roundNumber)} aria-expanded={expanded} aria-controls={eventsId}>
-                  <span className="coaching-round-header-copy"><strong>第 {roundGroup.roundNumber} 回合</strong><small>{roundGroup.events.length} 条建议</small></span>
-                  <ChevronDown className="coaching-round-chevron" size={15} aria-hidden="true" />
+                  <span className="coaching-round-toggle" aria-hidden="true">{expanded ? "−" : "+"}</span>
+                  <strong>第 {roundGroup.roundNumber} 回合</strong><small>{roundGroup.events.length} 条建议</small>
                 </button>
               ) : null}
               {expanded ? (

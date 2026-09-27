@@ -1,12 +1,11 @@
 "use client";
 
-import { Bomb, Crosshair, Flag, Skull, Target, TimerReset, X } from "lucide-react";
+import { X } from "lucide-react";
 import { Fragment, memo, useEffect, useMemo, useRef } from "react";
 
 import {
   buildRoundReviewModel,
   jumpTargetsForRound,
-  type RoundJumpTarget,
   type RoundReviewSummary
 } from "@/lib/round-review";
 import { formatRoundTime } from "@/lib/replay-time";
@@ -114,14 +113,19 @@ export const RoundStrip = memo(function RoundStrip(props: RoundStripProps) {
 
   if (model.rounds.length === 0) {
     return (
-      <section className="round-strip empty" aria-label="回合">
+      <section className="panel round-strip empty" aria-labelledby="round-strip-title">
+        <div className="panel-bar round-strip-head"><h2 className="panel-bar-title" id="round-strip-title">回合记录</h2></div>
         <p className="round-review-empty"><strong>暂无回合数据</strong><span>这场比赛暂时无法按回合跳转。</span></p>
       </section>
     );
   }
 
   return (
-    <section className="round-strip" aria-label="回合">
+    <section className="panel round-strip" aria-labelledby="round-strip-title">
+      <div className="panel-bar round-strip-head">
+        <h2 className="panel-bar-title" id="round-strip-title">回合记录</h2>
+        <RoundStripLegend />
+      </div>
       <div ref={trackRef} className="round-strip-track" role="group" aria-label="回合列表">
         {model.rounds.map((round, roundIndex) => (
           <Fragment key={round.roundNumber}>
@@ -146,6 +150,7 @@ export const RoundStrip = memo(function RoundStrip(props: RoundStripProps) {
               aria-label={roundAriaLabel(round)}
               title={`第 ${round.roundNumber} 回合：${outcomeText(round)}，${round.killCount} 次击杀，${round.coachingEventCount} 条建议${round.playerDeath.tick !== null ? "，阵亡" : ""}`}
             >
+              <span className="round-strip-fill" aria-hidden="true" />
               <span className="round-strip-number">{round.roundNumber}</span>
               <span className="round-strip-marks" aria-hidden="true">
                 {round.playerDeath.tick !== null ? <X className="round-strip-death" size={13} strokeWidth={3} /> : null}
@@ -155,9 +160,22 @@ export const RoundStrip = memo(function RoundStrip(props: RoundStripProps) {
           </Fragment>
         ))}
       </div>
+      {/* Phones have no room in the bar: the same legend, one line under the track. */}
+      <RoundStripLegend below />
     </section>
   );
 });
+
+function RoundStripLegend({ below = false }: { below?: boolean }) {
+  return (
+    <p className={`round-strip-legend${below ? " round-strip-legend-below" : ""}`} aria-hidden="true">
+      <span><i className="side-t" />T 胜</span>
+      <span><i className="side-ct" />CT 胜</span>
+      <span><X size={12} strokeWidth={3} className="round-strip-death" />阵亡</span>
+      <span><b className="round-strip-legend-dot" />建议</span>
+    </p>
+  );
+}
 
 /** The selected round: who won it, and quick jumps to its key moments. */
 export const RoundReviewPanel = memo(function RoundReviewPanel(props: RoundReviewPanelProps) {
@@ -173,15 +191,15 @@ export const RoundReviewPanel = memo(function RoundReviewPanel(props: RoundRevie
   }
 
   return (
-    <section className="round-detail-panel" aria-label="本回合">
-      <div className="round-detail-head">
-        <h2 className="round-detail-title">第 {selectedSummary.roundNumber} 回合</h2>
+    <section className="panel round-detail-panel" aria-label="本回合">
+      <div className="panel-bar round-detail-head">
+        <h2 className="panel-bar-title round-detail-title">第 {selectedSummary.roundNumber} 回合</h2>
         <span className={`round-detail-winner side-${selectedSummary.winnerSide.toLowerCase()}`}>
           {selectedSummary.winnerSide} 获胜
         </span>
         {selectedSummary.playerOutcome ? (
           <span className={`round-detail-outcome ${selectedSummary.playerOutcome}`}>
-            {selectedSummary.playerOutcome === "won" ? "赢" : "输"}
+            {selectedPlayerName ? `${selectedPlayerName} ` : ""}{selectedSummary.playerOutcome === "won" ? "赢下本回合" : "输掉本回合"}
           </span>
         ) : null}
         <span className="round-detail-count">{selectedSummary.coachingEventCount} 条建议</span>
@@ -193,7 +211,6 @@ export const RoundReviewPanel = memo(function RoundReviewPanel(props: RoundRevie
             disabled={!target.available || target.tick === null}
             onClick={() => { if (target.tick !== null) onSeek(target.tick); }}
             title={target.tick === null ? `本回合没有${target.label}记录` : `跳到${target.label}（${clock(target.tick)}）`}>
-            <JumpTargetIcon target={target} />
             <span>{target.label}</span>
             {target.tick !== null ? <small>{clock(target.tick)}</small> : null}
           </button>
@@ -262,25 +279,6 @@ function RoundRibbonMetric({ label, value, tick }: { label: string; value: strin
       <dd>{value}</dd>
     </div>
   );
-}
-
-function JumpTargetIcon({ target }: { target: RoundJumpTarget }) {
-  if (target.id === "round_start") {
-    return <Flag size={14} aria-hidden="true" />;
-  }
-  if (target.id === "live_start") {
-    return <TimerReset size={14} aria-hidden="true" />;
-  }
-  if (target.id === "first_kill") {
-    return <Crosshair size={14} aria-hidden="true" />;
-  }
-  if (target.id === "player_first_kill") {
-    return <Target size={14} aria-hidden="true" />;
-  }
-  if (target.id === "player_death") {
-    return <Skull size={14} aria-hidden="true" />;
-  }
-  return <Bomb size={14} aria-hidden="true" />;
 }
 
 function eventText(tick: number | null, detail: string | null | undefined, clock: (tick: number) => string): string {

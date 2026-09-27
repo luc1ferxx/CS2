@@ -97,7 +97,7 @@ describe("DashboardPage", () => {
 
     render(<DashboardPage />);
 
-    expect(await screen.findByText("2 场比赛")).toBeInTheDocument();
+    expect(await screen.findByText("（2 场）")).toBeInTheDocument();
     const ready = rowFor("Mock Match demo-1");
     expect(ready).toHaveTextContent("可以复盘");
     expect(within(ready).getByRole("link", { name: "进入复盘：Mock Match demo-1" })).toHaveAttribute(
@@ -119,10 +119,10 @@ describe("DashboardPage", () => {
 
     render(<DashboardPage />);
 
-    await screen.findByText("2 场比赛");
+    await screen.findByText("（2 场）");
     const count = within(rowFor("Mock Match demo-1")).getByTitle("所有玩家合计；进入比赛后只显示你的玩家的建议");
-    expect(count).toHaveTextContent(/^全场\s*37\s*条复盘线索$/);
-    expect(rowFor("Ranked Mirage")).not.toHaveTextContent(/复盘线索/);
+    expect(count).toHaveTextContent(/^全场建议\s*37$/);
+    expect(within(rowFor("Ranked Mirage")).getByTitle("所有玩家合计；进入比赛后只显示你的玩家的建议")).toBeEmptyDOMElement();
   });
 
   it("creates a mock demo from the empty library and shows it", async () => {
@@ -162,14 +162,14 @@ describe("DashboardPage", () => {
 
     expect(await screen.findByRole("alert")).toHaveTextContent("网络连接中断，请检查网络后重试。");
     expect(screen.queryByText(/应用已启动/)).not.toBeInTheDocument();
-    const emptyState = screen.getByText("暂时无法加载比赛").closest(".library-empty-state");
+    const emptyState = screen.getByText("暂时无法加载比赛").closest(".lib-empty");
     if (!emptyState) throw new Error("library empty state not rendered");
 
     // The toolbar has its own refresh control; the empty state offers the same
     // action as the recovery path, which is the one under test here.
     await user.click(within(emptyState as HTMLElement).getByRole("button", { name: "刷新比赛列表" }));
 
-    expect(await screen.findByText("1 场比赛")).toBeInTheDocument();
+    expect(await screen.findByText("（1 场）")).toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(rowFor("Mock Match demo-1")).toBeInTheDocument();
   });
@@ -195,7 +195,7 @@ describe("DashboardPage", () => {
       .mockResolvedValue([demoSummary()]);
 
     render(<DashboardPage />);
-    await screen.findByText("1 场比赛");
+    await screen.findByText("（1 场）");
     await user.click(screen.getByRole("button", { name: "刷新比赛列表" }));
 
     const alert = await screen.findByRole("alert");
@@ -231,7 +231,7 @@ describe("DashboardPage", () => {
     const pickerClicks = vi.fn();
 
     render(<DashboardPage />);
-    await screen.findByText("1 场比赛");
+    await screen.findByText("（1 场）");
     const row = rowFor("Mock Match demo-1");
     screen.getByLabelText("选择 .dem 比赛文件").addEventListener("click", pickerClicks);
 
@@ -274,7 +274,7 @@ describe("DashboardPage", () => {
     ]);
 
     render(<DashboardPage />);
-    await screen.findByText("1 场比赛");
+    await screen.findByText("（1 场）");
     const row = rowFor("Mock Match demo-1");
 
     expect(within(row).getByText("处理时间过长，已停止。")).toBeInTheDocument();
@@ -287,7 +287,7 @@ describe("DashboardPage", () => {
     vi.mocked(api.listDemos).mockResolvedValue([demoSummary()]);
 
     render(<DashboardPage />);
-    expect(await screen.findByText("1 场比赛")).toBeInTheDocument();
+    expect(await screen.findByText("（1 场）")).toBeInTheDocument();
 
     await user.type(screen.getByRole("searchbox", { name: "搜索比赛" }), "mirage");
     expect(screen.getByText("没有找到这场比赛")).toBeInTheDocument();
@@ -311,7 +311,7 @@ describe("DashboardPage", () => {
     expect(screen.queryByText(/模拟比赛体验/)).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "示例比赛" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "示例比赛（模拟数据）" })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "上传比赛" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "上传 .dem" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "上传比赛 .dem" })).toBeEnabled();
     expect(api.createMockUpload).not.toHaveBeenCalled();
   });
@@ -447,7 +447,7 @@ describe("DashboardPage", () => {
     expect(screen.queryByRole("article", { name: /正在上传/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(leavingIsGuarded()).toBe(false);
-    expect(screen.getByRole("button", { name: "上传比赛" })).toHaveFocus();
+    expect(screen.getByRole("button", { name: "上传 .dem" })).toHaveFocus();
   });
 
   it("says the server is checking the file once every byte is sent", async () => {
@@ -594,7 +594,7 @@ describe("DashboardPage", () => {
     });
     const { unmount } = render(<DashboardPage />);
     expect(await screen.findByText("今天还可上传 7 场")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "上传比赛" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "上传 .dem" })).toBeEnabled();
     unmount();
 
     vi.mocked(api.getUploadQuota).mockResolvedValue({
@@ -608,7 +608,7 @@ describe("DashboardPage", () => {
 
     expect(await screen.findByText(DAILY_LIMIT)).toBeInTheDocument();
     expect(screen.getByText("今天的次数已用完")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "上传比赛" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "上传 .dem" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "上传比赛 .dem" })).toBeDisabled();
 
     // A dropped file is held back too, instead of spending minutes on a refused transfer.
@@ -623,7 +623,7 @@ describe("DashboardPage", () => {
     vi.mocked(api.getUploadQuota).mockResolvedValue(usedUp);
     render(<DashboardPage />);
     await flush();
-    expect(screen.getByRole("button", { name: "上传比赛" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "上传 .dem" })).toBeDisabled();
     dropFiles([new File(["demo"], "late.dem")]);
     await flush();
     expect(screen.getByRole("alert")).toBeInTheDocument();
@@ -633,7 +633,7 @@ describe("DashboardPage", () => {
       await vi.advanceTimersByTimeAsync(65_000);
     });
 
-    expect(screen.getByRole("button", { name: "上传比赛" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "上传 .dem" })).toBeEnabled();
     expect(screen.getByText("今天还可上传 1 场")).toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
@@ -652,7 +652,7 @@ describe("DashboardPage", () => {
     });
     await flush();
 
-    expect(screen.getByRole("button", { name: "上传比赛" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "上传 .dem" })).toBeEnabled();
     expect(screen.queryByText(DAILY_LIMIT)).not.toBeInTheDocument();
   });
 
@@ -692,7 +692,7 @@ describe("DashboardPage", () => {
 
     render(<DashboardPage />);
     await flush();
-    const region = document.querySelector(".library-notice-region");
+    const region = document.querySelector(".lib-notices");
     if (!(region instanceof HTMLElement)) throw new Error("no notice region");
     expect(region).toHaveAttribute("aria-live", "polite");
     expect(region).toBeEmptyDOMElement();
@@ -748,9 +748,9 @@ describe("DashboardPage", () => {
 
     render(<DashboardPage />);
 
-    expect(screen.getByRole("status")).toHaveTextContent("正在加载比赛…");
+    expect(screen.getByRole("status")).toHaveTextContent("（加载中…）");
     expect(screen.getByRole("region", { name: "比赛列表" })).toHaveAttribute("aria-busy", "true");
-    expect(document.querySelectorAll(".library-skeleton-row")).toHaveLength(3);
+    expect(document.querySelectorAll(".lib-skel-row")).toHaveLength(3);
     expect(screen.queryByText("开始你的第一场复盘")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "上传比赛 .dem" })).not.toBeInTheDocument();
   });
@@ -768,7 +768,7 @@ describe("DashboardPage", () => {
     ]);
 
     render(<DashboardPage />);
-    await screen.findByText("2 场比赛");
+    await screen.findByText("（2 场）");
 
     expect(within(rowFor("Ranked Mirage")).getByText("—")).toBeInTheDocument();
     expect(screen.getByText("1 场处理失败")).toBeInTheDocument();
@@ -780,7 +780,7 @@ describe("DashboardPage", () => {
     vi.mocked(api.listDemos).mockResolvedValue([demoSummary(), parsingDemo()]);
 
     render(<DashboardPage />);
-    await screen.findByText("2 场比赛");
+    await screen.findByText("（2 场）");
     await user.type(screen.getByRole("searchbox", { name: "搜索比赛" }), "读取比赛中");
 
     expect(rowFor("Ranked Mirage")).toBeInTheDocument();
@@ -795,7 +795,7 @@ describe("DashboardPage", () => {
     vi.mocked(api.updateDemo).mockResolvedValueOnce(demoSummary({ archived: false }));
 
     render(<DashboardPage />);
-    await screen.findByText("2 场比赛");
+    await screen.findByText("（2 场）");
     await user.click(screen.getByLabelText("Mock Match demo-1 的更多操作"));
     await user.click(within(rowFor("Mock Match demo-1")).getByRole("button", { name: "归档比赛" }));
 
@@ -817,7 +817,7 @@ describe("DashboardPage", () => {
     vi.mocked(api.updateDemo).mockRejectedValueOnce(new api.ApiError(400, "Name is invalid"));
 
     render(<DashboardPage />);
-    await screen.findByText("1 场比赛");
+    await screen.findByText("（1 场）");
     await user.click(screen.getByLabelText("Mock Match demo-1 的更多操作"));
     await user.click(within(rowFor("Mock Match demo-1")).getByRole("button", { name: "重命名" }));
 
@@ -842,7 +842,7 @@ describe("DashboardPage", () => {
     const user = userEvent.setup();
     vi.mocked(api.listDemos).mockResolvedValue([demoSummary()]);
     render(<DashboardPage />);
-    await screen.findByText("1 场比赛");
+    await screen.findByText("（1 场）");
     const popover = screen.getByText("筛选与排序").closest("details");
     if (!popover) throw new Error("no filter popover");
 

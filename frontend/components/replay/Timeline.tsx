@@ -1,13 +1,38 @@
 "use client";
 
-import { memo, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent } from "react";
+import { memo, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent } from "react";
 
 import { timelineMarkersForRound } from "@/lib/coaching-review";
 import { coachingCopy } from "@/lib/coaching-copy";
-import { timelineParserEventMarkersForRound } from "@/lib/replay-events";
+import { clusterTimelineMarkers, timelineParserEventMarkersForRound, type ParserEventTimelineMarker } from "@/lib/replay-events";
 import { formatRoundTime, roundPlaybackStartTick } from "@/lib/replay-time";
 import type { CoachingEvent } from "@/types/coaching";
 import type { ReplayEvent, ReplayRound } from "@/types/replay";
+
+// Event chips are 18 px wide: nearer than this they share one chip (a tick on phones, 3 px).
+const EVENT_CHIP_GAP_PX = 20;
+const EVENT_TICK_GAP_PX = 6;
+const NARROW_LANE_PX = 480;
+
+// One or more parser events drawn as one chip, anchored at the first.
+interface ParserLaneItem {
+  event: ParserEventTimelineMarker["event"];
+  seekTick: number;
+  leftPercent: number;
+  members: ParserEventTimelineMarker[];
+}
+
+// Most telling first: my death, my kill, any kill, the rest.
+function clusterTone(members: ParserEventTimelineMarker[]): string {
+  if (members.some((member) => member.presentation.tone === "own-death")) return "has-own-death";
+  if (members.some((member) => member.presentation.tone === "own-kill")) return "has-own-kill";
+  return "";
+}
+
+// Keeps an 18 px chip whole at either end of the lane.
+function laneLeft(percent: number, halfWidthPx: number): string {
+  return `clamp(${halfWidthPx}px, ${percent}%, calc(100% - ${halfWidthPx}px))`;
+}
 
 interface TimelineProps {
   currentTick: number;
@@ -45,6 +70,24 @@ export const Timeline = memo(function Timeline({
   const parserEventMarkers = useMemo(
     () => timelineParserEventMarkersForRound(parserEvents, selectedRound, minTick, maxTick, selectedPlayerId),
     [maxTick, minTick, parserEvents, selectedPlayerId, selectedRound]
+  );
+  const lanesShown = rounds.length > 0;
+  const tracksRef = useRef<HTMLDivElement | null>(null);
+  const [laneWidth, setLaneWidth] = useState(0);
+  useEffect(() => {
+    const element = tracksRef.current;
+    if (!element || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver((entries) => {
+      const width = entries[0]?.contentRect.width ?? 0;
+      setLaneWidth((previous) => (Math.abs(previous - width) < 1 ? previous : width));
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [lanesShown]);
+  const parserLaneItems = useMemo<ParserLaneItem[]>(
+    () => clusterTimelineMarkers(parserEventMarkers, laneWidth, laneWidth < NARROW_LANE_PX ? EVENT_TICK_GAP_PX : EVENT_CHIP_GAP_PX)
+      .map((members) => ({ event: members[0].event, seekTick: members[0].seekTick, leftPercent: members[0].leftPercent, members })),
+    [laneWidth, parserEventMarkers]
   );
   const hasRounds = rounds.length > 0;
   const span = Math.max(1, maxTick - minTick);
@@ -106,7 +149,7 @@ export const Timeline = memo(function Timeline({
               <small>{markers.length}</small>
             </div>
           </div>
-          <div className="timeline-lane-tracks">
+          <div className="timeline-lane-tracks" ref={tracksRef}>
             <div className="timeline-current-spine" aria-hidden="true">
               <span>{elapsed}</span>
             </div>
@@ -135,23 +178,44 @@ export const Timeline = memo(function Timeline({
               className="timeline-lane-track parser-lane parser-event-markers"
               label="比赛事件"
               currentTick={currentTick}
-              markers={parserEventMarkers}
-              markerTick={(marker) => marker.seekTick}
-              renderMarker={(marker, tabIndex, register) => {
-                const text = `${marker.description} · ${clock(marker.seekTick)}`;
+              markers={parserLaneItems}
+              markerTick={(item) => item.seekTick}
+              renderMarker={(item, tabIndex, register) => {
+                if (item.members.length === 1) {
+                  const marker = item.members[0];
+                  const text = `${marker.description} · ${clock(marker.seekTick)}`;
+                  return (
+                    <button
+                      key={marker.event.id}
+                      ref={register}
+                      className={`parser-event-marker ${marker.presentation.tone}${marker.side ? ` side-${marker.side.toLowerCase()}` : ""}`}
+                      style={{ left: laneLeft(marker.leftPercent, 9) }}
+                      type="button"
+                      tabIndex={tabIndex}
+                      onClick={() => onSeek(marker.seekTick)}
+                      aria-label={`${marker.presentation.label}：${text}`}
+                      title={text}
+                    >
+                      {marker.presentation.shortLabel}
+                    </button>
+                  );
+                }
+                // Events too close to tell apart: one chip with their count; it lands on the first.
+                const lines = item.members.map((member) => `${member.description} · ${clock(member.seekTick)}`);
+                const tone = clusterTone(item.members);
                 return (
                   <button
-                    key={marker.event.id}
+                    key={item.event.id}
                     ref={register}
-                    className={`parser-event-marker ${marker.presentation.tone}${marker.side ? ` side-${marker.side.toLowerCase()}` : ""}`}
-                    style={{ left: `${marker.leftPercent}%` }}
+                    className={`parser-event-marker cluster${tone ? ` ${tone}` : ""}`}
+                    style={{ left: laneLeft(item.leftPercent, 9) }}
                     type="button"
                     tabIndex={tabIndex}
-                    onClick={() => onSeek(marker.seekTick)}
-                    aria-label={`${marker.presentation.label}：${text}`}
-                    title={text}
+                    onClick={() => onSeek(item.seekTick)}
+                    aria-label={`${item.members.length} 个事件：${lines.join("；")}`}
+                    title={lines.join("\n")}
                   >
-                    {marker.presentation.shortLabel}
+                    {item.members.length}
                   </button>
                 );
               }}
@@ -169,7 +233,7 @@ export const Timeline = memo(function Timeline({
                     key={marker.event.id}
                     ref={register}
                     className={`event-marker ${marker.event.severity}`}
-                    style={{ left: `${marker.leftPercent}%` }}
+                    style={{ left: laneLeft(marker.leftPercent, 4) }}
                     type="button"
                     tabIndex={tabIndex}
                     onClick={() => (onSeekFinding ? onSeekFinding(marker.event) : onSeek(marker.event.tick_start))}

@@ -194,7 +194,7 @@ assert.doesNotMatch(panel("", devAccount, [players[1]]), /xelex/, "the developme
   // A long name is cut with an ellipsis, so the full name rides along in its title.
   assert.match(own, /正在复盘 <strong class="personal-review-name" title="xelex">xelex<\/strong>/);
   assert.match(own, /已按你的 Steam 账号匹配到 xelex/);
-  assert.match(own, /<strong>1<\/strong> 条值得优先回看/);
+  assert.match(own, /<span>1 条值得优先回看<\/span>/);
   assert.match(own, />查看最值得回看的一条<\/button>/);
   assert.doesNotMatch(own, /id="review-player-picker"|设为我的玩家/);
   assert.doesNotMatch(own, /First finding/);

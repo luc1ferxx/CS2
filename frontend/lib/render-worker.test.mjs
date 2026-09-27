@@ -82,15 +82,15 @@ function panel(renderWorker, extra = {}) {
     video: pendingVideo, latestJob: queuedJob, renderWorker, jobCount: 1, refreshing: false, onRefresh() {}, ...extra
   }));
 }
-assert.match(panel(offline), /<strong>排队中，视频服务暂时离线<\/strong>/);
+assert.match(panel(offline), /<strong[^>]*>排队中，视频服务暂时离线<\/strong>/);
 assert.match(panel(offline), /已排队，服务恢复后会自动开始生成。/);
 assert.doesNotMatch(panel(offline), /渲染器|15 分钟/, "the renderer's heartbeat stays in the operator view");
 assert.match(panel(offline, { devTools: true }), /15 分钟/);
 assert.match(panel(offline, { devTools: true }), /任务已保留，渲染器启动后会自动开始/);
-assert.match(panel(connected), /<strong>排队中<\/strong>/);
+assert.match(panel(connected), /<strong[^>]*>排队中<\/strong>/);
 assert.match(panel(connected), /等待开始生成/);
 assert.match(panel(connected, { devTools: true }), /领取后会自动开始/);
-assert.match(panel(null), /<strong>排队中<\/strong>/, "An unreachable status endpoint must not report the renderer as offline");
+assert.match(panel(null), /<strong[^>]*>排队中<\/strong>/, "An unreachable status endpoint must not report the renderer as offline");
 for (const markup of [panel(offline), panel(connected), panel(null)]) {
   assert.doesNotMatch(markup, /check diagnostics for worker heartbeat/,
     "The panel now reports the heartbeat itself instead of pointing elsewhere");

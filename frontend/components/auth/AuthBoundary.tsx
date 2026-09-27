@@ -1,11 +1,10 @@
 "use client";
 
-import { LogIn, RefreshCw, ShieldCheck } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 
 import { useAuth } from "@/components/auth/AuthProvider";
 import { AppBrand } from "@/components/layout/AppBrand";
-import { AuthShell } from "@/components/layout/AuthShell";
+import { AuthPanel, AuthShell } from "@/components/layout/AuthShell";
 
 // Most session checks finish well inside this; only a slow one earns a message.
 const CONNECTING_NOTICE_DELAY_MS = 400;
@@ -25,42 +24,37 @@ export function AuthBoundary({ children }: { children: ReactNode }) {
 
   return (
     <AuthShell beta>
-      <section className="panel auth-panel" aria-live="polite">
-        <span className="auth-icon">
-          <ShieldCheck size={20} aria-hidden="true" />
-        </span>
-        <div>
-          <h1>{copy.title}</h1>
-          <p>{copy.message}</p>
-          {signingIn && provider === "steam" ? (
-            <p className="auth-note">
-              将跳转到 Steam 官方页面（steamcommunity.com）登录。我们只会得到你的 Steam ID 和公开的昵称、头像，不会获得你的密码。
-            </p>
-          ) : null}
-          {state.status === "error" && state.message ? (
-            <details>
-              <summary>查看错误详情</summary>
-              <p>{state.message}</p>
-            </details>
-          ) : null}
-        </div>
-        {signingIn ? (
-          <button className="primary-button" type="button" onClick={() => signIn()}>
-            <LogIn size={16} />
-            {provider === "steam" ? "通过 Steam 登录" : "登录"}
-          </button>
+      <AuthPanel
+        title={copy.title}
+        live
+        actions={
+          <>
+            {signingIn ? (
+              <button className="primary-button" type="button" onClick={() => signIn()}>
+                {provider === "steam" ? "通过 Steam 登录" : "登录"}
+              </button>
+            ) : null}
+            {state.status === "error" ? (
+              <button className="secondary-button" type="button" onClick={() => void refreshSession()}>
+                重新连接
+              </button>
+            ) : null}
+          </>
+        }
+      >
+        <p>{copy.message}</p>
+        {signingIn && provider === "steam" ? (
+          <p className="auth-note">
+            将跳转到 Steam 官方页面（steamcommunity.com）登录。我们只会得到你的 Steam ID 和公开的昵称、头像，不会获得你的密码。
+          </p>
         ) : null}
-        {state.status === "error" ? (
-          <button
-            className="secondary-button"
-            type="button"
-            onClick={() => void refreshSession()}
-          >
-            <RefreshCw size={16} />
-            重新连接
-          </button>
+        {state.status === "error" && state.message ? (
+          <details>
+            <summary>查看错误详情</summary>
+            <p>{state.message}</p>
+          </details>
         ) : null}
-      </section>
+      </AuthPanel>
     </AuthShell>
   );
 }
@@ -76,7 +70,7 @@ function SessionCheckShell() {
   return (
     <main className="app-shell library-app session-check-shell">
       <header className="topbar">
-        <AppBrand />
+        <AppBrand nav={false} />
       </header>
       <section className="page" aria-busy="true">
         <p className="session-check-notice" role="status">{slow ? "正在连接…" : ""}</p>

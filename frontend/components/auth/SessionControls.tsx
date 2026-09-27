@@ -1,41 +1,26 @@
 "use client";
 
-import { CircleUserRound, LogOut } from "lucide-react";
 import { useState } from "react";
 
 import { useAuth } from "@/components/auth/AuthProvider";
 
+// The account as plain text at the right of the top bar, and a text link to sign out.
 export function SessionControls() {
   const { signOut, state } = useAuth();
   const [signingOut, setSigningOut] = useState(false);
   const account = state.account;
   const displayName = account?.provider === "development" && account.displayName === "Local development"
-    ? "本地复盘"
+    ? "本地账户"
     : account?.displayName ?? "当前账户";
 
   return (
     <div className="session-controls">
-      <span className="account-chip" title={displayName}>
-        {account?.avatarUrl ? (
-          <span
-            aria-hidden="true"
-            className="account-avatar account-avatar-image"
-            style={{ backgroundImage: `url("${account.avatarUrl}")` }}
-          />
-        ) : (
-          <span className="account-avatar" aria-hidden="true">
-            <CircleUserRound size={15} />
-          </span>
-        )}
-        <span className="account-copy">
-          <strong>{displayName}</strong>
-          <small>{accountProviderLabel(account?.provider)}</small>
-        </span>
+      <span className="account-name" title={accountTitle(displayName, account?.provider)}>
+        {displayName}
       </span>
       {account?.provider !== "development" ? (
         <button
-          aria-label="退出登录"
-          className="secondary-button compact-button account-sign-out"
+          className="topbar-link account-sign-out"
           type="button"
           disabled={signingOut}
           onClick={async () => {
@@ -44,7 +29,6 @@ export function SessionControls() {
             setSigningOut(false);
           }}
         >
-          <LogOut size={14} />
           {signingOut ? "正在退出" : "退出登录"}
         </button>
       ) : null}
@@ -52,12 +36,12 @@ export function SessionControls() {
   );
 }
 
-function accountProviderLabel(provider: "steam" | "oidc" | "development" | undefined) {
+function accountTitle(name: string, provider: "steam" | "oidc" | "development" | undefined) {
   if (provider === "steam") {
-    return "Steam";
+    return `${name}（Steam 账号）`;
   }
   if (provider === "oidc") {
-    return "OIDC";
+    return `${name}（OIDC 账号）`;
   }
-  return "本地账户";
+  return name;
 }

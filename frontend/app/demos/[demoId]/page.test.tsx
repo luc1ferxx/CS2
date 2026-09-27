@@ -476,7 +476,8 @@ describe("DemoDetailPage", () => {
     const { unmount } = render(<DemoDetailPage />);
 
     expect(await screen.findByRole("heading", { name: "选择你在这场比赛中的玩家" })).toBeInTheDocument();
-    expect(screen.getByText("全场 12 条复盘线索，选择你的玩家后查看建议")).toBeInTheDocument();
+    expect(screen.getByText("全场建议")).toBeInTheDocument();
+    expect(screen.getByText("全场建议").parentElement).toHaveTextContent("全场建议12");
     expect(screen.getByText("选择你在这场比赛中的玩家后，这里会列出对应的建议。")).toBeInTheDocument();
     expect(screen.queryByText(/xelex|未找到/)).not.toBeInTheDocument();
 
@@ -737,7 +738,7 @@ describe("DemoDetailPage", () => {
 
     const { unmount } = render(<DemoDetailPage />);
 
-    await waitFor(() => expect(document.title).toBe("Mock Match demo-1 · 复盘 · CS2 Demo Coach"));
+    await waitFor(() => expect(document.title).toBe("Mock Match demo-1 - CS2 复盘"));
     unmount();
     expect(document.title).toBe("CS2 Demo Coach");
   });
@@ -875,10 +876,10 @@ describe("DemoDetailPage", () => {
       expect(strip).toHaveTextContent("第 1 回合 0:04");
 
       // 下一条 counts from the suggestion being watched, not from the earlier playhead.
-      await user.click(screen.getByRole("button", { name: "下一条" }));
+      await user.click(screen.getByRole("button", { name: "下一条建议" }));
       expect(slider()).toHaveValue("258");
-      expect(screen.getByRole("button", { name: "下一条" })).toBeDisabled();
-      await user.click(screen.getByRole("button", { name: "上一条" }));
+      expect(screen.getByRole("button", { name: "下一条建议" })).toBeDisabled();
+      await user.click(screen.getByRole("button", { name: "上一条建议" }));
       expect(slider()).toHaveValue("208");
 
       await user.click(watchButton());

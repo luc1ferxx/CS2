@@ -7,27 +7,25 @@ import type { ReplayDetailDiagnostics } from "@/lib/replay-diagnostics";
 export const ReplayDiagnosticsPanel = memo(function ReplayDiagnosticsPanel({ diagnostics }: { diagnostics: ReplayDetailDiagnostics }) {
   return (
     <section className="panel replay-diagnostics-panel" aria-label="回放数据检查">
-      <div className="replay-diagnostics-header">
-        <div>
-          <h2>回放数据检查</h2>
-          <p>
-            {diagnostics.normalizedLegacy
-              ? "旧版或不完整的回放数据，已整理后用于复盘"
-              : "回放数据已载入"}
-          </p>
-        </div>
-        <span className={`mini-pill replay-contract-version ${diagnostics.normalizedLegacy ? "legacy" : "current"}`}
+      <div className="panel-bar replay-diagnostics-header">
+        <h2 className="panel-bar-title">回放数据检查</h2>
+        <span className={`panel-bar-meta replay-contract-version ${diagnostics.normalizedLegacy ? "legacy" : "current"}`}
           title="回放数据版本">
           {diagnostics.contractVersion}
         </span>
       </div>
+      <p className="replay-diagnostics-state">
+        {diagnostics.normalizedLegacy
+          ? "旧版或不完整的回放数据，已整理后用于复盘"
+          : "回放数据已载入"}
+      </p>
       <div className="replay-diagnostics-grid">
         <DiagnosticMetric label="解析事件" value={diagnostics.counts.parserEvents} />
         <DiagnosticMetric label="建议" value={diagnostics.counts.coachingEvents} />
         <DiagnosticMetric label="回合" value={diagnostics.counts.rounds} />
         <DiagnosticMetric label="玩家" value={diagnostics.counts.players} />
         <DiagnosticMetric label="位置帧" value={diagnostics.counts.frames} />
-        <DiagnosticMetric label="视频生成" value={renderStateLabel(diagnostics.renderState.label)} tone={diagnostics.renderState.tone} />
+        <DiagnosticMetric label="回放内视频" value={renderStateLabel(diagnostics.renderState.label)} tone={diagnostics.renderState.tone} />
       </div>
       {diagnostics.warnings.length > 0 ? (
         <ul className="replay-diagnostics-warnings">

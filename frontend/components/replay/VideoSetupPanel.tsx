@@ -1,6 +1,5 @@
 "use client";
 
-import { Save, TimerReset, Upload } from "lucide-react";
 import { memo, useEffect, useId, useState } from "react";
 
 import type { VideoCalibrationUpdate } from "@/lib/api";
@@ -104,13 +103,10 @@ export const VideoSetupPanel = memo(function VideoSetupPanel({
 
   return (
     <section className="panel video-setup-panel" aria-label="手动视频校准">
-      <div className="video-setup-header">
-        <div>
-          <h2>手动视频校准（开发测试）</h2>
-          <span>{video.source} / {video.status}</span>
-        </div>
+      <div className="panel-bar video-setup-header">
+        <h2 className="panel-bar-title">手动视频校准（开发测试）</h2>
+        <span className="panel-bar-meta">{video.source} / {video.status}</span>
         <label className={`secondary-button compact-button ${uploading ? "disabled-label" : ""}`} htmlFor={fileInputId}>
-          <Upload size={14} aria-hidden="true" />
           {uploading ? "上传中" : "上传 MP4"}
         </label>
         <input
@@ -150,7 +146,7 @@ export const VideoSetupPanel = memo(function VideoSetupPanel({
       </dl>
 
       {calibrationDisabled ? <p className="setup-message">已保存的视频片段沿用生成时的时间对齐；上传 MP4 后才能手动校准。</p> : null}
-      <fieldset className="calibration-grid" disabled={calibrationDisabled} style={{ border: 0, padding: 0, margin: 0 }}>
+      <fieldset className="calibration-grid" disabled={calibrationDisabled} style={{ border: 0, margin: 0 }}>
         <label>
           <span>timeOriginSeconds</span>
           <input
@@ -202,7 +198,6 @@ export const VideoSetupPanel = memo(function VideoSetupPanel({
           disabled={!video.url || calibrationDisabled}
           onClick={() => setTimeOriginSeconds(currentVideoTime.toFixed(2))}
         >
-          <TimerReset size={14} aria-hidden="true" />
           用当前视频时间作为 tickStart 起点
         </button>
         <button
@@ -211,7 +206,6 @@ export const VideoSetupPanel = memo(function VideoSetupPanel({
           disabled={saving || calibrationDisabled}
           onClick={() => void handleSave()}
         >
-          <Save size={14} aria-hidden="true" />
           {saving ? "保存中" : "保存校准"}
         </button>
       </div>

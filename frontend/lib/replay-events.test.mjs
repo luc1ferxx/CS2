@@ -40,6 +40,7 @@ const {
   parserEventPresentationForType,
   recentMapParserEvents,
   timelineParserEventMarkersForRound,
+  clusterTimelineMarkers,
   weaponName
 } = loadTypeScriptModule("./replay-events.ts");
 
@@ -128,6 +129,30 @@ const parserEvents = [
   assert.deepEqual(normalize(sides.map((marker) => [marker.event.id, marker.side])), [
     ["kill-1", "T"], ["kill-5", "CT"], ["plant-1", null], ["smoke-1", null]
   ]);
+}
+
+{
+  // Round start and end stay on the round lane, not the event lane.
+  const markers = timelineParserEventMarkersForRound([
+    replayEvent({ id: "start-1", type: "round_start", tick: 100, label: "start" }),
+    parserEvents[0],
+    replayEvent({ id: "end-1", type: "round_end", tick: 500, label: "end" })
+  ], 1, 100, 500);
+  assert.deepEqual(normalize(markers.map((marker) => marker.event.id)), ["kill-1"]);
+}
+
+{
+  // Markers closer than the gap share one chip, anchored at the first; an unmeasured lane keeps them apart.
+  const at = (id, leftPercent) => ({ id, leftPercent });
+  const markers = [at("a", 10), at("b", 11), at("c", 12.5), at("d", 20), at("e", 90)];
+  assert.deepEqual(
+    normalize(clusterTimelineMarkers(markers, 800, 20).map((group) => group.map((marker) => marker.id))),
+    [["a", "b"], ["c"], ["d"], ["e"]]
+  );
+  assert.deepEqual(
+    normalize(clusterTimelineMarkers(markers, 0, 20).map((group) => group.map((marker) => marker.id))),
+    [["a"], ["b"], ["c"], ["d"], ["e"]]
+  );
 }
 
 {

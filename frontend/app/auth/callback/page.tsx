@@ -1,11 +1,10 @@
 "use client";
 
-import { LogIn, Mail, RefreshCw, ShieldCheck, UserX, WifiOff } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
 import { useAuth } from "@/components/auth/AuthProvider";
-import { AuthShell } from "@/components/layout/AuthShell";
+import { AuthPanel, AuthShell } from "@/components/layout/AuthShell";
 import { sanitizeReturnTo } from "@/lib/auth";
 
 // Optional: where an uninvited player can ask for access. Hidden when unset.
@@ -49,28 +48,25 @@ export default function AuthCallbackPage() {
   if (notInvited) {
     return (
       <AuthShell>
-        <section className="panel auth-panel" aria-live="polite">
-          <span className="auth-icon">
-            <UserX size={20} aria-hidden="true" />
-          </span>
-          <div>
-            <h1>暂未开放</h1>
-            <p>这个 Steam 账号还没有获得内测资格。</p>
-            <p>如果受邀的是另一个 Steam 账号，请先在 Steam 网站退出当前账号，再用受邀账号重新登录。</p>
-          </div>
-          <div className="auth-panel-actions">
-            <button className="primary-button" type="button" onClick={() => signIn("/dashboard")}>
-              <LogIn size={16} aria-hidden="true" />
-              使用其他 Steam 账号登录
-            </button>
-            {BETA_CONTACT_URL ? (
-              <a className="secondary-button" href={BETA_CONTACT_URL} target="_blank" rel="noreferrer">
-                <Mail size={16} aria-hidden="true" />
-                申请内测资格
-              </a>
-            ) : null}
-          </div>
-        </section>
+        <AuthPanel
+          title="暂未开放"
+          live
+          actions={
+            <>
+              <button className="primary-button" type="button" onClick={() => signIn("/dashboard")}>
+                使用其他 Steam 账号登录
+              </button>
+              {BETA_CONTACT_URL ? (
+                <a href={BETA_CONTACT_URL} target="_blank" rel="noreferrer">
+                  申请内测资格
+                </a>
+              ) : null}
+            </>
+          }
+        >
+          <p>这个 Steam 账号还没有获得内测资格。</p>
+          <p>如果受邀的是另一个 Steam 账号，请先在 Steam 网站退出当前账号，再用受邀账号重新登录。</p>
+        </AuthPanel>
       </AuthShell>
     );
   }
@@ -80,41 +76,38 @@ export default function AuthCallbackPage() {
 
   return (
     <AuthShell>
-      <section className="panel auth-panel" aria-live="polite">
-        <span className="auth-icon">
-          {unreachable ? <WifiOff size={20} aria-hidden="true" /> : <ShieldCheck size={20} aria-hidden="true" />}
-        </span>
-        <div>
-          <h1>{unreachable ? "暂时无法连接" : failed ? "登录没有完成" : "正在完成登录…"}</h1>
-          <p>
-            {unreachable
-              ? "网络连接中断，还不能确认登录状态。请检查网络后重试。"
-              : failed
-                ? "没有获得有效的登录状态，请重新登录。"
-                : "正在确认登录状态，马上回到你的比赛。"}
-          </p>
-        </div>
-        {unreachable ? (
-          <button
-            className="primary-button"
-            type="button"
-            disabled={retrying}
-            onClick={async () => {
-              setRetrying(true);
-              await finishSignIn();
-              setRetrying(false);
-            }}
-          >
-            <RefreshCw size={16} aria-hidden="true" />
-            {retrying ? "正在重试…" : "重试"}
-          </button>
-        ) : failed ? (
-          <button className="primary-button" type="button" onClick={() => signIn("/dashboard")}>
-            <LogIn size={16} aria-hidden="true" />
-            {provider === "steam" ? "重新通过 Steam 登录" : "重新登录"}
-          </button>
-        ) : null}
-      </section>
+      <AuthPanel
+        title={unreachable ? "暂时无法连接" : failed ? "登录没有完成" : "正在完成登录…"}
+        live
+        actions={
+          unreachable ? (
+            <button
+              className="primary-button"
+              type="button"
+              disabled={retrying}
+              onClick={async () => {
+                setRetrying(true);
+                await finishSignIn();
+                setRetrying(false);
+              }}
+            >
+              {retrying ? "正在重试…" : "重试"}
+            </button>
+          ) : failed ? (
+            <button className="primary-button" type="button" onClick={() => signIn("/dashboard")}>
+              {provider === "steam" ? "重新通过 Steam 登录" : "重新登录"}
+            </button>
+          ) : null
+        }
+      >
+        <p>
+          {unreachable
+            ? "网络连接中断，还不能确认登录状态。请检查网络后重试。"
+            : failed
+              ? "没有获得有效的登录状态，请重新登录。"
+              : "正在确认登录状态，马上回到你的比赛。"}
+        </p>
+      </AuthPanel>
     </AuthShell>
   );
 }

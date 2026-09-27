@@ -42,7 +42,7 @@ describe("AuthBoundary", () => {
     renderBoundary();
     expect(screen.queryByText("workspace")).not.toBeInTheDocument();
     // One line on what this is and what Steam shares, before the redirect.
-    expect(screen.getByText("CS2 Demo Coach")).toBeInTheDocument();
+    expect(screen.getByText("CS2 复盘")).toBeInTheDocument();
     expect(screen.getByText("内测")).toBeInTheDocument();
     expect(screen.getByText(/上传 CS2 比赛录像（.dem）/)).toBeInTheDocument();
     expect(screen.getByText(/steamcommunity\.com.*不会获得你的密码/)).toBeInTheDocument();
@@ -82,7 +82,7 @@ describe("AuthBoundary", () => {
     renderBoundary();
 
     // The shell, not a centered card about the library, and no page content yet.
-    expect(screen.getByText("CS2 Demo Coach")).toBeInTheDocument();
+    expect(screen.getByText("CS2 复盘")).toBeInTheDocument();
     expect(screen.queryByRole("heading")).not.toBeInTheDocument();
     expect(screen.queryByText("workspace")).not.toBeInTheDocument();
     expect(document.querySelector(".page")).toHaveAttribute("aria-busy", "true");

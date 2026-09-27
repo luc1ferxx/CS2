@@ -1,6 +1,6 @@
 "use client";
 
-import { Users, X } from "lucide-react";
+import { X } from "lucide-react";
 import { memo, useMemo, useRef, useState, type KeyboardEvent } from "react";
 
 import { getTacticalMapLevel, getTacticalMapPresentation, resolveTacticalMapLevel, sanitizeRadarPoint } from "@/lib/map-config";
@@ -35,7 +35,6 @@ export const ReplayViewer = memo(function ReplayViewer({
   const levelMode = controlledLevelMode ?? localLevelMode;
   const setLevelMode = onLevelModeChange ?? setLocalLevelMode;
   const [highlightedPlayerId, setHighlightedPlayerId] = useState<string | null>(null);
-  const [rosterOpen, setRosterOpen] = useState(false);
   const rosterButtons = useRef(new Map<string, HTMLButtonElement>());
   const frame = useMemo(
     () => getFrameForTick(replay.frames, currentTick, replay.tickRate),
@@ -125,7 +124,7 @@ export const ReplayViewer = memo(function ReplayViewer({
         >
           <defs>
             <pattern id="grid" width="5" height="5" patternUnits="userSpaceOnUse">
-              <path d="M 5 0 L 0 0 0 5" fill="none" stroke="#2a2e33" strokeWidth="0.25" />
+              <path className="fallback-map-grid" d="M 5 0 L 0 0 0 5" fill="none" strokeWidth="0.25" />
             </pattern>
           </defs>
           {floor.radarImagePath ? (
@@ -176,20 +175,7 @@ export const ReplayViewer = memo(function ReplayViewer({
           {hasFloors ? <small>本层 {visiblePlayers.length} 人，另一层 {framePlayers.length - visiblePlayers.length - unknownHeights} 人</small> : null}
           {hasFloors && levelMode === "auto" && !floor.followingPlayer ? <small>选择有高度数据的玩家后可自动切换楼层。</small> : null}
           {unknownHeights > 0 ? <small>{unknownHeights} 人的高度数据缺失，请查看名单。</small> : null}
-          {framePlayers.length > 0 ? (
-            <button type="button" className="map-roster-toggle" aria-expanded={rosterOpen} onClick={() => setRosterOpen((open) => !open)}>
-              <Users size={14} aria-hidden="true" />玩家名单
-            </button>
-          ) : null}
         </div>
-
-        {framePlayers.length > 0 ? (
-          <div className={`player-list ${rosterOpen ? "roster-open" : "roster-collapsed"}`} role="group" aria-label="玩家名单"
-            onKeyDown={handleRosterKeyDown}>
-            <Roster side="T" title="进攻方" players={tPlayers} {...rosterProps} />
-            <Roster side="CT" title="防守方" players={ctPlayers} {...rosterProps} />
-          </div>
-        ) : null}
 
         {highlightedPlayer ? (
           <div className="map-highlight-card" role="status">
@@ -220,6 +206,13 @@ export const ReplayViewer = memo(function ReplayViewer({
           </div>
         ) : null}
       </div>
+
+      {framePlayers.length > 0 ? (
+        <div className="player-list" role="group" aria-label="玩家名单" onKeyDown={handleRosterKeyDown}>
+          <Roster side="T" title="进攻方" players={tPlayers} {...rosterProps} />
+          <Roster side="CT" title="防守方" players={ctPlayers} {...rosterProps} />
+        </div>
+      ) : null}
     </section>
   );
 });
@@ -266,40 +259,37 @@ function BombMarker({ bombState }: { bombState: ReplayFrame["bombState"] | undef
 
 function GenericMapBackground({ label }: { label: string }) {
   return (
-    <>
-      <rect x="0" y="0" width="100" height="100" fill="#1b1d20" />
+    <g className="fallback-map">
+      <rect className="fallback-map-ground" x="0" y="0" width="100" height="100" />
       <rect x="0" y="0" width="100" height="100" fill="url(#grid)" />
       <path
+        className="fallback-map-floor"
         d="M13 68 L28 68 L28 58 L40 58 L40 48 L53 48 L53 36 L66 36 L66 27 L82 27 L82 42 L72 42 L72 53 L84 53 L84 66 L66 66 L66 80 L50 80 L50 66 L35 66 L35 81 L18 81 L18 74 L13 74 Z"
-        fill="#262a2f"
-        stroke="#4b5158"
         strokeWidth="0.8"
       />
       <path
+        className="fallback-map-lane"
         d="M35 66 L50 66 L50 80 L66 80 L66 66 L84 66 L84 53 L72 53 L72 42 L66 42 L66 36 L53 36 L53 48 L40 48 L40 58 L35 58 Z"
-        fill="#2f343a"
-        opacity="0.88"
       />
-      <rect x="70" y="33" width="12" height="12" fill="rgba(238,234,226,0.06)" stroke="#4b5158" />
-      <text x="76" y="41" textAnchor="middle" fill="#a4a8ad" fontSize="7" fontWeight="700">
+      <rect className="fallback-map-site" x="70" y="33" width="12" height="12" />
+      <text className="fallback-map-text" x="76" y="41" textAnchor="middle" fontSize="7" fontWeight="700">
         A
       </text>
-      <rect x="22" y="70" width="12" height="12" fill="rgba(238,234,226,0.06)" stroke="#4b5158" />
-      <text x="28" y="78" textAnchor="middle" fill="#a4a8ad" fontSize="7" fontWeight="700">
+      <rect className="fallback-map-site" x="22" y="70" width="12" height="12" />
+      <text className="fallback-map-text" x="28" y="78" textAnchor="middle" fontSize="7" fontWeight="700">
         B
       </text>
       <text
-        className="fallback-map-label"
+        className="fallback-map-text fallback-map-label"
         x="50"
         y="12"
         textAnchor="middle"
-        fill="#a4a8ad"
         fontSize="4"
         fontWeight="700"
       >
         {label}
       </text>
-    </>
+    </g>
   );
 }
 
@@ -382,7 +372,10 @@ function Roster({
   const sideClass = `side-${side.toLowerCase()}`;
   return (
     <div className={`side-roster ${sideClass}`}>
-      <h3><span className="roster-side">{side}</span> {title}</h3>
+      <div className={`panel-bar roster-head panel-bar-${side.toLowerCase()}`}>
+        <h3 className="panel-bar-title"><span className="roster-side">{side}</span> {title}</h3>
+        <span aria-hidden="true">血量</span>
+      </div>
       {players.map((player, index) => (
         <div key={player.id} className={`roster-row ${player.alive ? "" : "dead"} ${player.id === selectedPlayerId ? "reviewed" : ""}`}>
           <span className={`roster-index ${sideClass}`}>{index + 1}</span>

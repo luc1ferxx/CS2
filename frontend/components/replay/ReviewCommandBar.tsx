@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronLeft, ChevronRight, Keyboard, Pause, Play, RotateCcw, RotateCw, SkipForward } from "lucide-react";
+import { Keyboard, Pause, Play } from "lucide-react";
 import { memo } from "react";
 
 import type { CoachingEvent } from "@/types/coaching";
@@ -57,28 +57,26 @@ export const ReviewCommandBar = memo(function ReviewCommandBar({
     <section className="review-command-bar" aria-label="播放控制">
       <div className="review-command-actions">
         {onSeekBy ? (
-          <button className="ghost-button compact-button review-seek-button" type="button"
+          <button className="icon-button review-seek-button" type="button"
             onClick={() => onSeekBy(-5)} aria-label="后退 5 秒" title="后退 5 秒（←）">
-            <RotateCcw size={15} aria-hidden="true" />
+            <span aria-hidden="true">−5s</span>
           </button>
         ) : null}
         {nextRoundNumber !== null && onNextRound ? (
-          <button className="primary-button compact-button coordinate-play-button" type="button" onClick={onNextRound}
+          <button className="secondary-button review-next-round-button" type="button" onClick={onNextRound}
             title="从下一回合冻结时间结束处继续播放">
-            <SkipForward size={17} aria-hidden="true" />
-            <span>下一回合</span>
+            下一回合
           </button>
         ) : (
-          <button className="primary-button compact-button coordinate-play-button" type="button" onClick={onTogglePlay}
-            title={playing ? "暂停（空格）" : "播放（空格）"}>
-            {playing ? <Pause size={17} aria-hidden="true" /> : <Play size={17} aria-hidden="true" />}
-            <span>{playing ? "暂停" : "播放"}</span>
+          <button className="icon-button review-play-button" type="button" onClick={onTogglePlay}
+            aria-label={playing ? "暂停" : "播放"} title={playing ? "暂停（空格）" : "播放（空格）"}>
+            {playing ? <Pause size={14} fill="currentColor" aria-hidden="true" /> : <Play size={14} fill="currentColor" aria-hidden="true" />}
           </button>
         )}
         {onSeekBy ? (
-          <button className="ghost-button compact-button review-seek-button" type="button"
+          <button className="icon-button review-seek-button" type="button"
             onClick={() => onSeekBy(5)} aria-label="前进 5 秒" title="前进 5 秒（→）">
-            <RotateCw size={15} aria-hidden="true" />
+            <span aria-hidden="true">+5s</span>
           </button>
         ) : null}
         <label className="review-speed-control">
@@ -109,28 +107,26 @@ export const ReviewCommandBar = memo(function ReviewCommandBar({
       </div>
       <div className="review-finding-navigation" role="group" aria-label="建议导航">
         <button
-          className="secondary-button compact-button"
+          className="secondary-button"
           type="button"
           onClick={onPreviousFinding}
           disabled={!previousFinding}
           title={previousFinding ? "查看上一条建议（P）" : "已经是第一条建议"}
         >
-          <ChevronLeft size={15} aria-hidden="true" />
-          <span>上一条</span>
+          上一条建议
         </button>
         <button
-          className="secondary-button compact-button"
+          className="secondary-button"
           type="button"
           onClick={onNextFinding}
           disabled={!nextFinding}
           title={nextFinding ? "查看下一条建议（N）" : "没有下一条建议"}
         >
-          <span>下一条</span>
-          <ChevronRight size={15} aria-hidden="true" />
+          下一条建议
         </button>
       </div>
       {onToggleShortcuts ? (
-        <button className="ghost-button compact-button review-shortcuts-button" type="button"
+        <button className="icon-button review-shortcuts-button" type="button"
           onClick={onToggleShortcuts} aria-expanded={shortcutsOpen} aria-controls="review-shortcuts" title="快捷键（?）">
           <Keyboard size={15} aria-hidden="true" />
           <span className="visually-hidden">快捷键</span>

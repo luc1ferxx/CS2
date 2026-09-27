@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { ArrowLeft, Check, CircleAlert, Loader2, RefreshCcw, UploadCloud, WifiOff } from "lucide-react";
+import { Check } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 
 import {
@@ -32,12 +32,16 @@ const STEP_STATE_TEXT = { done: "已完成", current: "进行中", pending: "未
 export function ReviewSkeleton({ label }: { label: string }) {
   return (
     <div className="review-skeleton" aria-busy="true">
-      <div className="review-skeleton-strip" aria-hidden="true">
-        {Array.from({ length: 18 }, (_, index) => <span key={index} />)}
+      <div className="panel review-skeleton-strip" aria-hidden="true">
+        <div className="panel-bar" />
+        <div className="review-skeleton-cells">
+          {Array.from({ length: 18 }, (_, index) => <span key={index} />)}
+        </div>
       </div>
       <div className="review-layout">
         <div className="review-main-column">
-          <div className="review-stage">
+          <div className="panel review-stage">
+            <div className="panel-bar" aria-hidden="true" />
             <div className="review-main-canvas showing-map review-skeleton-canvas">
               <p role="status">{label}</p>
             </div>
@@ -47,8 +51,8 @@ export function ReviewSkeleton({ label }: { label: string }) {
             </div>
           </div>
         </div>
-        <div className="coaching-panel review-skeleton-coaching" aria-hidden="true">
-          <span className="skeleton-bar" />
+        <div className="panel coaching-panel review-skeleton-coaching" aria-hidden="true">
+          <div className="panel-bar" />
           {[0, 1, 2].map((index) => (
             <div className="review-skeleton-card" key={index}>
               <span className="skeleton-bar wide" />
@@ -69,49 +73,39 @@ export function DemoStateCard(props: DemoStateCardProps) {
   if (state.kind === "failed" || state.kind === "replay_unavailable") {
     return <FailureCard {...props} state={state} />;
   }
+  // No match to head these two: the page renders no match header, so the card carries the page title.
   if (state.kind === "not_found") {
     return (
-      <section className="panel demo-state-card" aria-label="比赛状态">
-        <p>这场比赛可能已被删除，或属于其他账号。</p>
+      <section className="panel demo-state-card" aria-labelledby="demo-state-title">
+        <div className="panel-bar"><h1 className="panel-bar-title" id="demo-state-title">找不到这场比赛</h1></div>
+        <div className="demo-state-heading"><p>这场比赛可能已被删除，或属于其他账号。</p></div>
         <div className="demo-state-actions">
-          <Link className="primary-button compact-button" href="/dashboard">
-            <ArrowLeft size={14} aria-hidden="true" />
-            返回我的比赛
-          </Link>
+          <Link href="/dashboard">返回我的比赛</Link>
         </div>
       </section>
     );
   }
   if (state.kind === "unreachable") {
     return (
-      <section className="panel demo-state-card" aria-label="比赛状态">
+      <section className="panel demo-state-card" aria-labelledby="demo-state-title">
+        <div className="panel-bar"><h1 className="panel-bar-title" id="demo-state-title">暂时无法打开比赛</h1></div>
         <div className="demo-state-heading">
-          <WifiOff size={20} aria-hidden="true" />
           <p role="status">网络连接中断，正在自动重试…</p>
         </div>
         <div className="demo-state-actions">
-          <button className="primary-button compact-button" type="button" onClick={props.onRetryStatus}>
-            <RefreshCcw size={14} aria-hidden="true" />
-            立即重试
-          </button>
-          <Link className="secondary-button compact-button" href="/dashboard">返回我的比赛</Link>
+          <button className="secondary-button compact-button" type="button" onClick={props.onRetryStatus}>立即重试</button>
+          <Link href="/dashboard">返回我的比赛</Link>
         </div>
       </section>
     );
   }
   return (
     <section className="panel demo-state-card failed" aria-labelledby="demo-state-title">
-      <div className="demo-state-heading">
-        <CircleAlert size={20} aria-hidden="true" />
-        <div>
-          <h2 id="demo-state-title">回放暂时无法打开</h2>
-          <p role="alert">载入回放数据时出错，可以重新载入。</p>
-        </div>
-      </div>
+      <div className="panel-bar"><h2 className="panel-bar-title" id="demo-state-title">回放暂时无法打开</h2></div>
+      <div className="demo-state-heading"><p role="alert">载入回放数据时出错，可以重新载入。</p></div>
       <div className="demo-state-actions">
         <button className="primary-button compact-button" type="button" onClick={props.onReloadReplay}
           disabled={props.replayReloading}>
-          <RefreshCcw size={14} aria-hidden="true" />
           {props.replayReloading ? "正在重新载入…" : "重新载入"}
         </button>
         {state.retryable ? (
@@ -136,13 +130,8 @@ function ProcessingCard({ step, stale, startedAt, technicalDetails }: {
   const elapsed = processingElapsedLabel(startedAt, now);
   return (
     <section className="panel demo-state-card" aria-labelledby="demo-state-title">
-      <div className="demo-state-heading">
-        <Loader2 size={20} className="spin-icon" aria-hidden="true" />
-        <div>
-          <h2 id="demo-state-title">正在处理这场比赛</h2>
-          <p>{processingHeadline(step)}</p>
-        </div>
-      </div>
+      <div className="panel-bar"><h2 className="panel-bar-title" id="demo-state-title">正在处理这场比赛</h2></div>
+      <div className="demo-state-heading"><p>{processingHeadline(step)}</p></div>
       <ol className="demo-progress-steps" aria-label="处理进度">
         {processingSteps(step).map((item, index) => (
           <li key={item.key} data-state={item.state} aria-current={item.state === "current" ? "step" : undefined}>
@@ -163,10 +152,7 @@ function ProcessingCard({ step, stale, startedAt, technicalDetails }: {
         <p className="demo-state-warning">处理时间比平时长。如果超时，会自动标记为失败，届时可以重新处理。</p>
       ) : null}
       <div className="demo-state-actions">
-        <Link className="secondary-button compact-button" href="/dashboard">
-          <ArrowLeft size={14} aria-hidden="true" />
-          返回我的比赛
-        </Link>
+        <Link href="/dashboard">返回我的比赛</Link>
       </div>
       {technicalDetails ? <TechnicalDetails>{technicalDetails}</TechnicalDetails> : null}
     </section>
@@ -178,28 +164,19 @@ function FailureCard({ state, parseRetrying, onRetryParse, technicalDetails }: D
   const retryButton = state.retryable ? (
     <button className={`${retryFirst ? "primary-button" : "secondary-button"} compact-button`} type="button"
       onClick={onRetryParse} disabled={parseRetrying}>
-      <RefreshCcw size={14} aria-hidden="true" />
       {parseRetrying ? "正在重新处理…" : "重新处理"}
     </button>
   ) : null;
   return (
     <section className="panel demo-state-card failed" aria-labelledby="demo-state-title">
-      <div className="demo-state-heading">
-        <CircleAlert size={20} aria-hidden="true" />
-        <div>
-          <h2 id="demo-state-title">{state.kind === "failed" ? "这场比赛处理失败" : "回放暂时无法打开"}</h2>
-          <p>{state.failure.message}</p>
-        </div>
-      </div>
+      <div className="panel-bar"><h2 className="panel-bar-title" id="demo-state-title">{state.kind === "failed" ? "这场比赛处理失败" : "回放暂时无法打开"}</h2></div>
+      <div className="demo-state-heading"><p>{state.failure.message}</p></div>
       <p className="demo-state-hint">{state.next.hint}</p>
       <div className="demo-state-actions">
         {retryFirst ? retryButton : (
-          <Link className="primary-button compact-button" href="/dashboard">
-            <UploadCloud size={14} aria-hidden="true" />
-            去「我的比赛」重新上传
-          </Link>
+          <Link className="primary-button compact-button" href="/dashboard">去「我的比赛」重新上传</Link>
         )}
-        {retryFirst ? <Link className="secondary-button compact-button" href="/dashboard">返回我的比赛</Link> : retryButton}
+        {retryFirst ? <Link href="/dashboard">返回我的比赛</Link> : retryButton}
       </div>
       <TechnicalDetails>
         <dl className="demo-state-facts">

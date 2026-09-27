@@ -1,6 +1,5 @@
 "use client";
 
-import { ChevronDown } from "lucide-react";
 import { memo, useState } from "react";
 
 import type { ReviewIdentityMatch, personalReviewSummary } from "@/lib/personal-review";
@@ -34,14 +33,14 @@ export const PersonalReviewPanel = memo(function PersonalReviewPanel({
       <div className="personal-review-heading personal-review-inline">
         <div>
           <h2>{selectedPlayer ? <>正在复盘 <strong className="personal-review-name" title={selectedPlayer.name}>{selectedPlayer.name}</strong></> : "选择你在这场比赛中的玩家"}</h2>
-          {selectedPlayer ? null : (
+          {selectedPlayer || !selectionHint(match) ? null : (
             <p className="personal-review-status" role="status">{selectionHint(match)}</p>
           )}
         </div>
         {selectedPlayer ? (
           <div className="personal-review-metrics" aria-label="复盘概况">
-            <span><strong>{summary.findingCount}</strong> 条建议</span>
-            <span><strong>{summary.priorityCount}</strong> 条值得优先回看</span>
+            <span className="personal-review-count">{summary.findingCount} 条建议</span>
+            <span>{summary.priorityCount} 条值得优先回看</span>
           </div>
         ) : null}
         {selectedPlayer ? (
@@ -52,41 +51,43 @@ export const PersonalReviewPanel = memo(function PersonalReviewPanel({
           </button>
         ) : null}
         <details className="personal-review-settings">
-          <summary>切换 / 身份设置<ChevronDown className="personal-review-chevron" size={14} aria-hidden="true" /></summary>
-          <div className="personal-review-controls">
-            <form onSubmit={(event) => { event.preventDefault(); onSaveIdentity(draftIdentity); }}>
-              <label htmlFor="preferred-player-identity">我的游戏名或 Steam ID</label>
-              <div className="personal-identity-input">
-                <input id="preferred-player-identity" value={draftIdentity} required maxLength={128}
-                  placeholder="游戏名或 Steam ID"
-                  onChange={(event) => setDraftIdentity(event.target.value)} autoComplete="off" />
-                <button className="secondary-button compact-button" type="submit" disabled={!draftIdentity.trim()}>保存身份</button>
-              </div>
-              {!preferenceSaved ? <small role="status">浏览器无法保存设置，本次访问仍可使用。</small> : null}
-            </form>
-            <div className="personal-player-select">
-              <label htmlFor="review-player-select">当前复盘玩家</label>
-              <div className="personal-player-select-row">
-                <select id="review-player-select" value={selectedPlayer?.id ?? ""}
-                  onChange={(event) => onSelectPlayer(event.target.value || null)}>
-                  <option value="">选择玩家</option>
-                  {players.map((player) => (
-                    <option key={player.id} value={player.id}>{player.name}（{player.id}）</option>
-                  ))}
-                </select>
-                {selectedPlayer && reviewingSomeoneElse ? (
-                  <button className="secondary-button compact-button" type="button"
-                    onClick={() => onSaveIdentity(selectedPlayer.id)}>
-                    设为我的玩家
-                  </button>
-                ) : null}
+          <summary>切换 / 身份设置</summary>
+          <div className="popover personal-review-popover">
+            <div className="personal-review-controls">
+              <form onSubmit={(event) => { event.preventDefault(); onSaveIdentity(draftIdentity); }}>
+                <label htmlFor="preferred-player-identity">我的游戏名或 Steam ID</label>
+                <div className="personal-identity-input">
+                  <input id="preferred-player-identity" value={draftIdentity} required maxLength={128}
+                    placeholder="游戏名或 Steam ID"
+                    onChange={(event) => setDraftIdentity(event.target.value)} autoComplete="off" />
+                  <button className="secondary-button compact-button" type="submit" disabled={!draftIdentity.trim()}>保存身份</button>
+                </div>
+                {!preferenceSaved ? <small role="status">浏览器无法保存设置，本次访问仍可使用。</small> : null}
+              </form>
+              <div className="personal-player-select">
+                <label htmlFor="review-player-select">当前复盘玩家</label>
+                <div className="personal-player-select-row">
+                  <select id="review-player-select" value={selectedPlayer?.id ?? ""}
+                    onChange={(event) => onSelectPlayer(event.target.value || null)}>
+                    <option value="">选择玩家</option>
+                    {players.map((player) => (
+                      <option key={player.id} value={player.id}>{player.name}（{player.id}）</option>
+                    ))}
+                  </select>
+                  {selectedPlayer && reviewingSomeoneElse ? (
+                    <button className="secondary-button compact-button" type="button"
+                      onClick={() => onSaveIdentity(selectedPlayer.id)}>
+                      设为我的玩家
+                    </button>
+                  ) : null}
+                </div>
               </div>
             </div>
+            <p className="personal-review-status">
+              {identityStatus(match, reviewingSomeoneElse)}
+              建议和事件标记跟随当前复盘玩家。
+            </p>
           </div>
-          <p className="personal-review-status">
-            {identityStatus(match, reviewingSomeoneElse)}
-            建议和事件标记跟随当前复盘玩家。
-          </p>
         </details>
       </div>
       {selectedPlayer ? null : (
@@ -116,14 +117,14 @@ function PlayerPicker({ players, highlighted, onChoose }: {
     <div id={PLAYER_PICKER_ID} className="personal-player-picker" role="group" aria-label="选择你在这场比赛中的玩家">
       {sides.map((group) => (
         <div key={group.side} className={`personal-player-picker-side side-${group.side.toLowerCase()}`}>
-          <span className="personal-player-picker-label">{group.side}</span>
+          <span className="personal-player-picker-label">{group.side === "T" ? "T 进攻方" : "CT 防守方"}</span>
           <div className="personal-player-picker-chips">
             {group.players.map((player) => {
               // Same-name players stay tellable apart by the end of their Steam ID.
               const duplicate = (nameCounts.get(player.name.trim().toLowerCase()) ?? 0) > 1;
               return (
                 <button key={player.id} type="button" title={`${player.name} · ${player.id}`}
-                  className={`filter-button personal-player-chip ${highlightedIds.has(player.id) ? "active" : ""}`}
+                  className={`personal-player-chip ${highlightedIds.has(player.id) ? "active" : ""}`}
                   onClick={() => onChoose(player.id)}>
                   {player.name}{duplicate ? <small>…{player.id.slice(-4)}</small> : null}
                 </button>
@@ -136,15 +137,15 @@ function PlayerPicker({ players, highlighted, onChoose }: {
   );
 }
 
+// Only what the player needs to know to pick; the picker itself says what it is for.
 function selectionHint(match: ReviewIdentityMatch): string {
-  const follow = "建议、时间轴和回合统计会跟随你选择的玩家。";
   if (match.status === "ambiguous") {
-    return `有多位玩家叫 ${match.identity}，请选出你自己。${follow}`;
+    return `有多位玩家叫 ${match.identity}，请选出你自己。`;
   }
   if (match.source === "saved") {
-    return `这场比赛中没有你保存的身份 ${match.identity}。${follow}`;
+    return `这场比赛中没有你保存的身份 ${match.identity}。`;
   }
-  return follow;
+  return "";
 }
 
 function identityStatus(match: ReviewIdentityMatch, reviewingSomeoneElse: boolean): string {

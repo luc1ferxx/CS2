@@ -1,27 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import {
-  Archive,
-  ArrowDownUp,
-  Check,
-  CircleAlert,
-  CircleCheck,
-  ChevronDown,
-  Clock3,
-  ExternalLink,
-  FileUp,
-  Loader2,
-  Map as MapIcon,
-  MoreHorizontal,
-  Pencil,
-  Play,
-  RefreshCcw,
-  Search,
-  Undo2,
-  UploadCloud,
-  X
-} from "lucide-react";
+import { MoreHorizontal, X } from "lucide-react";
 import {
   useCallback,
   useEffect,
@@ -312,7 +292,7 @@ function DashboardContent() {
     function closeOutside(event: PointerEvent) {
       const target = event.target instanceof Node ? event.target : null;
       document
-        .querySelectorAll<HTMLDetailsElement>(".library-app :is(.library-more-filters, .library-record-menu)[open]")
+        .querySelectorAll<HTMLDetailsElement>(".library-app :is(.lib-filters, .lib-menu, .lib-help-pop)[open]")
         .forEach((details) => {
           if (!target || !details.contains(target)) details.open = false;
         });
@@ -442,7 +422,7 @@ function DashboardContent() {
   }
 
   function cancelRename(demo: DemoSummary) {
-    pendingFocusRef.current = [rowSelector(demo.id, ".library-record-menu > summary")];
+    pendingFocusRef.current = [rowSelector(demo.id, ".lib-menu > summary")];
     setRenamingDemoId(null);
     setRenameValue("");
     setRenameError(null);
@@ -456,7 +436,7 @@ function DashboardContent() {
     try {
       const updated = await updateDemo(demo.id, { name: renameValue });
       invalidateLibraryLoads();
-      pendingFocusRef.current = [rowSelector(updated.id, ".library-record-menu > summary")];
+      pendingFocusRef.current = [rowSelector(updated.id, ".lib-menu > summary")];
       setDemos((current) => current.map((item) => (item.id === updated.id ? updated : item)));
       setNotice({ kind: "message", message: `已重命名为「${updated.name}」`, demoId: updated.id });
       setRenamingDemoId(null);
@@ -490,11 +470,11 @@ function DashboardContent() {
       });
       if (updated.archived) {
         pendingFocusRef.current = filters.includeArchived
-          ? [rowSelector(updated.id, ".library-record-menu > summary")]
-          : [...(neighbour ? [rowSelector(neighbour.id, ".demo-name a")] : []), NOTICE_UNDO];
+          ? [rowSelector(updated.id, ".lib-menu > summary")]
+          : [...(neighbour ? [rowSelector(neighbour.id, ".lib-name a")] : []), NOTICE_UNDO];
         setNotice({ kind: "archived", demo: updated });
       } else {
-        pendingFocusRef.current = [rowSelector(updated.id, ".demo-name a")];
+        pendingFocusRef.current = [rowSelector(updated.id, ".lib-name a")];
         setNotice({ kind: "message", message: `已恢复「${updated.name}」`, demoId: updated.id });
       }
       setError(null);
@@ -513,8 +493,8 @@ function DashboardContent() {
       const updated = await retryDemoParse(demo.id);
       invalidateLibraryLoads();
       pendingFocusRef.current = [
-        rowSelector(updated.id, ".library-play-button"),
-        rowSelector(updated.id, ".library-record-menu > summary")
+        rowSelector(updated.id, ".lib-enter"),
+        rowSelector(updated.id, ".lib-menu > summary")
       ];
       setDemos((current) => current.map((item) => (item.id === updated.id ? updated : item)));
       setNotice({ kind: "message", message: `正在重新处理「${updated.name}」`, demoId: updated.id });
@@ -545,28 +525,7 @@ function DashboardContent() {
         </div>
       </header>
 
-      <section className="page">
-        <div className="page-header library-page-header archive-command-bar">
-          <div className="library-header-copy">
-            <h1 className="page-title">我的比赛</h1>
-            <p className="page-subtitle">
-              选择比赛，找到值得复盘的一刻。
-            </p>
-            {firstRun ? null : <DemFileHelp quotaNote={quotaSummary.helpNote} />}
-          </div>
-          <DemoUploader
-            disabled={uploadDisabled}
-            busyLabel={uploadBusyLabel}
-            hint={quotaSummary.hint}
-            disabledReason={quotaSummary.blockedReason}
-            onMockUpload={devTools ? handleMockUpload : undefined}
-            onDemoUpload={(file) => void handleDemoUpload(file)}
-          />
-        </div>
-
-        {quotaSummary.blockedReason && !uploadError ? (
-          <p className="library-quota-note">{quotaSummary.blockedReason}</p>
-        ) : null}
+      <div className="page lib-page">
         {uploadError ? (
           <ErrorBanner message={uploadError.message} onDismiss={() => setUploadError(null)} />
         ) : null}
@@ -575,7 +534,7 @@ function DashboardContent() {
         {error && demos.length > 0 ? (
           <ErrorBanner message={error} onRetry={() => void loadDemos()} onDismiss={() => setError(null)} />
         ) : null}
-        <div className="library-notice-region" aria-live="polite">
+        <div className="lib-notices" aria-live="polite">
           {notice ? (
             <LibraryNoticeView
               notice={notice}
@@ -587,21 +546,40 @@ function DashboardContent() {
           ) : null}
         </div>
 
-        <section className="library-toolbar library-controls" aria-label="搜索与筛选比赛">
-          <label className="library-search">
-            <Search size={16} />
+        <section className="panel lib-panel" aria-labelledby="library-title">
+          <header className="panel-bar lib-head">
+            <h1 id="library-title" className="panel-bar-title">我的比赛</h1>
+            <p className="panel-bar-meta lib-count" role="status">
+              <span>{loading ? "（加载中…）" : `（${visibleDemos.length} 场）`}</span>
+              {parsingJobs > 0 ? <span>{parsingJobs} 场正在处理，完成后自动更新</span> : null}
+              {videoJobs > 0 ? <span>{videoJobs} 场正在生成视频</span> : null}
+              {failedDemos > 0 ? <span className="lib-count-failed">{failedDemos} 场处理失败</span> : null}
+            </p>
+            <DemoUploader
+              disabled={uploadDisabled}
+              busyLabel={uploadBusyLabel}
+              hint={quotaSummary.hint}
+              disabledReason={quotaSummary.blockedReason}
+              onMockUpload={devTools ? handleMockUpload : undefined}
+              onDemoUpload={(file) => void handleDemoUpload(file)}
+            />
+          </header>
+
+          {quotaSummary.blockedReason && !uploadError ? (
+            <p className="lib-quota">{quotaSummary.blockedReason}</p>
+          ) : null}
+
+          <div className="lib-toolbar" role="group" aria-label="搜索与筛选比赛">
             <input
+              className="lib-search"
               type="search"
               value={filters.search}
               onChange={(event) => setFilters((current) => ({ ...current, search: event.target.value }))}
               placeholder="搜索比赛、文件、地图或状态"
               aria-label="搜索比赛"
             />
-          </label>
-
-          <label className="library-filter">
-            <span>地图</span>
             <select
+              className="lib-select"
               value={filters.map}
               onChange={(event) => setFilters((current) => ({ ...current, map: event.target.value }))}
               aria-label="筛选地图"
@@ -613,340 +591,370 @@ function DashboardContent() {
                 </option>
               ))}
             </select>
-          </label>
 
-          <details className="library-more-filters" onKeyDown={closeDetailsOnEscape}>
-            <summary className="secondary-button compact-button">
-              <ArrowDownUp size={14} />
-              筛选与排序
-              {filters.status !== "all" || filters.includeArchived || filters.sort !== "recent" || filters.order !== "desc"
-                ? <span className="library-filter-active">已应用</span>
-                : null}
-              <ChevronDown size={14} />
-            </summary>
-            <div className="library-filter-options">
-              <label className="library-filter">
-                <span>状态</span>
-                <select
-                  value={filters.status}
-                  onChange={(event) => setFilters((current) => ({
-                    ...current,
-                    status: event.target.value as DemoLibraryFilters["status"]
-                  }))}
-                  aria-label="筛选状态"
-                >
-                  <option value="all">全部状态</option>
-                  {filterOptions.statuses.map((status) => (
-                    <option key={status} value={status}>{demoStatusDisplayLabel(status)}</option>
-                  ))}
-                </select>
-              </label>
-              <label className="library-filter">
-                <span>排序</span>
-                <select
-                  value={filters.sort}
-                  onChange={(event) =>
-                    setFilters((current) => ({
+            <details className="lib-filters" onKeyDown={closeDetailsOnEscape}>
+              <summary className="secondary-button compact-button">
+                筛选与排序
+                {filters.status !== "all" || filters.includeArchived || filters.sort !== "recent" || filters.order !== "desc"
+                  ? <span className="lib-filters-on">（已应用）</span>
+                  : null}
+              </summary>
+              <div className="popover lib-filter-pop">
+                <label className="lib-field">
+                  <span>状态</span>
+                  <select
+                    className="lib-select"
+                    value={filters.status}
+                    onChange={(event) => setFilters((current) => ({
                       ...current,
-                      sort: event.target.value as DemoLibraryFilters["sort"],
-                      order: event.target.value === "recent" ? "desc" : current.order
-                    }))
-                  }
-                  aria-label="比赛排序"
-                >
-                  <option value="recent">上传时间</option>
-                  <option value="name">比赛名称</option>
-                  <option value="map">地图</option>
-                  <option value="status">处理状态</option>
-                </select>
-              </label>
-              <button
-                className="secondary-button compact-button"
-                type="button"
-                onClick={() =>
-                  setFilters((current) => ({
-                    ...current,
-                    order: current.order === "asc" ? "desc" : "asc"
-                  }))
-                }
-              >
-                <ArrowDownUp size={14} />
-                {filters.order === "asc" ? "升序" : "降序"}
-              </button>
-              <label className="include-archived-toggle">
-                <input
-                  type="checkbox"
-                  checked={filters.includeArchived}
-                  onChange={(event) =>
-                    setFilters((current) => ({ ...current, includeArchived: event.target.checked }))
-                  }
-                />
-                显示已归档
-              </label>
-              <button
-                className="secondary-button compact-button"
-                type="button"
-                onClick={() => setFilters(DEFAULT_FILTERS)}
-              >
-                重置筛选
-              </button>
-            </div>
-          </details>
-          <button
-            className="secondary-button compact-button"
-            type="button"
-            onClick={() => void loadDemos()}
-            aria-label="刷新比赛列表"
-          >
-            <RefreshCcw size={14} />
-            刷新
-          </button>
-        </section>
-
-        <div className="library-count-summary" role="status">
-          <span>{loading ? "正在加载比赛…" : `${visibleDemos.length} 场比赛`}</span>
-          {parsingJobs > 0 ? <span>{parsingJobs} 场正在处理，完成后自动更新</span> : null}
-          {videoJobs > 0 ? <span>{videoJobs} 场正在生成视频</span> : null}
-          {failedDemos > 0 ? <span className="library-attention-count">{failedDemos} 场处理失败</span> : null}
-        </div>
-
-        <section
-          className={`archive-ledger${dragActive ? " drop-active" : ""}`}
-          aria-label="比赛列表"
-          aria-busy={emptyState?.kind === "loading"}
-        >
-          <div className="archive-ledger-head" aria-hidden="true">
-            <span className="ledger-head-thumb" />
-            <span className="ledger-head-identity">比赛</span>
-            <span className="ledger-head-map">地图</span>
-            <span className="ledger-head-rounds">回合</span>
-            <span className="ledger-head-signals">全场复盘线索</span>
-            <span className="ledger-head-state">状态</span>
-            <span className="ledger-head-actions">操作</span>
-          </div>
-          {dragActive ? (
-            <div className="library-drop-overlay" aria-hidden="true">
-              <FileUp size={20} />
-              {upload ? "正在上传另一场比赛，请稍后再拖入" : "松开即可上传 .dem"}
-            </div>
-          ) : null}
-          {upload ? <UploadProgressRow upload={upload} onCancel={() => cancelDemoUpload()} /> : null}
-          {emptyState?.kind === "loading" ? (
-            <LibrarySkeletonRows />
-          ) : showEmptyState && emptyState ? (
-            <LibraryEmptyStateRow
-              state={emptyState}
-              error={error}
-              uploadDisabled={uploadDisabled}
-              quotaNote={quotaSummary.helpNote}
-              onClearFilters={() => setFilters(DEFAULT_FILTERS)}
-              onMockUpload={devTools ? () => void handleMockUpload() : undefined}
-              onUpload={openUploadPicker}
-              onRefresh={() => void loadDemos()}
-              onShowArchived={() =>
-                setFilters((current) => ({ ...current, includeArchived: true }))
-              }
-            />
-          ) : (
-            visibleDemos.map((demo) => {
-              const failure = demoFailureState(demo);
-              const display = libraryDisplayTitle(demo, mapDisplayName);
-              const mapName = mapDisplayName(demo.map_name);
-              const completed = demo.status === "completed";
-              const videoLabel = libraryVideoLabel(demo);
-              return (
-              <article
-                key={demo.id}
-                data-demo-id={demo.id}
-                className={`archive-record ${demo.archived ? "archived-row" : ""} ${demo.status}`}
-              >
-                <MapThumb mapName={demo.map_name} />
-                <div className="archive-record-identity">
-                  {renamingDemoId === demo.id ? (
-                    <>
-                      <form className="rename-form" onSubmit={(event) => saveRename(event, demo)}>
-                        <input
-                          value={renameValue}
-                          onChange={(event) => setRenameValue(event.target.value)}
-                          onKeyDown={(event) => {
-                            if (event.key === "Escape") {
-                              event.preventDefault();
-                              cancelRename(demo);
-                            }
-                          }}
-                          aria-label={`重命名 ${demo.name}`}
-                          aria-invalid={renameError ? true : undefined}
-                          aria-describedby={renameError ? `rename-error-${demo.id}` : undefined}
-                          maxLength={255}
-                          required
-                          autoFocus
-                        />
-                        <button
-                          className="icon-button"
-                          type="submit"
-                          disabled={busyDemoId === demo.id || !renameValue.trim()}
-                          aria-label={`保存 ${demo.name} 的名称`}
-                        >
-                          <Check size={15} />
-                        </button>
-                        <button
-                          className="icon-button"
-                          type="button"
-                          aria-label={`取消重命名 ${demo.name}`}
-                          onClick={() => cancelRename(demo)}
-                        >
-                          <X size={15} />
-                        </button>
-                      </form>
-                      {renameError ? (
-                        <p className="rename-error" id={`rename-error-${demo.id}`} role="alert">{renameError}</p>
-                      ) : null}
-                    </>
-                  ) : (
-                    <div className="demo-name">
-                      <span>
-                        <Link
-                          href={`/demos/${demo.id}`}
-                          title={display.filename ? `${display.title}（${display.filename}）` : display.title}
-                        >
-                          {display.title}
-                        </Link>
-                      </span>
-                      {display.filename ? <span>{display.filename}</span> : null}
-                      {demo.archived ? <span className="archived-label">已归档</span> : null}
-                    </div>
-                  )}
-                  <div className="archive-record-date">
-                    {/* Narrow screens drop the map and round columns; the facts move here. */}
-                    {display.composed ? null : (
-                      <span className="archive-record-map-inline">
-                        <span>{mapName}</span>
-                        {completed ? <span>{demo.round_count} 回合</span> : null}
-                      </span>
-                    )}
-                    <span title={`最近更新：${formatLibraryDate(demo.updated_at)}`}>{formatLibraryDate(demo.created_at)} 上传</span>
-                  </div>
-                </div>
-                <div className="archive-record-map">
-                  <span className="map-anchor">{mapName}</span>
-                </div>
-                <div className="archive-record-rounds">
-                  <span className="library-round-count">
-                    <strong>{completed ? demo.round_count : "—"}</strong>
-                    {completed ? " 回合" : null}
+                      status: event.target.value as DemoLibraryFilters["status"]
+                    }))}
+                    aria-label="筛选状态"
+                  >
+                    <option value="all">全部状态</option>
+                    {filterOptions.statuses.map((status) => (
+                      <option key={status} value={status}>{demoStatusDisplayLabel(status)}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="lib-field">
+                  <span>排序</span>
+                  <span className="lib-field-row">
+                    <select
+                      className="lib-select"
+                      value={filters.sort}
+                      onChange={(event) =>
+                        setFilters((current) => ({
+                          ...current,
+                          sort: event.target.value as DemoLibraryFilters["sort"],
+                          order: event.target.value === "recent" ? "desc" : current.order
+                        }))
+                      }
+                      aria-label="比赛排序"
+                    >
+                      <option value="recent">上传时间</option>
+                      <option value="name">比赛名称</option>
+                      <option value="map">地图</option>
+                      <option value="status">处理状态</option>
+                    </select>
+                    <button
+                      className="secondary-button compact-button"
+                      type="button"
+                      onClick={() =>
+                        setFilters((current) => ({
+                          ...current,
+                          order: current.order === "asc" ? "desc" : "asc"
+                        }))
+                      }
+                    >
+                      {filters.order === "asc" ? "升序" : "降序"}
+                    </button>
                   </span>
-                </div>
-                <div className="archive-record-signals">
-                  {completed ? (
-                    <span className="library-clue-count" title="所有玩家合计；进入比赛后只显示你的玩家的建议">
-                      全场 <strong>{demo.coaching_event_count}</strong> 条复盘线索
-                    </span>
-                  ) : null}
-                </div>
-                <div className="archive-record-state">
-                  <div className="library-readiness">
-                    <StatusBadge status={demo.status} />
-                    <IngestionMeta demo={demo} now={now} />
-                    {failure ? <p className="library-failure-reason">{failure.failure.message}</p> : null}
-                    {canRetryParse(demo) && failure?.next.action !== "reupload" ? (
-                      <button
-                        className="secondary-button compact-button library-retry-button"
-                        type="button"
-                        onClick={() => void handleRetryParse(demo)}
-                        disabled={busyDemoId === demo.id}
-                      >
-                        <RefreshCcw size={14} />
-                        重新处理
-                      </button>
-                    ) : null}
-                  </div>
-                  {videoLabel ? (
-                    <span className={`mini-pill library-render-pill readiness-${playbackReadiness(demo)}`}>
-                      {videoLabel}
-                    </span>
-                  ) : null}
-                </div>
-                <div className="archive-record-actions">
-                  <div className="library-actions">
-                    {failure?.next.action === "reupload" ? (
-                      <button
-                        className="secondary-button compact-button"
-                        type="button"
-                        disabled={uploadDisabled}
-                        onClick={openUploadPicker}
-                        aria-label={`重新上传：${display.title}`}
-                      >
-                        <FileUp size={14} />
-                        重新上传
-                      </button>
-                    ) : failure ? null : <PlayEntry demo={demo} title={display.title} />}
-                    <details className="library-record-menu" onKeyDown={closeDetailsOnEscape}>
-                      <summary className="icon-button" aria-label={`${display.title} 的更多操作`}>
-                        <MoreHorizontal size={18} />
-                      </summary>
-                      <div className="library-record-menu-items">
-                        {canRetryParse(demo) && failure?.next.action === "reupload" ? (
-                          <button
-                            className="secondary-button compact-button"
-                            type="button"
-                            onClick={(event) => {
-                              closeRecordMenu(event.currentTarget);
-                              void handleRetryParse(demo);
-                            }}
-                            disabled={busyDemoId === demo.id}
-                          >
-                            <RefreshCcw size={14} />
-                            重新处理
-                          </button>
-                        ) : null}
-                        <button
-                          className="secondary-button compact-button"
-                          type="button"
-                          onClick={(event) => {
-                            closeRecordMenu(event.currentTarget);
-                            startRename(demo);
-                          }}
-                          disabled={busyDemoId === demo.id}
-                        >
-                          <Pencil size={14} />
-                          重命名
-                        </button>
-                        <button
-                          className="secondary-button compact-button"
-                          type="button"
-                          onClick={(event) => {
-                            closeRecordMenu(event.currentTarget);
-                            void handleArchive(demo);
-                          }}
-                          disabled={busyDemoId === demo.id}
-                        >
-                          <Archive size={14} />
-                          {demo.archived ? "恢复到比赛库" : "归档比赛"}
-                        </button>
-                      </div>
-                    </details>
-                  </div>
-                </div>
-              </article>
-              );
-            })
-          )}
+                </label>
+                <label className="lib-check">
+                  <input
+                    type="checkbox"
+                    checked={filters.includeArchived}
+                    onChange={(event) =>
+                      setFilters((current) => ({ ...current, includeArchived: event.target.checked }))
+                    }
+                  />
+                  显示已归档
+                </label>
+                <button className="text-button" type="button" onClick={() => setFilters(DEFAULT_FILTERS)}>
+                  重置筛选
+                </button>
+              </div>
+            </details>
+            <span className="lib-toolbar-end">
+              {firstRun ? null : <DemFileHelp popover quotaNote={quotaSummary.helpNote} />}
+              <button
+                className="text-button"
+                type="button"
+                onClick={() => void loadDemos()}
+                aria-label="刷新比赛列表"
+              >
+                刷新
+              </button>
+            </span>
+          </div>
+
+          <section
+            className={`lib-table${dragActive ? " drop-active" : ""}`}
+            aria-label="比赛列表"
+            aria-busy={emptyState?.kind === "loading"}
+          >
+            {showEmptyState && emptyState?.kind !== "loading" && !upload ? null : (
+              <div className="lib-row lib-row-head" aria-hidden="true">
+                <span className="c-thumb" />
+                <span className="c-name">比赛</span>
+                <span className="c-map">地图</span>
+                <span className="c-num c-rounds">回合</span>
+                <span className="c-num c-signals">全场建议</span>
+                <span className="c-date">上传时间</span>
+                <span className="c-state">状态</span>
+                <span className="c-actions" />
+              </div>
+            )}
+            {dragActive ? (
+              <div className="lib-drop" aria-hidden="true">
+                {upload ? "正在上传另一场比赛，请稍后再拖入" : "松开即可上传 .dem"}
+              </div>
+            ) : null}
+            <div className="data-rows lib-rows">
+              {upload ? <UploadProgressRow upload={upload} onCancel={() => cancelDemoUpload()} /> : null}
+              {emptyState?.kind === "loading" ? (
+                <LibrarySkeletonRows />
+              ) : showEmptyState ? null : (
+                visibleDemos.map((demo) => (
+                  <LibraryRow
+                    key={demo.id}
+                    demo={demo}
+                    now={now}
+                    renaming={renamingDemoId === demo.id}
+                    renameValue={renameValue}
+                    renameError={renameError}
+                    busy={busyDemoId === demo.id}
+                    uploadDisabled={uploadDisabled}
+                    onRenameValue={setRenameValue}
+                    onSaveRename={(event) => saveRename(event, demo)}
+                    onCancelRename={() => cancelRename(demo)}
+                    onStartRename={() => startRename(demo)}
+                    onArchive={() => void handleArchive(demo)}
+                    onRetryParse={() => void handleRetryParse(demo)}
+                    onReupload={openUploadPicker}
+                  />
+                ))
+              )}
+            </div>
+            {emptyState?.kind !== "loading" && showEmptyState && emptyState ? (
+              <LibraryEmptyStateRow
+                state={emptyState}
+                error={error}
+                uploadDisabled={uploadDisabled}
+                quotaNote={quotaSummary.helpNote}
+                onClearFilters={() => setFilters(DEFAULT_FILTERS)}
+                onMockUpload={devTools ? () => void handleMockUpload() : undefined}
+                onUpload={openUploadPicker}
+                onRefresh={() => void loadDemos()}
+                onShowArchived={() =>
+                  setFilters((current) => ({ ...current, includeArchived: true }))
+                }
+              />
+            ) : null}
+          </section>
         </section>
+
         <details
-          className="library-import-options"
+          className="panel lib-steam"
           onToggle={(event) => {
             if (event.currentTarget.open) setImportOptionsLoaded(true);
           }}
         >
-          <summary>
-            <span>Steam 比赛记录</span>
-            <span>当前版本暂不支持自动导入，请手动上传 .dem</span>
-            <ChevronDown size={16} />
+          <summary className="panel-bar lib-head">
+            <span className="lib-head-name">Steam 比赛记录</span>
+            <span className="lib-steam-note">当前版本暂不支持自动导入，请手动上传 .dem</span>
+            <span className="lib-steam-toggle" aria-hidden="true" />
           </summary>
           {importOptionsLoaded ? <RecentSteamMatches /> : null}
         </details>
-      </section>
+      </div>
     </main>
+  );
+}
+
+function statusTone(status: DemoProcessingStatus): "ok" | "failed" | "progress" {
+  if (status === "completed") return "ok";
+  if (status === "failed") return "failed";
+  return "progress";
+}
+
+function LibraryRow({
+  demo,
+  now,
+  renaming,
+  renameValue,
+  renameError,
+  busy,
+  uploadDisabled,
+  onRenameValue,
+  onSaveRename,
+  onCancelRename,
+  onStartRename,
+  onArchive,
+  onRetryParse,
+  onReupload
+}: {
+  demo: DemoSummary;
+  now: number;
+  renaming: boolean;
+  renameValue: string;
+  renameError: string | null;
+  busy: boolean;
+  uploadDisabled: boolean;
+  onRenameValue: (value: string) => void;
+  onSaveRename: (event: FormEvent<HTMLFormElement>) => void;
+  onCancelRename: () => void;
+  onStartRename: () => void;
+  onArchive: () => void;
+  onRetryParse: () => void;
+  onReupload: () => void;
+}) {
+  const failure = demoFailureState(demo);
+  const display = libraryDisplayTitle(demo, mapDisplayName);
+  const completed = demo.status === "completed";
+  // "战术回放可用" would repeat on every parsed row; only a video is worth a word.
+  const videoLabel = playbackReadiness(demo) === "none" ? null : libraryVideoLabel(demo);
+  const retryable = canRetryParse(demo);
+  const reupload = failure?.next.action === "reupload";
+  return (
+    <article
+      data-demo-id={demo.id}
+      className={`lib-row${demo.archived ? " is-archived" : ""}${display.composed ? " is-composed" : ""}`}
+    >
+      <MapThumb mapName={demo.map_name} />
+      <div className="c-name">
+        {renaming ? (
+          <>
+            <form className="lib-rename" onSubmit={onSaveRename}>
+              <input
+                value={renameValue}
+                onChange={(event) => onRenameValue(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Escape") {
+                    event.preventDefault();
+                    onCancelRename();
+                  }
+                }}
+                aria-label={`重命名 ${demo.name}`}
+                aria-invalid={renameError ? true : undefined}
+                aria-describedby={renameError ? `rename-error-${demo.id}` : undefined}
+                maxLength={255}
+                required
+                autoFocus
+              />
+              <button
+                className="secondary-button compact-button"
+                type="submit"
+                disabled={busy || !renameValue.trim()}
+                aria-label={`保存 ${demo.name} 的名称`}
+              >
+                保存
+              </button>
+              <button
+                className="text-button"
+                type="button"
+                aria-label={`取消重命名 ${demo.name}`}
+                onClick={onCancelRename}
+              >
+                取消
+              </button>
+            </form>
+            {renameError ? (
+              <p className="lib-rename-error" id={`rename-error-${demo.id}`} role="alert">{renameError}</p>
+            ) : null}
+          </>
+        ) : (
+          <div className="lib-name">
+            <Link
+              href={`/demos/${demo.id}`}
+              title={display.filename ? `${display.title}（${display.filename}）` : display.title}
+            >
+              {display.title}
+            </Link>
+            {display.filename || demo.archived ? (
+              <span className="lib-file">
+                {display.filename ? <span>{display.filename}</span> : null}
+                {demo.archived ? <span className="lib-archived">已归档</span> : null}
+              </span>
+            ) : null}
+          </div>
+        )}
+      </div>
+      <div className="c-map">{mapDisplayName(demo.map_name)}</div>
+      <div className="c-num c-rounds num">
+        <span className="lib-cell-label">回合</span>
+        {completed ? demo.round_count : "—"}
+      </div>
+      <div className="c-num c-signals num" title="所有玩家合计；进入比赛后只显示你的玩家的建议">
+        {completed ? (
+          <>
+            <span className="lib-cell-label">全场建议</span>
+            {demo.coaching_event_count}
+          </>
+        ) : null}
+      </div>
+      <div className="c-date" title={`最近更新：${formatLibraryDate(demo.updated_at)}`}>
+        <span className="lib-cell-label">上传</span>
+        {formatLibraryDate(demo.created_at)}
+      </div>
+      <div className="c-state">
+        <span className={`status-text ${statusTone(demo.status)}`}>{demoStatusDisplayLabel(demo.status)}</span>
+        <IngestionMeta demo={demo} now={now} />
+        {videoLabel ? <span className="lib-video">{videoLabel}</span> : null}
+        {failure ? <p className="lib-reason">{failure.failure.message}</p> : null}
+        {retryable && !reupload ? (
+          <button className="text-button" type="button" onClick={onRetryParse} disabled={busy}>
+            重新处理
+          </button>
+        ) : null}
+      </div>
+      <div className="c-actions">
+        {reupload ? (
+          <button
+            className="text-button"
+            type="button"
+            disabled={uploadDisabled}
+            onClick={onReupload}
+            aria-label={`重新上传：${display.title}`}
+          >
+            重新上传
+          </button>
+        ) : failure ? null : <PlayEntry demo={demo} title={display.title} />}
+        <details className="lib-menu" onKeyDown={closeDetailsOnEscape}>
+          <summary className="icon-button compact-button" aria-label={`${display.title} 的更多操作`}>
+            <MoreHorizontal size={14} aria-hidden="true" />
+          </summary>
+          <div className="menu lib-menu-items">
+            {retryable && reupload ? (
+              <button
+                className="menu-item"
+                type="button"
+                onClick={(event) => {
+                  closeRecordMenu(event.currentTarget);
+                  onRetryParse();
+                }}
+                disabled={busy}
+              >
+                重新处理
+              </button>
+            ) : null}
+            <button
+              className="menu-item"
+              type="button"
+              onClick={(event) => {
+                closeRecordMenu(event.currentTarget);
+                onStartRename();
+              }}
+              disabled={busy}
+            >
+              重命名
+            </button>
+            <button
+              className="menu-item"
+              type="button"
+              onClick={(event) => {
+                closeRecordMenu(event.currentTarget);
+                onArchive();
+              }}
+              disabled={busy}
+            >
+              {demo.archived ? "恢复到比赛库" : "归档比赛"}
+            </button>
+          </div>
+        </details>
+      </div>
+    </article>
   );
 }
 
@@ -971,25 +979,22 @@ function LibraryNoticeView({
     if (liveDemo.status === "completed" && !failure) {
       message = `「${liveDemo.name}」可以复盘了。`;
       action = (
-        <Link className="primary-button compact-button" href={`/demos/${liveDemo.id}#player`}>
-          <Play size={14} />
+        <Link className="text-button" href={`/demos/${liveDemo.id}#player`}>
           进入复盘
         </Link>
       );
     } else if (failure) {
-      tone = " failed";
+      tone = " error";
       message = `「${liveDemo.name}」处理失败：${failure.failure.message}`;
       action = (
-        <Link className="secondary-button compact-button" href={`/demos/${liveDemo.id}`}>
-          <ExternalLink size={14} />
+        <Link className="text-button" href={`/demos/${liveDemo.id}`}>
           查看原因
         </Link>
       );
     } else {
       message = `「${liveDemo.name}」已上传，${processingNoticeLabel(liveDemo.status)}，完成后会在这里提示。`;
       action = (
-        <Link className="secondary-button compact-button" href={`/demos/${liveDemo.id}`}>
-          <ExternalLink size={14} />
+        <Link className="text-button" href={`/demos/${liveDemo.id}`}>
           查看进度
         </Link>
       );
@@ -999,20 +1004,18 @@ function LibraryNoticeView({
     action = (
       <button
         id="library-notice-undo"
-        className="secondary-button compact-button"
+        className="text-button"
         type="button"
         disabled={busy}
         onClick={() => onUndoArchive(notice.demo)}
       >
-        <Undo2 size={14} />
         撤销
       </button>
     );
   } else if (notice.kind === "message") {
     message = notice.message;
     action = notice.demoId ? (
-      <Link className="secondary-button compact-button" href={`/demos/${notice.demoId}`}>
-        <ExternalLink size={14} />
+      <Link className="text-button" href={`/demos/${notice.demoId}`}>
         查看比赛
       </Link>
     ) : null;
@@ -1021,14 +1024,12 @@ function LibraryNoticeView({
   }
 
   return (
-    <div className={`library-notice${tone}`}>
-      <span>{message}</span>
-      <div className="library-notice-actions">
-        {action}
-        <button className="icon-button" type="button" aria-label="关闭提示" onClick={onDismiss}>
-          <X size={15} aria-hidden="true" />
-        </button>
-      </div>
+    <div className={`notice lib-notice${tone}`}>
+      <span className="lib-notice-text">{message}</span>
+      {action}
+      <button className="icon-button compact-button lib-notice-close" type="button" aria-label="关闭提示" onClick={onDismiss}>
+        <X size={14} aria-hidden="true" />
+      </button>
     </div>
   );
 }
@@ -1040,28 +1041,26 @@ function UploadProgressRow({ upload, onCancel }: { upload: DemoUploadSnapshot; o
   const label = uploadProgressLabel(upload, now);
   const eta = verifying ? null : uploadEtaLabel(upload, now);
   return (
-    <article className="archive-record uploading" aria-label={`正在上传：${upload.fileName}`}>
-      <span className="library-map-thumb upload-thumb" aria-hidden="true">
-        <FileUp size={18} />
-      </span>
-      <div className="archive-record-identity">
-        <div className="demo-name">
-          <span title={upload.fileName}>{upload.fileName}</span>
+    <article className="lib-row is-uploading" aria-label={`正在上传：${upload.fileName}`}>
+      <span className="lib-thumb" aria-hidden="true" />
+      <div className="c-name">
+        <div className="lib-name">
+          <span className="lib-name-text" title={upload.fileName}>{upload.fileName}</span>
         </div>
         {/* Percent, size and time left as separate readings, not one joined string. */}
-        <div className="archive-record-date upload-progress-facts">
+        <div className="lib-progress-facts">
           {verifying ? (
             <span>{label}</span>
           ) : (
             <>
-              <span className="upload-progress-percent">上传中 {percent}%</span>
+              <span className="lib-progress-pct">上传中 {percent}%</span>
               <span>{formatMegabytes(upload.loaded)} / {formatMegabytes(upload.total)} MB</span>
               {eta ? <span>剩余{eta}</span> : null}
             </>
           )}
         </div>
         <div
-          className={`upload-progress-track${verifying ? " verifying" : ""}`}
+          className={`lib-progress${verifying ? " verifying" : ""}`}
           role="progressbar"
           aria-label="上传进度"
           aria-valuemin={0}
@@ -1072,24 +1071,19 @@ function UploadProgressRow({ upload, onCancel }: { upload: DemoUploadSnapshot; o
           <span style={{ width: `${verifying ? 100 : percent}%` }} />
         </div>
       </div>
-      <div className="archive-record-map" />
-      <div className="archive-record-rounds" />
-      <div className="archive-record-signals" />
-      <div className="archive-record-state">
-        <span className="status-badge queued">
-          <Loader2 size={14} className="spin-icon" />
-          {verifying ? "校验中" : "上传中"}
-        </span>
+      <div className="c-map" />
+      <div className="c-num c-rounds" />
+      <div className="c-num c-signals" />
+      <div className="c-date" />
+      <div className="c-state">
+        <span className="status-text progress">{verifying ? "校验中" : "上传中"}</span>
       </div>
-      <div className="archive-record-actions">
-        <div className="library-actions">
-          {verifying ? null : (
-            <button className="secondary-button compact-button" type="button" onClick={onCancel}>
-              <X size={14} />
-              取消上传
-            </button>
-          )}
-        </div>
+      <div className="c-actions">
+        {verifying ? null : (
+          <button className="text-button" type="button" onClick={onCancel}>
+            取消上传
+          </button>
+        )}
       </div>
     </article>
   );
@@ -1097,65 +1091,44 @@ function UploadProgressRow({ upload, onCancel }: { upload: DemoUploadSnapshot; o
 
 function LibrarySkeletonRows() {
   return (
-    <div className="library-skeleton" aria-hidden="true">
+    <>
       {[0, 1, 2].map((row) => (
-        <div key={row} className="archive-record library-skeleton-row">
-          <span className="library-map-thumb" />
-          <div className="archive-record-identity">
-            <span className="skeleton-bar wide" />
-            <span className="skeleton-bar" />
-          </div>
-          <div className="archive-record-map"><span className="skeleton-bar" /></div>
-          <div className="archive-record-rounds"><span className="skeleton-bar" /></div>
-          <div className="archive-record-signals"><span className="skeleton-bar" /></div>
-          <div className="archive-record-state"><span className="skeleton-bar" /></div>
-          <div className="archive-record-actions"><span className="skeleton-bar" /></div>
+        <div key={row} className="lib-row lib-skel-row" aria-hidden="true">
+          <span className="lib-thumb" />
+          <div className="c-name"><span className="skeleton-bar wide" /></div>
+          <div className="c-map"><span className="skeleton-bar" /></div>
+          <div className="c-num c-rounds"><span className="skeleton-bar" /></div>
+          <div className="c-num c-signals"><span className="skeleton-bar" /></div>
+          <div className="c-date"><span className="skeleton-bar" /></div>
+          <div className="c-state"><span className="skeleton-bar" /></div>
+          <div className="c-actions" />
         </div>
       ))}
-    </div>
+    </>
   );
 }
 
 // The match's radar overview, so a row is recognisable before its name is read.
-// Unknown maps get a neutral tile rather than another map's radar.
+// Unknown maps get a blank tile rather than another map's radar.
 function MapThumb({ mapName }: { mapName: string | null | undefined }) {
   const radar = getTacticalMapConfig(mapName)?.radarImagePath ?? null;
   return radar ? (
-    <span
-      className="library-map-thumb"
-      aria-hidden="true"
-      style={{ backgroundImage: `url("${radar}")` }}
-    />
+    <span className="lib-thumb" aria-hidden="true" style={{ backgroundImage: `url("${radar}")` }} />
   ) : (
-    <span className="library-map-thumb unknown" aria-hidden="true">
-      <MapIcon size={16} />
-    </span>
+    <span className="lib-thumb" aria-hidden="true" />
   );
 }
 
 function PlayEntry({ demo, title }: { demo: DemoSummary; title: string }) {
-  const readiness = playbackReadiness(demo);
-  const href = `/demos/${demo.id}#player`;
-  if (readiness !== "unavailable") {
+  if (playbackReadiness(demo) !== "unavailable") {
     return (
-      <Link
-        className="secondary-button compact-button library-play-button"
-        href={href}
-        aria-label={`进入复盘：${title}`}
-      >
-        <Play size={14} />
+      <Link className="text-button lib-enter" href={`/demos/${demo.id}#player`} aria-label={`进入复盘：${title}`}>
         进入复盘
       </Link>
     );
   }
-
   return (
-    <Link
-      className="secondary-button compact-button library-play-button"
-      href={`/demos/${demo.id}`}
-      aria-label={`查看处理状态：${title}`}
-    >
-      <Clock3 size={14} />
+    <Link className="text-button lib-enter" href={`/demos/${demo.id}`} aria-label={`查看处理状态：${title}`}>
       查看状态
     </Link>
   );
@@ -1186,68 +1159,39 @@ function LibraryEmptyStateRow({
   const showMockAction = state.showMockAction && onMockUpload !== undefined;
   const isError = state.kind === "error";
   return (
-    <div className={`library-empty-state ${state.kind}`} role={isError ? "alert" : undefined}>
-      <div>
-        <strong>{copy.title}</strong>
-        {isError && error ? <p>{error}</p> : null}
-        <p>{state.kind === "empty" && showMockAction ? `${copy.message}${MOCK_DEMO_HINT}` : copy.message}</p>
-      </div>
+    <div className={`lib-empty is-${state.kind}`} role={isError ? "alert" : undefined}>
+      <strong>{copy.title}</strong>
+      {isError && error ? <p>{error}</p> : null}
+      <p>{state.kind === "empty" && showMockAction ? `${copy.message}${MOCK_DEMO_HINT}` : copy.message}</p>
       {state.kind === "empty" ? <DemFileHelp open quotaNote={quotaNote} /> : null}
-      <div className="library-empty-actions">
+      <div className="lib-empty-actions">
         {state.showUploadAction ? (
-          <button
-            className="primary-button compact-button"
-            type="button"
-            disabled={uploadDisabled}
-            onClick={onUpload}
-          >
-            <FileUp size={14} />
+          <button className="text-button" type="button" disabled={uploadDisabled} onClick={onUpload}>
             上传比赛 .dem
           </button>
         ) : null}
         {showMockAction ? (
-          <button
-            className="secondary-button compact-button"
-            type="button"
-            onClick={onMockUpload}
-            disabled={uploadDisabled}
-          >
-            <UploadCloud size={14} />
+          <button className="text-button" type="button" onClick={onMockUpload} disabled={uploadDisabled}>
             示例比赛（模拟数据）
           </button>
         ) : null}
         {state.showClearFiltersAction ? (
-          <button className="secondary-button compact-button" type="button" onClick={onClearFilters}>
-            <X size={14} />
+          <button className="text-button" type="button" onClick={onClearFilters}>
             清除筛选
           </button>
         ) : null}
         {state.showArchivedAction ? (
-          <button className="secondary-button compact-button" type="button" onClick={onShowArchived}>
-            <Archive size={14} />
+          <button className="text-button" type="button" onClick={onShowArchived}>
             显示已归档
           </button>
         ) : null}
         {state.showRefreshAction ? (
-          <button className="secondary-button compact-button" type="button" onClick={onRefresh}>
-            <RefreshCcw size={14} />
+          <button className="text-button" type="button" onClick={onRefresh}>
             刷新比赛列表
           </button>
         ) : null}
       </div>
     </div>
-  );
-}
-
-function StatusBadge({ status }: { status: DemoProcessingStatus }) {
-  const Icon =
-    status === "completed" ? CircleCheck : status === "failed" ? CircleAlert : Loader2;
-  const active = status === "queued" || status === "parsing" || status === "analyzing";
-  return (
-    <span className={`status-badge ${status}`}>
-      <Icon size={14} className={active ? "spin-icon" : ""} />
-      {demoStatusDisplayLabel(status)}
-    </span>
   );
 }
 
@@ -1261,13 +1205,14 @@ function IngestionMeta({ demo, now }: { demo: DemoSummary; now: number }) {
   if (ingestion?.stale) {
     labels.push("处理时间较长");
   }
-  if (ingestion && ingestion.attemptCount > 1) {
+  // A finished parse needs no retry history in the row.
+  if (ingestion && ingestion.attemptCount > 1 && demo.status !== "completed") {
     labels.push(`第 ${ingestion.attemptCount} 次处理`);
   }
   return labels.length > 0 ? (
-    <p className="library-ingestion-meta">
+    <span className="lib-meta">
       {labels.map((label) => <span key={label}>{label}</span>)}
-    </p>
+    </span>
   ) : null;
 }
 
