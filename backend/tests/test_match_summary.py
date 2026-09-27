@@ -22,7 +22,11 @@ from app.models import Demo, DemoJob
 from app.parser.demo_parser import parse_demo_file, parse_team_names, team_name_sample_ticks
 from app.parser.normalizer import normalize_parser_output
 from app.services.demo_service import DemoService
-from app.services.demo_service.match_summary import build_match_summary, public_match_summary
+from app.services.demo_service.match_summary import (
+    MATCH_SUMMARY_VERSION,
+    build_match_summary,
+    public_match_summary,
+)
 from app.services.storage import LocalArtifactStore
 from app.workers import match_summary_backfill
 from app.workers.match_summary_backfill import backfill_match_summaries
@@ -36,9 +40,13 @@ def replay_fixture(
     winners: list[str | None],
     a_side_by_round: dict[int, str | None],
     *,
-    kills: list[dict[str, Any]] | None = None,
+    events: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """Two-a-side match; `a_side_by_round[n]` None means round n has no frames."""
+    """Two-a-side match; `a_side_by_round[n]` None means round n has no frames.
+
+    The side rule itself is pinned by the shared cases in fixtures/match-rules/
+    (test_match_side_rules.py); these tests cover the summary around it.
+    """
     rounds = []
     frames = []
     for index, winner in enumerate(winners):
@@ -63,7 +71,7 @@ def replay_fixture(
                     *({"id": pid, "side": b_side, "x": 2, "y": 2} for pid in B_PLAYERS),
                 ],
             })
-    return {"rounds": rounds, "frames": frames, "kills": kills or [], "events": []}
+    return {"rounds": rounds, "frames": frames, "events": events or []}
 
 
 def regulation_sides(total_rounds: int) -> dict[int, str | None]:
@@ -181,7 +189,7 @@ class BuildMatchSummaryTest(unittest.TestCase):
                 {"key": "B", "name": None, "startSide": "CT", "score": 11},
             ],
             "rounds": 24,
-            "version": 1,
+            "version": 2,
         })
 
     def test_overtime_sides_come_from_frames_not_round_numbers(self) -> None:
@@ -201,19 +209,36 @@ class BuildMatchSummaryTest(unittest.TestCase):
         sides = regulation_sides(14)
         sides[13] = None
         sides[14] = None
-        kills = [{
-            "roundNumber": 13, "attackerId": "b1", "attackerSide": "T",
-            "victimId": "a1", "victimSide": "CT",
-        }]
+        kill = {
+            "id": "kill-13500-a1", "type": "kill", "tick": 13_500, "roundNumber": 13,
+            "metadata": {"attackerId": "b1", "attackerSide": "T", "victimId": "a1", "victimSide": "CT"},
+        }
         winners = ["T"] * 12 + ["CT", "CT"]
 
-        summary = build_match_summary(replay_fixture(winners, sides, kills=kills))
+        summary = build_match_summary(replay_fixture(winners, sides, events=[kill]))
         assert summary is not None
 
-        # Round 13: kills put A on CT, so A wins it; round 14 keeps round 13's sides
-        # (the same guess the review page makes), so A wins it too.
+        # Round 13: the kill puts A on CT, so A wins it; round 14 keeps round 13's
+        # sides (the same guess the review page makes), so A wins it too.
         self.assertEqual([team["score"] for team in summary["teams"]], [14, 0])
         self.assertEqual(summary["rounds"], 14)
+
+    def test_a_legacy_kills_list_is_not_read(self) -> None:
+        # The served replay (what the review page reads) never merges a stored
+        # `kills` list into its events, so the summary does not read it either.
+        sides = regulation_sides(14)
+        sides[13] = None
+        replay = replay_fixture(["T"] * 12 + ["CT", "CT"], sides)
+        replay["kills"] = [{
+            "tick": 13_500, "roundNumber": 13, "attackerId": "b1", "attackerSide": "T",
+            "victimId": "a1", "victimSide": "CT",
+        }]
+
+        summary = build_match_summary(replay)
+        assert summary is not None
+
+        # Round 13 keeps round 12's sides (A on T), so B wins it; A wins round 14 on CT.
+        self.assertEqual([team["score"] for team in summary["teams"]], [13, 1])
 
     def test_frames_a_round_keeps_through_the_half_time_break_do_not_vote(self) -> None:
         winners = ["T"] * 12 + ["CT"]
@@ -236,11 +261,23 @@ class BuildMatchSummaryTest(unittest.TestCase):
         # A won all twelve rounds on T and round 13 on CT.
         self.assertEqual([team["score"] for team in summary["teams"]], [13, 0])
 
-    def test_missing_winner_or_reason_is_not_a_round_win(self) -> None:
+    def test_a_missing_winner_reads_ct_as_in_the_served_replay(self) -> None:
+        # The replay contract fills a missing winnerSide with CT before the review
+        # page sees it; the stored score must say the same.
         summary = build_match_summary(replay_fixture(["T", None, "CT"], regulation_sides(3)))
         assert summary is not None
-        self.assertEqual([team["score"] for team in summary["teams"]], [1, 1])
+        self.assertEqual([team["score"] for team in summary["teams"]], [1, 2])
         self.assertEqual(summary["rounds"], 3)
+
+    def test_a_substitute_counts_for_the_team_name(self) -> None:
+        replay = replay_fixture(["T", "T"], {1: "T", 2: "T"})
+        # Round 2: c1 plays T next to A's members, so c1 joins team A.
+        replay["frames"][-1]["players"].append({"id": "c1", "side": "T", "x": 1, "y": 1})
+        # Without c1, A's names tie and the alphabetically first one ("Alpha") wins.
+        names = {"a1": "Alpha", "a2": "MOUZ", "c1": "MOUZ", "b1": "Spirit"}
+        summary = build_match_summary(replay, names)
+        assert summary is not None
+        self.assertEqual([team["name"] for team in summary["teams"]], ["MOUZ", "Spirit"])
 
     def test_team_name_is_the_most_common_clan_name_among_members(self) -> None:
         names = {"a1": "MOUZ", "a2": "MOUZ", "b1": "Spirit", "b2": "  ", "x9": "Other"}
@@ -262,13 +299,20 @@ class BuildMatchSummaryTest(unittest.TestCase):
             "events": [{"type": "kill", "metadata": None}],
         }))
 
-    def test_public_summary_accepts_only_the_version_one_shape(self) -> None:
+    def test_public_summary_accepts_the_current_and_older_versions(self) -> None:
         stored = build_match_summary(replay_fixture(["T"], {1: "T"}), {"a1": "MOUZ"})
+        assert stored is not None
+        self.assertEqual(stored["version"], MATCH_SUMMARY_VERSION)
         public = public_match_summary(stored)
         assert public is not None
         self.assertEqual(public.teams[0].name, "MOUZ")
+        # A version 1 summary stays visible until the backfill recomputes it.
+        older = public_match_summary({**stored, "version": 1})
+        assert older is not None
+        self.assertEqual(older.version, 1)
         self.assertIsNone(public_match_summary(None))
-        self.assertIsNone(public_match_summary({**(stored or {}), "version": 2}))
+        for version in (MATCH_SUMMARY_VERSION + 1, 0, "2", True, None):
+            self.assertIsNone(public_match_summary({**stored, "version": version}))
         self.assertIsNone(public_match_summary({"teams": [], "rounds": 1, "version": 1}))
         self.assertIsNone(public_match_summary("13:11"))
 
@@ -384,9 +428,12 @@ class MatchSummaryStorageTest(unittest.TestCase):
         }
 
     def clear_summary(self, demo_id: str) -> datetime:
+        return self.set_summary(demo_id, None)
+
+    def set_summary(self, demo_id: str, summary: dict[str, Any] | None) -> datetime:
         with self.Session() as db:
             demo = db.get(Demo, demo_id)
-            demo.match_summary = None
+            demo.match_summary = summary
             db.commit()
             db.refresh(demo)
             return demo.updated_at
@@ -482,6 +529,60 @@ class MatchSummaryStorageTest(unittest.TestCase):
                 [],
             )
 
+    def test_backfill_recomputes_summaries_stored_before_the_current_version(self) -> None:
+        stale_id = self.upload_and_parse(parsed_match())
+        versionless_id = self.upload_and_parse(parsed_match())
+        current_id = self.upload_and_parse(parsed_match({"a1": "MOUZ"}))
+        old_teams = [
+            {"key": "A", "name": "Old", "startSide": "T", "score": 0},
+            {"key": "B", "name": None, "startSide": "CT", "score": 2},
+        ]
+        updated_at = self.set_summary(stale_id, {"teams": old_teams, "rounds": 2, "version": 1})
+        self.set_summary(versionless_id, {"teams": old_teams, "rounds": 2})
+        artifacts_before = self.artifact_files()
+        with self.Session() as db:
+            current_before = db.get(Demo, current_id).match_summary
+            replay_key = db.get(Demo, stale_id).replay_storage_key
+            self.assertEqual(
+                sorted(DemoService.for_internal(db).demo_ids_missing_match_summary(limit=5)),
+                sorted([stale_id, versionless_id]),
+            )
+
+        stored = backfill_match_summaries(
+            force=True, session_factory=self.Session, read_team_names=lambda *_: {},
+        )
+
+        self.assertEqual(sorted(stored), sorted([stale_id, versionless_id]))
+        with self.Session() as db:
+            for demo_id in (stale_id, versionless_id):
+                summary = db.get(Demo, demo_id).match_summary
+                self.assertEqual(summary["version"], MATCH_SUMMARY_VERSION)
+                self.assertEqual([team["score"] for team in summary["teams"]], [2, 0])
+            stale = db.get(Demo, stale_id)
+            self.assertEqual(stale.updated_at, updated_at)
+            self.assertEqual(stale.replay_storage_key, replay_key)
+            self.assertEqual(db.get(Demo, current_id).match_summary, current_before)
+            self.assertEqual(DemoService.for_internal(db).demo_ids_missing_match_summary(limit=5), [])
+        # Read-only on storage: the replay blobs are untouched.
+        self.assertEqual(self.artifact_files(), artifacts_before)
+        self.assertEqual(
+            backfill_match_summaries(force=True, session_factory=self.Session, read_team_names=lambda *_: {}),
+            [],
+        )
+
+    def test_backfill_of_an_old_summary_is_bounded_per_pass(self) -> None:
+        demo_ids = [self.upload_and_parse(parsed_match()) for _ in range(3)]
+        for demo_id in demo_ids:
+            self.set_summary(demo_id, {"teams": [], "rounds": 2, "version": 1})
+        first = backfill_match_summaries(
+            force=True, session_factory=self.Session, read_team_names=lambda *_: {}, limit=2,
+        )
+        second = backfill_match_summaries(
+            force=True, session_factory=self.Session, read_team_names=lambda *_: {}, limit=2,
+        )
+        self.assertEqual(len(first), 2)
+        self.assertEqual(sorted(first + second), sorted(demo_ids))
+
     def test_backfill_is_rate_limited_between_passes(self) -> None:
         demo_id = self.upload_and_parse(parsed_match())
         self.clear_summary(demo_id)
@@ -540,7 +641,7 @@ class MatchSummaryApiTest(unittest.TestCase):
                 {"key": "B", "name": "Spirit", "startSide": "CT", "score": 11},
             ],
             "rounds": 24,
-            "version": 1,
+            "version": MATCH_SUMMARY_VERSION,
         })
         self.assertIsNone(by_id["without-summary"]["matchSummary"])
         self.assertIsNone(by_id["junk-summary"]["matchSummary"])

@@ -1,0 +1,30 @@
+{
+  "name": "kills-decide-the-start-round",
+  "description": "Round 1 has no frames, only a kill: it is still the start round, so Ace (T) founds team A and Bolt (CT) team B. Ash and Blaze first appear in round 2's frames and join the team playing their side there.",
+  "replay": {
+    "rounds": [
+      { "roundNumber": 1, "startTick": 1000, "endTick": 1900, "winnerSide": "T" },
+      { "roundNumber": 2, "startTick": 2000, "endTick": 2900, "winnerSide": "CT" }
+    ],
+    "frames": [
+      { "tick": 2100, "roundNumber": 2, "players": [{ "id": "a1", "side": "T" }, { "id": "a2", "side": "T" }, { "id": "b1", "side": "CT" }, { "id": "b2", "side": "CT" }] }
+    ],
+    "events": [
+      { "id": "kill-1500-b1", "type": "kill", "tick": 1500, "roundNumber": 1, "metadata": { "attackerId": "a1", "attackerSide": "T", "victimId": "b1", "victimSide": "CT" } }
+    ]
+  },
+  "expected": {
+    "sidesByRound": {
+      "1": { "a1": "T", "b1": "CT" },
+      "2": { "a1": "T", "a2": "T", "b1": "CT", "b2": "CT" }
+    },
+    "teams": [
+      { "key": "A", "playerIds": ["a1", "a2"], "startSide": "T", "score": 1 },
+      { "key": "B", "playerIds": ["b1", "b2"], "startSide": "CT", "score": 1 }
+    ],
+    "teamSidesByRound": {
+      "1": { "A": "T", "B": "CT" },
+      "2": { "A": "T", "B": "CT" }
+    }
+  }
+}

@@ -1,0 +1,35 @@
+{
+  "name": "conflicting-kill-sides",
+  "description": "Round 1: a kill says Ace is CT, but his frames say T and frames win. Round 2 has no frames: Bolt's earliest kill (2200) says CT and a later one T, so CT; at tick 2600 two kills disagree on Blaze and the first in the array wins (CT). Cinder's suicide lists him as attacker T and victim CT: the attacker comes first (T), and he joins team A, which plays T there.",
+  "replay": {
+    "rounds": [
+      { "roundNumber": 1, "startTick": 1000, "endTick": 1900, "winnerSide": "T" },
+      { "roundNumber": 2, "startTick": 2000, "endTick": 2900, "winnerSide": "CT" }
+    ],
+    "frames": [
+      { "tick": 1100, "roundNumber": 1, "players": [{ "id": "a1", "side": "T" }, { "id": "a2", "side": "T" }, { "id": "b1", "side": "CT" }, { "id": "b2", "side": "CT" }] }
+    ],
+    "events": [
+      { "id": "kill-1500-b1", "type": "kill", "tick": 1500, "roundNumber": 1, "metadata": { "attackerId": "a1", "attackerSide": "CT", "victimId": "b1", "victimSide": "CT" } },
+      { "id": "kill-2200-a2", "type": "kill", "tick": 2200, "roundNumber": 2, "metadata": { "attackerId": "b1", "attackerSide": "CT", "victimId": "a2", "victimSide": "T" } },
+      { "id": "kill-2400-b1", "type": "kill", "tick": 2400, "roundNumber": 2, "metadata": { "attackerId": "a1", "attackerSide": "T", "victimId": "b1", "victimSide": "T" } },
+      { "id": "kill-2600-a1", "type": "kill", "tick": 2600, "roundNumber": 2, "metadata": { "attackerId": "b2", "attackerSide": "CT", "victimId": "a1", "victimSide": "T" } },
+      { "id": "kill-2600-b2", "type": "kill", "tick": 2600, "roundNumber": 2, "metadata": { "attackerId": "a2", "attackerSide": "T", "victimId": "b2", "victimSide": "T" } },
+      { "id": "kill-2800-c1", "type": "kill", "tick": 2800, "roundNumber": 2, "metadata": { "attackerId": "c1", "attackerSide": "T", "victimId": "c1", "victimSide": "CT" } }
+    ]
+  },
+  "expected": {
+    "sidesByRound": {
+      "1": { "a1": "T", "a2": "T", "b1": "CT", "b2": "CT" },
+      "2": { "a1": "T", "a2": "T", "b1": "CT", "b2": "CT", "c1": "T" }
+    },
+    "teams": [
+      { "key": "A", "playerIds": ["a1", "a2", "c1"], "startSide": "T", "score": 1 },
+      { "key": "B", "playerIds": ["b1", "b2"], "startSide": "CT", "score": 1 }
+    ],
+    "teamSidesByRound": {
+      "1": { "A": "T", "B": "CT" },
+      "2": { "A": "T", "B": "CT" }
+    }
+  }
+}

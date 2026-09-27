@@ -1,0 +1,62 @@
+{
+  "name": "overtime-swaps",
+  "description": "Regulation plus one overtime (rounds in between left out: the rule never reads round numbers). Team A is T in 1-12, CT in 13-24, T in 25-27 and CT again in 28-30, each read from that round's frames.",
+  "replay": {
+    "rounds": [
+      { "roundNumber": 1, "startTick": 1000, "endTick": 1900, "winnerSide": "T" },
+      { "roundNumber": 12, "startTick": 12000, "endTick": 12900, "winnerSide": "CT" },
+      { "roundNumber": 13, "startTick": 13000, "endTick": 13900, "winnerSide": "CT" },
+      { "roundNumber": 24, "startTick": 24000, "endTick": 24900, "winnerSide": "T" },
+      { "roundNumber": 25, "startTick": 25000, "endTick": 25900, "winnerSide": "T" },
+      { "roundNumber": 26, "startTick": 26000, "endTick": 26900, "winnerSide": "CT" },
+      { "roundNumber": 27, "startTick": 27000, "endTick": 27900, "winnerSide": "T" },
+      { "roundNumber": 28, "startTick": 28000, "endTick": 28900, "winnerSide": "CT" },
+      { "roundNumber": 29, "startTick": 29000, "endTick": 29900, "winnerSide": "CT" },
+      { "roundNumber": 30, "startTick": 30000, "endTick": 30900, "winnerSide": "T" }
+    ],
+    "frames": [
+      { "tick": 1100, "roundNumber": 1, "players": [{ "id": "a1", "side": "T" }, { "id": "b1", "side": "CT" }] },
+      { "tick": 12100, "roundNumber": 12, "players": [{ "id": "a1", "side": "T" }, { "id": "b1", "side": "CT" }] },
+      { "tick": 13100, "roundNumber": 13, "players": [{ "id": "a1", "side": "CT" }, { "id": "b1", "side": "T" }] },
+      { "tick": 24100, "roundNumber": 24, "players": [{ "id": "a1", "side": "CT" }, { "id": "b1", "side": "T" }] },
+      { "tick": 24950, "roundNumber": 24, "players": [{ "id": "a1", "side": "T" }, { "id": "b1", "side": "CT" }] },
+      { "tick": 25100, "roundNumber": 25, "players": [{ "id": "a1", "side": "T" }, { "id": "b1", "side": "CT" }] },
+      { "tick": 26100, "roundNumber": 26, "players": [{ "id": "a1", "side": "T" }, { "id": "b1", "side": "CT" }] },
+      { "tick": 27100, "roundNumber": 27, "players": [{ "id": "a1", "side": "T" }, { "id": "b1", "side": "CT" }] },
+      { "tick": 28100, "roundNumber": 28, "players": [{ "id": "a1", "side": "CT" }, { "id": "b1", "side": "T" }] },
+      { "tick": 29100, "roundNumber": 29, "players": [{ "id": "a1", "side": "CT" }, { "id": "b1", "side": "T" }] },
+      { "tick": 30100, "roundNumber": 30, "players": [{ "id": "a1", "side": "CT" }, { "id": "b1", "side": "T" }] }
+    ],
+    "events": []
+  },
+  "expected": {
+    "sidesByRound": {
+      "1": { "a1": "T", "b1": "CT" },
+      "12": { "a1": "T", "b1": "CT" },
+      "13": { "a1": "CT", "b1": "T" },
+      "24": { "a1": "CT", "b1": "T" },
+      "25": { "a1": "T", "b1": "CT" },
+      "26": { "a1": "T", "b1": "CT" },
+      "27": { "a1": "T", "b1": "CT" },
+      "28": { "a1": "CT", "b1": "T" },
+      "29": { "a1": "CT", "b1": "T" },
+      "30": { "a1": "CT", "b1": "T" }
+    },
+    "teams": [
+      { "key": "A", "playerIds": ["a1"], "startSide": "T", "score": 6 },
+      { "key": "B", "playerIds": ["b1"], "startSide": "CT", "score": 4 }
+    ],
+    "teamSidesByRound": {
+      "1": { "A": "T", "B": "CT" },
+      "12": { "A": "T", "B": "CT" },
+      "13": { "A": "CT", "B": "T" },
+      "24": { "A": "CT", "B": "T" },
+      "25": { "A": "T", "B": "CT" },
+      "26": { "A": "T", "B": "CT" },
+      "27": { "A": "T", "B": "CT" },
+      "28": { "A": "CT", "B": "T" },
+      "29": { "A": "CT", "B": "T" },
+      "30": { "A": "CT", "B": "T" }
+    }
+  }
+}

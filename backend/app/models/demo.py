@@ -37,7 +37,8 @@ class Demo(Base):
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     # {"teams": [{"key", "name", "startSide", "score"}], "rounds", "version"}; see
     # services/demo_service/match_summary.py. none_as_null so an unset summary is
-    # SQL NULL, which is what the backfill looks for.
+    # SQL NULL; the backfill fills NULL rows and recomputes rows whose version is
+    # older than MATCH_SUMMARY_VERSION.
     match_summary: Mapped[dict[str, Any] | None] = mapped_column(
         JSON(none_as_null=True),
         nullable=True,

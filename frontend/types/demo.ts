@@ -31,7 +31,7 @@ export interface DemoIngestionStatus {
 }
 
 /**
- * Final score stored on a completed demo (`matchSummary`, version 1). Team "A"
+ * Final score stored on a completed demo (`matchSummary`, version 2; version 1 rows are recomputed by the backfill). Team "A"
  * started T, team "B" started CT; `name` is the demo's clan name or null.
  * Absent on old API builds and on demos the backfill has not reached yet.
  */

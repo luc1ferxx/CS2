@@ -65,6 +65,68 @@ describe("usePoll", () => {
     expect(task).toHaveBeenCalledTimes(1);
     await advance(1000);
     expect(task).toHaveBeenCalledTimes(2);
+
+    // Hiding again pauses again: the pending visible tick is dropped.
+    await act(async () => setHidden(true));
+    await advance(10_000);
+    expect(task).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps polling at the slower delay while hidden when asked, and refreshes at once on return", async () => {
+    const task = vi.fn(async () => {});
+    renderHook(() => usePoll(task, 1000, { hiddenDelayMs: 5000 }));
+
+    await advance(1000);
+    expect(task).toHaveBeenCalledTimes(1);
+
+    // The hidden cadence starts from the moment the tab is hidden, not after one more visible tick.
+    await act(async () => setHidden(true));
+    await advance(4999);
+    expect(task).toHaveBeenCalledTimes(1);
+    await advance(1);
+    expect(task).toHaveBeenCalledTimes(2);
+    await advance(5000);
+    expect(task).toHaveBeenCalledTimes(3);
+
+    await act(async () => setHidden(false));
+    expect(task).toHaveBeenCalledTimes(4);
+    await advance(1000);
+    expect(task).toHaveBeenCalledTimes(5);
+  });
+
+  it("starts at the hidden delay when mounted in a hidden tab", async () => {
+    Object.defineProperty(document, "hidden", { configurable: true, get: () => true });
+    const paused = vi.fn(async () => {});
+    const slow = vi.fn(async () => {});
+    renderHook(() => usePoll(paused, 1000));
+    renderHook(() => usePoll(slow, 1000, { hiddenDelayMs: 5000 }));
+
+    await advance(4999);
+    expect(slow).not.toHaveBeenCalled();
+    await advance(1);
+    expect(slow).toHaveBeenCalledTimes(1);
+    await advance(20_000);
+    expect(paused).not.toHaveBeenCalled();
+  });
+
+  it("never overlaps a slow run while hidden or on return", async () => {
+    let finish!: () => void;
+    const task = vi.fn(() => new Promise<void>((resolve) => { finish = resolve; }));
+    renderHook(() => usePoll(task, 1000, { hiddenDelayMs: 5000 }));
+
+    await act(async () => setHidden(true));
+    await advance(5000);
+    expect(task).toHaveBeenCalledTimes(1);
+    await advance(20_000);
+    await act(async () => setHidden(false));
+    expect(task).toHaveBeenCalledTimes(1);
+
+    // Settling back in view schedules the next run at the visible delay.
+    await act(async () => finish());
+    await advance(999);
+    expect(task).toHaveBeenCalledTimes(1);
+    await advance(1);
+    expect(task).toHaveBeenCalledTimes(2);
   });
 
   it("always calls the latest task", async () => {

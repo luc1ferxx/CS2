@@ -1,0 +1,39 @@
+{
+  "name": "in-bounds-frames-without-sides",
+  "description": "Round 2's in-bounds frames carry no valid side (null, SPECTATOR, missing, lower-case t, a numeric id), so all its frames vote; Blaze is only in the in-bounds ones and gets CT from the kill. Round 3 has in-bounds votes, but not for Blaze (empty side): his side comes from the kill (T).",
+  "replay": {
+    "rounds": [
+      { "roundNumber": 1, "startTick": 1000, "endTick": 1900, "winnerSide": "T" },
+      { "roundNumber": 2, "startTick": 2000, "endTick": 2900, "winnerSide": "T" },
+      { "roundNumber": 3, "startTick": 3000, "endTick": 3900, "winnerSide": "T" }
+    ],
+    "frames": [
+      { "tick": 1100, "roundNumber": 1, "players": [{ "id": "a1", "side": "T" }, { "id": "a2", "side": "T" }, { "id": "b1", "side": "CT" }, { "id": "b2", "side": "CT" }] },
+      { "tick": 2100, "roundNumber": 2, "players": [{ "id": "a1", "side": null }, { "id": "a2", "side": "SPECTATOR" }, { "id": "b1" }, { "id": "b2", "side": "t" }, { "id": 7, "side": "T" }] },
+      { "tick": 2200, "roundNumber": 2, "players": [{ "id": "a1", "side": null }, { "id": "a2", "side": "SPECTATOR" }, { "id": "b1" }, { "id": "b2", "side": "t" }] },
+      { "tick": 2950, "roundNumber": 2, "players": [{ "id": "a1", "side": "T" }, { "id": "a2", "side": "T" }, { "id": "b1", "side": "CT" }] },
+      { "tick": 2960, "roundNumber": 2, "players": [{ "id": "a1", "side": "T" }, { "id": "a2", "side": "T" }, { "id": "b1", "side": "CT" }] },
+      { "tick": 3100, "roundNumber": 3, "players": [{ "id": "a1", "side": "CT" }, { "id": "a2", "side": "CT" }, { "id": "b1", "side": "T" }, { "id": "b2", "side": "" }] }
+    ],
+    "events": [
+      { "id": "kill-2400-b2", "type": "kill", "tick": 2400, "roundNumber": 2, "metadata": { "attackerId": "a1", "attackerSide": "T", "victimId": "b2", "victimSide": "CT" } },
+      { "id": "kill-3400-a2", "type": "kill", "tick": 3400, "roundNumber": 3, "metadata": { "attackerId": "b2", "attackerSide": "T", "victimId": "a2", "victimSide": "CT" } }
+    ]
+  },
+  "expected": {
+    "sidesByRound": {
+      "1": { "a1": "T", "a2": "T", "b1": "CT", "b2": "CT" },
+      "2": { "a1": "T", "a2": "T", "b1": "CT", "b2": "CT" },
+      "3": { "a1": "CT", "a2": "CT", "b1": "T", "b2": "T" }
+    },
+    "teams": [
+      { "key": "A", "playerIds": ["a1", "a2"], "startSide": "T", "score": 2 },
+      { "key": "B", "playerIds": ["b1", "b2"], "startSide": "CT", "score": 1 }
+    ],
+    "teamSidesByRound": {
+      "1": { "A": "T", "B": "CT" },
+      "2": { "A": "T", "B": "CT" },
+      "3": { "A": "CT", "B": "T" }
+    }
+  }
+}

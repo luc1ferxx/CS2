@@ -1,0 +1,31 @@
+{
+  "name": "stray-first-frame",
+  "description": "Ace's first frame in round 1 shows CT, the two after it T. The majority (T) decides, so Ace stays on team A instead of being put on B by his first frame.",
+  "replay": {
+    "rounds": [
+      { "roundNumber": 1, "startTick": 1000, "endTick": 1900, "winnerSide": "T" },
+      { "roundNumber": 2, "startTick": 2000, "endTick": 2900, "winnerSide": "CT" }
+    ],
+    "frames": [
+      { "tick": 1100, "roundNumber": 1, "players": [{ "id": "a1", "side": "CT" }, { "id": "a2", "side": "T" }, { "id": "b1", "side": "CT" }, { "id": "b2", "side": "CT" }] },
+      { "tick": 1300, "roundNumber": 1, "players": [{ "id": "a1", "side": "T" }, { "id": "a2", "side": "T" }, { "id": "b1", "side": "CT" }, { "id": "b2", "side": "CT" }] },
+      { "tick": 1500, "roundNumber": 1, "players": [{ "id": "a1", "side": "T" }, { "id": "a2", "side": "T" }, { "id": "b1", "side": "CT" }, { "id": "b2", "side": "CT" }] },
+      { "tick": 2100, "roundNumber": 2, "players": [{ "id": "a1", "side": "T" }, { "id": "a2", "side": "T" }, { "id": "b1", "side": "CT" }, { "id": "b2", "side": "CT" }] }
+    ],
+    "events": []
+  },
+  "expected": {
+    "sidesByRound": {
+      "1": { "a1": "T", "a2": "T", "b1": "CT", "b2": "CT" },
+      "2": { "a1": "T", "a2": "T", "b1": "CT", "b2": "CT" }
+    },
+    "teams": [
+      { "key": "A", "playerIds": ["a1", "a2"], "startSide": "T", "score": 1 },
+      { "key": "B", "playerIds": ["b1", "b2"], "startSide": "CT", "score": 1 }
+    ],
+    "teamSidesByRound": {
+      "1": { "A": "T", "B": "CT" },
+      "2": { "A": "T", "B": "CT" }
+    }
+  }
+}

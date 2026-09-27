@@ -1,0 +1,25 @@
+{
+  "name": "player-id-order",
+  "description": "Team members are listed by code point, as Python sorts them: U+FF41 comes before U+1F600, although JavaScript's < puts U+1F600 first (it compares the UTF-16 surrogate 0xD83D).",
+  "replay": {
+    "rounds": [
+      { "roundNumber": 1, "startTick": 0, "endTick": 900, "winnerSide": "T" }
+    ],
+    "frames": [
+      { "tick": 100, "roundNumber": 1, "players": [{ "id": "\ud83d\ude00", "side": "T" }, { "id": "\uff41", "side": "T" }, { "id": "b1", "side": "CT" }] }
+    ],
+    "events": []
+  },
+  "expected": {
+    "sidesByRound": {
+      "1": { "\uff41": "T", "\ud83d\ude00": "T", "b1": "CT" }
+    },
+    "teams": [
+      { "key": "A", "playerIds": ["\uff41", "\ud83d\ude00"], "startSide": "T", "score": 1 },
+      { "key": "B", "playerIds": ["b1"], "startSide": "CT", "score": 0 }
+    ],
+    "teamSidesByRound": {
+      "1": { "A": "T", "B": "CT" }
+    }
+  }
+}

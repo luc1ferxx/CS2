@@ -1,0 +1,33 @@
+{
+  "name": "missing-ticks",
+  "description": "Round 1 starts at tick 0. Frames with a null, missing or string tick are out of bounds, so only the tick-100 frame votes (a null tick must not read as 0). Round 2 has no in-bounds frame: all vote, each player ties 1:1, and the ticked frame (1950) counts as earlier than the one without a tick although it comes second in the array.",
+  "replay": {
+    "rounds": [
+      { "roundNumber": 1, "startTick": 0, "endTick": 900, "winnerSide": "T" },
+      { "roundNumber": 2, "startTick": 1000, "endTick": 1900, "winnerSide": "T" }
+    ],
+    "frames": [
+      { "tick": null, "roundNumber": 1, "players": [{ "id": "a1", "side": "CT" }, { "id": "b1", "side": "T" }] },
+      { "roundNumber": 1, "players": [{ "id": "a1", "side": "CT" }, { "id": "b1", "side": "T" }] },
+      { "tick": "150", "roundNumber": 1, "players": [{ "id": "a1", "side": "CT" }, { "id": "b1", "side": "T" }] },
+      { "tick": 100, "roundNumber": 1, "players": [{ "id": "a1", "side": "T" }, { "id": "b1", "side": "CT" }] },
+      { "roundNumber": 2, "players": [{ "id": "a1", "side": "CT" }, { "id": "b1", "side": "T" }] },
+      { "tick": 1950, "roundNumber": 2, "players": [{ "id": "a1", "side": "T" }, { "id": "b1", "side": "CT" }] }
+    ],
+    "events": []
+  },
+  "expected": {
+    "sidesByRound": {
+      "1": { "a1": "T", "b1": "CT" },
+      "2": { "a1": "T", "b1": "CT" }
+    },
+    "teams": [
+      { "key": "A", "playerIds": ["a1"], "startSide": "T", "score": 2 },
+      { "key": "B", "playerIds": ["b1"], "startSide": "CT", "score": 0 }
+    ],
+    "teamSidesByRound": {
+      "1": { "A": "T", "B": "CT" },
+      "2": { "A": "T", "B": "CT" }
+    }
+  }
+}

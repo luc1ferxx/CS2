@@ -1,0 +1,35 @@
+{
+  "name": "frameless-round-without-kills",
+  "description": "Rounds 1 and 3 have neither frames nor kills. Round 2 is the start round. Round 1 takes the nearest later placed round's sides (round 2), round 3 the nearest earlier one (round 2, not round 4).",
+  "replay": {
+    "rounds": [
+      { "roundNumber": 1, "startTick": 1000, "endTick": 1900, "winnerSide": "CT" },
+      { "roundNumber": 2, "startTick": 2000, "endTick": 2900, "winnerSide": "T" },
+      { "roundNumber": 3, "startTick": 3000, "endTick": 3900, "winnerSide": "T" },
+      { "roundNumber": 4, "startTick": 4000, "endTick": 4900, "winnerSide": "CT" }
+    ],
+    "frames": [
+      { "tick": 2100, "roundNumber": 2, "players": [{ "id": "a1", "side": "T" }, { "id": "b1", "side": "CT" }] },
+      { "tick": 4100, "roundNumber": 4, "players": [{ "id": "a1", "side": "CT" }, { "id": "b1", "side": "T" }] }
+    ],
+    "events": []
+  },
+  "expected": {
+    "sidesByRound": {
+      "1": {},
+      "2": { "a1": "T", "b1": "CT" },
+      "3": {},
+      "4": { "a1": "CT", "b1": "T" }
+    },
+    "teams": [
+      { "key": "A", "playerIds": ["a1"], "startSide": "T", "score": 3 },
+      { "key": "B", "playerIds": ["b1"], "startSide": "CT", "score": 1 }
+    ],
+    "teamSidesByRound": {
+      "1": { "A": "T", "B": "CT" },
+      "2": { "A": "T", "B": "CT" },
+      "3": { "A": "T", "B": "CT" },
+      "4": { "A": "CT", "B": "T" }
+    }
+  }
+}

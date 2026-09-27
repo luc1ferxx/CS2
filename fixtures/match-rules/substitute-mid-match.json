@@ -1,0 +1,37 @@
+{
+  "name": "substitute-mid-match",
+  "description": "A short match whose sides swap after round 2. Blaze leaves after round 1 and Cinder takes his place on CT in round 2: he joins team B, the team playing CT there. Ash leaves after round 3 and Dune appears on CT in round 4, where team A plays CT: he joins A.",
+  "replay": {
+    "rounds": [
+      { "roundNumber": 1, "startTick": 1000, "endTick": 1900, "winnerSide": "T" },
+      { "roundNumber": 2, "startTick": 2000, "endTick": 2900, "winnerSide": "CT" },
+      { "roundNumber": 3, "startTick": 3000, "endTick": 3900, "winnerSide": "CT" },
+      { "roundNumber": 4, "startTick": 4000, "endTick": 4900, "winnerSide": "T" }
+    ],
+    "frames": [
+      { "tick": 1100, "roundNumber": 1, "players": [{ "id": "a1", "side": "T" }, { "id": "a2", "side": "T" }, { "id": "b1", "side": "CT" }, { "id": "b2", "side": "CT" }] },
+      { "tick": 2100, "roundNumber": 2, "players": [{ "id": "a1", "side": "T" }, { "id": "a2", "side": "T" }, { "id": "b1", "side": "CT" }, { "id": "c1", "side": "CT" }] },
+      { "tick": 3100, "roundNumber": 3, "players": [{ "id": "a1", "side": "CT" }, { "id": "a2", "side": "CT" }, { "id": "b1", "side": "T" }, { "id": "c1", "side": "T" }] },
+      { "tick": 4100, "roundNumber": 4, "players": [{ "id": "a1", "side": "CT" }, { "id": "d1", "side": "CT" }, { "id": "b1", "side": "T" }, { "id": "c1", "side": "T" }] }
+    ],
+    "events": []
+  },
+  "expected": {
+    "sidesByRound": {
+      "1": { "a1": "T", "a2": "T", "b1": "CT", "b2": "CT" },
+      "2": { "a1": "T", "a2": "T", "b1": "CT", "c1": "CT" },
+      "3": { "a1": "CT", "a2": "CT", "b1": "T", "c1": "T" },
+      "4": { "a1": "CT", "b1": "T", "c1": "T", "d1": "CT" }
+    },
+    "teams": [
+      { "key": "A", "playerIds": ["a1", "a2", "d1"], "startSide": "T", "score": 2 },
+      { "key": "B", "playerIds": ["b1", "b2", "c1"], "startSide": "CT", "score": 2 }
+    ],
+    "teamSidesByRound": {
+      "1": { "A": "T", "B": "CT" },
+      "2": { "A": "T", "B": "CT" },
+      "3": { "A": "CT", "B": "T" },
+      "4": { "A": "CT", "B": "T" }
+    }
+  }
+}

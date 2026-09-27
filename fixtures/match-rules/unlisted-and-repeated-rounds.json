@@ -1,0 +1,37 @@
+{
+  "name": "unlisted-and-repeated-rounds",
+  "description": "Warmup frames filed under round 0 (not in rounds) would put Ace on CT; a kill filed under round 99 would give Zed a side. Neither counts. Round 2 is listed twice: the first entry's bounds and winner apply, so only the frames at 2100 and 2200 vote, and the repeat's T win is no extra round.",
+  "replay": {
+    "rounds": [
+      { "roundNumber": 1, "startTick": 1000, "endTick": 1900, "winnerSide": "T" },
+      { "roundNumber": 2, "startTick": 2000, "endTick": 2900, "winnerSide": "CT" },
+      { "roundNumber": 2, "startTick": 2900, "endTick": 3000, "winnerSide": "T" }
+    ],
+    "frames": [
+      { "tick": 500, "roundNumber": 0, "players": [{ "id": "a1", "side": "CT" }, { "id": "b1", "side": "T" }] },
+      { "tick": 1100, "roundNumber": 1, "players": [{ "id": "a1", "side": "T" }, { "id": "b1", "side": "CT" }] },
+      { "tick": 2100, "roundNumber": 2, "players": [{ "id": "a1", "side": "T" }, { "id": "b1", "side": "CT" }] },
+      { "tick": 2200, "roundNumber": 2, "players": [{ "id": "a1", "side": "T" }, { "id": "b1", "side": "CT" }] },
+      { "tick": 2950, "roundNumber": 2, "players": [{ "id": "a1", "side": "CT" }, { "id": "b1", "side": "T" }] },
+      { "tick": 2960, "roundNumber": 2, "players": [{ "id": "a1", "side": "CT" }, { "id": "b1", "side": "T" }] },
+      { "tick": 2970, "roundNumber": 2, "players": [{ "id": "a1", "side": "CT" }, { "id": "b1", "side": "T" }] }
+    ],
+    "events": [
+      { "id": "kill-99500-a1", "type": "kill", "tick": 99500, "roundNumber": 99, "metadata": { "attackerId": "z1", "attackerSide": "T", "victimId": "a1", "victimSide": "CT" } }
+    ]
+  },
+  "expected": {
+    "sidesByRound": {
+      "1": { "a1": "T", "b1": "CT" },
+      "2": { "a1": "T", "b1": "CT" }
+    },
+    "teams": [
+      { "key": "A", "playerIds": ["a1"], "startSide": "T", "score": 1 },
+      { "key": "B", "playerIds": ["b1"], "startSide": "CT", "score": 1 }
+    ],
+    "teamSidesByRound": {
+      "1": { "A": "T", "B": "CT" },
+      "2": { "A": "T", "B": "CT" }
+    }
+  }
+}

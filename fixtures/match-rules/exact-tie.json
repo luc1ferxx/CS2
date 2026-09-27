@@ -1,0 +1,34 @@
+{
+  "name": "exact-tie",
+  "description": "Round 2: Ace and Bolt each have one T and one CT frame. Each tie goes to the player's earliest vote by tick (2300: Ace CT, Bolt T), not to the first frame in the array (2500) and not to T, so team A is CT and wins round 2. Round 3: the team vote ties (Ace T for A, Bolt T for B), so the round is unplaced, keeps round 2's sides, and Cinder, first seen there, joins no team.",
+  "replay": {
+    "rounds": [
+      { "roundNumber": 1, "startTick": 1000, "endTick": 1900, "winnerSide": "T" },
+      { "roundNumber": 2, "startTick": 2000, "endTick": 2900, "winnerSide": "CT" },
+      { "roundNumber": 3, "startTick": 3000, "endTick": 3900, "winnerSide": "CT" }
+    ],
+    "frames": [
+      { "tick": 1100, "roundNumber": 1, "players": [{ "id": "a1", "side": "T" }, { "id": "a2", "side": "T" }, { "id": "b1", "side": "CT" }, { "id": "b2", "side": "CT" }] },
+      { "tick": 2500, "roundNumber": 2, "players": [{ "id": "a1", "side": "T" }, { "id": "b1", "side": "CT" }] },
+      { "tick": 2300, "roundNumber": 2, "players": [{ "id": "a1", "side": "CT" }, { "id": "b1", "side": "T" }] },
+      { "tick": 3100, "roundNumber": 3, "players": [{ "id": "a1", "side": "T" }, { "id": "b1", "side": "T" }, { "id": "c1", "side": "CT" }] }
+    ],
+    "events": []
+  },
+  "expected": {
+    "sidesByRound": {
+      "1": { "a1": "T", "a2": "T", "b1": "CT", "b2": "CT" },
+      "2": { "a1": "CT", "b1": "T" },
+      "3": { "a1": "T", "b1": "T", "c1": "CT" }
+    },
+    "teams": [
+      { "key": "A", "playerIds": ["a1", "a2"], "startSide": "T", "score": 3 },
+      { "key": "B", "playerIds": ["b1", "b2"], "startSide": "CT", "score": 0 }
+    ],
+    "teamSidesByRound": {
+      "1": { "A": "T", "B": "CT" },
+      "2": { "A": "CT", "B": "T" },
+      "3": { "A": "CT", "B": "T" }
+    }
+  }
+}

@@ -89,7 +89,7 @@ cd frontend && npm install && npm run dev
 - **上传流程**：先流式写入隔离区，同时计算真实长度和 SHA-256，校验通过后才转为正式文件并创建解析任务。
 - **存储与数据库**：所有文件都经过 `backend/app/services/storage/` 的统一接口读写；PostgreSQL 只存元数据和存储引用。
 - **任务队列**：带租约和数据库对账。worker 崩溃后，任务会自动回到队列。
-- **比分摘要**：解析完成时把双方战队名、开局阵营和最终比分存进 `demos.match_summary`（按玩家帧判定每回合阵营，半场和加时换边都算对），比赛库和复盘页从 `matchSummary` 读取；此前已完成的比赛由 worker 空闲时回填，只读 replay 和源 `.dem`，不改 replay。见 [api_reference_v1](docs/api_reference_v1.md)。
+- **比分摘要**：解析完成时把双方战队名、开局阵营和最终比分存进 `demos.match_summary`（按玩家帧判定每回合阵营，半场和加时换边都算对），比赛库和复盘页从 `matchSummary` 读取；此前已完成、或摘要版本低于当前版本（2）的比赛由 worker 空闲时回填，只读 replay 和源 `.dem`，不改 replay。阵营、队伍和比分的判定规则前后端各实现一份，写在 `match_summary.py` 和 `frontend/lib/match-stats.ts` 的注释里，由共享用例 `fixtures/match-rules/` 固定。见 [api_reference_v1](docs/api_reference_v1.md)。
 
 ```text
 frontend/        app/ 页面 · components/ 界面组件 · lib/ 客户端与纯函数 helper · public/maps/ 雷达图
@@ -99,6 +99,7 @@ render-worker/   独立渲染机的 runner 与适配器（fake / manual / CSDM�
 docs/            接口与配置参考、运维手册、验收记录
 deploy/          生产 Caddyfile 与 env 模板（配合 docker-compose.prod.yml）
 scripts/         verify.sh · rc_check.sh · cloud_preview_smoke.py · Windows 启动脚本 · deploy/ VPS 部署脚本
+fixtures/        前后端共用的测试用例（match-rules/：每回合阵营与比分规则）
 ```
 
 ## 开发与验证
@@ -123,7 +124,7 @@ PYTHONPATH=backend .venv/bin/python -m unittest discover backend/tests
 .venv/bin/python -m mypy               # 范围与遗留问题见 mypy.ini
 ```
 
-- **测试约定**：交互组件和页面状态的改动（加载、轮询、失败、重试）要附带同目录下的 `*.test.tsx`，用 mock 掉的 `@/lib/api` 挂载组件；测试数据放在 `frontend/lib/test-fixtures/review.ts`。
+- **测试约定**：交互组件和页面状态的改动（加载、轮询、失败、重试）要附带同目录下的 `*.test.tsx`，用 mock 掉的 `@/lib/api` 挂载组件；测试数据放在 `frontend/lib/test-fixtures/review.ts`。前后端必须一致的规则用 `fixtures/` 下的共享 JSON 用例固定：`fixtures/match-rules/*.json` 同时由 `backend/tests/test_match_side_rules.py` 和 `frontend/lib/match-side-rules.test.mjs` 逐个运行，改规则时两边和用例一起改。
 - **手动检查**：界面改动还需要在浏览器里走一遍比赛库和复盘页，清单见 [release_candidate_qa_v1](docs/release_candidate_qa_v1.md)。
 - **更多命令**：常用 API 调用（上传、状态轮询、回放、建议、评价、删除、渲染任务）见 [API Reference](docs/api_reference_v1.md) 和 `AGENTS.md`。
 

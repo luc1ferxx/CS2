@@ -1,0 +1,79 @@
+{
+  "name": "side-swap-at-13",
+  "description": "A regulation first half and the start of the second: team A is T in rounds 1-12 and CT from round 13, read from the frames, never from the round number. Round 12 also keeps two half-time break frames on the swapped sides.",
+  "replay": {
+    "rounds": [
+      { "roundNumber": 1, "startTick": 1000, "endTick": 1900, "winnerSide": "T" },
+      { "roundNumber": 2, "startTick": 2000, "endTick": 2900, "winnerSide": "T" },
+      { "roundNumber": 3, "startTick": 3000, "endTick": 3900, "winnerSide": "CT" },
+      { "roundNumber": 4, "startTick": 4000, "endTick": 4900, "winnerSide": "T" },
+      { "roundNumber": 5, "startTick": 5000, "endTick": 5900, "winnerSide": "CT" },
+      { "roundNumber": 6, "startTick": 6000, "endTick": 6900, "winnerSide": "CT" },
+      { "roundNumber": 7, "startTick": 7000, "endTick": 7900, "winnerSide": "T" },
+      { "roundNumber": 8, "startTick": 8000, "endTick": 8900, "winnerSide": "T" },
+      { "roundNumber": 9, "startTick": 9000, "endTick": 9900, "winnerSide": "T" },
+      { "roundNumber": 10, "startTick": 10000, "endTick": 10900, "winnerSide": "CT" },
+      { "roundNumber": 11, "startTick": 11000, "endTick": 11900, "winnerSide": "T" },
+      { "roundNumber": 12, "startTick": 12000, "endTick": 12900, "winnerSide": "CT" },
+      { "roundNumber": 13, "startTick": 13000, "endTick": 13900, "winnerSide": "CT" },
+      { "roundNumber": 14, "startTick": 14000, "endTick": 14900, "winnerSide": "T" }
+    ],
+    "frames": [
+      { "tick": 1100, "roundNumber": 1, "players": [{ "id": "a1", "side": "T" }, { "id": "b1", "side": "CT" }] },
+      { "tick": 2100, "roundNumber": 2, "players": [{ "id": "a1", "side": "T" }, { "id": "b1", "side": "CT" }] },
+      { "tick": 3100, "roundNumber": 3, "players": [{ "id": "a1", "side": "T" }, { "id": "b1", "side": "CT" }] },
+      { "tick": 4100, "roundNumber": 4, "players": [{ "id": "a1", "side": "T" }, { "id": "b1", "side": "CT" }] },
+      { "tick": 5100, "roundNumber": 5, "players": [{ "id": "a1", "side": "T" }, { "id": "b1", "side": "CT" }] },
+      { "tick": 6100, "roundNumber": 6, "players": [{ "id": "a1", "side": "T" }, { "id": "b1", "side": "CT" }] },
+      { "tick": 7100, "roundNumber": 7, "players": [{ "id": "a1", "side": "T" }, { "id": "b1", "side": "CT" }] },
+      { "tick": 8100, "roundNumber": 8, "players": [{ "id": "a1", "side": "T" }, { "id": "b1", "side": "CT" }] },
+      { "tick": 9100, "roundNumber": 9, "players": [{ "id": "a1", "side": "T" }, { "id": "b1", "side": "CT" }] },
+      { "tick": 10100, "roundNumber": 10, "players": [{ "id": "a1", "side": "T" }, { "id": "b1", "side": "CT" }] },
+      { "tick": 11100, "roundNumber": 11, "players": [{ "id": "a1", "side": "T" }, { "id": "b1", "side": "CT" }] },
+      { "tick": 12100, "roundNumber": 12, "players": [{ "id": "a1", "side": "T" }, { "id": "b1", "side": "CT" }] },
+      { "tick": 12950, "roundNumber": 12, "players": [{ "id": "a1", "side": "CT" }, { "id": "b1", "side": "T" }] },
+      { "tick": 12990, "roundNumber": 12, "players": [{ "id": "a1", "side": "CT" }, { "id": "b1", "side": "T" }] },
+      { "tick": 13100, "roundNumber": 13, "players": [{ "id": "a1", "side": "CT" }, { "id": "b1", "side": "T" }] },
+      { "tick": 14100, "roundNumber": 14, "players": [{ "id": "a1", "side": "CT" }, { "id": "b1", "side": "T" }] }
+    ],
+    "events": []
+  },
+  "expected": {
+    "sidesByRound": {
+      "1": { "a1": "T", "b1": "CT" },
+      "2": { "a1": "T", "b1": "CT" },
+      "3": { "a1": "T", "b1": "CT" },
+      "4": { "a1": "T", "b1": "CT" },
+      "5": { "a1": "T", "b1": "CT" },
+      "6": { "a1": "T", "b1": "CT" },
+      "7": { "a1": "T", "b1": "CT" },
+      "8": { "a1": "T", "b1": "CT" },
+      "9": { "a1": "T", "b1": "CT" },
+      "10": { "a1": "T", "b1": "CT" },
+      "11": { "a1": "T", "b1": "CT" },
+      "12": { "a1": "T", "b1": "CT" },
+      "13": { "a1": "CT", "b1": "T" },
+      "14": { "a1": "CT", "b1": "T" }
+    },
+    "teams": [
+      { "key": "A", "playerIds": ["a1"], "startSide": "T", "score": 8 },
+      { "key": "B", "playerIds": ["b1"], "startSide": "CT", "score": 6 }
+    ],
+    "teamSidesByRound": {
+      "1": { "A": "T", "B": "CT" },
+      "2": { "A": "T", "B": "CT" },
+      "3": { "A": "T", "B": "CT" },
+      "4": { "A": "T", "B": "CT" },
+      "5": { "A": "T", "B": "CT" },
+      "6": { "A": "T", "B": "CT" },
+      "7": { "A": "T", "B": "CT" },
+      "8": { "A": "T", "B": "CT" },
+      "9": { "A": "T", "B": "CT" },
+      "10": { "A": "T", "B": "CT" },
+      "11": { "A": "T", "B": "CT" },
+      "12": { "A": "T", "B": "CT" },
+      "13": { "A": "CT", "B": "T" },
+      "14": { "A": "CT", "B": "T" }
+    }
+  }
+}

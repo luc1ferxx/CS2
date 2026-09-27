@@ -231,11 +231,11 @@ Demo list items 和 `GET /demos/{demo_id}/status` 带可选的 `matchSummary`（
     {"key": "B", "name": "Spirit", "startSide": "CT", "score": 11}
   ],
   "rounds": 24,
-  "version": 1
+  "version": 2
 }
 ```
 
-队伍 = 首个有玩家帧的回合里同一阵营的玩家；A 队开局 T，B 队开局 CT。每回合各队的阵营取自该回合 `startTick`–`endTick` 之间的玩家帧（中场休息时回合仍带着已换边的帧，这些不算；没有帧时用该回合的击杀记录，仍无法判定就沿用最近一个已判定回合的阵营），不按回合号推断，所以半场和加时换边都算对；比分 = 该队所在阵营获胜的回合数。`name` 是 demo 里的战队名（`team_clan_name`，匹配赛通常没有 → `null`）。解析完成时写入 `demos.match_summary`；此前已完成的比赛由 worker 空闲时回填（每 30 秒最多 3 场：比分读已存 replay，战队名在 parse 子进程里只读源 `.dem` 的几个 tick；读不到名字就只存比分；从不改 replay）。计算在 `backend/app/services/demo_service/match_summary.py`，与前端 `frontend/lib/match-stats.ts` 的定义保持一致。
+队伍 = 首个有人可判定阵营的回合里同一阵营的玩家；A 队开局 T，B 队开局 CT。每名玩家每回合的阵营取该回合 `startTick`–`endTick` 之间玩家帧里的多数（平票取最早的一帧；该回合没有范围内的帧时用它的全部帧；仍没有就用该回合的击杀记录），队伍阵营由队员投票，无法判定的回合沿用最近一个已判定回合的阵营；不按回合号推断，所以半场和加时换边都算对。完整规则写在两边实现的文件头注释里，并由前后端共用的 `fixtures/match-rules/` 用例固定；比分 = 该队所在阵营获胜的回合数。`name` 是 demo 里的战队名（`team_clan_name`，匹配赛通常没有 → `null`）。解析完成时写入 `demos.match_summary`；此前已完成的比赛（没有摘要，或摘要 `version` 低于 2）由 worker 空闲时回填或重算（每 30 秒最多 3 场：比分读已存 replay，战队名在 parse 子进程里只读源 `.dem` 的几个 tick；读不到名字就只存比分；从不改 replay）。计算在 `backend/app/services/demo_service/match_summary.py`，与前端 `frontend/lib/match-stats.ts` 的定义保持一致。
 
 ### Parser failure taxonomy
 

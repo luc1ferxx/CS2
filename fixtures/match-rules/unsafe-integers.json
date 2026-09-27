@@ -1,0 +1,36 @@
+{
+  "name": "unsafe-integers",
+  "description": "Ticks and round numbers beyond 2^53 - 1 count as missing, because the browser's JSON.parse cannot read them exactly (9007199254740993 arrives as 9007199254740992). Round 2's bounds are both beyond it, so every frame with a tick votes there, but the two frames whose ticks are beyond it do not: only the tick-1500 frame decides round 2. The round-1 kill at tick 9007199254740993 gives c1 no side. Rounds 9007199254740992 and 9007199254740993 are not rounds at all, so their CT wins count for nobody.",
+  "replay": {
+    "rounds": [
+      { "roundNumber": 1, "startTick": 0, "endTick": 900, "winnerSide": "T" },
+      { "roundNumber": 2, "startTick": 9007199254740992, "endTick": 9007199254740992, "winnerSide": "CT" },
+      { "roundNumber": 9007199254740992, "startTick": 3000, "endTick": 3900, "winnerSide": "CT" },
+      { "roundNumber": 9007199254740993, "startTick": 4000, "endTick": 4900, "winnerSide": "CT" }
+    ],
+    "frames": [
+      { "tick": 100, "roundNumber": 1, "players": [{ "id": "a1", "side": "T" }, { "id": "b1", "side": "CT" }] },
+      { "tick": 9007199254740993, "roundNumber": 2, "players": [{ "id": "a1", "side": "CT" }] },
+      { "tick": 9007199254740992, "roundNumber": 2, "players": [{ "id": "b1", "side": "T" }] },
+      { "tick": 1500, "roundNumber": 2, "players": [{ "id": "a1", "side": "T" }, { "id": "b1", "side": "CT" }] },
+      { "tick": 3100, "roundNumber": 9007199254740992, "players": [{ "id": "a1", "side": "T" }, { "id": "b1", "side": "CT" }] }
+    ],
+    "events": [
+      { "id": "kill-late-b1", "type": "kill", "tick": 9007199254740993, "roundNumber": 1, "metadata": { "attackerId": "c1", "attackerSide": "T", "victimId": "b1", "victimSide": "CT" } }
+    ]
+  },
+  "expected": {
+    "sidesByRound": {
+      "1": { "a1": "T", "b1": "CT" },
+      "2": { "a1": "T", "b1": "CT" }
+    },
+    "teams": [
+      { "key": "A", "playerIds": ["a1"], "startSide": "T", "score": 1 },
+      { "key": "B", "playerIds": ["b1"], "startSide": "CT", "score": 1 }
+    ],
+    "teamSidesByRound": {
+      "1": { "A": "T", "B": "CT" },
+      "2": { "A": "T", "B": "CT" }
+    }
+  }
+}

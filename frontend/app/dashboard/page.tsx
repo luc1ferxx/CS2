@@ -96,6 +96,8 @@ const DEFAULT_FILTERS: DemoLibraryFilters = {
 const UPLOAD_BUTTON = "#demo-upload-input-button";
 const QUOTA_RESET_SLACK_MS = 5000;
 const QUOTA_RECHECK_MS = 5 * 60 * 1000;
+const LIBRARY_HIDDEN_POLL_MS = 15_000;
+const TAB_FLAG = /^\((?:可复盘|处理失败)\) /;
 const NOTICE_UNDO = "#library-notice-undo";
 const LIBRARY_LABELS = { mapLabel: mapDisplayName };
 
@@ -238,7 +240,12 @@ function DashboardContent() {
   const uploadBlocked = Boolean(quotaSummary.blockedReason);
   const uploadDisabled = creating || upload !== null || uploadBlocked;
 
-  usePoll(loadDemos, shouldPollLibrary({ loading, creating, activeJobs }) ? 1800 : null);
+  // Slower, not paused, in a hidden tab: the title flag below needs to see a parse finish there.
+  // Browsers may stretch or suspend hidden-tab timers, so the flag is best-effort; the refresh
+  // on return is what always shows the outcome.
+  usePoll(loadDemos, shouldPollLibrary({ loading, creating, activeJobs }) ? 1800 : null, {
+    hiddenDelayMs: LIBRARY_HIDDEN_POLL_MS
+  });
 
   // The in-flight count moves with every finished parse and every new upload.
   useEffect(() => {
@@ -285,22 +292,43 @@ function DashboardContent() {
 
   const noticeDemo =
     notice?.kind === "upload" ? demos.find((demo) => demo.id === notice.demo.id) ?? notice.demo : null;
-  const uploadReady = noticeDemo?.status === "completed";
+  // Read the way the notice reads it: any failure is a failure, else done is ready.
+  const uploadTabFlag = !noticeDemo
+    ? null
+    : demoFailureState(noticeDemo)
+      ? "(处理失败)"
+      : noticeDemo.status === "completed"
+        ? "(可复盘)"
+        : null;
 
-  // A player who switched tabs during a long upload sees it in the tab title.
+  // A player who switched tabs during a long upload sees how it ended in the tab
+  // title until they come back. An ending they watched happen needs no flag.
+  // The flag lasts until the player is back (or the page goes), not as long as
+  // the notice: a later notice while they are away must not take it down.
+  const tabFlagRef = useRef<{ flagged: string; original: string } | null>(null);
   useEffect(() => {
-    if (!uploadReady || !document.hidden) return;
-    const original = document.title;
-    document.title = `(可复盘) ${original}`;
     const restore = () => {
-      if (!document.hidden) document.title = original;
+      const flag = tabFlagRef.current;
+      tabFlagRef.current = null;
+      // A title the page set in the meantime is newer than ours: leave it.
+      if (flag && document.title === flag.flagged) document.title = flag.original;
     };
-    document.addEventListener("visibilitychange", restore);
+    const onVisibilityChange = () => {
+      if (!document.hidden) restore();
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
     return () => {
-      document.removeEventListener("visibilitychange", restore);
-      document.title = original;
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      restore();
     };
-  }, [uploadReady]);
+  }, []);
+  useEffect(() => {
+    if (!uploadTabFlag || !document.hidden) return;
+    const original = document.title.replace(TAB_FLAG, "");
+    const flagged = `${uploadTabFlag} ${original}`;
+    document.title = flagged;
+    tabFlagRef.current = { flagged, original };
+  }, [uploadTabFlag]);
 
   useEffect(() => {
     function closeOutside(event: PointerEvent) {

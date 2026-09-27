@@ -1,14 +1,38 @@
 import type { PlayerSide, ReplayData, ReplayEvent, ReplayFrame, ReplayRound } from "@/types/replay";
 
 /*
+ * Side rule, shared with the backend match summary
+ * (backend/app/services/demo_service/match_summary.py implements it identically). The cases in
+ * fixtures/match-rules/ pin it: lib/match-side-rules.test.mjs and
+ * backend/tests/test_match_side_rules.py both run every one. Change the rule in both files and
+ * in the fixtures together. Input: the replay contract as GET /demos/{id}/replay serves it.
+ * A roundNumber or tick counts only as a finite number of magnitude at most 2^53 - 1: JSON.parse
+ * rounds larger integers, so the backend reads those as missing too. Player ids sort by code point.
+ * 1. Rounds are `rounds` without repeated roundNumbers (the first one wins). Frames and events
+ *    filed under any other round number never decide a side.
+ * 2. A player's side in round R is the majority of that player's T/CT entries in R's in-bounds
+ *    frames: a frame is in bounds when its tick is a finite number within R's
+ *    [startTick, endTick]; when R has no valid bounds, every frame with a tick counts. The
+ *    frames a round keeps through the half-time break already show the swapped sides and fall
+ *    outside it. When nobody has an in-bounds entry in R, all of R's frames vote instead. A tie
+ *    goes to the side of the player's earliest entry (by tick, frames without a tick last,
+ *    then array order).
+ * 3. A player without a frame vote in R takes the side from R's kill events (metadata
+ *    attackerSide / victimSide; by tick, then array order, attacker before victim). No other
+ *    event assigns a side. `players[].side` is not the starting side and is never used.
+ * 4. The start round is the first round in which anybody has a side. Its T players are team A
+ *    (started T, shown left), its CT players team B (started CT). Round by round, team members
+ *    vote for A's side: A members with their side, B members with the opposite one. The
+ *    majority places the round; a tie leaves it unplaced. After a placed round, players without
+ *    a team (a substitute) join the team playing their side there. An unplaced round takes the
+ *    side of the nearest earlier placed round, else the nearest later one.
+ * 5. Team score = rounds whose `winnerSide` equals that team's side in that round.
+ *
  * Match statistics derived from a stored replay. Definitions (kept in one place):
- * - A player's side in a round comes from that round's frames (teams swap at half time and
- *   in overtime); kill metadata sides, then event sides, are the fallback. `players[].side`
- *   is not the starting side and is never used for it.
- * - Team A = the players on T in the first round with frames (shown left), team B = the CT
- *   players. A player first seen later joins the team playing their side in that round.
- * - Team score = rounds whose `winnerSide` equals that team's side in that round. Halves:
- *   rounds 1-12, 13-24, overtime 25+ (a half's side is null when it changes within it).
+ * - Sides, teams and scores follow the side rule above. Halves: rounds 1-12, 13-24, overtime
+ *   25+ (a half's side is null when it changes within it).
+ * - A round was played by the players in the frames that decided its sides (all of them in a
+ *   round without frames: those a kill gave a side).
  * - Kills and damage belong to the round their tick falls in. The parser files what happens
  *   between one round's endTick and the next startTick (exit kills, a bomb going off after the
  *   round) under the NEXT round; those count for the round that just ended, with its sides, as
@@ -89,6 +113,12 @@ export interface OpeningDuel {
   opponentName: string | null;
 }
 
+export interface MatchSideRules {
+  sidesByRound: Record<string, Record<string, PlayerSide>>;
+  teams: { key: TeamKey; playerIds: string[]; startSide: PlayerSide; score: number }[];
+  teamSidesByRound: Record<string, Record<TeamKey, PlayerSide | null>>;
+}
+
 export interface UtilityCounts {
   smoke: number;
   flash: number;
@@ -104,6 +134,7 @@ export const ROUND_END_REASON_LABELS: Record<RoundEndReason, string> = {
   other: "其他"
 };
 
+const TEAM_KEYS = ["A", "B"] as const;
 const REGULATION_HALF_ROUNDS = 12;
 const TRADE_WINDOW_SECONDS = 5;
 const FULL_HEALTH = 100;
@@ -137,8 +168,8 @@ interface MatchIndex {
   names: Map<string, string>;
   playerOrder: string[];
   teamOf: Map<string, TeamKey>;
+  // Team A's side in every round; empty when nobody has a side anywhere (then no teams).
   teamSideByRound: Map<number, PlayerSide>;
-  startSideA: PlayerSide | null;
   kills: KillRecord[];
   killsByRound: Map<number, KillRecord[]>;
   openingByRound: Map<number, KillRecord>;
@@ -179,10 +210,9 @@ export function matchTeams(
   teamNames?: readonly { key: string; name?: string | null }[] | null
 ): MatchTeam[] {
   const index = matchIndex(replay);
-  if (!index.startSideA) return [];
-  const startSideA = index.startSideA;
-  return (["A", "B"] as const).map((key) => {
-    const startSide = key === "A" ? startSideA : opposite(startSideA);
+  if (index.teamSideByRound.size === 0) return [];
+  return TEAM_KEYS.map((key) => {
+    const startSide: PlayerSide = key === "A" ? "T" : "CT";
     const sideIn = (roundNumber: number) => teamSide(index, key, roundNumber);
     const halves: MatchHalf[] = [];
     let score = 0;
@@ -213,6 +243,29 @@ export function sideOfPlayerInRound(replay: ReplayData, playerId: string, roundN
 
 export function teamKeyOfPlayer(replay: ReplayData, playerId: string): TeamKey | null {
   return matchIndex(replay).teamOf.get(playerId) ?? null;
+}
+
+/** The side rule's result in the shape of a fixtures/match-rules case's `expected`. */
+export function matchSideRules(replay: ReplayData): MatchSideRules {
+  const index = matchIndex(replay);
+  const sidesByRound: MatchSideRules["sidesByRound"] = {};
+  const teamSidesByRound: MatchSideRules["teamSidesByRound"] = {};
+  for (const round of index.rounds) {
+    const sides = [...(index.sidesByRound.get(round.roundNumber) ?? [])]
+      .sort(([left], [right]) => byCodePoint(left, right));
+    sidesByRound[String(round.roundNumber)] = Object.fromEntries(sides);
+    teamSidesByRound[String(round.roundNumber)] = {
+      A: teamSide(index, "A", round.roundNumber),
+      B: teamSide(index, "B", round.roundNumber)
+    };
+  }
+  const teams = matchTeams(replay).map((team) => ({
+    key: team.key,
+    playerIds: [...team.playerIds].sort(byCodePoint),
+    startSide: team.startSide,
+    score: team.score
+  }));
+  return { sidesByRound, teams, teamSidesByRound };
 }
 
 export function playerMatchStats(replay: ReplayData): PlayerMatchStats[] {
@@ -381,9 +434,16 @@ function matchIndex(replay: ReplayData): MatchIndex {
 }
 
 function buildIndex(replay: ReplayData, frames: ReplayFrame[]): MatchIndex {
-  const rounds = (Array.isArray(replay?.rounds) ? replay.rounds : [])
-    .filter((round) => round && Number.isFinite(round.roundNumber))
-    .sort((left, right) => left.roundNumber - right.roundNumber);
+  // Rule step 1: one round per roundNumber, the first one wins (sort is stable).
+  const rounds: ReplayRound[] = [];
+  const seenRounds = new Set<number>();
+  for (const round of (Array.isArray(replay?.rounds) ? replay.rounds : [])
+    .filter((item) => item && isRuleNumber(item.roundNumber))
+    .sort((left, right) => left.roundNumber - right.roundNumber)) {
+    if (seenRounds.has(round.roundNumber)) continue;
+    seenRounds.add(round.roundNumber);
+    rounds.push(round);
+  }
   const events = (Array.isArray(replay?.events) ? replay.events : []).filter((event) => event && typeof event === "object");
   const names = new Map<string, string>();
   const playerOrder: string[] = [];
@@ -398,48 +458,52 @@ function buildIndex(replay: ReplayData, frames: ReplayFrame[]): MatchIndex {
   };
   for (const player of Array.isArray(replay?.players) ? replay.players : []) addPlayer(player?.id, player?.name);
 
-  // One pass over the frame samples: frames per round, and each player's side per round. Only
-  // frames inside the round's [startTick, endTick] decide sides and who played: a round keeps
-  // frames through the half-time break that already show the swapped sides. A round whose
-  // frames all fall outside its bounds uses all of them (the backend summary does the same).
-  const bounds = new Map<number, [number, number]>();
+  // Rule step 2, in one pass over the frame samples: frames per round (all of them, for
+  // positions) and each player's side votes per round, in bounds and everywhere.
+  const bounds = new Map<number, [number, number] | null>();
   for (const round of rounds) {
-    if (Number.isFinite(round.startTick) && Number.isFinite(round.endTick) && round.endTick >= round.startTick) {
-      if (!bounds.has(round.roundNumber)) bounds.set(round.roundNumber, [round.startTick, round.endTick]);
-    }
+    const valid = isRuleNumber(round.startTick) && isRuleNumber(round.endTick) && round.endTick >= round.startTick;
+    bounds.set(round.roundNumber, valid ? [round.startTick, round.endTick] : null);
   }
   const framesByRound = new Map<number, ReplayFrame[]>();
-  const insideSides = new Map<number, Map<string, PlayerSide>>();
+  const insideVotes = new Map<number, Map<string, SideTally>>();
   const insidePlayed = new Map<number, Set<string>>();
-  const outsideSides = new Map<number, Map<string, PlayerSide>>();
-  const outsidePlayed = new Map<number, Set<string>>();
-  for (const frame of frames) {
-    if (!frame || !Number.isFinite(frame.roundNumber)) continue;
-    let roundFrames = framesByRound.get(frame.roundNumber);
-    if (!roundFrames) {
-      roundFrames = [];
-      framesByRound.set(frame.roundNumber, roundFrames);
-    }
-    roundFrames.push(frame);
+  const allVotes = new Map<number, Map<string, SideTally>>();
+  const allPlayed = new Map<number, Set<string>>();
+  frames.forEach((frame, frameIndex) => {
+    if (!frame || !Number.isFinite(frame.roundNumber)) return;
+    mapFor(framesByRound, frame.roundNumber, () => [] as ReplayFrame[]).push(frame);
+    const players = Array.isArray(frame.players) ? frame.players : [];
+    for (const player of players) if (player) addPlayer(player.id, player.name);
+    if (!bounds.has(frame.roundNumber)) return;
     const limits = bounds.get(frame.roundNumber);
-    const inside = !limits || (frame.tick >= limits[0] && frame.tick <= limits[1]);
-    const sides = mapFor(inside ? insideSides : outsideSides, frame.roundNumber, () => new Map<string, PlayerSide>());
-    const played = mapFor(inside ? insidePlayed : outsidePlayed, frame.roundNumber, () => new Set<string>());
-    for (const player of Array.isArray(frame.players) ? frame.players : []) {
-      if (!player || typeof player.id !== "string") continue;
-      if (!sides.has(player.id) && isSide(player.side)) sides.set(player.id, player.side);
-      if (!played.has(player.id)) {
-        played.add(player.id);
-        addPlayer(player.id, player.name);
-      }
-    }
-  }
+    const ticked = isRuleNumber(frame.tick);
+    const inside = ticked && (!limits || (frame.tick >= limits[0] && frame.tick <= limits[1]));
+    const allRound = mapFor(allVotes, frame.roundNumber, () => new Map<string, SideTally>());
+    const allSeen = mapFor(allPlayed, frame.roundNumber, () => new Set<string>());
+    const insideRound = inside ? mapFor(insideVotes, frame.roundNumber, () => new Map<string, SideTally>()) : null;
+    const insideSeen = inside ? mapFor(insidePlayed, frame.roundNumber, () => new Set<string>()) : null;
+    players.forEach((player, position) => {
+      if (!player || typeof player.id !== "string" || !player.id) return;
+      allSeen.add(player.id);
+      insideSeen?.add(player.id);
+      if (!isSide(player.side)) return;
+      const order: VoteOrder = [ticked ? 0 : 1, ticked ? frame.tick : 0, frameIndex, position];
+      vote(allRound, player.id, player.side, order);
+      if (insideRound) vote(insideRound, player.id, player.side, order);
+    });
+  });
   const sidesByRound = new Map<number, Map<string, PlayerSide>>();
   const playedByRound = new Map<number, Set<string>>();
-  for (const roundNumber of framesByRound.keys()) {
-    const useInside = (insideSides.get(roundNumber)?.size ?? 0) > 0;
-    sidesByRound.set(roundNumber, (useInside ? insideSides : outsideSides).get(roundNumber) ?? new Map());
-    playedByRound.set(roundNumber, (useInside ? insidePlayed : outsidePlayed).get(roundNumber) ?? new Set());
+  for (const round of rounds) {
+    const roundNumber = round.roundNumber;
+    // Nobody voted in bounds: all of the round's frames vote instead.
+    const useInside = (insideVotes.get(roundNumber)?.size ?? 0) > 0;
+    const tallies = (useInside ? insideVotes : allVotes).get(roundNumber) ?? new Map<string, SideTally>();
+    sidesByRound.set(roundNumber, new Map([...tallies].map(([playerId, tally]) => [playerId, tallySide(tally)])));
+    if (framesByRound.has(roundNumber)) {
+      playedByRound.set(roundNumber, (useInside ? insidePlayed : allPlayed).get(roundNumber) ?? new Set());
+    }
   }
   for (const roundFrames of framesByRound.values()) {
     if (!roundFrames.every((frame, position) => position === 0 || roundFrames[position - 1].tick <= frame.tick)) {
@@ -447,21 +511,27 @@ function buildIndex(replay: ReplayData, frames: ReplayFrame[]): MatchIndex {
     }
   }
 
-  // Kill metadata sides, then event sides, fill rounds the frames do not cover.
-  for (const event of events) {
-    if (!Number.isFinite(event.roundNumber)) continue;
-    const metadata = metadataOf(event);
-    const sides = mapFor(sidesByRound, event.roundNumber, () => new Map<string, PlayerSide>());
-    const fill = (playerId: unknown, side: unknown) => {
+  // Rule step 3: kill events, by tick then array order, give a side to players without a
+  // frame vote. No other event assigns one.
+  const killEvents = events
+    .map((event, position) => ({ event, position }))
+    .filter(({ event }) => event.type === "kill" && isRuleNumber(event.tick) && isRuleNumber(event.roundNumber))
+    .sort((left, right) => left.event.tick - right.event.tick || left.position - right.position);
+  for (const { event } of killEvents) {
+    const sides = sidesByRound.get(event.roundNumber);
+    if (!sides || !event.metadata || typeof event.metadata !== "object") continue;
+    const metadata = event.metadata;
+    for (const [idKey, sideKey] of [["attackerId", "attackerSide"], ["victimId", "victimSide"]] as const) {
+      const playerId = metadata[idKey];
+      const side = metadata[sideKey];
       if (typeof playerId === "string" && playerId && !sides.has(playerId) && isSide(side)) sides.set(playerId, side);
-    };
-    if (event.type === "kill") {
-      fill(metadata.attackerId, metadata.attackerSide);
-      fill(metadata.victimId, metadata.victimSide);
-      addPlayer(metadata.attackerId, metadata.attackerName);
-      addPlayer(metadata.victimId, metadata.victimName);
     }
-    fill(event.playerId, event.side);
+  }
+  for (const event of events) {
+    if (event.type !== "kill" || !Number.isFinite(event.roundNumber)) continue;
+    const metadata = metadataOf(event);
+    addPlayer(metadata.attackerId, metadata.attackerName);
+    addPlayer(metadata.victimId, metadata.victimName);
   }
   // Rounds without frames: whoever has a known side there played it.
   for (const round of rounds) {
@@ -470,7 +540,7 @@ function buildIndex(replay: ReplayData, frames: ReplayFrame[]): MatchIndex {
     if (sides && sides.size > 0) playedByRound.set(round.roundNumber, new Set(sides.keys()));
   }
 
-  const { teamOf, teamSideByRound, startSideA } = assignTeams(rounds, framesByRound, sidesByRound);
+  const { teamOf, teamSideByRound } = assignTeams(rounds.map((round) => round.roundNumber), sidesByRound);
   const sideIn = (playerId: string | null, roundNumber: number): PlayerSide | null => {
     if (!playerId) return null;
     const known = sidesByRound.get(roundNumber)?.get(playerId);
@@ -549,7 +619,7 @@ function buildIndex(replay: ReplayData, frames: ReplayFrame[]): MatchIndex {
   }
 
   return {
-    rounds, framesByRound, sidesByRound, playedByRound, names, playerOrder, teamOf, teamSideByRound, startSideA,
+    rounds, framesByRound, sidesByRound, playedByRound, names, playerOrder, teamOf, teamSideByRound,
     kills, killsByRound, openingByRound, damageByPlayer, events
   };
 }
@@ -591,58 +661,47 @@ function eventFiling(rounds: ReplayRound[]) {
   };
 }
 
-function assignTeams(
-  rounds: ReplayRound[],
-  framesByRound: Map<number, ReplayFrame[]>,
-  sidesByRound: Map<number, Map<string, PlayerSide>>
-) {
+// Rule step 4: team membership and team A's side in every round.
+function assignTeams(roundNumbers: number[], sidesByRound: Map<number, Map<string, PlayerSide>>) {
   const teamOf = new Map<string, TeamKey>();
   const teamSideByRound = new Map<number, PlayerSide>();
-  const roundNumbers = [...new Set([...rounds.map((round) => round.roundNumber), ...sidesByRound.keys()])]
-    .sort((left, right) => left - right);
-  // Frames decide the teams; kill sides only when there are no frames at all.
-  const firstRound = roundNumbers.find((roundNumber) => framesByRound.has(roundNumber) && (sidesByRound.get(roundNumber)?.size ?? 0) > 0)
-    ?? roundNumbers.find((roundNumber) => (sidesByRound.get(roundNumber)?.size ?? 0) > 0);
-  if (firstRound === undefined) return { teamOf, teamSideByRound, startSideA: null };
+  const start = roundNumbers.find((roundNumber) => (sidesByRound.get(roundNumber)?.size ?? 0) > 0);
+  if (start === undefined) return { teamOf, teamSideByRound };
+  for (const [playerId, side] of sidesByRound.get(start) ?? []) teamOf.set(playerId, side === "T" ? "A" : "B");
 
-  for (const [playerId, side] of sidesByRound.get(firstRound) ?? []) teamOf.set(playerId, side === "T" ? "A" : "B");
-  const startSideA: PlayerSide = [...teamOf.values()].includes("A") ? "T" : "CT";
-  if (startSideA === "CT") {
-    // Nobody was on T in the first round: the only team there is B (started CT).
-    for (const playerId of teamOf.keys()) teamOf.set(playerId, "B");
-  }
-
+  const placed = new Map<number, PlayerSide>();
   for (const roundNumber of roundNumbers) {
-    const sides = sidesByRound.get(roundNumber);
+    const sides = sidesByRound.get(roundNumber) ?? new Map<string, PlayerSide>();
     let votes = 0;
-    for (const [playerId, side] of sides ?? []) {
+    for (const [playerId, side] of sides) {
       const team = teamOf.get(playerId);
       if (!team) continue;
       const sideA = team === "A" ? side : opposite(side);
       votes += sideA === "T" ? 1 : -1;
     }
-    if (votes !== 0) teamSideByRound.set(roundNumber, votes > 0 ? "T" : "CT");
-    const sideA = teamSideByRound.get(roundNumber);
-    if (!sideA) continue;
-    // A player first seen now joins the team that plays their side this round.
-    for (const [playerId, side] of sides ?? []) {
+    if (votes === 0) continue;
+    const sideA: PlayerSide = votes > 0 ? "T" : "CT";
+    placed.set(roundNumber, sideA);
+    // A player first seen now (a substitute) joins the team that plays their side this round.
+    for (const [playerId, side] of sides) {
       if (!teamOf.has(playerId)) teamOf.set(playerId, side === sideA ? "A" : "B");
     }
   }
-  // A round nobody on either team was seen in keeps the nearest earlier (else later) side.
+  // An unplaced round keeps the nearest earlier placed round's side, else the nearest later one.
   let previous: PlayerSide | null = null;
-  const missing: number[] = [];
+  const unplaced: number[] = [];
   for (const roundNumber of roundNumbers) {
-    const known = teamSideByRound.get(roundNumber);
-    if (known) {
-      for (const gap of missing.splice(0)) teamSideByRound.set(gap, previous ?? known);
-      previous = known;
-    } else {
-      missing.push(roundNumber);
+    const sideA = placed.get(roundNumber);
+    if (!sideA) {
+      unplaced.push(roundNumber);
+      continue;
     }
+    for (const gap of unplaced.splice(0)) teamSideByRound.set(gap, previous ?? sideA);
+    teamSideByRound.set(roundNumber, sideA);
+    previous = sideA;
   }
-  for (const gap of missing) if (previous) teamSideByRound.set(gap, previous);
-  return { teamOf, teamSideByRound, startSideA };
+  for (const gap of unplaced) if (previous) teamSideByRound.set(gap, previous);
+  return { teamOf, teamSideByRound };
 }
 
 function teamSide(index: MatchIndex, key: TeamKey, roundNumber: number): PlayerSide | null {
@@ -680,6 +739,42 @@ function framePositionAt(frames: ReplayFrame[], playerId: string, tick: number) 
   return null;
 }
 
+// [frame without a tick, tick, frame index, entry index]: the order of a frame vote.
+type VoteOrder = [number, number, number, number];
+
+interface SideTally {
+  T: number;
+  CT: number;
+  firstSide: PlayerSide;
+  firstOrder: VoteOrder;
+}
+
+function vote(tallies: Map<string, SideTally>, playerId: string, side: PlayerSide, order: VoteOrder) {
+  const tally = tallies.get(playerId);
+  if (!tally) {
+    tallies.set(playerId, { T: side === "T" ? 1 : 0, CT: side === "CT" ? 1 : 0, firstSide: side, firstOrder: order });
+    return;
+  }
+  tally[side] += 1;
+  if (compareOrder(order, tally.firstOrder) < 0) {
+    tally.firstSide = side;
+    tally.firstOrder = order;
+  }
+}
+
+function compareOrder(left: VoteOrder, right: VoteOrder): number {
+  for (let position = 0; position < left.length; position += 1) {
+    if (left[position] !== right[position]) return left[position] < right[position] ? -1 : 1;
+  }
+  return 0;
+}
+
+// Majority; a tie goes to the side of the earliest vote.
+function tallySide(tally: SideTally): PlayerSide {
+  if (tally.T !== tally.CT) return tally.T > tally.CT ? "T" : "CT";
+  return tally.firstSide;
+}
+
 function mapFor<K, V>(map: Map<K, V>, key: K, create: () => V): V {
   let value = map.get(key);
   if (value === undefined) {
@@ -703,6 +798,25 @@ function opposite(side: PlayerSide): PlayerSide {
 
 function stringOrNull(value: unknown): string | null {
   return typeof value === "string" && value ? value : null;
+}
+
+// A number the side rule counts: finite, and exact after JSON.parse (see the rule above).
+function isRuleNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && Math.abs(value) <= Number.MAX_SAFE_INTEGER;
+}
+
+// Code point order, as the backend's sorted() has it; `<` compares UTF-16 code units.
+function byCodePoint(left: string, right: string): number {
+  let i = 0;
+  let j = 0;
+  while (i < left.length && j < right.length) {
+    const a = left.codePointAt(i) ?? 0;
+    const b = right.codePointAt(j) ?? 0;
+    if (a !== b) return a - b;
+    i += a > 0xffff ? 2 : 1;
+    j += b > 0xffff ? 2 : 1;
+  }
+  return left.length - i - (right.length - j);
 }
 
 function finiteOrNull(value: unknown): number | null {

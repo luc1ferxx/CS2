@@ -1,16 +1,20 @@
-"""Backstop that gives demos completed before match summaries existed their summary.
+"""Backstop that gives completed demos a current match summary.
 
 A new parse stores its summary at completion (ParseLifecycle.complete_parse_job).
-Older completed demos have none, so the library would show "—" for them forever.
-This pass runs off the worker's idle tick, a few demos at a time: the score comes
-from the stored replay blob (read, never written) and the clan names from the
-stored source demo through a names-only read in the parse child process, under
-the same kind of wall-clock ceiling as a real parse. Names are optional; when
-the source is gone or the read fails, the summary is stored without them.
+Demos completed before match summaries existed have none, so the library would
+show "—" for them forever, and demos whose summary predates the current
+MATCH_SUMMARY_VERSION (version 1: before the side rule shared with the review
+page) hold a score computed by older rules. This pass recomputes both off the
+worker's idle tick, a few demos at a time: the score comes from the stored
+replay blob (read, never written) and the clan names from the stored source demo
+through a names-only read in the parse child process, under the same kind of
+wall-clock ceiling as a real parse. Names are optional; when the source is gone
+or the read fails, the summary is stored without them. An older summary stays
+visible in the library until its row is recomputed.
 
-Idempotent: a demo that has a summary is never selected again. A demo that
-cannot get one (replay blob missing, no player frames) is remembered for the life
-of this process so it does not block the demos behind it.
+Idempotent: a demo with a current-version summary is never selected again. A
+demo that cannot get one (replay blob missing, nobody with a side) is remembered
+for the life of this process so it does not block the demos behind it.
 """
 
 from __future__ import annotations
@@ -115,7 +119,7 @@ def backfill_match_summaries(
     read_team_names: Callable[[Path, list[int]], Mapping[str, Any]] | None = None,
     limit: int = MATCH_SUMMARY_BACKFILL_BATCH,
 ) -> list[str]:
-    """One bounded pass; returns the ids of the demos that got a summary.
+    """One bounded pass; returns the ids of the demos that got a (current) summary.
 
     Rate-limited like the other idle-tick backstops; `force` skips the limiter
     for tests. `on_tick` keeps the worker's lease and heartbeat fresh while a

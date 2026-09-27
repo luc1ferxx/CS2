@@ -1,0 +1,24 @@
+{
+  "name": "no-sides-anywhere",
+  "description": "Nobody has a valid side in any frame and there are no kills: there is no start round, so no teams, no team sides, and no stored summary.",
+  "replay": {
+    "rounds": [
+      { "roundNumber": 1, "startTick": 1000, "endTick": 1900, "winnerSide": "T" }
+    ],
+    "frames": [
+      { "tick": 1100, "roundNumber": 1, "players": [{ "id": "a1", "side": null }, { "id": "b1", "side": "SPECTATOR" }] }
+    ],
+    "events": [
+      { "id": "smoke-1200", "type": "smoke", "tick": 1200, "roundNumber": 1, "playerId": "a1", "side": "T", "metadata": {} }
+    ]
+  },
+  "expected": {
+    "sidesByRound": {
+      "1": {}
+    },
+    "teams": [],
+    "teamSidesByRound": {
+      "1": { "A": null, "B": null }
+    }
+  }
+}

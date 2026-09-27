@@ -91,6 +91,8 @@ For every change, run the relevant verification commands above. Backend changes 
 
 Backend tests that delete rows must enable SQLite foreign-key enforcement (`PRAGMA foreign_keys=ON` through an engine connect event), so they fail where Postgres would; the deletion test matrix is in `docs/data_deletion_v1.md`.
 
+`fixtures/match-rules/*.json` pin the per-round side/team/score rule that `frontend/lib/match-stats.ts` and `backend/app/services/demo_service/match_summary.py` implement identically (rule in both header comments): `cd frontend && node lib/match-side-rules.test.mjs` and `PYTHONPATH=backend python3 -m unittest backend.tests.test_match_side_rules` run every case from a full checkout; change both files and the cases together, and bump `MATCH_SUMMARY_VERSION` so the worker backfill recomputes stored summaries.
+
 For release-candidate QA work, keep `docs/release_candidate_qa_v1.md`, `scripts/rc_check.sh`, README, deployment readiness, cloud preview, and sample fixture docs aligned. `rc_check.sh` is only the non-browser gate; manual browser smoke remains required for RC sign-off. For map config/radar changes, run `PYTHONPATH=backend python3 -m unittest backend.tests.test_map_config` and `cd frontend && node lib/map-config.test.mjs`.
 
 ## Product Direction For Future Codex Work

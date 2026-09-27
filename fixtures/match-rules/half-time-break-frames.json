@@ -1,0 +1,32 @@
+{
+  "name": "half-time-break-frames",
+  "description": "Round 12 keeps three frames after its endTick (the half-time break) that already show the swapped sides, and only one inside it. Only the in-bounds frame votes, so team A is still T in round 12 and CT from round 13.",
+  "replay": {
+    "rounds": [
+      { "roundNumber": 12, "startTick": 12000, "endTick": 12900, "winnerSide": "T" },
+      { "roundNumber": 13, "startTick": 13000, "endTick": 13900, "winnerSide": "CT" }
+    ],
+    "frames": [
+      { "tick": 12100, "roundNumber": 12, "players": [{ "id": "a1", "side": "T" }, { "id": "b1", "side": "CT" }] },
+      { "tick": 12950, "roundNumber": 12, "players": [{ "id": "a1", "side": "CT" }, { "id": "b1", "side": "T" }] },
+      { "tick": 12960, "roundNumber": 12, "players": [{ "id": "a1", "side": "CT" }, { "id": "b1", "side": "T" }] },
+      { "tick": 12970, "roundNumber": 12, "players": [{ "id": "a1", "side": "CT" }, { "id": "b1", "side": "T" }] },
+      { "tick": 13100, "roundNumber": 13, "players": [{ "id": "a1", "side": "CT" }, { "id": "b1", "side": "T" }] }
+    ],
+    "events": []
+  },
+  "expected": {
+    "sidesByRound": {
+      "12": { "a1": "T", "b1": "CT" },
+      "13": { "a1": "CT", "b1": "T" }
+    },
+    "teams": [
+      { "key": "A", "playerIds": ["a1"], "startSide": "T", "score": 2 },
+      { "key": "B", "playerIds": ["b1"], "startSide": "CT", "score": 0 }
+    ],
+    "teamSidesByRound": {
+      "12": { "A": "T", "B": "CT" },
+      "13": { "A": "CT", "B": "T" }
+    }
+  }
+}

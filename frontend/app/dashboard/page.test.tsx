@@ -8,6 +8,7 @@ import * as api from "@/lib/api";
 import type { AuthCapabilities } from "@/lib/auth";
 import { leaveLibraryNotice } from "@/lib/library-notice";
 import { demoSummary, ingestion } from "@/lib/test-fixtures/review";
+import type { DemoSummary } from "@/types/demo";
 
 vi.mock("@/components/auth/AuthProvider", () => ({ useAuth: vi.fn() }));
 
@@ -77,6 +78,41 @@ async function flush() {
   });
 }
 
+const LIBRARY_TITLE = "我的比赛 - CS2 复盘";
+
+function setHidden(hidden: boolean) {
+  Object.defineProperty(document, "hidden", { configurable: true, get: () => hidden });
+  document.dispatchEvent(new Event("visibilitychange"));
+}
+
+// Uploads ranked.dem into an empty library (fake timers on) and leaves it queued,
+// with every later library load answering with the demo as `ending` makes it.
+async function uploadAndWatch(ending: Partial<DemoSummary>) {
+  const uploaded = demoSummary({
+    id: "demo-7",
+    name: "ranked.dem",
+    original_filename: "ranked.dem",
+    status: "queued",
+    completed_at: null,
+    ingestion: ingestion({ phase: "uploaded", active: true, jobStatus: "queued" })
+  });
+  vi.mocked(api.listDemos)
+    .mockResolvedValueOnce([])
+    .mockResolvedValueOnce([uploaded])
+    .mockResolvedValue([{ ...uploaded, ...ending }]);
+  vi.mocked(api.uploadDemoFile).mockResolvedValueOnce(uploaded);
+
+  const view = render(<DashboardPage />);
+  await flush();
+  fireEvent.change(screen.getByLabelText("选择 .dem 比赛文件"), {
+    target: { files: [new File(["demo"], "ranked.dem")] }
+  });
+  await flush();
+  expect(screen.getByText("「ranked.dem」已上传，正在排队处理，完成后会在这里提示。")).toBeInTheDocument();
+  expect(api.listDemos).toHaveBeenCalledTimes(2);
+  return view;
+}
+
 function rowFor(name: string) {
   const link = screen.getByRole("link", { name });
   const row = link.closest("article");
@@ -93,6 +129,8 @@ describe("DashboardPage", () => {
 
   afterEach(() => {
     vi.useRealTimers();
+    Reflect.deleteProperty(document, "hidden");
+    document.title = "";
   });
 
   it("lists demos with their processing state and the right entry action", async () => {
@@ -743,6 +781,179 @@ describe("DashboardPage", () => {
 
     fireEvent.click(within(region).getByRole("button", { name: "关闭提示" }));
     expect(region).toBeEmptyDOMElement();
+  });
+
+  it.each([
+    ["ready to review", "(可复盘)", { status: "completed" as const, round_count: 24, ingestion: ingestion() }],
+    [
+      "failed",
+      "(处理失败)",
+      { status: "failed" as const, completed_at: null, ingestion: ingestion({ phase: "failed", jobStatus: "failed" }) }
+    ]
+  ])("flags the tab title when an upload ends %s while the tab is hidden, until the player is back", async (_, flag, ending) => {
+    vi.useFakeTimers();
+    document.title = LIBRARY_TITLE;
+    await uploadAndWatch(ending);
+
+    await act(async () => setHidden(true));
+    // The library keeps polling in the hidden tab, just more slowly.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1800 * 2);
+    });
+    expect(api.listDemos).toHaveBeenCalledTimes(2);
+    expect(document.title).toBe(LIBRARY_TITLE);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(15_000 - 1800 * 2);
+    });
+    expect(api.listDemos).toHaveBeenCalledTimes(3);
+    expect(document.title).toBe(`${flag} ${LIBRARY_TITLE}`);
+
+    await act(async () => setHidden(false));
+    expect(document.title).toBe(LIBRARY_TITLE);
+    // Seen once is enough: leaving again does not bring the flag back.
+    await act(async () => setHidden(true));
+    expect(document.title).toBe(LIBRARY_TITLE);
+  });
+
+  it("leaves the tab title alone when the upload ends while the player is watching", async () => {
+    vi.useFakeTimers();
+    document.title = LIBRARY_TITLE;
+    await uploadAndWatch({ status: "completed", round_count: 24, ingestion: ingestion() });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1800);
+    });
+    expect(screen.getByText("「ranked.dem」可以复盘了。")).toBeInTheDocument();
+    expect(document.title).toBe(LIBRARY_TITLE);
+
+    await act(async () => setHidden(true));
+    expect(document.title).toBe(LIBRARY_TITLE);
+    await act(async () => setHidden(false));
+    expect(document.title).toBe(LIBRARY_TITLE);
+  });
+
+  it("never stacks the tab flag and keeps a title the page set while it was up", async () => {
+    vi.useFakeTimers();
+    document.title = `(可复盘) ${LIBRARY_TITLE}`;
+    const { unmount } = await uploadAndWatch({ status: "completed", round_count: 24, ingestion: ingestion() });
+
+    await act(async () => setHidden(true));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(15_000);
+    });
+    expect(document.title).toBe(`(可复盘) ${LIBRARY_TITLE}`);
+
+    document.title = "Newer title - CS2 复盘";
+    await act(async () => setHidden(false));
+    expect(document.title).toBe("Newer title - CS2 复盘");
+    unmount();
+    expect(document.title).toBe("Newer title - CS2 复盘");
+  });
+
+  it("keeps the tab flag up while the player is away when the in-flight-limit wait ends with it", async () => {
+    vi.useFakeTimers();
+    document.title = LIBRARY_TITLE;
+    const queued = demoSummary({
+      id: "demo-7",
+      name: "ranked.dem",
+      original_filename: "ranked.dem",
+      status: "queued",
+      completed_at: null,
+      ingestion: ingestion({ phase: "uploaded", active: true, jobStatus: "queued" })
+    });
+    // Initial load, the reload after ranked.dem lands, the reload after next.dem is refused.
+    vi.mocked(api.listDemos)
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([queued])
+      .mockResolvedValueOnce([queued])
+      .mockResolvedValue([{ ...queued, status: "completed", round_count: 24, ingestion: ingestion() }]);
+    vi.mocked(api.uploadDemoFile)
+      .mockResolvedValueOnce(queued)
+      .mockRejectedValueOnce(new api.ApiError(429, "Too many demos are processing.", "active_parse_limit", 60));
+
+    const { unmount } = render(<DashboardPage />);
+    await flush();
+    fireEvent.change(screen.getByLabelText("选择 .dem 比赛文件"), {
+      target: { files: [new File(["demo"], "ranked.dem")] }
+    });
+    await flush();
+    fireEvent.change(screen.getByLabelText("选择 .dem 比赛文件"), {
+      target: { files: [new File(["demo"], "next.dem")] }
+    });
+    await flush();
+    expect(screen.getByRole("alert")).toHaveTextContent(ACTIVE_LIMIT);
+
+    await act(async () => setHidden(true));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(15_000);
+    });
+    // The wait's own line replaces the upload notice, but the player is still away.
+    expect(screen.getByText("当前比赛已处理完成，可以继续上传。")).toBeInTheDocument();
+    expect(document.title).toBe(`(可复盘) ${LIBRARY_TITLE}`);
+
+    await act(async () => setHidden(false));
+    expect(document.title).toBe(LIBRARY_TITLE);
+    unmount();
+    expect(document.title).toBe(LIBRARY_TITLE);
+  });
+
+  it("keeps the tab flag up when a second upload lands while the player is away", async () => {
+    vi.useFakeTimers();
+    document.title = LIBRARY_TITLE;
+    const queued = (id: string) =>
+      demoSummary({
+        id,
+        name: `${id}.dem`,
+        original_filename: `${id}.dem`,
+        status: "queued",
+        completed_at: null,
+        ingestion: ingestion({ phase: "uploaded", active: true, jobStatus: "queued" })
+      });
+    const completed = { ...queued("first"), status: "completed" as const, round_count: 24, ingestion: ingestion() };
+    vi.mocked(api.listDemos)
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([queued("first")])
+      .mockResolvedValueOnce([completed])
+      .mockResolvedValue([queued("second"), completed]);
+    let landSecond: (demo: DemoSummary) => void = () => {};
+    vi.mocked(api.uploadDemoFile)
+      .mockResolvedValueOnce(queued("first"))
+      .mockImplementationOnce(
+        () =>
+          new Promise<DemoSummary>((resolve) => {
+            landSecond = resolve;
+          })
+      );
+
+    const { unmount } = render(<DashboardPage />);
+    await flush();
+    fireEvent.change(screen.getByLabelText("选择 .dem 比赛文件"), {
+      target: { files: [new File(["demo"], "first.dem")] }
+    });
+    await flush();
+    fireEvent.change(screen.getByLabelText("选择 .dem 比赛文件"), {
+      target: { files: [new File(["demo"], "second.dem")] }
+    });
+    await flush();
+
+    await act(async () => setHidden(true));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(15_000);
+    });
+    expect(document.title).toBe(`(可复盘) ${LIBRARY_TITLE}`);
+
+    await act(async () => {
+      landSecond(queued("second"));
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    await flush();
+    expect(screen.getByText("「second.dem」已上传，正在排队处理，完成后会在这里提示。")).toBeInTheDocument();
+    expect(document.title).toBe(`(可复盘) ${LIBRARY_TITLE}`);
+
+    await act(async () => setHidden(false));
+    expect(document.title).toBe(LIBRARY_TITLE);
+    unmount();
+    expect(document.title).toBe(LIBRARY_TITLE);
   });
 
   it("clears an in-flight-limit rejection once the parse it waited on is done", async () => {

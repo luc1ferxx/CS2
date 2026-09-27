@@ -1,0 +1,35 @@
+{
+  "name": "frameless-round-placed-by-kills",
+  "description": "Round 2 has no frames. Its kill puts Ace on CT and Bolt on T, which places the round (A on CT) instead of the nearest earlier round's T. The smoke event's side does not give Ash a side: only kill events do.",
+  "replay": {
+    "rounds": [
+      { "roundNumber": 1, "startTick": 1000, "endTick": 1900, "winnerSide": "T" },
+      { "roundNumber": 2, "startTick": 2000, "endTick": 2900, "winnerSide": "CT" },
+      { "roundNumber": 3, "startTick": 3000, "endTick": 3900, "winnerSide": "T" }
+    ],
+    "frames": [
+      { "tick": 1100, "roundNumber": 1, "players": [{ "id": "a1", "side": "T" }, { "id": "a2", "side": "T" }, { "id": "b1", "side": "CT" }, { "id": "b2", "side": "CT" }] },
+      { "tick": 3100, "roundNumber": 3, "players": [{ "id": "a1", "side": "CT" }, { "id": "a2", "side": "CT" }, { "id": "b1", "side": "T" }, { "id": "b2", "side": "T" }] }
+    ],
+    "events": [
+      { "id": "smoke-2100", "type": "smoke", "tick": 2100, "roundNumber": 2, "playerId": "a2", "side": "CT", "metadata": {} },
+      { "id": "kill-2300-b1", "type": "kill", "tick": 2300, "roundNumber": 2, "metadata": { "attackerId": "a1", "attackerSide": "CT", "victimId": "b1", "victimSide": "T" } }
+    ]
+  },
+  "expected": {
+    "sidesByRound": {
+      "1": { "a1": "T", "a2": "T", "b1": "CT", "b2": "CT" },
+      "2": { "a1": "CT", "b1": "T" },
+      "3": { "a1": "CT", "a2": "CT", "b1": "T", "b2": "T" }
+    },
+    "teams": [
+      { "key": "A", "playerIds": ["a1", "a2"], "startSide": "T", "score": 2 },
+      { "key": "B", "playerIds": ["b1", "b2"], "startSide": "CT", "score": 1 }
+    ],
+    "teamSidesByRound": {
+      "1": { "A": "T", "B": "CT" },
+      "2": { "A": "CT", "B": "T" },
+      "3": { "A": "CT", "B": "T" }
+    }
+  }
+}
