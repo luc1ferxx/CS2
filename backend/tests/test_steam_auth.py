@@ -275,6 +275,10 @@ class SteamOpenIdBrowserTest(unittest.TestCase):
         self.assertEqual(response.headers["referrer-policy"], "no-referrer")
 
     def test_login_and_callback_have_bounded_per_client_rate_limits(self) -> None:
+        # The limiter uses fixed 60 s windows; freeze the clock so the loops
+        # below cannot straddle a window boundary and reset the count.
+        frozen_now = time.time()
+        self.steam_service.clock = lambda: frozen_now
         for _ in range(30):
             self.assertEqual(
                 self.client.get("/auth/steam/login", follow_redirects=False).status_code,
