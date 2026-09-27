@@ -14,6 +14,7 @@ from app.services.artifact_binding import (
 )
 from app.services.demo_service._component import ServiceComponent
 from app.services.demo_service._helpers import _optional_str
+from app.services.demo_service.gone import demo_gone_raises
 from app.services.storage import ArtifactStore, StorageKeyError
 from app.services.upload_service import StoredVideoUpload
 
@@ -164,6 +165,7 @@ class VideoRegistry(ServiceComponent):
                 return None
         return storage_key
 
+    @demo_gone_raises
     def attach_manual_video(self, demo: Demo, stored_video: StoredVideoUpload) -> dict[str, Any]:
         current_video = self._service.replay.get_video_status(demo)
         previous_reference = _optional_str(current_video.get("storageKey"))
@@ -195,6 +197,7 @@ class VideoRegistry(ServiceComponent):
             self._service.delete_artifact_safely(previous_reference)
         return updated
 
+    @demo_gone_raises
     def update_video_calibration(
         self,
         demo: Demo,

@@ -20,6 +20,7 @@ from app.models.job import DemoJob
 from app.parser.demo_parser import DemoParserError
 from app.parser.normalizer import normalize_parser_output
 from app.services.artifact_binding import AcceptedArtifactError
+from app.services.deletion_service import drain_deletion_outbox, run_hourly_storage_maintenance
 from app.services.demo_service import (
     RENDER_CLIP_JOB_TYPE,
     RENDER_CLIP_NOT_CONNECTED_ERROR,
@@ -27,6 +28,7 @@ from app.services.demo_service import (
     RENDER_FAILED_ERROR_CODE,
     RENDER_FAILED_PUBLIC_MESSAGE,
     RENDER_WORKER_UNAVAILABLE_ERROR_CODE,
+    DemoGoneError,
     DemoService,
 )
 from app.services.diagnostics import write_worker_heartbeat
@@ -46,6 +48,14 @@ PARSER_UNEXPECTED_PUBLIC_MESSAGE = "Unexpected parser error. Retry or upload a d
 # on it and carrying on. Reaping it is a courtesy; the worker staying responsive
 # is the point.
 PARSE_KILL_GRACE_SECONDS = 30
+# How often a running parse checks that its job still exists. A match deleted
+# mid-parse stops its child instead of holding the single worker (and every
+# queued upload behind it) for up to PARSE_TIMEOUT_SECONDS.
+PARSE_DELETION_CHECK_SECONDS = 15
+
+
+class ParseJobDeletedError(Exception):
+    """The job's row vanished while its parse ran: the match was deleted."""
 
 
 def utc_now() -> datetime:
@@ -81,15 +91,17 @@ def process_job(
 
 def process_mock_parse_job(db: Session, demo: Demo, job: DemoJob) -> None:
     service = DemoService.for_internal(db)
+    demo_id = demo.id
     if not service.claim_parse_job(demo, job):
         return
 
     time.sleep(1.2)
 
-    service.mark_parse_analyzing(demo, job)
+    if not service.mark_parse_analyzing(demo, job):
+        return
     time.sleep(1.2)
 
-    replay, events = build_mock_replay(demo.id)
+    replay, events = build_mock_replay(demo_id)
     service.complete_parse_job(demo, job, replay, events)
 
 
@@ -223,6 +235,50 @@ def _parse_child_result(return_code: int, output_path: Path) -> dict[str, Any]:
     )
 
 
+def parse_job_exists(db: Session, job_id: str) -> bool:
+    """Whether the job row is still there, read on a short session of its own.
+
+    The parse's own session sits idle while the child runs; a separate one
+    keeps this from holding anything open across the whole parse.
+    """
+    with Session(bind=db.get_bind()) as check_db:
+        return check_db.query(DemoJob.id).filter(DemoJob.id == job_id).first() is not None
+
+
+def deletion_aware_tick(
+    job_exists: Callable[[], bool],
+    on_tick: Callable[[], None] | None = None,
+    *,
+    interval_seconds: float | None = None,
+    clock: Callable[[], float] = time.monotonic,
+) -> Callable[[], None]:
+    """Wrap a parse's tick so it raises ParseJobDeletedError once the job is gone.
+
+    run_parse_subprocess kills the child when its tick raises, and the
+    temporary copy of the .dem goes with its workspace. A failed check never
+    stops a parse: an unknown answer is not a deletion.
+    """
+    interval = PARSE_DELETION_CHECK_SECONDS if interval_seconds is None else interval_seconds
+    last_check = clock()
+
+    def tick() -> None:
+        nonlocal last_check
+        if on_tick is not None:
+            on_tick()
+        now = clock()
+        if now - last_check < interval:
+            return
+        last_check = now
+        try:
+            exists = job_exists()
+        except Exception:
+            return
+        if not exists:
+            raise ParseJobDeletedError
+
+    return tick
+
+
 def process_real_parse_job(
     db: Session,
     demo: Demo,
@@ -231,27 +287,41 @@ def process_real_parse_job(
     on_tick: Callable[[], None] | None = None,
 ) -> None:
     service = DemoService.for_internal(db)
+    # Read once while the rows are known to be loaded: the match can be
+    # deleted at any point from here on, and each transition below reports
+    # that by returning False instead of raising.
+    demo_id, job_id = demo.id, job.id
 
     if not service.claim_parse_job(demo, job):
         return
 
+    tick = deletion_aware_tick(lambda: parse_job_exists(db, job_id), on_tick)
     try:
         with service.materialized_source_demo(demo, job) as source_path:
-            parsed = run_parse_subprocess(source_path, on_tick=on_tick)
+            parsed = run_parse_subprocess(source_path, on_tick=tick)
+    except ParseJobDeletedError:
+        # The child is already stopped and its copy of the .dem removed.
+        print(f"Worker job {job_id} stopped: demo deleted during parse", flush=True)
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        return
     except BaseException as exc:
         if isinstance(exc, (KeyboardInterrupt, SystemExit)):
             raise
-        _log_job_failure(job.id, "parse", exc)
+        _log_job_failure(job_id, "parse", exc)
         _fail_classified_parse_job(service, demo, job, exc, phase="parse")
         return
 
-    service.mark_parse_analyzing(demo, job)
+    if not service.mark_parse_analyzing(demo, job):
+        return
 
     try:
-        replay = normalize_parser_output(demo.id, parsed)
+        replay = normalize_parser_output(demo_id, parsed)
         events = analyze_replay(replay)
     except Exception as exc:
-        _log_job_failure(job.id, "normalization", exc)
+        _log_job_failure(job_id, "normalization", exc)
         _fail_classified_parse_job(service, demo, job, exc, phase="normalization")
         return
 
@@ -261,20 +331,24 @@ def process_real_parse_job(
 def process_mock_render_job(db: Session, demo: Demo, job: DemoJob) -> None:
     service = DemoService.for_internal(db)
 
-    job.attempts += 1
-    service.transition_mock_render_job(
-        job,
-        job_status="processing",
-        video_status="rendering",
-    )
+    try:
+        job.attempts += 1
+        service.transition_mock_render_job(
+            job,
+            job_status="processing",
+            video_status="rendering",
+        )
 
-    time.sleep(1.4)
+        time.sleep(1.4)
 
-    service.transition_mock_render_job(
-        job,
-        job_status="completed",
-        video_status="ready",
-    )
+        service.transition_mock_render_job(
+            job,
+            job_status="completed",
+            video_status="ready",
+        )
+    except DemoGoneError:
+        # The match was deleted mid-render; there is nothing left to update.
+        return
 
 
 def process_render_clip_job(db: Session, demo: Demo, job: DemoJob) -> None:
@@ -291,24 +365,35 @@ def process_render_clip_job(db: Session, demo: Demo, job: DemoJob) -> None:
         raise ValueError("Replay blob is not ready")
 
     try:
-        service.claim_render_clip_job(job)
-    except ValueError:
-        # Another worker may have claimed the job since the initial read.
-        db.refresh(job)
-        if job.status != "queued":
-            return
-        raise
-    service.fail_render_clip_job(
-        job,
-        RENDER_CLIP_NOT_CONNECTED_ERROR,
-        error_code=RENDER_WORKER_UNAVAILABLE_ERROR_CODE,
-    )
+        try:
+            service.claim_render_clip_job(job)
+        except ValueError:
+            # Another worker may have claimed the job since the initial read.
+            db.refresh(job)
+            if job.status != "queued":
+                return
+            raise
+        service.fail_render_clip_job(
+            job,
+            RENDER_CLIP_NOT_CONNECTED_ERROR,
+            error_code=RENDER_WORKER_UNAVAILABLE_ERROR_CODE,
+        )
+    except DemoGoneError:
+        # The match was deleted while this job waited; nothing to fail.
+        return
 
 
 def fail_job(db: Session, job_id: str, demo_id: str, error: Any) -> None:
+    # Whatever failed may have left the session mid-transaction -- a flush
+    # that hit a row deleted underneath it leaves it unusable until this.
+    try:
+        db.rollback()
+    except Exception:
+        pass
     demo = db.query(Demo).filter(Demo.id == demo_id).one_or_none()
     job = db.query(DemoJob).filter(DemoJob.id == job_id).one_or_none()
     if demo is None or job is None or job.demo_id != demo.id:
+        # Deleted (or never paired): nothing to mark failed.
         return
     if demo is not None and job is not None and job.job_type == "mock_render":
         try:
@@ -354,7 +439,13 @@ def fail_job(db: Session, job_id: str, demo_id: str, error: Any) -> None:
             else "Background job failed. Retry the operation."
         )
         job.finished_at = utc_now()
-    db.commit()
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        if db.query(Demo.id).filter(Demo.id == demo_id).first() is None:
+            return
+        raise
 
 
 RENDER_CLIP_SWEEP_INTERVAL_SECONDS = 60
@@ -557,6 +648,10 @@ def run_worker() -> None:
                     "parse-sweep",
                     lambda: sweep_stale_parse_jobs(redis_client=redis_client),
                 )
+                # Storage purges owed by hard deletes (at most every 60 s), and
+                # hourly quarantine cleanup + upload ledger prune.
+                _run_backstop("deletion-drain", drain_deletion_outbox)
+                _run_backstop("storage-maintenance", run_hourly_storage_maintenance)
                 continue
 
             try:
@@ -577,7 +672,13 @@ def run_worker() -> None:
                     print(f"Completed job {job_id} for demo {demo_id}", flush=True)
                 except Exception as exc:
                     _log_job_failure(job_id, "process", exc)
-                    fail_job(db, job_id, demo_id, exc)
+                    try:
+                        fail_job(db, job_id, demo_id, exc)
+                    except Exception as fail_exc:
+                        # Recording the failure failed too (the database may be
+                        # briefly unreachable). The sweeps reconcile the row
+                        # later; losing the whole worker over it helps nobody.
+                        _log_job_failure(job_id, "failure-update", fail_exc)
                 finally:
                     # Released only now: for everything between reserve() and
                     # here, the message is still in this consumer's processing

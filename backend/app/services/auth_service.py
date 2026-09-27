@@ -15,6 +15,9 @@ from app.core.config import Settings, settings
 from app.core.redis import get_redis_client
 
 MAX_RETURN_TO_LENGTH = 2048
+# An owner revocation marker outlives every session it can revoke (the session
+# TTL is at most 86400 s in production) plus clock skew.
+OWNER_REVOCATION_TTL_SECONDS = 86_400 + 300
 
 
 @dataclass(frozen=True)
@@ -183,11 +186,14 @@ class AuthService:
         )
         if bounded_max_age <= 0:
             raise AuthenticationError("Verified session lifetime is invalid")
-        now = int(time.time())
+        now_seconds = time.time()
+        now = int(now_seconds)
         session_token = secrets.token_urlsafe(32)
         record: dict[str, str | int] = {
             "ownerId": owner_id,
             "expiresAt": now + bounded_max_age,
+            # Milliseconds; compared with an owner revocation marker.
+            "issuedAt": int(now_seconds * 1000),
         }
         if steam_id is not None:
             record["steamId"] = steam_id
@@ -218,6 +224,7 @@ class AuthService:
             expires_at <= int(time.time())
             or not owner_id.startswith("owner_v1_")
             or not self._steam_session_still_invited(session.get("steamId"))
+            or self._revoked_by_owner_marker(owner_id, session.get("issuedAt"))
         ):
             self.revoke_session(session_token)
             return None
@@ -226,6 +233,36 @@ class AuthService:
     def revoke_session(self, session_token: str | None) -> None:
         if _is_valid_opaque_value(session_token):
             self.redis.delete(_hashed_key("auth:session", session_token))
+
+    def revoke_owner_sessions(self, owner_id: str) -> int:
+        """End every session of this owner, on every device, as of now.
+
+        Sessions are keyed by token with no owner index, so this writes one
+        marker instead: `resolve_session` rejects any session of the owner
+        issued at or before it. Sessions created later (a new sign-in) have a
+        later `issuedAt` and are unaffected. Returns the marker (ms).
+        """
+        marker = int(time.time() * 1000)
+        self.redis.setex(
+            _owner_revocation_key(owner_id),
+            OWNER_REVOCATION_TTL_SECONDS,
+            str(marker),
+        )
+        return marker
+
+    def _revoked_by_owner_marker(self, owner_id: str, issued_at: object) -> bool:
+        raw_marker = self.redis.get(_owner_revocation_key(owner_id))
+        if not raw_marker:
+            return False
+        try:
+            marker = int(_decode_redis_value(raw_marker))
+        except (TypeError, ValueError):
+            # An unreadable marker still means "this owner was revoked".
+            return True
+        # A session from before issuedAt existed cannot prove it is newer.
+        if isinstance(issued_at, bool) or not isinstance(issued_at, int):
+            return True
+        return issued_at <= marker
 
     def _steam_session_still_invited(self, steam_id: object) -> bool:
         # Re-checked on every resolution so removing a Steam ID from
@@ -313,6 +350,11 @@ def oidc_provider_key(issuer: str) -> str:
 
 def _base64url(value: bytes) -> str:
     return base64.urlsafe_b64encode(value).decode("ascii").rstrip("=")
+
+
+def _owner_revocation_key(owner_id: str) -> str:
+    digest = hashlib.sha256(owner_id.encode("utf-8")).hexdigest()
+    return f"auth:owner-revoked:{digest}"
 
 
 def _hashed_key(prefix: str, opaque_value: str) -> str:

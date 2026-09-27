@@ -60,7 +60,9 @@
 
 	# FastAPI routes. /auth/callback is deliberately absent: it is the Next.js
 	# sign-in completion page, distinct from the backend /auth/steam/callback.
-	@api path /auth/steam/login /auth/steam/callback /auth/login /auth/oidc/callback /auth/me /auth/session /auth/logout /demos /steam/* /uploads/* /coaching/* /render-worker/* /render/* /health /diagnostics
+	# /auth/account (DELETE) is the API's account deletion; the Next.js page is
+	# /account, a different path.
+	@api path /auth/steam/login /auth/steam/callback /auth/login /auth/oidc/callback /auth/me /auth/session /auth/logout /auth/account /demos /steam/* /uploads/* /coaching/* /render-worker/* /render/* /health /diagnostics
 
 	# Anything below a demo id: status, replay, coaching, diagnostics, video and
 	# private media (Range requests), render jobs, archive, parse retry.

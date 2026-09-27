@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.exc import StaleDataError
 
 from app.models.account import Account, ExternalIdentity
 
@@ -47,14 +48,28 @@ class AccountService:
         safe_avatar_url = _normalize_optional_text(avatar_url, 512)
 
         try:
-            result = self._resolve_or_create(
-                provider=normalized_provider,
-                subject=normalized_subject,
-                preferred_owner_id=owner_id,
-                display_name=safe_display_name,
-                avatar_url=safe_avatar_url,
-            )
-            self.db.commit()
+            try:
+                result = self._resolve_or_create(
+                    provider=normalized_provider,
+                    subject=normalized_subject,
+                    preferred_owner_id=owner_id,
+                    display_name=safe_display_name,
+                    avatar_url=safe_avatar_url,
+                )
+                self.db.commit()
+            except StaleDataError:
+                # The account was deleted between reading its identity and
+                # updating it. Resolve again: with the identity gone this signs
+                # in to a fresh account, as any later sign-in would.
+                self.db.rollback()
+                result = self._resolve_or_create(
+                    provider=normalized_provider,
+                    subject=normalized_subject,
+                    preferred_owner_id=owner_id,
+                    display_name=safe_display_name,
+                    avatar_url=safe_avatar_url,
+                )
+                self.db.commit()
             return result
         except AccountConflictError:
             self.db.rollback()

@@ -10,6 +10,15 @@ class DemoDispatchError(RuntimeError):
     pass
 
 
+class DemoGoneError(LookupError):
+    """The demo (or its job) was deleted while this operation was in flight.
+
+    Deliberately not a ValueError: callers map ValueError to 400/409, and a
+    row that no longer exists is a 404 at the API and a quiet no-op in the
+    worker (docs/data_deletion_v1.md).
+    """
+
+
 class ReplayBlobUnavailableError(ValueError):
     """The replay a render needs cannot be read.
 

@@ -25,6 +25,10 @@ Rules of the composition:
 * `queue_client()` is the one place the Redis client is resolved, through this
   module's `get_redis_client`, so tests can keep patching
   `app.services.demo_service.get_redis_client`.
+* A match can be deleted in any state, so a write to a demo or job loaded
+  earlier can find the row gone. Such operations raise `DemoGoneError` (a
+  LookupError, never caught as ValueError: the API answers 404), and the parse
+  transitions return False instead; `gone.py` holds the shared detection.
 """
 
 from collections.abc import Callable, Iterator
@@ -86,7 +90,13 @@ from app.services.demo_service.constants import (
 )
 from app.services.demo_service.demo_ingest import DemoIngest, PreparedRealDemo, QueueClient
 from app.services.demo_service.demo_library import DemoLibrary
-from app.services.demo_service.errors import DemoArtifactBindError, DemoDispatchError, ReplayBlobUnavailableError
+from app.services.demo_service.errors import (
+    DemoArtifactBindError,
+    DemoDispatchError,
+    DemoGoneError,
+    ReplayBlobUnavailableError,
+)
+from app.services.demo_service.gone import rows_missing
 from app.services.demo_service.parse_lifecycle import ParseLifecycle
 from app.services.demo_service.render_lifecycle import RenderLifecycle
 from app.services.demo_service.render_worker_media import RenderWorkerMedia
@@ -165,6 +175,15 @@ class DemoService:
             )
         except Exception:
             pass
+
+    # -- Rows deleted mid-request (gone.py) ---------------------------------------
+    def demo_missing(self, demo_id: str) -> bool:
+        """Roll back, then report whether the demo row no longer exists."""
+        return rows_missing(self.db, demo_id=demo_id)
+
+    def render_job_missing(self, job_id: str) -> bool:
+        """Roll back, then report whether the job (or its demo) no longer exists."""
+        return rows_missing(self.db, job_id=job_id)
 
     # -- DemoLibrary (demo_library.py) --------------------------------------------
     def list_demos(
@@ -305,7 +324,7 @@ class DemoService:
     def claim_parse_job(self, demo: Demo, job: DemoJob) -> bool:
         return self.parse.claim_parse_job(demo, job)
 
-    def mark_parse_analyzing(self, demo: Demo, job: DemoJob) -> None:
+    def mark_parse_analyzing(self, demo: Demo, job: DemoJob) -> bool:
         return self.parse.mark_parse_analyzing(demo, job)
 
     def complete_parse_job(
@@ -316,7 +335,7 @@ class DemoService:
         events: list[dict[str, Any]],
         *,
         name: str | None = None,
-    ) -> None:
+    ) -> bool:
         return self.parse.complete_parse_job(demo, job, replay, events, name=name)
 
     def fail_parse_job(
@@ -326,7 +345,7 @@ class DemoService:
         error: str,
         *,
         error_code: str = "PARSER_FAILED",
-    ) -> None:
+    ) -> bool:
         return self.parse.fail_parse_job(demo, job, error, error_code=error_code)
 
     def abandon_parse_job(self, job: DemoJob) -> bool:
@@ -604,6 +623,7 @@ __all__ = [
     "UNCLAIMED_RENDER_CLIP_STATUSES",
     "DemoArtifactBindError",
     "DemoDispatchError",
+    "DemoGoneError",
     "DemoService",
     "PreparedRealDemo",
     "PrivateVideoHandle",

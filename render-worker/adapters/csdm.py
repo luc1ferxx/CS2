@@ -14,6 +14,7 @@ from typing import Any, Protocol
 from adapters.base import (
     AdapterConfigError,
     AdapterResult,
+    RenderJobGoneError,
     RenderWorkerClient,
     completed_payload,
     failed_payload,
@@ -275,6 +276,10 @@ class CSDMAdapter:
             write_json(workspace / "media-verification.json", verification)
             write_json(workspace / "status.json", {"state": "uploading"})
             uploaded = client.upload_media(job_id, media)
+        except RenderJobGoneError:
+            # The match was deleted: a failed callback would 404 as well, and
+            # the runner removes this workspace.
+            raise
         except (AdapterConfigError, RenderError, OSError, RuntimeError) as exc:
             message = str(exc) if isinstance(exc, (AdapterConfigError, RenderError)) else "Local rendering failed; inspect the operator workspace and service status"
             payload = failed_payload(manifest, message)

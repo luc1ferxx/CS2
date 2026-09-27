@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import hashlib
+import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import (
+    JSON,
     CheckConstraint,
     Column,
     DateTime,
@@ -279,6 +282,85 @@ def _add_steam_demo_import_v1(connection: Connection) -> None:
     )
 
 
+UPLOAD_LEDGER_BACKFILL_WINDOW = timedelta(hours=24)
+
+
+def _create_deletion_outbox_and_upload_ledger_v1(connection: Connection) -> None:
+    inspector = inspect(connection)
+    existing_tables = set(inspector.get_table_names())
+    owned_tables = {"deletion_tasks", "upload_ledger"}
+    if existing_tables.intersection(owned_tables):
+        raise RuntimeError(
+            "Deletion outbox schema exists without its tracked schema migration"
+        )
+    metadata = MetaData()
+    deletion_tasks = Table(
+        "deletion_tasks",
+        metadata,
+        Column("id", String(36), primary_key=True),
+        Column("owner_id", String(64), nullable=False),
+        Column("demo_id", String(36), nullable=True),
+        Column("artifact_refs", JSON, nullable=False),
+        Column("cutoff_at", DateTime(timezone=True), nullable=True),
+        Column("final_sweep_after", DateTime(timezone=True), nullable=False),
+        Column("next_attempt_at", DateTime(timezone=True), nullable=False),
+        Column("attempts", Integer, nullable=False),
+        Column("last_error", String(255), nullable=True),
+        Column("created_at", DateTime(timezone=True), nullable=False),
+        Column("updated_at", DateTime(timezone=True), nullable=False),
+    )
+    Index("ix_deletion_tasks_next_attempt_at", deletion_tasks.c.next_attempt_at)
+    upload_ledger = Table(
+        "upload_ledger",
+        metadata,
+        Column("id", String(36), primary_key=True),
+        Column("owner_id", String(64), nullable=False),
+        Column("created_at", DateTime(timezone=True), nullable=False),
+    )
+    Index(
+        "ix_upload_ledger_owner_created_at",
+        upload_ledger.c.owner_id,
+        upload_ledger.c.created_at,
+    )
+    deletion_tasks.create(connection)
+    upload_ledger.create(connection)
+
+    # The daily quota used to count demo rows; carry the last 24 hours over so
+    # the switch to the ledger does not hand everyone a fresh quota. Fresh ids,
+    # not demo ids: the ledger must not point back at a demo.
+    if "demos" not in existing_tables:
+        return
+    demo_columns = {column["name"] for column in inspector.get_columns("demos")}
+    if not {"owner_id", "created_at"}.issubset(demo_columns):
+        return
+    demos = Table(
+        "demos",
+        MetaData(),
+        Column("owner_id", String(64)),
+        Column("created_at", DateTime(timezone=True)),
+    )
+    cutoff = datetime.now(UTC) - UPLOAD_LEDGER_BACKFILL_WINDOW
+    recent = connection.execute(
+        select(demos.c.owner_id, demos.c.created_at).where(
+            demos.c.created_at > cutoff,
+            demos.c.owner_id.is_not(None),
+            demos.c.owner_id != "",
+        )
+    ).all()
+    if recent:
+        connection.execute(
+            insert(upload_ledger),
+            [
+                {
+                    "id": str(uuid.uuid4()),
+                    "owner_id": row.owner_id,
+                    "created_at": row.created_at,
+                }
+                for row in recent
+            ],
+        )
+
+
 MIGRATIONS = (
     SchemaMigration(
         version="2026071901",
@@ -308,6 +390,16 @@ MIGRATIONS = (
             "unique-demo"
         ),
         upgrade=_add_steam_demo_import_v1,
+    ),
+    SchemaMigration(
+        version="2026092601",
+        name="create_deletion_outbox_and_upload_ledger",
+        checksum=_checksum(
+            "deletion-outbox-v1:owner,demo-or-account,artifact-refs,cutoff,final-sweep,"
+            "next-attempt,attempts,last-error,timestamps;upload-ledger-v1:owner,created-at,"
+            "backfill-last-24h-demos"
+        ),
+        upgrade=_create_deletion_outbox_and_upload_ledger_v1,
     ),
 )
 

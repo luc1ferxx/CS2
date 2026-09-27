@@ -26,6 +26,8 @@ from app.schemas.coaching import (
 )
 from app.services.demo_service._component import ServiceComponent
 from app.services.demo_service._helpers import utc_now
+from app.services.demo_service.errors import DemoGoneError
+from app.services.demo_service.gone import gone_rows_raise, row_identity, rows_missing
 
 
 class CoachingReview(ServiceComponent):
@@ -52,8 +54,24 @@ class CoachingReview(ServiceComponent):
         verdict: str,
         note: str | None = None,
     ) -> CoachingFeedbackOut | None:
-        """Upsert the owner's verdict; None when the event is not in this demo."""
+        """Upsert the owner's verdict; None when the event is not in this demo.
+
+        Raises DemoGoneError when the match was deleted while this ran.
+        """
         owner_id = self._service.require_owner_id()
+        demo_id = row_identity(demo)
+        with gone_rows_raise(self.db, demo_id=demo_id):
+            return self._save_coaching_feedback(demo, event_id, owner_id, verdict=verdict, note=note)
+
+    def _save_coaching_feedback(
+        self,
+        demo: Demo,
+        event_id: str,
+        owner_id: str,
+        *,
+        verdict: str,
+        note: str | None,
+    ) -> CoachingFeedbackOut | None:
         if verdict not in COACHING_VERDICTS:
             raise ValueError("Unsupported coaching verdict")
         event_exists = (
@@ -89,10 +107,13 @@ class CoachingReview(ServiceComponent):
         try:
             self.db.commit()
         except IntegrityError:
-            # Two verdicts for the same suggestion raced past the lookup above
-            # and the unique constraint caught the second insert. Apply it as
-            # the update it would have been had the lookup seen the first.
-            self.db.rollback()
+            # Either the match was deleted since the lookup above (the demo
+            # foreign key) or two verdicts for the same suggestion raced past it
+            # and the unique constraint caught the second insert. The first is
+            # a 404; apply the second as the update it would have been had the
+            # lookup seen the first.
+            if rows_missing(self.db, demo_id=row_identity(demo)):
+                raise DemoGoneError("Demo was deleted") from None
             row = (
                 self.db.query(CoachingFeedback)
                 .filter(CoachingFeedback.owner_id == owner_id, CoachingFeedback.event_id == event_id)

@@ -1,8 +1,9 @@
+import json
 from typing import Annotated
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
-from fastapi.responses import RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from sqlalchemy.orm import Session
 
 from app.core.auth import require_trusted_origin
@@ -19,6 +20,7 @@ from app.services.auth_service import (
     AuthService,
     get_auth_service,
 )
+from app.services.deletion_service import DeletionService, account_exists_for_write
 from app.services.steam_auth_service import (
     AuthenticationRateLimitError,
     SteamAuthService,
@@ -27,6 +29,8 @@ from app.services.steam_auth_service import (
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 NO_REFERRER_HEADERS = {"Referrer-Policy": "no-referrer"}
+ACCOUNT_DELETION_CONFIRMATION = "delete-my-account"
+_ACCOUNT_DELETION_BODY_LIMIT_BYTES = 4096
 
 
 @router.get("/login")
@@ -85,6 +89,7 @@ def callback(
             max_age=verified.max_age,
             return_to=verified.return_to,
         )
+        _require_live_account(db, service, account.owner_id, grant.session_token)
     except AccountConflictError as exc:
         raise HTTPException(
             status_code=409,
@@ -197,6 +202,7 @@ def steam_callback(
             return_to=verified.return_to,
             steam_id=verified.steam_id,
         )
+        _require_live_account(db, auth_service, account.owner_id, grant.session_token)
     except AuthenticationRateLimitError as exc:
         raise HTTPException(
             status_code=429,
@@ -318,6 +324,109 @@ def logout(
         samesite="lax",
     )
     return response
+
+
+async def _account_deletion_confirmed(request: Request) -> bool:
+    """Whether the body is exactly {"confirm": "delete-my-account"} (read here so any other body is a 400, not a 422)."""
+    body = b""
+    async for chunk in request.stream():
+        body += chunk
+        if len(body) > _ACCOUNT_DELETION_BODY_LIMIT_BYTES:
+            return False
+    try:
+        payload = json.loads(body.decode("utf-8")) if body else None
+    except (UnicodeDecodeError, ValueError):
+        return False
+    return isinstance(payload, dict) and payload.get("confirm") == ACCOUNT_DELETION_CONFIRMATION
+
+
+def _account_error(status_code: int, code: str, message: str) -> JSONResponse:
+    return JSONResponse(
+        status_code=status_code,
+        content={"detail": {"code": code, "message": message}},
+        headers={"Cache-Control": "private, no-store"},
+    )
+
+
+@router.delete("/account", status_code=204, dependencies=[Depends(require_trusted_origin)])
+def delete_account(
+    request: Request,
+    confirmed: bool = Depends(_account_deletion_confirmed),
+    service: AuthService = Depends(get_auth_service),
+    db: Session = Depends(get_db),
+) -> Response:
+    """Delete the signed-in account and everything it owns, and end its sessions everywhere."""
+    if service.settings.auth_mode != "production":
+        # The local dev owner has no account row, and one request must never
+        # wipe the local library. Matches can still be deleted one by one.
+        return _account_error(
+            409,
+            "account_deletion_unavailable",
+            "Account deletion is only available with Steam sign-in.",
+        )
+    session_token = request.cookies.get(service.settings.auth_session_cookie_name)
+    owner_id = getattr(request.state, "authenticated_owner_id", None) or service.resolve_session(
+        session_token
+    )
+    if owner_id is None:
+        raise HTTPException(
+            status_code=401,
+            detail="Authentication required",
+            headers={"WWW-Authenticate": "Session"},
+        )
+    if not confirmed:
+        return _account_error(
+            400,
+            "confirmation_required",
+            'Send {"confirm": "delete-my-account"} to delete this account.',
+        )
+    deleted = DeletionService(db, runtime_settings=service.settings).delete_account(
+        owner_id,
+        revoke_sessions=service.revoke_owner_sessions,
+    )
+    if not deleted:
+        # No account behind this session any more: it is stale, not a success.
+        service.revoke_session(session_token)
+        raise HTTPException(
+            status_code=401,
+            detail="Authentication required",
+            headers={"WWW-Authenticate": "Session"},
+        )
+    service.revoke_session(session_token)
+    response = Response(status_code=204)
+    response.delete_cookie(
+        service.settings.auth_session_cookie_name,
+        path="/",
+        secure=service.settings.auth_cookie_secure,
+        httponly=True,
+        samesite="lax",
+    )
+    return response
+
+
+def _require_live_account(
+    db: Session,
+    service: AuthService,
+    owner_id: str,
+    session_token: str,
+) -> None:
+    """Refuse a session minted while its account was being deleted.
+
+    An account deletion locks the account row, writes the owner revocation
+    marker, then commits. A sign-in that resolved the identity before that
+    commit could mint its session after the marker, which the marker would not
+    catch. This check takes the creators' fence (`FOR KEY SHARE`) after the
+    session exists: it waits for a deletion holding the lock and then finds
+    the row gone; if it gets the lock first, any later deletion writes its
+    marker after this session's issuedAt and revokes it.
+    """
+    try:
+        alive = account_exists_for_write(db, owner_id, service.settings)
+    finally:
+        db.rollback()
+    if not alive:
+        service.revoke_session(session_token)
+        raise AuthenticationError("The account was deleted during sign-in")
 
 
 def _steam_not_invited_response(

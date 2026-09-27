@@ -9,7 +9,7 @@ from app.schemas.coaching import (
     CoachingFeedbackOut,
     CoachingFeedbackSummary,
 )
-from app.services.demo_service import DemoService
+from app.services.demo_service import DemoGoneError, DemoService
 
 router = APIRouter(tags=["coaching"])
 
@@ -41,7 +41,11 @@ def save_coaching_feedback(
     demo = service.get_demo(demo_id)
     if demo is None:
         raise HTTPException(status_code=404, detail="Demo not found")
-    saved = service.save_coaching_feedback(demo, event_id, verdict=feedback.verdict, note=feedback.note)
+    try:
+        saved = service.save_coaching_feedback(demo, event_id, verdict=feedback.verdict, note=feedback.note)
+    except DemoGoneError:
+        # The match was deleted since the lookup above; its verdicts went with it.
+        raise HTTPException(status_code=404, detail="Demo not found") from None
     if saved is None:
         raise HTTPException(status_code=404, detail="Coaching event not found")
     return saved

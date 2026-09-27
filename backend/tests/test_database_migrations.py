@@ -39,7 +39,7 @@ class DatabaseMigrationTest(unittest.TestCase):
                     " ORDER BY version"
                 )
             ).mappings().all()
-        self.assertEqual(len(rows), 3)
+        self.assertEqual(len(rows), 4)
         self.assertEqual(rows[0]["version"], MIGRATIONS[0].version)
         self.assertEqual(rows[0]["checksum"], MIGRATIONS[0].checksum)
         self.assertEqual(
@@ -54,6 +54,9 @@ class DatabaseMigrationTest(unittest.TestCase):
             MIGRATIONS[2].checksum,
             "cdf48d440c6b366a8edf94250112c26a171c18bef1b3517a785ad161a7d54dbf",
         )
+        self.assertEqual(rows[3]["version"], "2026092601")
+        self.assertEqual(rows[3]["checksum"], MIGRATIONS[3].checksum)
+        self.assertTrue({"deletion_tasks", "upload_ledger"}.issubset(table_names))
 
         steam_match_columns = {
             column["name"] for column in inspect(self.engine).get_columns("steam_matches")

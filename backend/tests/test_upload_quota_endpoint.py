@@ -16,7 +16,7 @@ from app.api import uploads
 from app.core.auth import SessionCsrfMiddleware
 from app.core.config import Settings, settings
 from app.core.database import Base, get_db
-from app.models import Demo
+from app.models import Demo, UploadLedger
 from app.services.auth_service import AuthService, get_auth_service
 from app.services.upload_quota import UploadQuotaService, UploadQuotaSnapshot
 
@@ -78,6 +78,8 @@ class DatabaseCase(unittest.TestCase):
         with self.Session() as db:
             for _ in range(count):
                 db.add(make_demo(owner_id, status=status, created_at=created_at, archived=archived))
+                # Every demo creation writes a ledger row; the daily quota counts those.
+                db.add(UploadLedger(id=str(uuid.uuid4()), owner_id=owner_id, created_at=created_at))
             db.commit()
 
 

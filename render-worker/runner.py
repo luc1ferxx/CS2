@@ -21,9 +21,24 @@ RUNNER_ROOT = Path(__file__).resolve().parent
 if str(RUNNER_ROOT) not in sys.path:
     sys.path.insert(0, str(RUNNER_ROOT))
 
-from adapters.base import AdapterConfigError, AdapterResult, UploadedMedia
+from adapters.base import (
+    GONE_HTTP_STATUSES,
+    AdapterConfigError,
+    AdapterResult,
+    RenderJobGoneError,
+    UploadedMedia,
+    is_job_gone_response,
+)
 from adapters.cs2_manual import CS2ManualAdapter
-from adapters.csdm import CSDMAdapter, CSDMConfig, assert_game_not_running, safe_job_id, validate_manifest
+from adapters.csdm import (
+    CSDMAdapter,
+    CSDMConfig,
+    RenderError,
+    assert_game_not_running,
+    clear_previous_attempt,
+    safe_job_id,
+    validate_manifest,
+)
 from adapters.fake_video import FakeVideoAdapter
 
 DEFAULT_API_BASE_URL = "http://localhost:8000"
@@ -31,6 +46,10 @@ DEFAULT_RENDER_WORKER_TOKEN = "dev-render-worker-token"
 DEFAULT_WORK_DIR = ".render-worker-work"
 DEFAULT_POLL_INTERVAL_SECONDS = 5
 MEDIA_UPLOAD_CHUNK_BYTES = 1024 * 1024
+JOB_GONE_MESSAGE = (
+    "Render job no longer exists on the API (its match was deleted); "
+    "no callback was posted and its local workspace was removed."
+)
 
 
 class WorkerClient(Protocol):
@@ -124,7 +143,13 @@ class RenderWorkerApiClient:
         partial = destination.with_suffix(".dem.part")
         created = False
         try:
-            with self._open_request(request, timeout=120) as response:
+            try:
+                opened = self._open_request(request, timeout=120)
+            except urllib.error.HTTPError as exc:
+                if exc.code in GONE_HTTP_STATUSES and is_job_gone_response(exc.code, exc.read()):
+                    raise RenderJobGoneError(str(manifest["jobId"])) from None
+                raise
+            with opened as response:
                 if response.status != 200:
                     raise RuntimeError("Source download did not return HTTP 200")
                 if response.headers.get("Content-Length") != str(expected_size):
@@ -152,6 +177,7 @@ class RenderWorkerApiClient:
         status, payload = self._request_json(
             "GET",
             f"/render-worker/jobs/{job_id}/manifest?claim={_bool_query(claim)}",
+            job_id=job_id,
         )
         if status != 200 or not isinstance(payload, dict):
             raise RuntimeError(f"Unexpected manifest response for {job_id}: HTTP {status}")
@@ -166,7 +192,11 @@ class RenderWorkerApiClient:
         return payload
 
     def upload_media(self, job_id: str, media_path: Path) -> UploadedMedia:
-        status, payload = self._upload_file(f"/render-worker/jobs/{job_id}/media", media_path)
+        status, payload = self._upload_file(
+            f"/render-worker/jobs/{job_id}/media",
+            media_path,
+            job_id=job_id,
+        )
         if status != 200 or not isinstance(payload, dict):
             raise RuntimeError(f"Unexpected media upload response for {job_id}: HTTP {status}")
         video_url = payload.get("videoUrl")
@@ -182,6 +212,7 @@ class RenderWorkerApiClient:
             "POST",
             f"/render-worker/jobs/{job_id}/result",
             payload,
+            job_id=job_id,
         )
         if status != 200 or not isinstance(response, dict):
             raise RuntimeError(f"Unexpected result callback response for {job_id}: HTTP {status}")
@@ -192,6 +223,8 @@ class RenderWorkerApiClient:
         method: str,
         path: str,
         payload: dict[str, Any] | None = None,
+        *,
+        job_id: str | None = None,
     ) -> tuple[int, Any]:
         data = None
         headers = {"X-Render-Worker-Token": self.config.render_worker_token}
@@ -213,10 +246,18 @@ class RenderWorkerApiClient:
             body = exc.read()
             if exc.code == 204:
                 return 204, None
+            if job_id is not None and is_job_gone_response(exc.code, body):
+                raise RenderJobGoneError(job_id) from None
             detail = body.decode("utf-8", errors="replace")
             raise RuntimeError(f"HTTP {exc.code} from {path}: {detail}") from exc
 
-    def _upload_file(self, path: str, media_path: Path) -> tuple[int, Any]:
+    def _upload_file(
+        self,
+        path: str,
+        media_path: Path,
+        *,
+        job_id: str | None = None,
+    ) -> tuple[int, Any]:
         boundary = f"----render-worker-{uuid.uuid4().hex}"
         filename = media_path.name
         prefix = (
@@ -244,7 +285,10 @@ class RenderWorkerApiClient:
                     response_body = response.read()
                     return response.status, json.loads(response_body.decode("utf-8"))
             except urllib.error.HTTPError as exc:
-                detail = exc.read().decode("utf-8", errors="replace")
+                body = exc.read()
+                detail = body.decode("utf-8", errors="replace")
+                if job_id is not None and is_job_gone_response(exc.code, body):
+                    raise RenderJobGoneError(job_id) from None
                 raise RuntimeError(f"HTTP {exc.code} from {path}: {detail}") from exc
 
 
@@ -316,7 +360,13 @@ def process_job(
 ) -> WorkerRunResult:
     worker_client = client or RenderWorkerApiClient(config)
     with _processing_guard(config, dry_run):
-        manifest = worker_client.fetch_manifest(job_id, claim=not dry_run)
+        try:
+            manifest = worker_client.fetch_manifest(job_id, claim=not dry_run)
+        except RenderJobGoneError:
+            if dry_run:
+                # A dry run inspects; it never removes anything.
+                return WorkerRunResult("gone", job_id, "Render job no longer exists on the API.")
+            return job_gone_result(config, job_id)
         return process_manifest(config, manifest, client=worker_client, dry_run=dry_run)
 
 
@@ -432,7 +482,41 @@ def process_manifest(
             manifest_path=manifest_path,
         )
 
-    return adapter.process(manifest, client, manifest_path=manifest_path)
+    try:
+        return adapter.process(manifest, client, manifest_path=manifest_path)
+    except RenderJobGoneError:
+        return job_gone_result(config, job_id)
+
+
+def job_gone_result(config: RunnerConfig, job_id: str) -> WorkerRunResult:
+    """The terminal outcome for a job the API no longer has: clean up, report, move on."""
+    discard_job_workspace(config, job_id)
+    return WorkerRunResult("gone", job_id, JOB_GONE_MESSAGE)
+
+
+def discard_job_workspace(config: RunnerConfig, job_id: str) -> None:
+    """Remove this job's files in WORK_DIR for a deleted job: WORK_DIR/jobs/{job} and its manifest.
+
+    The workspace can hold the downloaded source .dem and the rendered MP4, which
+    must not outlive the match they came from. Best-effort: a path that is not
+    an ordinary directory or file is left alone, as everywhere else in WORK_DIR.
+    Not every copy on the machine: `csdm analyze` also imported the match into
+    CS Demo Manager's own database, which the operator clears by hand (README).
+    """
+    try:
+        safe_id = safe_job_id(job_id)
+    except AdapterConfigError:
+        return
+    try:
+        clear_previous_attempt(config.work_dir / "jobs" / safe_id)
+    except (RenderError, OSError):
+        pass
+    manifest_path = config.work_dir / "manifests" / f"{safe_id}.json"
+    try:
+        if manifest_path.is_file() and not manifest_path.is_symlink():
+            manifest_path.unlink()
+    except OSError:
+        pass
 
 
 def prepare_job(
@@ -445,7 +529,10 @@ def prepare_job(
     if adapter_name != "cs2-manual":
         raise ValueError("prepare-job currently supports only --adapter cs2-manual")
     worker_client = client or RenderWorkerApiClient(config)
-    manifest = worker_client.fetch_manifest(job_id, claim=True)
+    try:
+        manifest = worker_client.fetch_manifest(job_id, claim=True)
+    except RenderJobGoneError:
+        return job_gone_result(config, job_id)
     return cs2_manual_adapter(config).prepare(manifest)
 
 
@@ -457,11 +544,14 @@ def complete_prepared_job(
     client: WorkerClient | None = None,
 ) -> WorkerRunResult:
     worker_client = client or RenderWorkerApiClient(config)
-    return cs2_manual_adapter(config).complete_prepared_job(
-        job_id,
-        worker_client,
-        video_path=video_path,
-    )
+    try:
+        return cs2_manual_adapter(config).complete_prepared_job(
+            job_id,
+            worker_client,
+            video_path=video_path,
+        )
+    except RenderJobGoneError:
+        return job_gone_result(config, job_id)
 
 
 def fake_video_adapter(config: RunnerConfig) -> FakeVideoAdapter:

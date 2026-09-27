@@ -15,7 +15,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.api import auth as auth_api
-from app.api import coaching, demos, diagnostics, private_media, replay, uploads
+from app.api import coaching, deletion, demos, diagnostics, private_media, replay, uploads
 from app.core.auth import SessionCsrfMiddleware, get_current_owner_id
 from app.core.config import Settings
 from app.core.database import Base, get_db
@@ -816,6 +816,8 @@ class ProductionUserRouteAuthenticationMatrixTest(unittest.TestCase):
             ),
             ("GET", "/demos/demo-a/render/jobs", {}),
             ("GET", "/demos/demo-a/media/video", {}),
+            ("DELETE", "/demos/demo-a", {}),
+            ("DELETE", "/auth/account", {"json": {"confirm": "delete-my-account"}}),
         )
         for actor in ("anonymous", "invalid", "expired"):
             service = AuthService(Settings(**valid_production_settings_kwargs()), FakeRedis())
@@ -1008,6 +1010,7 @@ def user_api_client(service: AuthService, session_factory=None) -> TestClient:
     )
     app.include_router(auth_api.router)
     app.include_router(demos.router)
+    app.include_router(deletion.router)
     app.include_router(uploads.router)
     app.include_router(replay.router)
     app.include_router(coaching.router)

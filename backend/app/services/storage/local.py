@@ -10,7 +10,7 @@ import re
 import stat
 import tempfile
 import uuid
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
@@ -21,12 +21,16 @@ from app.services.storage._directory import _DEFAULT_DIRECTORY_BACKEND, _LEAF_CR
 from app.services.storage.contract import (
     _ARTIFACT_ID_PATTERN,
     _ARTIFACT_KINDS,
+    _ARTIFACT_STATES,
     ARTIFACT_CLEANUP_BATCH_SIZE,
+    ARTIFACT_PURGE_BATCH_SIZE,
     ArtifactMetadata,
+    ArtifactPurgeResult,
     ArtifactRead,
     ArtifactReference,
     _decode_reference_identity,
     _encode_reference_identity,
+    purge_scope_tokens,
 )
 from app.services.storage.errors import (
     ArtifactBindingError,
@@ -610,6 +614,196 @@ class LocalArtifactStore(_ArtifactReferenceBoundary):
                 # A replacement or failed delete remains non-accepted for a later pass.
                 continue
         return removed
+
+    def purge_references(self, references: Iterable[str]) -> int:
+        parsed_references = [self.parse_reference(reference) for reference in references]
+        for parsed in parsed_references:
+            try:
+                directory = self._open_artifact_directory(parsed, create=False)
+            except (OSError, ArtifactIntegrityError):
+                continue
+            try:
+                self._purge_leaves(
+                    directory,
+                    [
+                        name
+                        for name in list(directory.iter_names())
+                        if self._leaf_group(name) == parsed.artifact_id
+                    ],
+                )
+            finally:
+                directory.close()
+        return len(parsed_references)
+
+    def purge_prefix(
+        self,
+        *,
+        owner_id: str,
+        demo_id: str | None = None,
+        created_before: datetime | None = None,
+        max_objects: int = ARTIFACT_PURGE_BATCH_SIZE,
+    ) -> ArtifactPurgeResult:
+        tokens = purge_scope_tokens(owner_id, demo_id)
+        cutoff = self._normalize_now(created_before) if created_before is not None else None
+        found = 0
+        complete = True
+        try:
+            root = self._open_root(create=False)
+        except FileNotFoundError:
+            return ArtifactPurgeResult(found=0, deleted=0)
+        except OSError as exc:
+            raise ArtifactStoreError("Artifact purge failed safely") from exc
+        try:
+            artifact_directory = root.open_optional_child("artifact-v1")
+            if artifact_directory is None:
+                return ArtifactPurgeResult(found=0, deleted=0)
+            try:
+                for state in sorted(_ARTIFACT_STATES):
+                    state_directory = artifact_directory.open_optional_child(state)
+                    if state_directory is None:
+                        continue
+                    try:
+                        for kind in sorted(_ARTIFACT_KINDS):
+                            kind_directory = state_directory.open_optional_child(kind)
+                            if kind_directory is None:
+                                continue
+                            try:
+                                owner_found, owner_complete = self._purge_owner_directory(
+                                    kind_directory,
+                                    tokens,
+                                    cutoff=cutoff,
+                                    budget=max_objects - found,
+                                )
+                            finally:
+                                kind_directory.close()
+                            found += owner_found
+                            if not owner_complete:
+                                complete = False
+                                break
+                    finally:
+                        state_directory.close()
+                    if not complete:
+                        break
+            finally:
+                artifact_directory.close()
+        finally:
+            root.close()
+        return ArtifactPurgeResult(found=found, deleted=found, complete=complete)
+
+    def _purge_owner_directory(
+        self,
+        kind_directory: _ArtifactDirectory,
+        tokens: tuple[str, ...],
+        *,
+        cutoff: datetime | None,
+        budget: int,
+    ) -> tuple[int, bool]:
+        owner_token = tokens[0]
+        owner_directory = kind_directory.open_optional_child(owner_token)
+        if owner_directory is None:
+            return 0, True
+        found = 0
+        complete = True
+        try:
+            demo_tokens = [tokens[1]] if len(tokens) > 1 else list(owner_directory.iter_names())
+            for demo_token in demo_tokens:
+                demo_directory = owner_directory.open_optional_child(demo_token)
+                if demo_directory is None:
+                    continue
+                try:
+                    demo_found, demo_complete = self._purge_demo_directory(
+                        demo_directory,
+                        cutoff=cutoff,
+                        budget=budget - found,
+                    )
+                finally:
+                    demo_directory.close()
+                found += demo_found
+                owner_directory.remove_empty_child(demo_token)
+                if not demo_complete:
+                    complete = False
+                    break
+        finally:
+            owner_directory.close()
+        if len(tokens) == 1:
+            # Owner-wide purges only (the account is gone by then). A demo purge
+            # leaves {kind}/{owner} alone: another of the owner's writes may be
+            # between opening it and creating its own demo directory inside.
+            kind_directory.remove_empty_child(owner_token)
+        return found, complete
+
+    def _purge_demo_directory(
+        self,
+        directory: _ArtifactDirectory,
+        *,
+        cutoff: datetime | None,
+        budget: int,
+    ) -> tuple[int, bool]:
+        groups: dict[str, list[str]] = {}
+        for name in list(directory.iter_names()):
+            groups.setdefault(self._leaf_group(name), []).append(name)
+        found = 0
+        for group, leaves in sorted(groups.items()):
+            if cutoff is not None and not self._group_created_before(directory, group, leaves, cutoff):
+                continue
+            if found >= budget:
+                return found, False
+            self._purge_leaves(directory, leaves)
+            found += 1
+        return found, True
+
+    def _purge_leaves(self, directory: _ArtifactDirectory, names: list[str]) -> None:
+        for name in names:
+            try:
+                status = directory.leaf_status(name)
+                if status is None:
+                    continue
+                if stat.S_ISDIR(status.st_mode):
+                    if not directory.remove_empty_child(name):
+                        raise ArtifactStoreError("Artifact purge found an unexpected directory")
+                    continue
+                directory.unlink_leaf(name)
+            except ArtifactStoreError:
+                raise
+            except OSError as exc:
+                raise ArtifactStoreError("Artifact purge failed safely") from exc
+
+    @staticmethod
+    def _leaf_group(name: str) -> str:
+        """The artifact a leaf belongs to: its data, metadata and in-flight temp/claim leaves share one id."""
+        candidate = name[1:] if name.startswith(".") else name
+        artifact_id = candidate.split(".", 1)[0]
+        if _ARTIFACT_ID_PATTERN.fullmatch(artifact_id):
+            return artifact_id
+        return name
+
+    def _group_created_before(
+        self,
+        directory: _ArtifactDirectory,
+        group: str,
+        leaves: list[str],
+        cutoff: datetime,
+    ) -> bool:
+        metadata_name = f"{group}.metadata.json"
+        if metadata_name in leaves:
+            try:
+                payload = json.loads(self._read_small_leaf(directory, metadata_name).decode("utf-8"))
+                created_at = datetime.fromisoformat(str(payload["createdAt"]).replace("Z", "+00:00"))
+                if created_at.tzinfo is not None:
+                    return created_at.astimezone(UTC) < cutoff
+            except (OSError, ArtifactStoreError, UnicodeDecodeError, ValueError, KeyError, TypeError):
+                pass
+        newest: float | None = None
+        for name in leaves:
+            try:
+                status = directory.leaf_status(name)
+            except OSError:
+                status = None
+            if status is not None:
+                newest = status.st_mtime if newest is None else max(newest, status.st_mtime)
+        if newest is None:
+            return False
+        return datetime.fromtimestamp(newest, UTC) < cutoff
 
     @staticmethod
     def _normalize_range(

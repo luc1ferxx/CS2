@@ -29,6 +29,8 @@ from app.services.demo_service._helpers import (
     _required_int,
 )
 from app.services.demo_service.constants import RENDER_CLIP_JOB_TYPE
+from app.services.demo_service.errors import DemoGoneError
+from app.services.demo_service.gone import job_gone_raises, row_identity, rows_missing
 from app.services.demo_service.video_registry import PrivateVideoHandle, _AcceptedVideoHandle, _PrivateArtifactStat
 from app.services.storage import ArtifactStoreError
 from app.services.upload_service import StoredVideoUpload
@@ -57,6 +59,7 @@ class RenderWorkerMedia(ServiceComponent):
         except (AcceptedArtifactError, ArtifactStoreError, ValueError):
             raise ValueError("Accepted render source binding is invalid") from None
 
+    @job_gone_raises
     def open_render_source(self, job: DemoJob) -> tuple[Any, AcceptedArtifactSnapshot]:
         if job.status != "rendering":
             raise ValueError("Render source download requires a rendering job")
@@ -106,6 +109,29 @@ class RenderWorkerMedia(ServiceComponent):
             opened.close()
 
     def bind_render_worker_media(
+        self,
+        job: DemoJob,
+        stored_video: StoredVideoUpload,
+    ) -> AcceptedArtifactSnapshot:
+        """Bind an uploaded MP4 to its rendering job.
+
+        The upload is already stored when this runs. If the match was deleted
+        while the body streamed in, or while binding, the MP4 belongs to
+        nothing: it is removed here and DemoGoneError answers the worker 404.
+        """
+        job_id = row_identity(job)
+        try:
+            return self._bind_render_worker_media(job, stored_video)
+        except Exception as exc:
+            if isinstance(exc, DemoGoneError) or rows_missing(self.db, job_id=job_id):
+                self._service.delete_artifact_safely(
+                    stored_video.storage_key,
+                    expected_generation=stored_video.generation,
+                )
+                raise DemoGoneError("Render job was deleted") from None
+            raise
+
+    def _bind_render_worker_media(
         self,
         job: DemoJob,
         stored_video: StoredVideoUpload,

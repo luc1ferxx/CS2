@@ -1,5 +1,7 @@
 import logging
 import secrets
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Any
 
 from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, Response, UploadFile
@@ -30,6 +32,7 @@ from app.schemas.demo import (
 from app.services.demo_service import (
     RENDER_CLIP_IDLE_RECLAIM_SECONDS,
     DemoDispatchError,
+    DemoGoneError,
     DemoService,
     ReplayBlobUnavailableError,
 )
@@ -82,6 +85,60 @@ def _reclaim_orphaned_render_clip_jobs(service: DemoService) -> None:
         logger.exception("Failed to reclaim orphaned render_clip jobs")
 
 
+# A demo deleted mid-request surfaces as whatever the operation tripped over
+# first: an SQLAlchemy error on a vanished row, or a 400/409 about a missing
+# replay or artifact. Each of these answers 404 once the row is confirmed gone.
+_GONE_MASKING_STATUSES = frozenset({400, 409})
+
+
+@contextmanager
+def deleted_demo_is_404(service: DemoService, demo_id: str) -> Iterator[None]:
+    """Answer 404, never a 500 or a misleading 409, for a demo deleted mid-request."""
+    try:
+        yield
+    except DemoGoneError:
+        raise HTTPException(status_code=404, detail="Demo not found") from None
+    except HTTPException as exc:
+        if exc.status_code in _GONE_MASKING_STATUSES and service.demo_missing(demo_id):
+            raise HTTPException(status_code=404, detail="Demo not found") from None
+        raise
+    except Exception:
+        if service.demo_missing(demo_id):
+            raise HTTPException(status_code=404, detail="Demo not found") from None
+        raise
+
+
+@contextmanager
+def deleted_render_job_is_404(service: DemoService, job_id: str) -> Iterator[None]:
+    """The render-worker twin: a job whose match was deleted is uniformly 404.
+
+    The runner treats 404 as terminal (no failed callback, no retry), which is
+    exactly right for work nobody is waiting for any more.
+    """
+    try:
+        yield
+    except DemoGoneError:
+        raise HTTPException(status_code=404, detail="Render clip job not found") from None
+    except HTTPException as exc:
+        if exc.status_code in _GONE_MASKING_STATUSES and service.render_job_missing(job_id):
+            raise HTTPException(status_code=404, detail="Render clip job not found") from None
+        raise
+    except Exception:
+        if service.render_job_missing(job_id):
+            raise HTTPException(status_code=404, detail="Render clip job not found") from None
+        raise
+
+
+def _require_render_job(service: DemoService, job_id: str) -> None:
+    """Re-check a render job right before answering with what was read for it.
+
+    The job and its demo are loaded once per request; a match deleted after
+    that must not still get its manifest or source handed to the renderer.
+    """
+    if service.render_job_missing(job_id):
+        raise HTTPException(status_code=404, detail="Render clip job not found")
+
+
 def render_worker_status_response(db: Session, redis_client: Any) -> RenderWorkerStatus:
     availability = render_worker_availability(db, redis_client)
     return RenderWorkerStatus(
@@ -124,13 +181,14 @@ def update_demo(
     owner_id: str = Depends(get_current_owner_id),
 ) -> DemoListItem:
     service = DemoService(db, owner_id=owner_id)
-    try:
-        demo = service.update_demo(demo_id, name=update.name, archived=update.archived)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    if demo is None:
-        raise HTTPException(status_code=404, detail="Demo not found")
-    return service.demo_list_item(demo)
+    with deleted_demo_is_404(service, demo_id):
+        try:
+            demo = service.update_demo(demo_id, name=update.name, archived=update.archived)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if demo is None:
+            raise HTTPException(status_code=404, detail="Demo not found")
+        return service.demo_list_item(demo)
 
 
 @router.post("/demos/{demo_id}/archive", response_model=DemoListItem)
@@ -140,10 +198,11 @@ def archive_demo(
     owner_id: str = Depends(get_current_owner_id),
 ) -> DemoListItem:
     service = DemoService(db, owner_id=owner_id)
-    demo = service.archive_demo(demo_id)
-    if demo is None:
-        raise HTTPException(status_code=404, detail="Demo not found")
-    return service.demo_list_item(demo)
+    with deleted_demo_is_404(service, demo_id):
+        demo = service.archive_demo(demo_id)
+        if demo is None:
+            raise HTTPException(status_code=404, detail="Demo not found")
+        return service.demo_list_item(demo)
 
 
 @router.post("/demos/{demo_id}/parse/retry", response_model=DemoListItem)
@@ -156,19 +215,22 @@ def retry_demo_parse(
     demo = service.get_demo(demo_id)
     if demo is None:
         raise HTTPException(status_code=404, detail="Demo not found")
-    try:
-        # Eligibility (409) is checked first; the in-flight count and the commit
-        # that queues the demo then share one admission, and dispatch runs after.
-        return service.retry_parse_job(
-            demo,
-            admission=lambda: retry_admission(db, owner_id),
-        )
-    except UploadQuotaExceeded as exc:
-        return exc.to_response()
-    except DemoDispatchError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from None
-    except ValueError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    with deleted_demo_is_404(service, demo_id):
+        try:
+            # Eligibility (409) is checked first; the in-flight count and the
+            # commit that queues the demo then share one admission, which also
+            # locks the demo (a deletion that won the race is a 404), and
+            # dispatch runs after.
+            return service.retry_parse_job(
+                demo,
+                admission=lambda: retry_admission(db, owner_id),
+            )
+        except UploadQuotaExceeded as exc:
+            return exc.to_response()
+        except DemoDispatchError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from None
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 def render_job_created_response(
@@ -193,7 +255,8 @@ def get_demo_status(
     demo = service.get_demo(demo_id)
     if demo is None:
         raise HTTPException(status_code=404, detail="Demo not found")
-    return service.demo_status(demo)
+    with deleted_demo_is_404(service, demo_id):
+        return service.demo_status(demo)
 
 
 @router.get("/demos/{demo_id}/video", response_model=ReplayVideoStatus)
@@ -206,7 +269,8 @@ def get_demo_video(
     demo = service.get_demo(demo_id)
     if demo is None:
         raise HTTPException(status_code=404, detail="Demo not found")
-    return ReplayVideoStatus.model_validate(service.public_video_status(demo))
+    with deleted_demo_is_404(service, demo_id):
+        return ReplayVideoStatus.model_validate(service.public_video_status(demo))
 
 
 @router.post(
@@ -227,22 +291,23 @@ def upload_demo_video(
     if demo.status != "completed":
         raise HTTPException(status_code=409, detail="Demo parse must complete before video upload")
 
-    try:
-        stored_video = store_video_artifact(
-            owner_id=demo.owner_id,
-            demo_id=demo.id,
-            upload=file,
-            store=service.artifact_store,
-            max_bytes=settings.max_video_upload_bytes,
-            chunk_size=settings.upload_chunk_bytes,
-        )
-        service.attach_manual_video(demo, stored_video)
-    except DemoUploadValidationError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except ValueError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    with deleted_demo_is_404(service, demo_id):
+        try:
+            stored_video = store_video_artifact(
+                owner_id=demo.owner_id,
+                demo_id=demo.id,
+                upload=file,
+                store=service.artifact_store,
+                max_bytes=settings.max_video_upload_bytes,
+                chunk_size=settings.upload_chunk_bytes,
+            )
+            service.attach_manual_video(demo, stored_video)
+        except DemoUploadValidationError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
 
-    return ReplayVideoStatus.model_validate(service.public_video_status(demo))
+        return ReplayVideoStatus.model_validate(service.public_video_status(demo))
 
 
 @router.post(
@@ -261,19 +326,20 @@ def update_demo_video_calibration(
     if demo is None:
         raise HTTPException(status_code=404, detail="Demo not found")
 
-    try:
-        service.update_video_calibration(
-            demo,
-            duration_seconds=calibration.durationSeconds,
-            tick_start=calibration.tickStart,
-            tick_end=calibration.tickEnd,
-            tick_rate=calibration.tickRate,
-            time_origin_seconds=calibration.timeOriginSeconds,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    with deleted_demo_is_404(service, demo_id):
+        try:
+            service.update_video_calibration(
+                demo,
+                duration_seconds=calibration.durationSeconds,
+                tick_start=calibration.tickStart,
+                tick_end=calibration.tickEnd,
+                tick_rate=calibration.tickRate,
+                time_origin_seconds=calibration.timeOriginSeconds,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
 
-    return ReplayVideoStatus.model_validate(service.public_video_status(demo))
+        return ReplayVideoStatus.model_validate(service.public_video_status(demo))
 
 
 @router.post(
@@ -294,16 +360,17 @@ def create_mock_render_job(
     if demo.status != "completed":
         raise HTTPException(status_code=409, detail="Demo parse must complete before rendering")
 
-    try:
-        job = service.create_mock_render_job(demo)
-    except ValueError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    with deleted_demo_is_404(service, demo_id):
+        try:
+            job = service.create_mock_render_job(demo)
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
 
-    job_status = service.render_job_status(job)
-    return render_job_created_response(
-        job_status,
-        ReplayVideoStatus.model_validate(service.public_video_status(demo)),
-    )
+        job_status = service.render_job_status(job)
+        return render_job_created_response(
+            job_status,
+            ReplayVideoStatus.model_validate(service.public_video_status(demo)),
+        )
 
 
 @router.post(
@@ -326,21 +393,22 @@ def create_render_clip_job(
     if demo.status != "completed":
         raise HTTPException(status_code=409, detail="Demo parse must complete before rendering")
 
-    try:
-        job = service.create_render_clip_job(demo, request)
-    except ReplayBlobUnavailableError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    with deleted_demo_is_404(service, demo_id):
+        try:
+            job = service.create_render_clip_job(demo, request)
+        except ReplayBlobUnavailableError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    job_status = service.render_job_status(job)
-    return render_job_created_response(
-        job_status,
-        ReplayVideoStatus.model_validate(service.public_video_status(demo)),
-        # The job is durable and stays queued either way, but the caller should
-        # learn immediately that nothing will pick it up yet.
-        render_worker_status_response(db, redis_client),
-    )
+        job_status = service.render_job_status(job)
+        return render_job_created_response(
+            job_status,
+            ReplayVideoStatus.model_validate(service.public_video_status(demo)),
+            # The job is durable and stays queued either way, but the caller
+            # should learn immediately that nothing will pick it up yet.
+            render_worker_status_response(db, redis_client),
+        )
 
 
 @router.post(
@@ -360,21 +428,22 @@ def retry_render_clip_job(
     if demo is None:
         raise HTTPException(status_code=404, detail="Demo not found")
 
-    try:
-        job = service.retry_render_clip_job(demo, job_id)
-    except ValueError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    if job is None:
-        raise HTTPException(status_code=404, detail="Render job not found")
+    with deleted_demo_is_404(service, demo_id):
+        try:
+            job = service.retry_render_clip_job(demo, job_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        if job is None:
+            raise HTTPException(status_code=404, detail="Render job not found")
 
-    job_status = service.render_job_status(job)
-    return render_job_created_response(
-        job_status,
-        ReplayVideoStatus.model_validate(service.public_video_status(demo)),
-        # Same as creating a job: the row is durable, but the caller should
-        # learn immediately whether anything is around to pick it up.
-        render_worker_status_response(db, redis_client),
-    )
+        job_status = service.render_job_status(job)
+        return render_job_created_response(
+            job_status,
+            ReplayVideoStatus.model_validate(service.public_video_status(demo)),
+            # Same as creating a job: the row is durable, but the caller should
+            # learn immediately whether anything is around to pick it up.
+            render_worker_status_response(db, redis_client),
+        )
 
 
 @router.get("/render/worker", response_model=RenderWorkerStatus)
@@ -398,7 +467,8 @@ def list_render_clip_jobs(
     demo = service.get_demo(demo_id)
     if demo is None:
         raise HTTPException(status_code=404, detail="Demo not found")
-    return service.list_render_clip_jobs(demo)
+    with deleted_demo_is_404(service, demo_id):
+        return service.list_render_clip_jobs(demo)
 
 
 @router.get(
@@ -417,12 +487,23 @@ def get_next_render_worker_manifest(
     if job is None:
         return Response(status_code=204)
 
+    job_id = job.id
     try:
-        if claim:
-            job = service.claim_render_clip_job(job)
-        return service.render_job_manifest(job)
-    except ValueError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+        with deleted_render_job_is_404(service, job_id):
+            try:
+                if claim:
+                    job = service.claim_render_clip_job(job)
+                manifest = service.render_job_manifest(job)
+            except ValueError as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
+            _require_render_job(service, job_id)
+            return manifest
+    except HTTPException as exc:
+        if exc.status_code == 404:
+            # The match was deleted between the lookup and the claim. The
+            # worker asked for "any job", not this one: nothing to hand out.
+            return Response(status_code=204)
+        raise
 
 
 @router.get(
@@ -441,12 +522,15 @@ def get_render_worker_manifest(
     if job is None:
         raise HTTPException(status_code=404, detail="Render clip job not found")
 
-    try:
-        if claim:
-            job = service.claim_render_clip_job(job)
-        return service.render_job_manifest(job)
-    except ValueError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    with deleted_render_job_is_404(service, job_id):
+        try:
+            if claim:
+                job = service.claim_render_clip_job(job)
+            manifest = service.render_job_manifest(job)
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        _require_render_job(service, job_id)
+        return manifest
 
 
 @router.get("/render-worker/jobs/{job_id}/source", tags=["render-worker"])
@@ -459,10 +543,18 @@ def download_render_worker_source(
     job = service.get_render_clip_job(job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="Render clip job not found")
-    try:
-        opened, snapshot = service.open_render_source(job)
-    except ValueError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from None
+    with deleted_render_job_is_404(service, job_id):
+        try:
+            opened, snapshot = service.open_render_source(job)
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from None
+        try:
+            # After opening, not before: a deletion that committed by now must
+            # not hand its .dem out of storage its purge has not reached yet.
+            _require_render_job(service, job_id)
+        except BaseException:
+            opened.close()
+            raise
     return StreamingResponse(
         service.stream_render_source(opened, snapshot),
         media_type="application/octet-stream",
@@ -498,24 +590,27 @@ def upload_render_worker_media(
             detail="Render worker media requires a rendering job",
         )
 
-    try:
-        stored_video = store_video_artifact(
-            owner_id=job.demo.owner_id,
-            demo_id=job.demo_id,
-            upload=file,
-            store=service.artifact_store,
-            max_bytes=settings.max_video_upload_bytes,
-            chunk_size=settings.upload_chunk_bytes,
-        )
-        service.bind_render_worker_media(job, stored_video)
-    except DemoUploadValidationError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except ValueError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    owner_id, demo_id = job.demo.owner_id, job.demo_id
+    with deleted_render_job_is_404(service, job_id):
+        try:
+            stored_video = store_video_artifact(
+                owner_id=owner_id,
+                demo_id=demo_id,
+                upload=file,
+                store=service.artifact_store,
+                max_bytes=settings.max_video_upload_bytes,
+                chunk_size=settings.upload_chunk_bytes,
+            )
+            # Removes the stored MP4 itself when the match was deleted meanwhile.
+            service.bind_render_worker_media(job, stored_video)
+        except DemoUploadValidationError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     return RenderWorkerMediaUpload(
-        jobId=job.id,
-        demoId=job.demo_id,
+        jobId=job_id,
+        demoId=demo_id,
         videoUrl=stored_video.url,
         storageKey=stored_video.storage_key,
         originalFilename=stored_video.original_filename,
@@ -539,12 +634,13 @@ def apply_render_worker_result(
     if job is None:
         raise HTTPException(status_code=404, detail="Render clip job not found")
 
-    try:
-        video = service.apply_render_worker_result(job, result)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    with deleted_render_job_is_404(service, job_id):
+        try:
+            video = service.apply_render_worker_result(job, result)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    return RenderWorkerResultAccepted(
-        job=service.render_job_status(job),
-        video=ReplayVideoStatus.model_validate(video),
-    )
+        return RenderWorkerResultAccepted(
+            job=service.render_job_status(job),
+            video=ReplayVideoStatus.model_validate(video),
+        )

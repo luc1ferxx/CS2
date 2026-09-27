@@ -36,7 +36,8 @@ from app.services.demo_service.constants import (
     REPLAY_ARTIFACT_MISSING_MESSAGE,
     STALE_PARSE_AFTER_SECONDS,
 )
-from app.services.demo_service.errors import DemoDispatchError
+from app.services.demo_service.errors import DemoDispatchError, DemoGoneError
+from app.services.demo_service.gone import row_identity, rows_missing
 from app.services.demo_service.steam_match import SteamMatchParseState
 from app.services.storage import ArtifactStoreError
 
@@ -149,7 +150,22 @@ class ParseLifecycle(ServiceComponent):
 
         # Only the commit that makes the demo active runs inside the admission:
         # source verification above and dispatch below can block on the network.
+        demo_id = demo.id
         with admission():
+            # Lock the demo first: a deletion that committed since get_demo()
+            # must answer 404 here rather than fail the job insert on its FK,
+            # and one still in flight waits for this commit and then removes
+            # the job this retry queues along with everything else.
+            locked = (
+                self.db.query(Demo)
+                .filter(Demo.id == demo_id, Demo.owner_id == demo.owner_id)
+                .populate_existing()
+                .with_for_update()
+                .one_or_none()
+            )
+            if locked is None:
+                raise DemoGoneError("Demo was deleted")
+            demo = locked
             # A concurrent retry of this demo may have queued its job since the
             # checks above; the admission serializes this re-read with its commit.
             if self._active_parse_job_exists(demo):
@@ -241,19 +257,35 @@ class ParseLifecycle(ServiceComponent):
         if claimed != 1:
             self.db.rollback()
             return False
-        self.db.refresh(job)
-        demo.status = "parsing"
-        demo.error_message = None
-        if job.job_type == "real_parse":
-            self._steam_matches.mark_parsing(demo, job, started_at)
-        self.db.commit()
+        demo_id, job_id = row_identity(demo), row_identity(job)
+        try:
+            self.db.refresh(job)
+            demo.status = "parsing"
+            demo.error_message = None
+            if job.job_type == "real_parse":
+                self._steam_matches.mark_parsing(demo, job, started_at)
+            self.db.commit()
+        except Exception:
+            if rows_missing(self.db, demo_id=demo_id, job_id=job_id):
+                _log_deleted_during_parse(demo_id, job_id)
+                return False
+            raise
         return True
 
-    def mark_parse_analyzing(self, demo: Demo, job: DemoJob) -> None:
-        self._ensure_parse_job(job)
-        demo.status = "analyzing"
-        job.metadata_json = _metadata_json({**_job_metadata(job), "phase": "analyzing"})
-        self.db.commit()
+    def mark_parse_analyzing(self, demo: Demo, job: DemoJob) -> bool:
+        """Move a claimed parse to "analyzing"; False when the demo was deleted meanwhile."""
+        demo_id, job_id = row_identity(demo), row_identity(job)
+        try:
+            self._ensure_parse_job(job)
+            demo.status = "analyzing"
+            job.metadata_json = _metadata_json({**_job_metadata(job), "phase": "analyzing"})
+            self.db.commit()
+        except Exception:
+            if rows_missing(self.db, demo_id=demo_id, job_id=job_id):
+                _log_deleted_during_parse(demo_id, job_id)
+                return False
+            raise
+        return True
 
     def complete_parse_job(
         self,
@@ -263,37 +295,52 @@ class ParseLifecycle(ServiceComponent):
         events: list[dict[str, Any]],
         *,
         name: str | None = None,
-    ) -> None:
-        self._ensure_parse_job(job)
-        previous_replay_reference = getattr(demo, "replay_storage_key", None)
-        replay_storage_key = self._service.replay.write_replay_blob(demo.id, replay)
+    ) -> bool:
+        """Store the parse result; False when the demo was deleted meanwhile.
 
-        self.db.query(CoachingEvent).filter(CoachingEvent.demo_id == demo.id).delete()
-        self.db.add_all(CoachingEvent(**event) for event in events)
-
-        demo.status = "completed"
-        if name is not None:
-            demo.name = name
-        demo.map_name = replay["mapName"]
-        demo.tick_rate = replay["tickRate"]
-        demo.round_count = len(replay["rounds"])
-        demo.coaching_event_count = len(events)
-        demo.replay_storage_key = replay_storage_key
-        demo.completed_at = utc_now()
-        demo.error_message = None
-
-        job.status = "completed"
-        completed_at = utc_now()
-        job.finished_at = completed_at
-        job.error_message = None
-        job.metadata_json = _metadata_json({**_job_metadata(job), "phase": "ready"})
-        if job.job_type == "real_parse":
-            self._steam_matches.mark_ready(demo, replay, completed_at)
+        A deletion anywhere up to the commit must not resurrect anything: the
+        rows roll back and the replay blob staged for them is removed. Should
+        that removal fail, the deletion's final storage sweep still finds it.
+        """
+        demo_id, job_id = row_identity(demo), row_identity(job)
+        replay_storage_key: str | None = None
         try:
+            self._ensure_parse_job(job)
+            previous_replay_reference = getattr(demo, "replay_storage_key", None)
+            replay_storage_key = self._service.replay.write_replay_blob(demo.id, replay)
+
+            self.db.query(CoachingEvent).filter(CoachingEvent.demo_id == demo.id).delete()
+            self.db.add_all(CoachingEvent(**event) for event in events)
+
+            demo.status = "completed"
+            if name is not None:
+                demo.name = name
+            demo.map_name = replay["mapName"]
+            demo.tick_rate = replay["tickRate"]
+            demo.round_count = len(replay["rounds"])
+            demo.coaching_event_count = len(events)
+            demo.replay_storage_key = replay_storage_key
+            demo.completed_at = utc_now()
+            demo.error_message = None
+
+            job.status = "completed"
+            completed_at = utc_now()
+            job.finished_at = completed_at
+            job.error_message = None
+            job.metadata_json = _metadata_json({**_job_metadata(job), "phase": "ready"})
+            if job.job_type == "real_parse":
+                self._steam_matches.mark_ready(demo, replay, completed_at)
             self.db.commit()
-        except BaseException:
+        except BaseException as exc:
             self.db.rollback()
-            self._service.delete_artifact_safely(replay_storage_key)
+            if replay_storage_key is not None:
+                self._service.delete_artifact_safely(replay_storage_key)
+            if isinstance(exc, Exception) and (
+                isinstance(exc, DemoGoneError)
+                or rows_missing(self.db, demo_id=demo_id, job_id=job_id)
+            ):
+                _log_deleted_during_parse(demo_id, job_id)
+                return False
             raise
         if (
             previous_replay_reference
@@ -301,6 +348,7 @@ class ParseLifecycle(ServiceComponent):
             and previous_replay_reference != replay_storage_key
         ):
             self._service.delete_artifact_safely(previous_replay_reference)
+        return True
 
     def fail_parse_job(
         self,
@@ -309,29 +357,38 @@ class ParseLifecycle(ServiceComponent):
         error: str,
         *,
         error_code: str = "PARSER_FAILED",
-    ) -> None:
-        self._ensure_parse_job(job)
-        failed_at = utc_now()
-        short_message = _compact_failure_message(error)
-        failure_metadata = {
-            "errorCode": error_code,
-            "message": short_message,
-            "failedAt": failed_at.isoformat(),
-            "updatedAt": failed_at.isoformat(),
-        }
-        metadata = _job_metadata(job)
-        metadata["failure"] = failure_metadata
-        metadata["phase"] = "failed"
+    ) -> bool:
+        """Record a parse failure; False when the demo was deleted meanwhile."""
+        demo_id, job_id = row_identity(demo), row_identity(job)
+        try:
+            self._ensure_parse_job(job)
+            failed_at = utc_now()
+            short_message = _compact_failure_message(error)
+            failure_metadata = {
+                "errorCode": error_code,
+                "message": short_message,
+                "failedAt": failed_at.isoformat(),
+                "updatedAt": failed_at.isoformat(),
+            }
+            metadata = _job_metadata(job)
+            metadata["failure"] = failure_metadata
+            metadata["phase"] = "failed"
 
-        demo.status = "failed"
-        demo.error_message = short_message
-        job.status = "failed"
-        job.error_message = short_message
-        job.finished_at = failed_at
-        job.metadata_json = _metadata_json(metadata)
-        if job.job_type == "real_parse":
-            self._steam_matches.mark_parse_failed(demo, failed_at)
-        self.db.commit()
+            demo.status = "failed"
+            demo.error_message = short_message
+            job.status = "failed"
+            job.error_message = short_message
+            job.finished_at = failed_at
+            job.metadata_json = _metadata_json(metadata)
+            if job.job_type == "real_parse":
+                self._steam_matches.mark_parse_failed(demo, failed_at)
+            self.db.commit()
+        except Exception:
+            if rows_missing(self.db, demo_id=demo_id, job_id=job_id):
+                _log_deleted_during_parse(demo_id, job_id)
+                return False
+            raise
+        return True
 
     def _active_parse_job_exists(self, demo: Demo) -> bool:
         return (
@@ -504,13 +561,12 @@ class ParseLifecycle(ServiceComponent):
         )
         if demo is None:
             return False
-        self.fail_parse_job(
+        return self.fail_parse_job(
             demo,
             job,
             PARSE_ABANDONED_MESSAGE,
             error_code=PARSE_ABANDONED_ERROR_CODE,
         )
-        return True
 
     def recover_parse_job(self, job_id: str, demo_id: str) -> bool:
         """Decide what to do with one message recovered from a dead consumer.
@@ -575,19 +631,29 @@ class ParseLifecycle(ServiceComponent):
 
         processing_cutoff = moment - timedelta(seconds=older_than_seconds)
         for job in self._stale_parse_jobs("processing", processing_cutoff, limit):
-            if job.attempts >= settings.parse_max_attempts:
+            job_id = row_identity(job)
+            try:
+                # An earlier iteration's commit expired this row; reloading it
+                # raises if its match was deleted since the query above.
+                attempts = job.attempts
+            except Exception:
+                if rows_missing(self.db, job_id=job_id):
+                    continue
+                raise
+            if attempts >= settings.parse_max_attempts:
                 if self.abandon_parse_job(job):
-                    reclaimed.append(str(job.id))
+                    reclaimed.append(str(job_id))
                 continue
             if self._requeue_parse_job(job):
-                reclaimed.append(str(job.id))
+                reclaimed.append(str(job_id))
                 client = self._redispatch_parse_job(job, client)
 
         queued_cutoff = moment - timedelta(seconds=redispatch_after_seconds)
         for job in self._stale_parse_jobs("queued", queued_cutoff, limit):
-            if str(job.id) in reclaimed:
+            job_id = row_identity(job)
+            if str(job_id) in reclaimed:
                 continue
-            reclaimed.append(str(job.id))
+            reclaimed.append(str(job_id))
             client = self._redispatch_parse_job(job, client)
         return reclaimed
 
@@ -604,3 +670,7 @@ class ParseLifecycle(ServiceComponent):
             # so the next pass tries again rather than the worker dying here.
             logger.warning("Could not redispatch parse job %s", job.id)
         return client
+
+
+def _log_deleted_during_parse(demo_id: str | None, job_id: str | None) -> None:
+    logger.info("demo deleted during parse: demo %s, job %s", demo_id, job_id)

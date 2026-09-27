@@ -102,6 +102,14 @@ class _ArtifactDirectory:
     def unlink_leaf(self, name: str) -> None:
         raise NotImplementedError
 
+    def leaf_status(self, name: str) -> os.stat_result | None:
+        """``lstat`` of one entry, never following a link; None when it is gone."""
+        raise NotImplementedError
+
+    def remove_empty_child(self, name: str) -> bool:
+        """Remove a child directory if it is empty; never follows a link or raises."""
+        raise NotImplementedError
+
     def open_optional_child(self, name: str) -> _ArtifactDirectory | None:
         try:
             return self.open_child(name, create=False)
@@ -193,6 +201,22 @@ class _PosixArtifactDirectory(_ArtifactDirectory):
             os.unlink(name, dir_fd=self._fd)
         except FileNotFoundError:
             pass
+
+    def leaf_status(self, name: str) -> os.stat_result | None:
+        try:
+            return os.stat(name, dir_fd=self._fd, follow_symlinks=False)
+        except FileNotFoundError:
+            return None
+
+    def remove_empty_child(self, name: str) -> bool:
+        try:
+            status = os.stat(name, dir_fd=self._fd, follow_symlinks=False)
+            if not stat.S_ISDIR(status.st_mode):
+                return False
+            os.rmdir(name, dir_fd=self._fd)
+            return True
+        except OSError:
+            return False
 
 
 class _PortableArtifactDirectory(_ArtifactDirectory):
@@ -303,6 +327,23 @@ class _PortableArtifactDirectory(_ArtifactDirectory):
             os.unlink(self._path / name)
         except FileNotFoundError:
             pass
+
+    def leaf_status(self, name: str) -> os.stat_result | None:
+        try:
+            return os.lstat(self._path / name)
+        except FileNotFoundError:
+            return None
+
+    def remove_empty_child(self, name: str) -> bool:
+        child_path = self._path / name
+        try:
+            status = os.lstat(child_path)
+            if stat.S_ISLNK(status.st_mode) or _is_reparse_point(status) or not stat.S_ISDIR(status.st_mode):
+                return False
+            os.rmdir(child_path)
+            return True
+        except OSError:
+            return False
 
 
 _DEFAULT_DIRECTORY_BACKEND: type[_ArtifactDirectory] = (

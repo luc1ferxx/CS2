@@ -9,8 +9,9 @@ from app.core.features import require_dev_tools
 from app.schemas.demo import DemoListItem
 from app.schemas.upload_quota import UploadQuotaResponse
 from app.services.artifact_intake import ArtifactIntakeError
+from app.services.deletion_service import AccountDeletedError, account_exists_for_write
 from app.services.demo_service import DemoArtifactBindError, DemoDispatchError, DemoService
-from app.services.upload_quota import UploadQuotaExceeded, UploadQuotaService, parse_admission
+from app.services.upload_quota import UploadQuotaExceeded, UploadQuotaService, parse_admission, record_upload
 from app.services.upload_service import DemoUploadValidationError
 
 router = APIRouter(tags=["uploads"])
@@ -71,12 +72,23 @@ def create_demo_upload(
         try:
             with parse_admission(db):
                 quota.check_new_upload(owner_id)
+                # The account may have been deleted while the body streamed:
+                # checked in the commit's own transaction (production only).
+                if not account_exists_for_write(db, owner_id):
+                    raise AccountDeletedError
+                record_upload(db, owner_id)
                 # Only the commit: the reload and a failed commit's cleanup
                 # need another pooled connection, so they run after the lock.
                 service.commit_prepared_real_demo_rows()
             committed = True
         except UploadQuotaExceeded as exc:
             return exc.to_response()
+        except AccountDeletedError as exc:
+            return JSONResponse(
+                status_code=401,
+                content={"detail": {"code": exc.code, "message": exc.message}},
+                headers={"Cache-Control": "private, no-store"},
+            )
         finally:
             if not committed:
                 service.discard_prepared_real_demo(prepared)

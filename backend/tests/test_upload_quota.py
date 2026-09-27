@@ -27,7 +27,7 @@ from app.core.auth import SessionCsrfMiddleware
 from app.core.config import Settings, settings
 from app.core.database import SCHEMA_UPGRADE_LOCK_ID, Base, get_db
 from app.core.request_limits import MultipartRequestLimitMiddleware
-from app.models import Demo, DemoJob
+from app.models import Account, Demo, DemoJob, UploadLedger
 from app.services.auth_service import AuthService, get_auth_service
 from app.services.demo_service import ACTIVE_DEMO_STATUSES, DemoService, demo_ingest
 from app.services.upload_quota import (
@@ -178,6 +178,8 @@ class UploadQuotaServiceTest(unittest.TestCase):
     ) -> None:
         for _ in range(count):
             self.db.add(make_demo(owner_id, status=status, created_at=NOW - age, archived=archived))
+            # Every demo creation writes a ledger row; the daily quota counts those.
+            self.db.add(make_ledger_entry(owner_id, created_at=NOW - age))
         self.db.commit()
 
     def assert_exceeded(
@@ -554,6 +556,11 @@ class ProductionUploadQuotaApiTest(unittest.TestCase):
             300,
             json.dumps({"ownerId": OWNER, "expiresAt": int(time.time()) + 300}),
         )
+        # A production session belongs to an account; the upload commit checks it.
+        with self.Session() as db:
+            if db.get(Account, OWNER) is None:
+                db.add(Account(owner_id=OWNER))
+                db.commit()
         app = FastAPI()
         if precheck is not None:
             app.add_middleware(MultipartRequestLimitMiddleware, demo_upload_precheck=precheck)
@@ -588,6 +595,7 @@ class ProductionUploadQuotaApiTest(unittest.TestCase):
                     created_at=datetime.now(UTC) - age,
                 )
                 db.add(demo)
+                db.add(make_ledger_entry(owner_id, created_at=datetime.now(UTC) - age))
                 ids.append(demo.id)
             db.commit()
         return ids
@@ -1251,6 +1259,10 @@ def make_demo(
         created_at=created_at,
         updated_at=created_at,
     )
+
+
+def make_ledger_entry(owner_id: str, *, created_at: datetime) -> UploadLedger:
+    return UploadLedger(id=str(uuid.uuid4()), owner_id=owner_id, created_at=created_at)
 
 
 def production_settings_kwargs() -> dict[str, Any]:

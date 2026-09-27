@@ -13,7 +13,8 @@ from app.services.artifact_binding import AcceptedArtifactError, read_accepted_r
 from app.services.demo_service._component import ServiceComponent
 from app.services.demo_service._helpers import _int_or_default, _optional_str, _positive_int_or_default
 from app.services.demo_service.constants import REPLAY_ARTIFACT_MISSING_MESSAGE
-from app.services.demo_service.errors import ReplayBlobUnavailableError
+from app.services.demo_service.errors import DemoGoneError, ReplayBlobUnavailableError
+from app.services.demo_service.gone import gone_rows_raise, row_identity
 from app.services.demo_service.projection import _project_fields, _public_render_failure, _public_replay_contract
 from app.services.storage import ArtifactStoreError
 
@@ -38,7 +39,9 @@ class ReplayBlob(ServiceComponent):
     def write_replay_blob(self, demo_id: str, replay: dict[str, Any]) -> str:
         demo = self.db.query(Demo).filter(Demo.id == demo_id).one_or_none()
         if demo is None:
-            raise ValueError("Demo is not available for replay storage")
+            # Deleted while the caller was working on it; nothing may be
+            # stored under an id whose rows are gone.
+            raise DemoGoneError("Demo is not available for replay storage")
         try:
             encoded = json.dumps(
                 replay,
@@ -235,12 +238,13 @@ class ReplayBlob(ServiceComponent):
         )
 
     def _commit_replay_update(self, pending: _PendingReplayUpdate) -> None:
-        try:
-            self.db.commit()
-        except BaseException:
-            self.db.rollback()
-            self._service.delete_artifact_safely(pending.next_reference)
-            raise
+        with gone_rows_raise(self.db, demo_id=pending.demo_id):
+            try:
+                self.db.commit()
+            except BaseException:
+                self.db.rollback()
+                self._service.delete_artifact_safely(pending.next_reference)
+                raise
         self.finish_replay_update(pending)
 
     def finish_replay_update(self, pending: _PendingReplayUpdate) -> None:
@@ -275,7 +279,9 @@ class ReplayBlob(ServiceComponent):
         error_code: str | None = None,
     ) -> tuple[dict[str, Any], _PendingReplayUpdate | None]:
         # A different job may have completed since this worker loaded the demo.
-        self.db.refresh(demo, with_for_update=True)
+        # Refreshing a row deleted meanwhile raises; that is a DemoGoneError.
+        with gone_rows_raise(self.db, demo_id=row_identity(demo)):
+            self.db.refresh(demo, with_for_update=True)
         current_video = self.get_video_status(demo)
         if current_video.get("source") == "manual_upload" or (
             current_video.get("status") == "ready"

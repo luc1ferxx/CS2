@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
-from app.api import auth, coaching, demos, diagnostics, private_media, replay, steam, uploads
+from app.api import auth, coaching, deletion, demos, diagnostics, private_media, replay, steam, uploads
 from app.core.access_log import (
     install_auth_callback_access_log_redaction,
     suppress_outbound_http_request_logging,
@@ -23,8 +23,9 @@ from app.core.request_limits import (
     SensitiveJsonRequestLimitMiddleware,
 )
 from app.services.artifact_intake import ArtifactIntakeError, ArtifactIntakePolicy, ArtifactIntakeService
+from app.services.deletion_service import DeletionService
 from app.services.storage import artifact_store_from_settings
-from app.services.upload_quota import upload_quota_precheck
+from app.services.upload_quota import prune_upload_ledger, upload_quota_precheck
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +45,14 @@ def on_startup() -> None:
         ).cleanup_abandoned()
     except ArtifactIntakeError:
         logger.warning("Artifact quarantine cleanup was unavailable during startup")
+    # Storage a previous process left to purge after a hard delete; the worker's
+    # idle tick drains the rest. Never allowed to stop the API from starting.
+    try:
+        with SessionLocal() as db:
+            DeletionService(db, artifact_store=store).drain_due_tasks()
+            prune_upload_ledger(db)
+    except Exception:
+        logger.warning("Deletion outbox drain was unavailable during startup")
     if settings.artifact_storage_backend == "local":
         for storage_dir in (
             settings.replay_storage_dir,
@@ -103,6 +112,7 @@ app.add_middleware(
 )
 
 app.include_router(demos.router)
+app.include_router(deletion.router)
 app.include_router(auth.router)
 app.include_router(uploads.router)
 app.include_router(replay.router)

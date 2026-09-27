@@ -10,6 +10,41 @@ class AdapterConfigError(ValueError):
     pass
 
 
+# The API answers these for a job that no longer exists -- in practice, one
+# whose match was deleted while it waited or rendered.
+GONE_HTTP_STATUSES = frozenset({404, 410})
+# The API's exact 404 body for a gone job. Any other 404 (a wrong API_BASE_URL,
+# the frontend origin, a proxy page) is a misconfiguration, not a deletion, and
+# must never make the runner remove a job's workspace.
+JOB_NOT_FOUND_DETAIL = "Render clip job not found"
+
+
+def is_job_gone_response(status: int, body: bytes) -> bool:
+    """410, or the API's own JSON 404 for a missing render job."""
+    if status == 410:
+        return True
+    if status != 404:
+        return False
+    try:
+        payload = json.loads(body.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError):
+        return False
+    return isinstance(payload, dict) and payload.get("detail") == JOB_NOT_FOUND_DETAIL
+
+
+class RenderJobGoneError(RuntimeError):
+    """The job is gone on the API side (HTTP 410, or the API's own 404 for it).
+
+    Terminal: nobody is waiting for the clip any more, so adapters must not
+    post a failed callback (it would 404 too) and the runner must not back off
+    and retry. The runner removes the job's local workspace instead.
+    """
+
+    def __init__(self, job_id: str):
+        super().__init__("Render job no longer exists on the API")
+        self.job_id = job_id
+
+
 class RenderWorkerClient(Protocol):
     def upload_media(self, job_id: str, media_path: Path) -> UploadedMedia:
         ...

@@ -7,17 +7,23 @@ import hmac
 import os
 import re
 import uuid
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterable, Iterator, Mapping
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, BinaryIO
 
 from app.services.storage._boundary import _ArtifactReferenceBoundary
 from app.services.storage.contract import (
+    _ARTIFACT_KINDS,
+    _ARTIFACT_STATES,
+    ARTIFACT_PURGE_BATCH_SIZE,
     ArtifactMetadata,
+    ArtifactPurgeResult,
     ArtifactRead,
     ArtifactReference,
     _decode_reference_identity,
     _encode_reference_identity,
+    purge_scope_tokens,
 )
 from app.services.storage.errors import (
     ArtifactBindingError,
@@ -79,6 +85,24 @@ class _SeekableStreamWindow:
         return True
 
 
+@dataclass(frozen=True)
+class _ListedVersion:
+    key: str
+    version_id: str
+    last_modified: datetime | None
+    delete_marker: bool
+
+
+def _created_before(entries: list[_ListedVersion], cutoff: datetime) -> bool:
+    """Whether a key's data was first written before the cutoff (a marker-only key holds no data)."""
+    written = [entry.last_modified for entry in entries if not entry.delete_marker]
+    if not written:
+        return True
+    if any(modified is None for modified in written):
+        return False
+    return min(modified for modified in written if modified is not None) < cutoff
+
+
 class S3ArtifactStore(_ArtifactReferenceBoundary):
     """Private S3-compatible adapter with conditional immutable reads."""
 
@@ -112,6 +136,8 @@ class S3ArtifactStore(_ArtifactReferenceBoundary):
             client = boto3.client("s3", **client_options)
             self._validate_client_capabilities(client)
         self.client = client
+        # Learned on the first purge; None until the bucket has answered.
+        self._versioned: bool | None = None
 
     def write_stream(
         self,
@@ -410,6 +436,256 @@ class S3ArtifactStore(_ArtifactReferenceBoundary):
                 return False
             raise ArtifactStoreError("Artifact delete failed safely") from exc
         return True
+
+    def purge_references(self, references: Iterable[str]) -> int:
+        keys = [self._object_key(self.parse_reference(reference)) for reference in references]
+        if self._bucket_versioned():
+            for key in keys:
+                self._delete_versions(
+                    [entry for entry in self._iter_listed_versions(key) if entry.key == key]
+                )
+            return len(keys)
+        self._delete_keys(keys)
+        return len(keys)
+
+    def purge_prefix(
+        self,
+        *,
+        owner_id: str,
+        demo_id: str | None = None,
+        created_before: datetime | None = None,
+        max_objects: int = ARTIFACT_PURGE_BATCH_SIZE,
+    ) -> ArtifactPurgeResult:
+        tokens = purge_scope_tokens(owner_id, demo_id)
+        cutoff = (
+            LocalArtifactStore._normalize_now(created_before)
+            if created_before is not None
+            else None
+        )
+        if self._bucket_versioned():
+            return self._purge_versioned_prefix(tokens, cutoff, max_objects)
+        found = 0
+        deleted = 0
+        complete = True
+        for state in sorted(_ARTIFACT_STATES):
+            for kind in sorted(_ARTIFACT_KINDS):
+                # Every token ends in "/": owner "ab" must never sweep owner "abc".
+                relative = "/".join(("v1", state, kind, *tokens)) + "/"
+                prefix = f"{self.prefix}/{relative}" if self.prefix else relative
+                keys: list[str] = []
+                for key, last_modified in self._iter_listed_keys(prefix):
+                    if not key.startswith(prefix) or key == prefix:
+                        continue
+                    if cutoff is not None and (last_modified is None or last_modified >= cutoff):
+                        continue
+                    if found + len(keys) >= max_objects:
+                        complete = False
+                        break
+                    keys.append(key)
+                found += len(keys)
+                deleted += self._delete_keys(keys)
+                if not complete:
+                    return ArtifactPurgeResult(found=found, deleted=deleted, complete=False)
+        return ArtifactPurgeResult(found=found, deleted=deleted, complete=complete)
+
+    def _bucket_versioned(self) -> bool:
+        """Whether deletes on this bucket only add delete markers.
+
+        On a versioned bucket a plain delete keeps the data as a noncurrent
+        version, so purges there delete every version by id. R2 (the
+        documented target) has no bucket versioning and answers
+        NotImplemented, which counts as unversioned: plain deletes, as the
+        purge contract prefers. Any other failure is not cached, so a
+        versioned bucket is still recognised on a later pass, which then finds
+        and removes what the plain deletes left behind.
+        """
+        if self._versioned is not None:
+            return self._versioned
+        get_versioning = getattr(self.client, "get_bucket_versioning", None)
+        if not callable(get_versioning):
+            self._versioned = False
+            return False
+        try:
+            response = get_versioning(Bucket=self.bucket)
+        except Exception as exc:
+            if self._error_code(exc) in {"NotImplemented", "501", "MethodNotAllowed"}:
+                self._versioned = False
+            return False
+        status = response.get("Status") if isinstance(response, Mapping) else None
+        self._versioned = status in {"Enabled", "Suspended"}
+        return self._versioned
+
+    def _purge_versioned_prefix(
+        self,
+        tokens: tuple[str, ...],
+        cutoff: datetime | None,
+        max_objects: int,
+    ) -> ArtifactPurgeResult:
+        found = 0
+        for state in sorted(_ARTIFACT_STATES):
+            for kind in sorted(_ARTIFACT_KINDS):
+                relative = "/".join(("v1", state, kind, *tokens)) + "/"
+                prefix = f"{self.prefix}/{relative}" if self.prefix else relative
+                by_key: dict[str, list[_ListedVersion]] = {}
+                for entry in self._iter_listed_versions(prefix):
+                    if entry.key.startswith(prefix) and entry.key != prefix:
+                        by_key.setdefault(entry.key, []).append(entry)
+                batch: list[_ListedVersion] = []
+                for entries in (by_key[key] for key in sorted(by_key)):
+                    if cutoff is not None and not _created_before(entries, cutoff):
+                        # Written at or after the cutoff: not the deleted account's.
+                        continue
+                    if found + len(batch) + len(entries) > max_objects and (found or batch):
+                        self._delete_versions(batch)
+                        found += len(batch)
+                        return ArtifactPurgeResult(found=found, deleted=found, complete=False)
+                    batch.extend(entries)
+                self._delete_versions(batch)
+                found += len(batch)
+        return ArtifactPurgeResult(found=found, deleted=found, complete=True)
+
+    def _iter_listed_versions(self, prefix: str) -> Iterator[_ListedVersion]:
+        """Every version and delete marker under a prefix."""
+        key_marker: str | None = None
+        version_marker: str | None = None
+        while True:
+            request: dict[str, Any] = {"Bucket": self.bucket, "Prefix": prefix, "MaxKeys": 1000}
+            if key_marker:
+                request["KeyMarker"] = key_marker
+                if version_marker:
+                    request["VersionIdMarker"] = version_marker
+            try:
+                response = self.client.list_object_versions(**request)
+            except Exception as exc:
+                raise ArtifactStoreError("Artifact purge listing failed safely") from exc
+            for field, is_marker in (("Versions", False), ("DeleteMarkers", True)):
+                items = response.get(field, [])
+                if not isinstance(items, list):
+                    raise ArtifactIntegrityError("Artifact purge listing is invalid")
+                for item in items:
+                    if not isinstance(item, Mapping):
+                        continue
+                    key, version_id = item.get("Key"), item.get("VersionId")
+                    if not isinstance(key, str) or not isinstance(version_id, str) or not version_id:
+                        continue
+                    last_modified = item.get("LastModified")
+                    if isinstance(last_modified, datetime):
+                        if last_modified.tzinfo is None:
+                            last_modified = last_modified.replace(tzinfo=UTC)
+                        last_modified = last_modified.astimezone(UTC)
+                    else:
+                        last_modified = None
+                    yield _ListedVersion(key, version_id, last_modified, is_marker)
+            if not response.get("IsTruncated"):
+                return
+            key_marker = response.get("NextKeyMarker")
+            version_marker = response.get("NextVersionIdMarker")
+            if not isinstance(key_marker, str) or not key_marker:
+                raise ArtifactIntegrityError("Artifact purge listing is invalid")
+
+    def _delete_versions(self, entries: list[_ListedVersion]) -> None:
+        """Delete exact versions, data and delete markers alike, on a versioned bucket."""
+        for start in range(0, len(entries), 1000):
+            objects = [
+                {"Key": entry.key, "VersionId": entry.version_id}
+                for entry in entries[start : start + 1000]
+            ]
+            try:
+                response = self.client.delete_objects(
+                    Bucket=self.bucket,
+                    Delete={"Objects": objects, "Quiet": True},
+                )
+            except Exception:
+                for item in objects:
+                    try:
+                        self.client.delete_object(Bucket=self.bucket, **item)
+                    except Exception as exc:
+                        if self._is_not_found(exc):
+                            continue
+                        raise ArtifactStoreError("Artifact purge failed safely") from exc
+                continue
+            errors = response.get("Errors") if isinstance(response, Mapping) else None
+            if any(
+                not (
+                    isinstance(error, Mapping)
+                    and str(error.get("Code")) in {"NoSuchKey", "NoSuchVersion", "NotFound", "404"}
+                )
+                for error in (errors or [])
+            ):
+                raise ArtifactStoreError("Artifact purge failed safely")
+
+    def _iter_listed_keys(self, prefix: str) -> Iterator[tuple[str, datetime | None]]:
+        continuation_token: str | None = None
+        while True:
+            request: dict[str, Any] = {
+                "Bucket": self.bucket,
+                "Prefix": prefix,
+                "MaxKeys": 1000,
+            }
+            if continuation_token:
+                request["ContinuationToken"] = continuation_token
+            try:
+                response = self.client.list_objects_v2(**request)
+            except Exception as exc:
+                raise ArtifactStoreError("Artifact purge listing failed safely") from exc
+            contents = response.get("Contents", [])
+            if not isinstance(contents, list):
+                raise ArtifactIntegrityError("Artifact purge listing is invalid")
+            for item in contents:
+                if not isinstance(item, Mapping) or not isinstance(item.get("Key"), str):
+                    continue
+                last_modified = item.get("LastModified")
+                if isinstance(last_modified, datetime):
+                    if last_modified.tzinfo is None:
+                        last_modified = last_modified.replace(tzinfo=UTC)
+                    yield item["Key"], last_modified.astimezone(UTC)
+                else:
+                    yield item["Key"], None
+            if not response.get("IsTruncated"):
+                return
+            next_token = response.get("NextContinuationToken")
+            if not isinstance(next_token, str) or not next_token:
+                raise ArtifactIntegrityError("Artifact purge listing is invalid")
+            continuation_token = next_token
+
+    def _delete_keys(self, keys: list[str]) -> int:
+        """Delete raw keys with no IfMatch/VersionId: purges must not depend on conditional-delete support."""
+        deleted = 0
+        for start in range(0, len(keys), 1000):
+            batch = keys[start : start + 1000]
+            try:
+                response = self.client.delete_objects(
+                    Bucket=self.bucket,
+                    Delete={"Objects": [{"Key": key} for key in batch], "Quiet": True},
+                )
+            except Exception:
+                # A provider without DeleteObjects (or its checksum rules) still
+                # honours plain per-key deletes.
+                for key in batch:
+                    self._delete_key(key)
+                deleted += len(batch)
+                continue
+            errors = response.get("Errors") if isinstance(response, Mapping) else None
+            failed = [
+                error
+                for error in (errors or [])
+                if not (
+                    isinstance(error, Mapping)
+                    and str(error.get("Code")) in {"NoSuchKey", "NotFound", "404"}
+                )
+            ]
+            if failed:
+                raise ArtifactStoreError("Artifact purge failed safely")
+            deleted += len(batch)
+        return deleted
+
+    def _delete_key(self, key: str) -> None:
+        try:
+            self.client.delete_object(Bucket=self.bucket, Key=key)
+        except Exception as exc:
+            if self._is_not_found(exc):
+                return
+            raise ArtifactStoreError("Artifact purge failed safely") from exc
 
     def iter_quarantine_before(
         self,

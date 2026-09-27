@@ -1,26 +1,32 @@
 """Production-only upload quotas: per-owner daily and in-flight caps plus a global parse cap.
 
-Counts come from the demos table. It is authoritative where the Redis queue is
-not: that queue also carries render jobs and deliberate re-sends, and Redis has
-no persistence here. Every check is a no-op outside AUTH_MODE=production, and a
-limit of 0 turns that limit off. Callers that queue a demo run the authoritative
-check and their commit inside `parse_admission`, so concurrent requests cannot
-all pass on the same count.
+The in-flight caps count active rows of the demos table. It is authoritative
+where the Redis queue is not: that queue also carries render jobs and
+deliberate re-sends, and Redis has no persistence here. The daily cap counts
+the content-free `upload_ledger` instead, written in the same transaction as
+every demo creation (upload and Steam import) and pruned after 24 hours: a
+demo row can be hard-deleted, and deleting must not refill the quota. Every
+check is a no-op outside AUTH_MODE=production, and a limit of 0 turns that
+limit off. Callers that queue a demo run the authoritative check and their
+commit inside `parse_admission`, so concurrent requests cannot all pass on the
+same count.
 """
 
 import math
 import threading
+import uuid
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import func, text
+from sqlalchemy import delete, func, text
 from sqlalchemy.orm import Session
 from starlette.responses import JSONResponse
 
 from app.core.config import Settings, settings
+from app.models.deletion import UploadLedger
 from app.models.demo import Demo, utc_now
 from app.services.demo_service.constants import ACTIVE_DEMO_STATUSES
 
@@ -109,16 +115,7 @@ class UploadQuotaService:
         daily_reset_seconds: int | None = None
         if daily_limit:
             now = self.clock()
-            recent = (
-                self.db.query(Demo.created_at)
-                .filter(
-                    Demo.owner_id == owner_id,
-                    Demo.created_at > now - UPLOAD_QUOTA_WINDOW,
-                )
-                .order_by(Demo.created_at.desc())
-                .limit(daily_limit)
-                .all()
-            )
+            recent = self._recent_uploads(owner_id, now, daily_limit)
             daily_used = len(recent)
             if daily_used >= daily_limit:
                 daily_reset_seconds = _seconds_until_slot_frees(recent[-1][0], now)
@@ -159,17 +156,7 @@ class UploadQuotaService:
         if not limit:
             return
         now = self.clock()
-        # Archived demos still count: archiving must not refill the quota.
-        recent = (
-            self.db.query(Demo.created_at)
-            .filter(
-                Demo.owner_id == owner_id,
-                Demo.created_at > now - UPLOAD_QUOTA_WINDOW,
-            )
-            .order_by(Demo.created_at.desc())
-            .limit(limit)
-            .all()
-        )
+        recent = self._recent_uploads(owner_id, now, limit)
         if len(recent) < limit:
             return
         raise UploadQuotaExceeded(
@@ -177,6 +164,20 @@ class UploadQuotaService:
             "upload_daily_limit",
             "Daily upload limit reached. Try again later.",
             _seconds_until_slot_frees(recent[-1][0], now),
+        )
+
+    def _recent_uploads(self, owner_id: str, now: datetime, limit: int) -> list[Any]:
+        # The ledger, not demo rows: archiving or deleting a demo must not
+        # refill the quota.
+        return (
+            self.db.query(UploadLedger.created_at)
+            .filter(
+                UploadLedger.owner_id == owner_id,
+                UploadLedger.created_at > now - UPLOAD_QUOTA_WINDOW,
+            )
+            .order_by(UploadLedger.created_at.desc())
+            .limit(limit)
+            .all()
         )
 
     def _active_demo_count(self, owner_id: str | None = None) -> int:
@@ -268,6 +269,29 @@ def upload_quota_precheck(
         return None
 
     return precheck
+
+
+def record_upload(db: Session, owner_id: str, *, now: datetime | None = None) -> UploadLedger:
+    """Add the ledger row for one demo creation to the caller's transaction (commit is the caller's)."""
+    entry = UploadLedger(id=str(uuid.uuid4()), owner_id=owner_id, created_at=now or utc_now())
+    db.add(entry)
+    return entry
+
+
+def prune_upload_ledger(db: Session, *, now: datetime | None = None) -> int:
+    """Drop ledger rows older than the quota window; they no longer count for anything."""
+    cutoff = (now or utc_now()) - UPLOAD_QUOTA_WINDOW
+    try:
+        result = db.execute(
+            delete(UploadLedger)
+            .where(UploadLedger.created_at <= cutoff)
+            .execution_options(synchronize_session=False)
+        )
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    return int(getattr(result, "rowcount", 0) or 0)
 
 
 def _any_parse_limit(runtime_settings: Settings) -> bool:

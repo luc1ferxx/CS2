@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import base64
 import re
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -20,6 +20,8 @@ _ARTIFACT_STATES = frozenset(
 )
 _ARTIFACT_ID_PATTERN = re.compile(r"^[a-f0-9]{32}$")
 ARTIFACT_CLEANUP_BATCH_SIZE = 1000
+# Objects one purge call may delete before it reports itself incomplete.
+ARTIFACT_PURGE_BATCH_SIZE = 5000
 
 
 def _encode_reference_identity(value: str) -> str:
@@ -168,6 +170,33 @@ class ArtifactMetadata:
         }
 
 
+@dataclass(frozen=True)
+class ArtifactPurgeResult:
+    """What one `purge_prefix` pass saw.
+
+    `found` counts the objects the listing returned inside the cutoff (each of
+    them was then deleted); `complete` is False when the batch limit stopped the
+    pass before the listing ended, so a caller must run another pass before
+    trusting `found == 0`.
+    """
+
+    found: int
+    deleted: int
+    complete: bool = True
+
+
+def purge_scope_tokens(owner_id: str, demo_id: str | None) -> tuple[str, ...]:
+    """The encoded path tokens a purge is confined to: owner, then optionally demo.
+
+    Callers join each token with a trailing separator, so an owner or demo whose
+    encoded token merely starts with another one's never matches.
+    """
+    owner_token = _encode_reference_identity(owner_id)
+    if demo_id is None:
+        return (owner_token,)
+    return (owner_token, _encode_reference_identity(demo_id))
+
+
 class ArtifactRead:
     """A closeable, length-bounded view of one immutable artifact generation."""
 
@@ -313,3 +342,27 @@ class ArtifactStore(Protocol):
         owner_id: str | None = None,
         demo_id: str | None = None,
     ) -> list[str]: ...
+
+    # Hard deletion. Unlike `delete`, these never compare generations or read
+    # metadata first: a purge must also remove objects whose metadata is
+    # corrupt, and a store that ignores conditional deletes must not keep them.
+
+    def purge_references(self, references: Iterable[str]) -> int:
+        """Delete these exact artifacts unconditionally; returns how many were attempted."""
+        ...
+
+    def purge_prefix(
+        self,
+        *,
+        owner_id: str,
+        demo_id: str | None = None,
+        created_before: datetime | None = None,
+        max_objects: int = ARTIFACT_PURGE_BATCH_SIZE,
+    ) -> ArtifactPurgeResult:
+        """Delete every object of one demo (or, with no demo, one owner) in every state and kind.
+
+        `created_before` keeps objects created at or after it (an owner-wide
+        account sweep must not touch uploads of a newer account under the same
+        owner id).
+        """
+        ...

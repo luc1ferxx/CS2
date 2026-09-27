@@ -18,7 +18,9 @@ modules are the seams:
 from app.services.storage._directory import SUPPORTS_DIRECTORY_FD, _PortableArtifactDirectory, _PosixArtifactDirectory
 from app.services.storage.contract import (
     ARTIFACT_CLEANUP_BATCH_SIZE,
+    ARTIFACT_PURGE_BATCH_SIZE,
     ArtifactMetadata,
+    ArtifactPurgeResult,
     ArtifactRead,
     ArtifactReference,
     ArtifactStore,
@@ -42,12 +44,14 @@ from app.services.storage.s3 import S3ArtifactStore
 
 __all__ = [
     "ARTIFACT_CLEANUP_BATCH_SIZE",
+    "ARTIFACT_PURGE_BATCH_SIZE",
     "SUPPORTS_DIRECTORY_FD",
     "ArtifactBindingError",
     "ArtifactConflictError",
     "ArtifactIntegrityError",
     "ArtifactMetadata",
     "ArtifactNotFoundError",
+    "ArtifactPurgeResult",
     "ArtifactRangeError",
     "ArtifactRead",
     "ArtifactReference",

@@ -361,6 +361,56 @@ class SteamOpenIdBrowserTest(unittest.TestCase):
             f"{STEAM_CLAIMED_ID_PREFIX}{STEAM_ID_A}",
         )
 
+    def test_a_sign_in_racing_the_account_deletion_gets_no_live_session(self) -> None:
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+
+        from app.services.deletion_service import DeletionService
+        from app.services.storage import LocalArtifactStore
+
+        self.assertEqual(complete_steam_login(self.client, STEAM_ID_A).status_code, 303)
+        with self.Session() as db:
+            owner_id = db.query(Account).one().owner_id
+        original_create = AuthService.create_session
+        scratch = tempfile.TemporaryDirectory()
+        self.addCleanup(scratch.cleanup)
+
+        def delete_account_then_create(service: AuthService, owner: str, **kwargs: object) -> object:
+            # The deletion locks the account and writes its revocation marker
+            # before this sign-in mints its session; its commit lands after.
+            with self.Session() as db:
+                DeletionService(
+                    db,
+                    artifact_store=LocalArtifactStore(Path(scratch.name)),
+                    runtime_settings=self.settings,
+                ).delete_account(owner, revoke_sessions=self.auth_service.revoke_owner_sessions)
+            with patch("app.services.auth_service.time.time", return_value=time.time() + 5):
+                grant = original_create(service, owner, **kwargs)
+            minted.append(grant.session_token)
+            return grant
+
+        minted: list[str] = []
+        second_browser = TestClient(self.app, base_url="https://coach.example.test")
+        with patch.object(AuthService, "create_session", delete_account_then_create):
+            response = complete_steam_login(second_browser, STEAM_ID_A)
+
+        self.assertEqual(response.status_code, 401)
+        self.assertNotIn("__Host-cs2_session=", response.headers.get("set-cookie", ""))
+        self.assertEqual(len(minted), 1)
+        self.assertIsNone(self.auth_service.resolve_session(minted[0]))
+        self.assertNotIn(
+            "auth:session:" + hashlib.sha256(minted[0].encode("ascii")).hexdigest(),
+            self.redis.values,
+        )
+        with self.Session() as db:
+            self.assertIsNone(db.get(Account, owner_id))
+        # Signing in again afterwards is an ordinary fresh account.
+        again = complete_steam_login(second_browser, STEAM_ID_A)
+        self.assertEqual(again.status_code, 303)
+        with self.Session() as db:
+            self.assertNotEqual(db.query(Account).one().owner_id, owner_id)
+
     def test_state_mismatch_and_forged_assertion_fail_without_account(self) -> None:
         login = start_steam_login(self.client)
         self.client.cookies.set("__Host-cs2_steam_state", "wrong-state")

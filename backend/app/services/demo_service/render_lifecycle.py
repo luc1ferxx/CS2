@@ -42,6 +42,14 @@ from app.services.demo_service.constants import (
     RENDER_WORKER_MANIFEST_VERSION,
     UNCLAIMED_RENDER_CLIP_STATUSES,
 )
+from app.services.demo_service.errors import DemoGoneError
+from app.services.demo_service.gone import (
+    demo_gone_raises,
+    gone_rows_raise,
+    job_gone_raises,
+    row_identity,
+    rows_missing,
+)
 from app.services.demo_service.projection import _public_render_failure
 
 logger = logging.getLogger(__name__)
@@ -50,6 +58,7 @@ logger = logging.getLogger(__name__)
 class RenderLifecycle(ServiceComponent):
     """Reached as ``DemoService.render``."""
 
+    @demo_gone_raises
     def create_mock_render_job(self, demo: Demo) -> DemoJob:
         self._service.replay.require_replay_blob(demo)
 
@@ -86,13 +95,17 @@ class RenderLifecycle(ServiceComponent):
         )
         return job
 
+    @demo_gone_raises
     def create_render_clip_job(self, demo: Demo, request: RenderClipRequest) -> DemoJob:
         # PostgreSQL serializes matching requests before either can create a job.
-        query = self.db.query(Demo).filter(Demo.id == demo.id)
+        query = self.db.query(Demo).filter(Demo.id == row_identity(demo))
         if self.owner_id is not None:
             query = query.filter(Demo.owner_id == self.owner_id)
         locked = query.populate_existing().with_for_update().one_or_none()
-        if locked is None or locked.status != "completed":
+        if locked is None:
+            # Deleted since the caller loaded it: a 404, not a bad request.
+            raise DemoGoneError("Demo was deleted")
+        if locked.status != "completed":
             raise ValueError("Demo parse must complete before rendering")
         demo = locked
         replay = self._service.replay.require_replay_blob(demo)
@@ -238,6 +251,7 @@ class RenderLifecycle(ServiceComponent):
         selected = matches[0]
         return request.model_copy(update={"playerId": selected["id"], "povSteamId": steam_id(selected)})
 
+    @job_gone_raises
     def transition_mock_render_job(
         self,
         job: DemoJob,
@@ -292,6 +306,7 @@ class RenderLifecycle(ServiceComponent):
             for job in jobs
         ]
 
+    @job_gone_raises
     def claim_render_clip_job(self, job: DemoJob) -> DemoJob:
         if job.job_type != RENDER_CLIP_JOB_TYPE:
             raise ValueError("Only render_clip jobs can be claimed by render workers")
@@ -310,7 +325,8 @@ class RenderLifecycle(ServiceComponent):
             .execution_options(synchronize_session=False)
         )
         if claimed.rowcount != 1:
-            self.db.rollback()
+            if rows_missing(self.db, job_id=row_identity(job)):
+                raise DemoGoneError("Render job was deleted")
             raise ValueError("Render job is already claimed or finished")
         self.db.refresh(job)
         _, pending = self._service.replay.prepare_render_clip_video_status(
@@ -444,7 +460,12 @@ class RenderLifecycle(ServiceComponent):
             # lock is what makes the check and the write one decision: a
             # concurrent claim_render_clip_job blocks on it rather than slipping
             # in behind it.
-            self.db.refresh(job, with_for_update=True)
+            try:
+                with gone_rows_raise(self.db, job_id=row_identity(job)):
+                    self.db.refresh(job, with_for_update=True)
+            except DemoGoneError:
+                # The match was deleted since the query above.
+                continue
             if job.status not in UNCLAIMED_RENDER_CLIP_STATUSES:
                 self.db.rollback()
                 continue
@@ -454,10 +475,10 @@ class RenderLifecycle(ServiceComponent):
                     f"No render worker claimed this job within {older_than_seconds}s.",
                     error_code=RENDER_QUEUE_TIMED_OUT_ERROR_CODE,
                 )
-            except ValueError:
-                # Reached the terminal states the guard above cannot see, so the
-                # row is already resolved. One such race must not cost the rest
-                # of the batch.
+            except (ValueError, DemoGoneError):
+                # Reached the terminal states the guard above cannot see, or the
+                # match was deleted, so the row is already resolved. One such
+                # race must not cost the rest of the batch.
                 continue
             failed.append(str(job.id))
         return failed
@@ -489,7 +510,14 @@ class RenderLifecycle(ServiceComponent):
         cutoff = moment - timedelta(seconds=older_than_seconds)
         reclaimed: list[str] = []
         for job in self._stale_render_clip_jobs(cutoff, limit):
-            if job.attempts >= RENDER_CLIP_MAX_ATTEMPTS:
+            try:
+                # An earlier iteration's commit expired this row; reloading it
+                # raises if its match was deleted since the query above.
+                with gone_rows_raise(self.db, job_id=row_identity(job)):
+                    attempts = job.attempts
+            except DemoGoneError:
+                continue
+            if attempts >= RENDER_CLIP_MAX_ATTEMPTS:
                 try:
                     self.fail_render_clip_job(
                         job,
@@ -497,15 +525,21 @@ class RenderLifecycle(ServiceComponent):
                         f"after {job.attempts} attempts.",
                         error_code=RENDER_TIMED_OUT_ERROR_CODE,
                     )
-                except ValueError:
+                except (ValueError, DemoGoneError):
                     # The worker reported in between the query and the refresh
-                    # above. Its result wins, exactly as in the requeue path --
-                    # and one such race must not cost the rest of the batch.
+                    # above, or the match was deleted. Its result wins, exactly
+                    # as in the requeue path -- and one such race must not cost
+                    # the rest of the batch.
                     continue
                 reclaimed.append(str(job.id))
                 continue
-            if self._requeue_render_clip_job(job):
-                reclaimed.append(str(job.id))
+            job_id = row_identity(job)
+            try:
+                requeued = self._requeue_render_clip_job(job)
+            except DemoGoneError:
+                continue
+            if requeued:
+                reclaimed.append(str(job_id))
         return reclaimed
 
     def retry_render_clip_job(self, demo: Demo, job_id: str) -> DemoJob | None:
@@ -549,6 +583,7 @@ class RenderLifecycle(ServiceComponent):
             )
         return job
 
+    @job_gone_raises
     def _requeue_render_clip_job(
         self,
         job: DemoJob,
@@ -661,6 +696,7 @@ class RenderLifecycle(ServiceComponent):
             finished_at=job.finished_at,
         )
 
+    @job_gone_raises
     def render_job_manifest(self, job: DemoJob) -> RenderJobManifest:
         if job.job_type != RENDER_CLIP_JOB_TYPE:
             raise ValueError("Only render_clip jobs have render worker manifests")
@@ -697,6 +733,7 @@ class RenderLifecycle(ServiceComponent):
             renderPreset=_optional_str(metadata.get("renderPreset")) or RENDER_CLIP_DEFAULT_PRESET,
         )
 
+    @job_gone_raises
     def apply_render_worker_result(
         self,
         job: DemoJob,
@@ -750,6 +787,7 @@ class RenderLifecycle(ServiceComponent):
         self.db.refresh(job)
         return video
 
+    @job_gone_raises
     def fail_render_clip_job(
         self,
         job: DemoJob,

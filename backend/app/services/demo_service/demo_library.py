@@ -7,6 +7,7 @@ from app.schemas.demo import DemoListItem, DemoStatus
 from app.services.demo_service._component import ServiceComponent
 from app.services.demo_service._helpers import _optional_str
 from app.services.demo_service.constants import DEMO_STATUS_ORDER, DEMO_STATUS_SEARCH_ALIASES
+from app.services.demo_service.gone import rows_missing
 
 
 class DemoLibrary(ServiceComponent):
@@ -119,8 +120,14 @@ class DemoLibrary(ServiceComponent):
         if archived is not None:
             demo.archived = archived
 
-        self.db.commit()
-        self.db.refresh(demo)
+        try:
+            self.db.commit()
+            self.db.refresh(demo)
+        except Exception:
+            # Deleted between the read above and this write: a 404, not a 500.
+            if rows_missing(self.db, demo_id=demo_id):
+                return None
+            raise
         return demo
 
     def archive_demo(self, demo_id: str) -> Demo | None:

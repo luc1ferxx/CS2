@@ -190,6 +190,26 @@ class LocalStorageService:
     def delete(self, storage_key: str) -> None:
         self.path_for_key(storage_key).unlink(missing_ok=True)
 
+    def purge_key(self, storage_key: str) -> bool:
+        """Hard-deletion cleanup of one legacy `local://` key: unlink it if it is a file, never raise.
+
+        Legacy keys are backfilled into rows whose file may never have existed
+        (every mock demo gets one), so a missing, malformed or unsafe key is
+        simply nothing to delete.
+        """
+        try:
+            path = self.path_for_key(storage_key)
+            status = os.lstat(path)
+        except (OSError, StorageKeyError, ValueError):
+            return False
+        if not stat.S_ISREG(status.st_mode):
+            return False
+        try:
+            path.unlink()
+        except OSError:
+            return False
+        return True
+
     def media_url(self, storage_key: str) -> str:
         category, segments = self._parse_key(storage_key)
         if category != "videos":

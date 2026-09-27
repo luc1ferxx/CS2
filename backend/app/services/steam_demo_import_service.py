@@ -13,6 +13,7 @@ from app.models.demo import Demo
 from app.models.job import DemoJob
 from app.models.steam import SteamMatch
 from app.services.artifact_intake import ArtifactIntakeError
+from app.services.deletion_service import AccountDeletedError, account_exists_for_write
 from app.services.demo_service import (
     DemoArtifactBindError,
     DemoDispatchError,
@@ -31,6 +32,7 @@ from app.services.steam_demo_download_limiter import (
     SteamDemoDownloadLimiterUnavailableError,
 )
 from app.services.storage import ArtifactStore
+from app.services.upload_quota import record_upload
 
 PARSER_DISPATCH_RETRY_AFTER_SECONDS = 30
 
@@ -266,8 +268,15 @@ class SteamDemoImportService:
             # Bind only after the downloader and limiter contexts have exited. A
             # cleanup failure must happen before the durable Demo/job transaction.
             assert prepared is not None
+            # The account fence comes first, before the bind locks the match
+            # row: an account delete locks the account and then deletes the
+            # Steam rows, so taking them in the same order cannot deadlock.
+            if not account_exists_for_write(self.db, self.owner_id, self.settings):
+                raise AccountDeletedError
             prepared.demo.name = f"Steam Match {match_id[:8]}"
             bound_at = self.clock()
+            # An import consumes the daily upload quota like an upload does.
+            record_upload(self.db, self.owner_id, now=bound_at)
             self.db.flush()
             bound = (
                 self.db.query(SteamMatch)
@@ -353,6 +362,12 @@ class SteamDemoImportService:
             ) from None
         except SteamDemoImportNotFoundError:
             raise
+        except AccountDeletedError:
+            # The match row went with the account; there is nothing to mark.
+            raise SteamDemoImportFailedError(
+                AccountDeletedError.code,
+                "The account was deleted while the Demo was importing.",
+            ) from None
         except (KeyboardInterrupt, SystemExit):
             raise
         except Exception:
