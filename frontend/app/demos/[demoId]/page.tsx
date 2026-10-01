@@ -37,6 +37,7 @@ import {
   type UtilityFinderState
 } from "@/components/replay/UtilityFinder";
 import { UtilityLayer } from "@/components/replay/UtilityLayer";
+import { EconomyPanel } from "@/components/stats/EconomyPanel";
 import { MatchAnalysis } from "@/components/stats/MatchAnalysis";
 import { Scoreboard } from "@/components/stats/Scoreboard";
 import {
@@ -78,6 +79,7 @@ import { mapDisplayName, tacticalRadarImagePaths, type TacticalMapLevelMode } fr
 import { matchTeams, playerMatchStats, teamKeyOfPlayer } from "@/lib/match-stats";
 import { buildReplayDiagnostics } from "@/lib/replay-diagnostics";
 import { resolvePrivateMediaSource } from "@/lib/media-url";
+import { roundEconomies } from "@/lib/round-economy";
 import { parseReviewPlace, reviewPlaceSearch } from "@/lib/replay-place";
 import {
   advanceReplayTick,
@@ -493,6 +495,8 @@ function DemoDetailContent() {
     [loadedReplay, matchSummaryTeams]
   );
   const scoreboardStats = useMemo(() => (loadedReplay ? playerMatchStats(loadedReplay) : []), [loadedReplay]);
+  // Each team's buy per round, once per loaded replay, for the round strip and 经济 ([] for v1 replays).
+  const economies = useMemo(() => (loadedReplay ? roundEconomies(loadedReplay) : []), [loadedReplay]);
   const reviewedTeamKey = loadedReplay && selectedPlayerId ? teamKeyOfPlayer(loadedReplay, selectedPlayerId) : null;
   // "你的队伍" follows the viewer's own identity, not whoever is being reviewed.
   const yourPlayerId = preferredPlayerMatch.status === "matched" ? preferredPlayerMatch.player?.id ?? null : null;
@@ -1196,23 +1200,33 @@ function DemoDetailContent() {
       ) : null}
     </>
   ), [hasReplay, knownStatus, loadState, personalEventCount, selectedPlayer, status]);
+  // The page renders once per playback frame; the chrome around the review does not change with
+  // the tick, so the same elements are handed back and React skips them (the session controls
+  // still follow the auth context on their own).
+  const topbar = useMemo(() => (
+    <header className="topbar">
+      <AppBrand />
+      <div className="topbar-actions">
+        <SessionControls />
+      </div>
+    </header>
+  ), []);
+  const breadcrumb = useMemo(() => (
+    <nav className="review-breadcrumb" aria-label="当前位置">
+      <Link href="/dashboard">我的比赛</Link>
+      <span aria-hidden="true">›</span>
+      <span aria-current="page">{pageTitle}</span>
+    </nav>
+  ), [pageTitle]);
+  const footer = useMemo(() => <SiteFooter />, []);
 
   return (
     <main className="app-shell review-detail-shell review-app">
-      <header className="topbar">
-        <AppBrand />
-        <div className="topbar-actions">
-          <SessionControls />
-        </div>
-      </header>
+      {topbar}
 
       <section className="page">
         <p className="visually-hidden" aria-live="polite">{progressAnnouncement(sawProcessing, Boolean(replay), loadState)}</p>
-        <nav className="review-breadcrumb" aria-label="当前位置">
-          <Link href="/dashboard">我的比赛</Link>
-          <span aria-hidden="true">›</span>
-          <span aria-current="page">{pageTitle}</span>
-        </nav>
+        {breadcrumb}
         {/* A missing or unreachable match has nothing to head: its state card carries the title. */}
         {loadState?.kind === "not_found" || loadState?.kind === "unreachable" ? null : (
         <header className={`panel review-header${replay ? " has-banner" : ""}`}>
@@ -1287,6 +1301,8 @@ function DemoDetailContent() {
               selectedPlayerId={selectedPlayerId}
               currentRoundNumber={currentRoundNumber}
               selectedRound={selectedRound}
+              economies={economies}
+              teams={teams}
               onSelectRound={changeRound}
             />
             <div className="review-layout">
@@ -1454,6 +1470,8 @@ function DemoDetailContent() {
             {/* S9 数据 section (UI-B) */}
             <MatchAnalysis replay={replay} player={selectedPlayer} onSeekTick={jumpToTick} onSelectRound={jumpToRound}
               onChoosePlayer={revealPlayerPicker} />
+            {/* S11 经济: hidden for replays without economy data (v1). */}
+            <EconomyPanel economies={economies} teams={teams} selectedRound={selectedRound} onSelectRound={jumpToRound} />
             <Scoreboard teams={teams} stats={scoreboardStats} reviewedPlayerId={selectedPlayerId} />
             {showVideoControls ? (
               <details className="review-saved-clips" id="saved-clips" ref={savedClipsRef}>
@@ -1501,7 +1519,7 @@ function DemoDetailContent() {
           </>
         )}
       </section>
-      <SiteFooter />
+      {footer}
 
       <ConfirmDialog
         open={deleteOpen}
