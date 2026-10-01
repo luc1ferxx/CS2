@@ -59,13 +59,15 @@ docker compose up --build
 
 本地为 development 模式，不需要登录。可以用"示例比赛"快速生成一场模拟数据，也可以上传真实 `.dem` 走完整解析流程。
 
+Compose 里的前端是生产构建（`frontend/Dockerfile.preview`，`next build` 后 `next start`），和线上部署是同一种构建；改了前端代码要重新 `--build` 才能看到（启动脚本每次都带 `--build`，代码没变时命中缓存）。`next build` 会做 lint 和类型检查，有错误时前端镜像构建失败。
+
 已配置好的 Windows 机器可以双击根目录的 **`Start CS2 Coach.cmd`**，或运行：
 
 ```powershell
 & .\scripts\start-local.ps1        # -SkipRenderer 只启动网页；-PreflightOnly 只检查本机配置
 ```
 
-只改前端时，可以只启动后端服务，再单独跑前端开发服务器（两者都占用 3000 端口，不要同时运行 Compose 里的 frontend）：
+只改前端时，可以只启动后端服务，再单独跑前端开发服务器（两者都占用 3000 端口，不要同时运行 Compose 里的 frontend）。开发服务器用的是开发版 React，每帧开销是生产构建的数倍，判断回放是否流畅请用 Compose 里的生产构建：
 
 ```bash
 docker compose up --build -d api worker postgres redis

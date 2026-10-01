@@ -7,7 +7,7 @@ This repository is a mock MVP for a website-based CS2 demo AI coach.
 - `frontend/`: Next.js + TypeScript app. App Router pages live in `frontend/app/`; shared UI is in `frontend/components/`; API helpers are in `frontend/lib/`; shared frontend types are in `frontend/types/`; static assets are in `frontend/public/`.
 - `backend/`: FastAPI service and worker code. Routes are in `backend/app/api/`; SQLAlchemy models in `backend/app/models/`; Pydantic schemas in `backend/app/schemas/`; business logic is in `backend/app/services/`, where `demo_service/` is a package (a thin `DemoService` facade over one-responsibility components; see its `__init__.py` docstring) and `storage/` is the artifact storage package (contract, local and S3 backends, factory); Redis worker entrypoint is in `backend/app/workers/worker.py`.
 - `render-worker/`: standalone Render Worker V1 skeleton. `runner.py` drives fake-video and manual-operator adapter flows without launching CS2, Steam, OBS, or ffmpeg; `render-worker/README.md` documents runner env, token, API, and adapter details.
-- `docker-compose.yml`: local stack for `frontend`, `api`, `worker`, `postgres`, and `redis`.
+- `docker-compose.yml`: local stack for `frontend`, `api`, `worker`, `postgres`, and `redis`. Its `frontend` is a production build (`frontend/Dockerfile.preview`, `next start`) with the local API origin baked in at build time; `docker-compose.dev.yml` (through `scripts/dev.sh`) swaps in the `next dev` image (`frontend/Dockerfile`) with the source mounted for live editing.
 - `.env.example`, `backend/.env.example`, `frontend/.env.example`, `render-worker/.env.example`, and `render-worker/config.example.env`: checked-in runtime config templates for Compose, API/worker, frontend public API origin, render-worker runner, and optional smoke/sample defaults; do not add real secrets.
 - `README.md`: current product scope, storage/parser/render boundaries, API list, observability notes, and verification guidance.
 - `docs/cloud_preview_deploy_v1.md`: Compose preview shape, public URL contract, smoke commands, render-worker preview notes, and rollback/cleanup commands.
@@ -21,7 +21,7 @@ This repository is a mock MVP for a website-based CS2 demo AI coach.
 
 ## Build, Test, and Development Commands
 
-- `docker compose up --build`: build and run the full local stack.
+- `docker compose up --build`: build and run the full local stack (the frontend image runs `next build`, so a lint or type error stops it; rebuild to see frontend changes).
 - `docker compose build` and `docker compose up -d`: run the split Docker build/start sequence used by the RC checklist.
 - `docker compose -f docker-compose.yml -f docker-compose.preview.yml up --build`: run the preview Compose shape with a production-built frontend; set `NEXT_PUBLIC_API_BASE_URL`, `BACKEND_PUBLIC_URL`, `CORS_ORIGINS`, and `MEDIA_URL_BASE` before building hosted previews.
 - `docker compose -f docker-compose.yml -f docker-compose.preview.yml down` and `docker compose -f docker-compose.yml -f docker-compose.preview.yml down -v`: stop a Compose preview with data preserved, or intentionally remove preview volumes for a clean environment.
@@ -54,7 +54,7 @@ This repository is a mock MVP for a website-based CS2 demo AI coach.
 - `curl "http://localhost:8000/render-worker/jobs/{job_id}/manifest?claim=false" -H "X-Render-Worker-Token: dev-render-worker-token"`: inspect a specific render-worker manifest without claiming it; omit `claim=false` to claim it as `rendering`.
 - `curl -X POST http://localhost:8000/render-worker/jobs/{job_id}/media -H "X-Render-Worker-Token: dev-render-worker-token" -F "file=@clip.mp4"`: upload worker-produced dev media before posting a render-worker result callback.
 - `curl -X POST http://localhost:8000/render-worker/jobs/{job_id}/result -H "X-Render-Worker-Token: dev-render-worker-token" -H "Content-Type: application/json" -d '{"status":"failed","errorMessage":"GPU worker not connected"}'`: submit a completed or failed render-worker callback; see `render-worker/README.md` for the full completed payload.
-- `cd frontend && npm run dev`: run the frontend dev server outside Docker.
+- `cd frontend && npm run dev`: run the frontend dev server outside Docker (stop the Compose `frontend` first; both use port 3000). Judge replay smoothness on the production build, not here: development React with StrictMode costs several times more per frame.
 - `cd frontend && npm run lint`: run ESLint with zero warnings allowed.
 - `cd frontend && npm run typecheck`: run TypeScript checks without emitting files.
 - `cd frontend && npm run build`: verify the production Next.js build.
@@ -150,6 +150,8 @@ Completed uploaded demos whose stored replay predates `REPLAY_CONTRACT_VERSION` 
 Rules analyzer additions must also tolerate missing parser event families. Keep rules deterministic and explainable, include compact evidence metadata such as `ruleId`, `involvedPlayerIds`, `evidenceTicks`, and `relatedEventIds` when parser events are used, and do not introduce OpenAI or AI prose generation into analyzer rules.
 
 Replay detail additions should preserve the shared tick/round state across first-person replay, tactical map, timeline, parser markers, round review, coaching cards, render fallback, and Replay Contract diagnostics. Keep the compact top summary useful for file/map/calibration, rounds, coaching count, parser failure category, media status, and latest render status. Degraded states for no frames, no rounds, no parser events, no coaching events, render worker unavailable, and media URL missing/unavailable should be explicit but compact.
+
+Playback re-renders the Demo Detail page once per animation frame, so keep that path cheap: panels that only depend on the round take the round number (not the tick) and are memoized with stable props and callbacks; per-replay derivations live in `useMemo`; nothing per frame scans the whole match; a per-frame CSS custom property goes on the element that reads it, never on a container (it restyles every descendant); and reduced-motion CSS turns transitions off with `transition: none`, not a near-zero duration (that makes every per-frame change a transition and four events). Judge smoothness on the production build (the Compose frontend), not `next dev`.
 
 Upload/parser observability should stay compact: ingestion snapshots, short failure metadata, attempts, stale/active/retryable state, owner-scoped parse retry, safe `/diagnostics`, and owner-scoped `/demos/{demo_id}/diagnostics` are acceptable. Parser failures should classify invalid/unreadable demos, unsupported parser format/support, missing essential match metadata, missing frames/ticks, normalization failure, storage/read failure, and unexpected parser exceptions with safe one-line API messages. Optional event-family absence is a partial success, not a parse failure. Do not add production telemetry, stack trace storage, raw parser logs, sensitive local paths in API responses, raw parser data, upload contents, secrets, env dumps, or retry flows that bypass `source_storage_key` and `backend/app/services/storage.py`.
 

@@ -33,7 +33,7 @@ Electron 是当前优先评估的桌面方案，尚未接入。其打包默认�
 
 ## 日常修改与验证
 
-前端 `app/components/lib/public/types` 及后端 `app` 从源码只读挂载到容器，前端和 API 可以检测变更。解析 worker 不自动重载；修改解析/规则代码、依赖或构建配置后，再运行 `bash scripts/dev.sh`，应用新镜像与代码。若 Mac 文件监听没有刷新，也可运行该命令。重建保留命名数据卷。
+前端 `app/components/lib/public/types` 及后端 `app` 从源码只读挂载到容器，前端和 API 可以检测变更（`docker-compose.dev.yml` 让前端改用 `frontend/Dockerfile` 的 `next dev`；不带它时 `docker-compose.yml` 的前端是生产构建，不读挂载的源码）。解析 worker 不自动重载；修改解析/规则代码、依赖或构建配置后，再运行 `bash scripts/dev.sh`，应用新镜像与代码。若 Mac 文件监听没有刷新，也可运行该命令。重建保留命名数据卷。
 
 ```bash
 bash scripts/dev.sh logs

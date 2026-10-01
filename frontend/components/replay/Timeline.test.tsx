@@ -104,4 +104,19 @@ describe("Timeline", () => {
     // Round 1 runs 100–900 and freeze time ends at 164: 8 % of the round.
     expect(stack.style.getPropertyValue("--timeline-freeze-end")).toBe("8%");
   });
+
+  it("puts the moving playhead only on the spine and the slider, not on the lanes", () => {
+    const props = { selectedRound: 1, rounds: replayRounds(), tickRate: 64, events: [], onSeek: vi.fn() };
+    const { rerender } = render(<Timeline currentTick={500} {...props} />);
+    const stack = document.querySelector<HTMLElement>(".timeline-lane-stack")!;
+    const spine = document.querySelector<HTMLElement>(".timeline-current-spine")!;
+    const slider = screen.getByRole("slider", { name: "拖动定位回放" });
+    // Round 1 runs 100–900: tick 500 is halfway.
+    expect(spine.style.getPropertyValue("--timeline-current-tick")).toBe("50%");
+    expect(slider.style.getPropertyValue("--timeline-current-tick")).toBe("50%");
+    // On the lane stack every marker would restyle each playback frame.
+    expect(stack.style.getPropertyValue("--timeline-current-tick")).toBe("");
+    rerender(<Timeline currentTick={700} {...props} />);
+    expect(spine.style.getPropertyValue("--timeline-current-tick")).toBe("75%");
+  });
 });

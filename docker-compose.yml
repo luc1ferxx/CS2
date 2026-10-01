@@ -165,9 +165,17 @@ services:
         condition: service_healthy
 
   frontend:
+    # A production build served by `next start`. The source is baked into the image (no volume), so
+    # a dev server gave no hot reload here, only on-demand compiles and React's 2-5x slower
+    # development build. For live editing, run `npm run dev` in frontend/ instead (see README).
+    # NEXT_PUBLIC_* values are bundled at build time: rebuild after changing them.
     build:
       context: ./frontend
-    command: npm run dev -- --hostname 0.0.0.0 --port 3000
+      dockerfile: Dockerfile.preview
+      args:
+        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8000}
+        NEXT_PUBLIC_AUTH_PROVIDER: ${AUTH_PROVIDER:-steam}
+    command: npm run start -- --hostname 0.0.0.0 --port 3000
     environment:
       NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8000}
       NEXT_PUBLIC_AUTH_PROVIDER: ${AUTH_PROVIDER:-steam}

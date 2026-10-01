@@ -1,6 +1,6 @@
 import { matchKills, teamKeyOfPlayer, type MatchKill, type TeamKey } from "@/lib/match-stats";
 import { getFrameForTick } from "@/lib/replay-frames";
-import type { PlayerSide, ReplayData, ReplayPlayerState } from "@/types/replay";
+import type { PlayerSide, ReplayData, ReplayFrame, ReplayPlayerState } from "@/types/replay";
 
 /*
  * Live player state for the roster, read from the replay contract v2 `playerStates` change points
@@ -91,6 +91,18 @@ export function killsDeathsAt(replay: ReplayData, tick: number): Map<string, Kil
   return counts;
 }
 
+// Index of the first of the tick-sorted kills at or after `tick` (kills.length when there is none).
+function firstKillAtOrAfter(kills: readonly MatchKill[], tick: number): number {
+  let low = 0;
+  let high = kills.length;
+  while (low < high) {
+    const middle = (low + high) >>> 1;
+    if (kills[middle].tick < tick) low = middle + 1;
+    else high = middle;
+  }
+  return low;
+}
+
 // How many of the tick-sorted kills happened at or before `tick`.
 function killsAtOrBefore(kills: readonly MatchKill[], tick: number): number {
   if (Number.isNaN(tick)) return 0;
@@ -112,10 +124,13 @@ function killsAtOrBefore(kills: readonly MatchKill[], tick: number): number {
 export function deathInfoAt(replay: ReplayData, playerId: string, tick: number): DeathInfo | null {
   if (!Number.isFinite(tick)) return null;
   const roundStart = currentRoundStart(replay, tick);
+  const kills = matchKills(replay);
   let death: MatchKill | null = null;
-  for (const kill of matchKills(replay)) {
-    if (kill.tick > tick) break;
-    if (kill.victimId === playerId && (roundStart === null || kill.tick >= roundStart)) death = kill;
+  // The roster asks for every dead player on every playback frame: read only this round's kills
+  // (they are tick-sorted), not the match's from the first one.
+  const end = killsAtOrBefore(kills, tick);
+  for (let index = roundStart === null ? 0 : firstKillAtOrAfter(kills, roundStart); index < end; index += 1) {
+    if (kills[index].victimId === playerId) death = kills[index];
   }
   if (!death) return null;
   return {
@@ -133,8 +148,14 @@ export function deathInfoAt(replay: ReplayData, playerId: string, tick: number):
  * the value he died with, so he is left out (an all-dead team carries $0). Null when none of the
  * members has an equipment value at all.
  */
-export function teamEquipmentAt(replay: ReplayData, team: TeamKey | PlayerSide, tick: number): number | null {
-  const frame = getFrameForTick(Array.isArray(replay?.frames) ? replay.frames : [], tick, replay?.tickRate > 0 ? replay.tickRate : 64);
+export function teamEquipmentAt(
+  replay: ReplayData, team: TeamKey | PlayerSide, tick: number, frameAtTick?: ReplayFrame | null
+): number | null {
+  // The roster passes the frame it is drawing, so playback does not interpolate it a second time
+  // (only membership, side and alive are read here, which interpolation never changes).
+  const frame = frameAtTick !== undefined
+    ? frameAtTick
+    : getFrameForTick(Array.isArray(replay?.frames) ? replay.frames : [], tick, replay?.tickRate > 0 ? replay.tickRate : 64);
   const members = (frame?.players ?? []).filter((player) => player && (
     team === "T" || team === "CT" ? player.side === team : teamKeyOfPlayer(replay, player.id) === team
   ));

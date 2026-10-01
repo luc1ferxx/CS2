@@ -52,6 +52,13 @@ services:
       start_period: 10s
 
   frontend:
+    # The base service is a production build; live editing of the mounted source needs the dev
+    # server and its image (frontend/Dockerfile).
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args: !reset {}
+    command: npm run dev -- --hostname 0.0.0.0 --port 3000
     environment:
       NEXT_PUBLIC_API_BASE_URL: http://localhost:8000
       NEXT_TELEMETRY_DISABLED: "1"

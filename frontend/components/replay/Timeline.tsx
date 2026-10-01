@@ -95,10 +95,10 @@ export const Timeline = memo(function Timeline({
     ? Math.max(0, Math.min(100, ((currentTick - minTick) / span) * 100))
     : 0;
   const freezeEndPercent = round ? Math.max(0, Math.min(100, ((roundPlaybackStartTick(round) - minTick) / span) * 100)) : 0;
-  const timelineStyle = {
-    "--timeline-current-tick": `${currentTickPercent}%`,
-    "--timeline-freeze-end": `${freezeEndPercent}%`
-  } as CSSProperties;
+  const stackStyle = { "--timeline-freeze-end": `${freezeEndPercent}%` } as CSSProperties;
+  // The playhead moves every playback frame. Only the two elements drawn from it (the spine and
+  // the slider track) carry the variable: on the lane stack it restyled every marker per frame.
+  const playheadStyle = { "--timeline-current-tick": `${currentTickPercent}%` } as CSSProperties;
   const safeTickRate = Number.isFinite(tickRate) && tickRate > 0 ? tickRate : 64;
   const clock = (tick: number) => formatRoundTime((tick - minTick) / safeTickRate);
   const elapsed = clock(Math.min(maxTick, Math.max(minTick, currentTick)));
@@ -134,7 +134,7 @@ export const Timeline = memo(function Timeline({
       </div>
 
       {hasRounds ? (
-        <div className="timeline-lane-stack" style={timelineStyle}>
+        <div className="timeline-lane-stack" style={stackStyle}>
           <div className="timeline-lane-labels" aria-hidden="true">
             <div className="timeline-lane-label">
               <span>回合</span>
@@ -150,7 +150,7 @@ export const Timeline = memo(function Timeline({
             </div>
           </div>
           <div className="timeline-lane-tracks" ref={tracksRef}>
-            <div className="timeline-current-spine" aria-hidden="true">
+            <div className="timeline-current-spine" aria-hidden="true" style={playheadStyle}>
               <span>{elapsed}</span>
             </div>
             <div className="timeline-lane-track round-lane">
@@ -250,9 +250,10 @@ export const Timeline = memo(function Timeline({
       )}
 
       {hasRounds ? (
-        <div className="timeline-scrubber" style={timelineStyle}>
+        <div className="timeline-scrubber">
           <input
             className="timeline-slider"
+            style={playheadStyle}
             type="range"
             min={minTick}
             max={maxTick}

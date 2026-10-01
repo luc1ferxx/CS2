@@ -145,6 +145,20 @@ test("teamEquipmentAt leaves out dead players, whose state keeps the value they 
   assert.equal(teamEquipmentAt(allDead, "CT", 600), 0);
 });
 
+test("teamEquipmentAt reads a frame the roster already has instead of interpolating its own", () => {
+  const replay = replayV2();
+  const { getFrameForTick } = loadTypeScriptModule("./replay-frames.ts");
+  for (const tick of [200, 400, 600, 1100]) {
+    const frame = getFrameForTick(replay.frames, tick, replay.tickRate);
+    for (const team of ["T", "CT", "A", "B"]) {
+      assert.equal(teamEquipmentAt(replay, team, tick, frame), teamEquipmentAt(replay, team, tick), `${team} at ${tick}`);
+    }
+  }
+  // The frame given is the one read: no players there, nothing carried.
+  assert.equal(teamEquipmentAt(replay, "T", 200, { ...replay.frames[0], players: [] }), null);
+  assert.equal(teamEquipmentAt(replay, "T", 200, null), null);
+});
+
 test("killsDeathsAt hands back the same table until the next kill", () => {
   const replay = replayV2();
   const first = killsDeathsAt(replay, 600);

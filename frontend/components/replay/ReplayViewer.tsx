@@ -125,12 +125,24 @@ export const ReplayViewer = memo(function ReplayViewer({
       : variant === "companion"
         ? "tactical-panel"
         : "";
+  // Markers only ever come from the round on screen: index the events by round once, so a playback
+  // frame looks at that round's few dozen instead of filtering the whole match.
+  const eventsByRound = useMemo(() => {
+    const byRound = new Map<number, ReplayEvent[]>();
+    for (const event of replay.events ?? []) {
+      const roundEvents = byRound.get(event.roundNumber);
+      if (roundEvents) roundEvents.push(event);
+      else byRound.set(event.roundNumber, [event]);
+    }
+    return byRound;
+  }, [replay.events]);
+  const roundEvents = (Number.isFinite(currentRoundNumber) ? eventsByRound.get(currentRoundNumber) : undefined) ?? NO_EVENTS;
   const nearbyParserEvents = useMemo(
     () => recentMapParserEvents(
-      hasFloors ? (replay.events ?? []).filter((event) => getTacticalMapLevel(mapPresentation, event.z) === floor.level) : replay.events ?? [],
+      hasFloors ? roundEvents.filter((event) => getTacticalMapLevel(mapPresentation, event.z) === floor.level) : roundEvents,
       currentRoundNumber, currentTick, replay.tickRate
     ),
-    [currentRoundNumber, currentTick, replay.events, replay.tickRate, hasFloors, mapPresentation, floor.level]
+    [currentRoundNumber, currentTick, roundEvents, replay.tickRate, hasFloors, mapPresentation, floor.level]
   );
   const rosterOrder = [...tPlayers, ...ctPlayers];
   const rovingId = [highlightedPlayerId, selectedPlayerId].find((id) => id && rosterOrder.some((player) => player.id === id))
@@ -181,6 +193,7 @@ export const ReplayViewer = memo(function ReplayViewer({
     register: registerRosterButton,
     replay: statsReplay,
     currentTick,
+    frame,
     killsDeaths,
     teamNames,
     compact: compactRoster
@@ -474,6 +487,7 @@ const GRENADES: Record<UtilityType, { icon: LucideIcon; label: string }> = {
   decoy: { icon: Disc, label: "诱饵弹" }
 };
 const LOW_HP = 30;
+const NO_EVENTS: ReplayEvent[] = [];
 
 type TeamNames = readonly { key: string; name?: string | null }[] | null | undefined;
 
@@ -492,6 +506,7 @@ function Roster({
   register,
   replay,
   currentTick,
+  frame,
   killsDeaths,
   teamNames,
   compact
@@ -507,13 +522,15 @@ function Roster({
   register: (playerId: string, element: HTMLButtonElement | null) => void;
   replay: ReplayData;
   currentTick: number;
+  // The frame the map is drawing (the viewer's own), so the equipment total does not interpolate again.
+  frame: ReplayFrame | null;
   killsDeaths: Map<string, KillsDeaths>;
   teamNames: TeamNames;
   compact: boolean;
 }) {
   const sideClass = `side-${side.toLowerCase()}`;
   const teamName = sideTeamName(replay, players, teamNames);
-  const equipment = teamEquipmentAt(replay, side, currentTick);
+  const equipment = teamEquipmentAt(replay, side, currentTick, frame);
   const floors = Boolean(map.secondaryRadarImagePath);
   return (
     <div className={`side-roster live-roster ${sideClass}`}>

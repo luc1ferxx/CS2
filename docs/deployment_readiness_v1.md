@@ -333,9 +333,9 @@ Manual first-run preview should start at `/dashboard`. Verify the empty/loading/
 - `postgres` and `redis` have health checks.
 - `api` waits for healthy PostgreSQL and Redis, exposes `/health`, and has a Compose health check.
 - `frontend` waits for the API service health check before starting.
-- The default Compose frontend still uses `NEXT_PUBLIC_API_BASE_URL=http://localhost:8000` because browser requests originate from the host browser, not from the container network.
-- `docker-compose.preview.yml` switches the frontend to a production Next.js build via `frontend/Dockerfile.preview`.
-- Rebuild the preview frontend image whenever `NEXT_PUBLIC_API_BASE_URL` or `NEXT_PUBLIC_AUTH_PROVIDER` changes because both are bundled at build time.
+- The default Compose frontend is already a production Next.js build (`frontend/Dockerfile.preview`, served by `next start`) and bakes in `NEXT_PUBLIC_API_BASE_URL=http://localhost:8000`, because browser requests originate from the host browser, not from the container network. `docker-compose.dev.yml` (used by `scripts/dev.sh`) swaps in the `next dev` image (`frontend/Dockerfile`) for live editing.
+- `docker-compose.preview.yml` rebuilds that frontend image with the public API origin and production auth provider.
+- Rebuild the frontend image whenever `NEXT_PUBLIC_API_BASE_URL` or `NEXT_PUBLIC_AUTH_PROVIDER` changes because both are bundled at build time.
 - Private media always uses the API's owner-scoped `/demos/{demo_id}/media/video` route. Production frontend pages and API/auth/media paths must share one exact HTTPS origin so `__Host-` cookies and CSRF checks protect both API and native video requests.
 - The local artifact adapter writes private logical-reference objects under `/data` by default and remains development/test only. Production startup requires the private S3-compatible adapter and never exposes a bucket URL.
 

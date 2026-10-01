@@ -60,7 +60,7 @@ Open:
 - API health: `http://localhost:8000/health`
 - Safe diagnostics: `http://localhost:8000/diagnostics`
 
-For a production-built frontend preview shape:
+The standard stack's frontend is already a production build. For the production-auth preview shape:
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.preview.yml up --build

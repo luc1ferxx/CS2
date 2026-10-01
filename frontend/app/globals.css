@@ -1092,7 +1092,10 @@ select:disabled {
     scroll-behavior: auto !important;
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
-    transition-duration: 0.01ms !important;
+    /* none, not a 0.01ms duration: with the default property `all`, that turned every per-frame
+       change of the replay (player dots, playhead, smoke opacity) into a transition and four
+       transition events, frame after frame. Nothing here listens for transitionend. */
+    transition: none !important;
   }
 }
 
@@ -2345,7 +2348,8 @@ select:disabled {
   *::before,
   *::after {
     scroll-behavior: auto !important;
-    transition-duration: 0.01ms !important;
+    /* See the first reduced-motion block: no transitions at all, not 0.01ms ones. */
+    transition: none !important;
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
   }
