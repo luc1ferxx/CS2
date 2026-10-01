@@ -410,6 +410,25 @@ export function openingDuels(replay: ReplayData, playerId: string): OpeningDuel[
   return duels;
 }
 
+/**
+ * Every kill in tick order, filed and classified by the definitions above (enemyKill: counts as a
+ * kill; every record is a death for its victim). For live counters such as lib/player-state.ts.
+ */
+export function matchKills(replay: ReplayData): readonly MatchKill[] {
+  return matchIndex(replay).kills;
+}
+
+export interface MatchKill {
+  tick: number;
+  roundNumber: number;
+  attackerId: string | null;
+  victimId: string;
+  attackerName: string | null;
+  weapon: string | null;
+  headshot: boolean;
+  enemyKill: boolean;
+}
+
 export function utilityCounts(replay: ReplayData, playerId: string): UtilityCounts {
   const counts: UtilityCounts = { smoke: 0, flash: 0, molotov: 0, he: 0 };
   for (const event of matchIndex(replay).events) {

@@ -92,6 +92,12 @@ def _public_replay_contract(
             for item in replay.get("events", [])
             if isinstance(item, dict)
         ],
+        "playerStates": _public_player_states(replay.get("playerStates")),
+        "utility": [
+            _public_utility(item)
+            for item in replay.get("utility", [])
+            if isinstance(item, dict)
+        ],
         "generatedAt": replay["generatedAt"],
         "contractVersion": replay["contractVersion"],
         "diagnostics": _public_replay_diagnostics(replay.get("diagnostics")),
@@ -100,6 +106,45 @@ def _public_replay_contract(
     if isinstance(map_metadata, dict):
         public["mapMetadata"] = _public_map_metadata(map_metadata)
     return public
+
+
+PLAYER_STATE_FIELDS = ("tick", "money", "armor", "helmet", "defuser", "weapon", "grenades", "equipValue")
+UTILITY_FIELDS = (
+    "id",
+    "type",
+    "throwerId",
+    "throwerName",
+    "throwerSide",
+    "roundNumber",
+    "throwTick",
+    "detonateTick",
+    "endTick",
+)
+
+
+def _public_player_states(value: Any) -> dict[str, list[dict[str, Any]]]:
+    if not isinstance(value, dict):
+        return {}
+    return {
+        str(player_id): [
+            _project_fields(entry, PLAYER_STATE_FIELDS)
+            for entry in entries
+            if isinstance(entry, dict)
+        ]
+        for player_id, entries in value.items()
+        if isinstance(entries, list)
+    }
+
+
+def _public_utility(value: dict[str, Any]) -> dict[str, Any]:
+    projected = _project_fields(value, UTILITY_FIELDS)
+    points = value.get("points")
+    projected["points"] = [
+        _project_fields(point, ("tick", "x", "y", "z"))
+        for point in points
+        if isinstance(point, dict)
+    ] if isinstance(points, list) else []
+    return projected
 
 
 def _public_map_metadata(value: dict[str, Any]) -> dict[str, Any]:
@@ -118,6 +163,9 @@ def _public_map_metadata(value: dict[str, Any]) -> dict[str, Any]:
             "source",
         ),
     )
+    scale = value.get("worldUnitsPerPercent")
+    if isinstance(scale, dict):
+        projected["worldUnitsPerPercent"] = _project_fields(scale, ("x", "y"))
     transform = value.get("transform")
     if isinstance(transform, dict):
         projected["transform"] = _project_fields(
@@ -244,6 +292,8 @@ def _public_replay_diagnostics(value: Any) -> dict[str, Any] | None:
             "missingFields",
             "degradedFields",
             "missingEventFamilies",
+            "utilityCount",
+            "playerStateCount",
         ),
     )
     family_counts = value.get("eventFamilyCounts")

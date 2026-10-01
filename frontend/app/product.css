@@ -642,19 +642,19 @@
 .review-app .roster-hp { color: var(--ink); text-align: right; font-variant-numeric: tabular-nums; }
 
 /* Map marks (SVG) on the radar canvas: side colours for players and kills, my player ringed in radar text. */
-.map-player-body { stroke: var(--radar-bg); stroke-width: 0.7px; }
+.map-player-body { stroke: var(--radar-bg); stroke-width: 1.5px; }
 .map-player-dot.side-t .map-player-body { fill: var(--t); }
 .map-player-dot.side-ct .map-player-body { fill: var(--ct); }
-.map-player-index { fill: var(--radar-bg); font-family: var(--font-body); font-size: 3.6px; font-weight: 700; }
-.map-player-reviewed { fill: none; stroke: var(--radar-text); stroke-width: 1.1px; }
-.map-player-dot.reviewed .map-player-body { stroke: var(--radar-text); stroke-width: 0.6px; }
-.map-player-highlight { fill: none; stroke: var(--radar-text-2); stroke-width: 0.6px; stroke-dasharray: 1.2 0.8; }
-.map-player-dead { stroke: var(--radar-text); stroke-width: 0.8px; }
-.review-app .map-player-name { fill: var(--radar-text); stroke: var(--radar-bg); stroke-width: 0.9px; paint-order: stroke; font-family: var(--font-body); font-size: 3.1px; font-weight: 700; }
-.map-bomb-marker rect { fill: var(--radar-text); stroke: var(--radar-bg); stroke-width: 0.6px; }
-.map-bomb-marker circle { fill: none; stroke: var(--danger); stroke-width: 0.5px; }
-.review-app .parser-map-event circle { fill: var(--radar-panel); stroke: var(--radar-line); stroke-width: 0.5px; }
-.review-app .parser-map-event text { fill: var(--radar-text); font-size: 2.9px; font-weight: 700; }
+.map-player-index { fill: var(--radar-bg); font-family: var(--font-body); font-size: 9.5px; font-weight: 700; }
+.map-player-reviewed { fill: none; stroke: var(--radar-text); stroke-width: 2px; }
+.map-player-dot.reviewed .map-player-body { stroke: var(--radar-text); stroke-width: 1.5px; }
+.map-player-highlight { fill: none; stroke: var(--radar-text-2); stroke-width: 1.5px; stroke-dasharray: 3 2; }
+.map-player-dead { stroke: var(--radar-text); stroke-width: 1.8px; }
+.review-app .map-player-name { fill: var(--radar-text); stroke: var(--radar-bg); stroke-width: 3px; paint-order: stroke; font-family: var(--font-body); font-size: 11px; font-weight: 700; }
+.map-bomb-marker rect { fill: var(--radar-text); stroke: var(--radar-bg); stroke-width: 1.5px; }
+.map-bomb-marker circle { fill: none; stroke: var(--danger); stroke-width: 1.5px; }
+.review-app .parser-map-event circle { fill: var(--radar-panel); stroke: var(--radar-line); stroke-width: 1.2px; }
+.review-app .parser-map-event text { fill: var(--radar-text); font-size: 7.5px; font-weight: 700; }
 .review-app .parser-map-event.side-t circle { fill: var(--t); stroke: var(--radar-bg); }
 .review-app .parser-map-event.side-ct circle { fill: var(--ct); stroke: var(--radar-bg); }
 .review-app .parser-map-event.own-kill circle { fill: var(--radar-text); stroke: var(--radar-bg); }
@@ -835,7 +835,6 @@
   .review-app .side-roster .roster-head > span { display: none; }
   .review-app .map-overlay-bar { top: 6px; right: 6px; max-width: calc(100% - 12px); padding: 3px 6px; }
   .review-app .map-overlay-bar small, .review-app .map-overlay-bar .map-calibration-pill { display: none; }
-  .review-app .map-player-name { font-size: 4px; }
   .review-app .timeline-panel { padding: 6px 8px 0; }
   /* Too narrow for glyphs: each event (or group) is a 3 px tick in its colour, not tappable here. */
   .review-app .timeline-lane-track .parser-event-marker { width: 3px; height: 12px; border-radius: 0; background: var(--ink-3); box-shadow: none; font-size: 0; pointer-events: none; }
@@ -1099,4 +1098,160 @@
   .match-analysis-grid { grid-template-columns: minmax(0, 1fr); }
   .match-analysis-cell:nth-child(odd) { border-right: 0; }
   .match-analysis-cell:nth-last-child(2) { border-bottom: 1px solid var(--line-bold); }
+}
+
+/* === S10 UI-ROSTER === */
+/* Live roster: a panel per side ("队名 阵营" + live equipment value), two lines per player.
+   Line 1: number, name, C4, money, K/D. Line 2 (indented under the name): HP bar + HP, armour,
+   weapon, kit, grenades; or how a dead player died. Icons are data only, in ink-2. */
+@media (min-width: 1181px) {
+  .review-app .review-main-canvas .replay-panel { grid-template-columns: minmax(0, 1fr) 280px; }
+}
+@media (min-width: 1001px) and (max-width: 1180px) {
+  .review-app .review-main-canvas .replay-panel { grid-template-columns: minmax(0, 1fr) 244px; }
+}
+/* Two-line rows are taller than the canvas on laptops: the list scrolls, the panels never shrink. */
+.review-app .review-main-canvas .player-list { grid-auto-rows: max-content; }
+.review-app .live-roster .roster-head { gap: 8px; }
+.review-app .live-roster .roster-head .panel-bar-title { display: flex; align-items: baseline; gap: 5px; min-width: 0; }
+.review-app .live-roster .roster-team-name { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.review-app .live-roster .roster-head > .roster-equipment { flex: none; color: var(--ink); font-size: var(--step-xs); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.review-app .review-main-canvas .roster-row.live-roster-row { display: block; min-height: 0; padding: 2px 8px 3px; }
+.review-app .roster-row.live-roster-row.dead .roster-name { text-decoration: none; }
+/* Dead: the words stay readable (ink-2, AA on every row background); only the number dot fades. */
+.review-app .roster-row.live-roster-row.dead { color: var(--ink-2); }
+.review-app .live-roster-row.dead .roster-index { opacity: 0.45; }
+.review-app .live-roster-row.dead :is(.roster-money, .roster-kd) { color: var(--ink-2); }
+.review-app .live-roster-row .roster-line-main { display: grid; grid-template-columns: 18px minmax(0, 1fr) auto; align-items: center; gap: 6px; min-height: 21px; }
+.review-app .live-roster-row .roster-stats { display: inline-flex; align-items: center; gap: 8px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.review-app .live-roster-row .roster-money { color: var(--ink); }
+.review-app .live-roster-row .roster-kd { min-width: 30px; color: var(--ink-2); text-align: right; }
+.review-app .live-roster-row .roster-line-detail { display: flex; align-items: center; gap: 6px; min-width: 0; min-height: 17px; padding-left: 24px; color: var(--ink-2); font-size: var(--step-xs); }
+.review-app .live-roster-row .roster-hp-bar { flex: none; width: 44px; height: 5px; overflow: hidden; border-radius: 1px; background: var(--line-subtle); }
+.review-app .live-roster-row .roster-hp-bar > span { display: block; height: 100%; background: var(--ink-3); }
+.review-app .live-roster-row .roster-hp-bar > span.low { background: var(--danger); }
+.review-app .live-roster-row .roster-hp { flex: none; min-width: 20px; color: var(--ink); text-align: left; font-variant-numeric: tabular-nums; }
+.review-app .live-roster-row .roster-weapon { flex: 1 1 auto; min-width: 0; overflow: hidden; color: var(--ink); white-space: nowrap; text-overflow: ellipsis; }
+.review-app .live-roster-row .roster-grenades { display: inline-flex; flex: none; gap: 1px; }
+.review-app .live-roster-row .roster-icon { flex: none; color: var(--ink-2); }
+.review-app .live-roster-row .roster-bomb { color: var(--t-text); }
+.review-app .live-roster-row .roster-defuser { color: var(--ct-text); }
+.review-app .live-roster-row .roster-death { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+/* v1 replays: HP sits on the name line and an alive row is one line. */
+.review-app .live-roster-row.compact .roster-stats .roster-hp-bar { width: 32px; }
+/* Laptop widths (a 440 px canvas): tighter lines, so ten rows and both headers fit without scrolling. */
+@media (min-width: 1001px) and (max-width: 1180px) {
+  .review-app .review-main-canvas .player-list { gap: 6px; padding: 6px; }
+  .review-app .review-main-canvas .roster-row.live-roster-row { padding: 1px 8px; }
+  .review-app .live-roster-row .roster-line-main { min-height: 18px; line-height: 18px; }
+  .review-app .live-roster-row .roster-name { min-height: 18px; }
+  .review-app .live-roster-row .roster-line-detail { min-height: 14px; line-height: 14px; }
+}
+/* The finder's "只看": everyone else on the map fades (the opacity itself is set on the dot). */
+.review-app .map-player-dot.focus-dimmed .map-player-name { display: none; }
+@media (max-width: 700px) {
+  .review-app .review-main-canvas .roster-row.live-roster-row { padding: 2px 6px 3px; }
+  .review-app .live-roster .roster-head > .roster-equipment { display: inline; }
+  .review-app .live-roster-row .roster-line-main { gap: 4px; }
+  .review-app .live-roster-row .roster-stats { gap: 5px; }
+  .review-app .live-roster-row .roster-kd { min-width: 0; }
+  .review-app .live-roster-row .roster-line-detail { gap: 4px; padding-left: 0; }
+  .review-app .live-roster-row .roster-hp-bar { width: 22px; }
+  /* The death line wraps instead of losing the weapon. */
+  .review-app .live-roster-row .roster-death { overflow: visible; white-space: normal; }
+}
+
+/* === S10 UI-UTIL === */
+/* Grenades on the tactical map during playback (UtilityLayer; SVG units are radar percent). The
+   thrower's side colours the trail and the in-flight ring; the effects are neutral by kind:
+   smoke grey, fire orange-red, flash a white burst, HE an amber ring. */
+.review-app .utility-layer .utility-item.other-floor { opacity: 0.25; }
+.review-app .utility-layer .utility-item.focus-dimmed { opacity: 0.3; }
+.review-app .utility-trail { stroke: var(--radar-text-2); stroke-width: 2px; vector-effect: non-scaling-stroke; stroke-linecap: round; }
+.review-app .utility-flight.side-t .utility-trail { stroke: var(--t); }
+.review-app .utility-flight.side-ct .utility-trail { stroke: var(--ct); }
+.review-app .utility-flight-body { fill: var(--radar-panel); stroke: var(--radar-text-2); stroke-width: 1.5px; }
+.review-app .utility-flight.side-t .utility-flight-body { stroke: var(--t); }
+.review-app .utility-flight.side-ct .utility-flight-body { stroke: var(--ct); }
+.review-app .utility-flight-icon { color: var(--radar-text); }
+/* Smoke and fire are drawn over the players: translucent, no ring, their kind's glyph in the middle. */
+.review-app .utility-smoke-cloud { fill: var(--radar-smoke); fill-opacity: 0.5; stroke: none; }
+.review-app .utility-fire-area { fill: var(--radar-fire); fill-opacity: 0.42; stroke: none; }
+.review-app .utility-effect-glyph { color: var(--radar-bg); opacity: 0.85; }
+.review-app .utility-molotov .utility-effect-glyph { color: var(--radar-text); }
+.review-app .utility-flash-burst { fill: var(--radar-flash); fill-opacity: 0.9; }
+.review-app .utility-he-ring { fill: none; stroke: var(--radar-he); stroke-width: 2px; vector-effect: non-scaling-stroke; }
+
+/* "只看 X" after 看这颗: one line over the map, cleared with 显示全部. */
+.review-app .review-focus-strip { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 10px; padding: 3px 9px; border-bottom: 1px solid var(--line-bold); border-left: 3px solid var(--ink-3); background: var(--panel); font-size: var(--step-body); }
+.review-app .review-focus-strip strong { font-weight: 700; overflow-wrap: anywhere; }
+
+/* 道具反查: the landing map on the left (drag to select), filters and the throw list on the right. */
+.review-app .review-main-canvas.showing-finder { background: var(--radar-bg); }
+.review-app .utility-finder { display: grid; grid-template-columns: minmax(0, 1fr) 300px; height: 100%; min-height: 0; }
+.review-app .utility-finder-map { position: relative; min-width: 0; min-height: 0; }
+.review-app .utility-finder-map > svg { position: absolute; inset: 8px; width: calc(100% - 16px); height: calc(100% - 16px); cursor: crosshair; touch-action: none; user-select: none; }
+/* Touch: a vertical swipe on the map still scrolls the page; the list is the main path on phones. */
+@media (pointer: coarse) {
+  .review-app .utility-finder-map > svg { touch-action: pan-y; }
+}
+.review-app .utility-finder-fallback { fill: var(--radar-panel); }
+.review-app .utility-finder-throw { cursor: pointer; }
+.review-app .utility-finder-hit { fill: none; stroke: transparent; stroke-width: 1.2px; }
+.review-app .utility-finder-path { fill: none; stroke: var(--radar-text-2); stroke-width: 0.35px; stroke-opacity: 0.85; stroke-linejoin: round; stroke-linecap: round; }
+.review-app .utility-finder-throw.side-t .utility-finder-path { stroke: var(--t); }
+.review-app .utility-finder-throw.side-ct .utility-finder-path { stroke: var(--ct); }
+.review-app .utility-finder-origin { fill: var(--radar-text-2); }
+.review-app .utility-finder-throw.side-t .utility-finder-origin { fill: var(--t); }
+.review-app .utility-finder-throw.side-ct .utility-finder-origin { fill: var(--ct); }
+.review-app .utility-finder-landing { fill: var(--radar-panel); stroke: var(--radar-text); stroke-width: 0.3px; }
+.review-app .utility-finder-landing-icon { color: var(--radar-text); }
+.review-app .utility-finder-throw.dimmed { opacity: 0.2; }
+.review-app .utility-finder-throw:is(:hover, .hovered) { opacity: 1; }
+.review-app .utility-finder-throw:is(:hover, .hovered) .utility-finder-path { stroke-width: 0.75px; stroke-opacity: 1; }
+.review-app .utility-finder-throw:is(:hover, .hovered) .utility-finder-landing { fill: var(--link); stroke: var(--radar-text); stroke-width: 0.45px; }
+.review-app .utility-finder-selection { fill: var(--radar-text); fill-opacity: 0.08; stroke: var(--radar-text); stroke-width: 0.35px; stroke-dasharray: 1 0.8; pointer-events: none; }
+/* While a rectangle is drawn the trajectories do not react to the pointer. */
+.review-app .utility-finder-map > svg.drafting .utility-finder-throw { pointer-events: none; }
+.review-app .utility-finder-side { display: flex; flex-direction: column; min-width: 0; min-height: 0; border-left: 1px solid var(--line-bold); background: var(--panel); }
+.review-app .utility-finder-filters { display: grid; gap: 6px; padding: 8px 10px; border-bottom: 1px solid var(--line-bold); }
+.review-app .utility-finder-filter { display: grid; grid-template-columns: 40px minmax(0, 1fr); align-items: center; gap: 4px 6px; }
+.review-app .utility-finder-filter-label { color: var(--ink-2); font-size: var(--step-xs); }
+.review-app .utility-finder-segments { display: flex; flex-wrap: wrap; min-width: 0; }
+.review-app .utility-finder-segment { height: 24px; margin-left: -1px; padding: 0 6px; border: 1px solid var(--control-line); border-radius: 0; background: var(--panel); color: var(--ink); font-family: var(--font-body); font-size: var(--step-sm); white-space: nowrap; cursor: pointer; }
+.review-app .utility-finder-segment:first-child { margin-left: 0; border-radius: var(--radius-control) 0 0 var(--radius-control); }
+.review-app .utility-finder-segment:last-child { border-radius: 0 var(--radius-control) var(--radius-control) 0; }
+.review-app .utility-finder-segment:hover { background: var(--row-alt); }
+.review-app .utility-finder-segment[aria-pressed="true"] { position: relative; z-index: 1; border-color: var(--link); background: var(--row-selected); font-weight: 700; }
+.review-app .utility-finder-player { grid-column: 2; max-width: 100%; height: 24px; font-size: var(--step-sm); }
+.review-app .utility-finder-filter select { height: 24px; font-size: var(--step-sm); }
+.review-app .utility-finder-results { display: flex; flex: 1 1 auto; flex-direction: column; min-height: 0; }
+.review-app .utility-finder-results-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 30px; padding: 0 10px; border-bottom: 1px solid var(--line-bold); background: var(--panel-head); }
+.review-app .utility-finder-count { margin: 0; font-size: var(--step-body); font-weight: 700; }
+.review-app .utility-finder-list { flex: 1 1 auto; min-height: 0; margin: 0; padding: 0; overflow: auto; list-style: none; scrollbar-width: thin; }
+.review-app .utility-finder-row { display: grid; grid-template-columns: 64px 34px minmax(0, 1fr) auto; align-items: center; gap: 6px; width: 100%; min-height: 28px; padding: 0 10px; border: 0; border-radius: 0; background: transparent; color: var(--ink); font-family: var(--font-body); font-size: var(--step-sm); text-align: left; cursor: pointer; }
+.review-app .utility-finder-row:is(:hover, :focus-visible) { background: var(--row-hover); }
+.review-app .utility-finder-time { color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.review-app .utility-finder-thrower { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.review-app .utility-finder-thrower::before { content: ""; display: inline-block; width: 7px; height: 7px; margin-right: 5px; border-radius: 50%; background: var(--ink-3); vertical-align: 1px; }
+.review-app .utility-finder-thrower.side-t::before { background: var(--t); }
+.review-app .utility-finder-thrower.side-ct::before { background: var(--ct); }
+.review-app .utility-finder-go { color: var(--link); }
+.review-app .utility-finder-row:hover .utility-finder-go { text-decoration: underline; }
+.review-app .utility-finder-empty { margin: 0; padding: 10px; color: var(--ink-2); font-size: var(--step-body); }
+.review-app .utility-finder-pending { height: 100%; min-height: 220px; padding: 12px; }
+.review-app .utility-finder-pending-notice { margin: 0; padding: 6px 10px; border-left: 3px solid var(--radar-text-2); background: var(--radar-panel); color: var(--radar-text); font-size: var(--step-body); text-align: left; }
+@media (max-width: 1180px) {
+  .review-app .utility-finder { grid-template-columns: minmax(0, 1fr) 260px; }
+}
+/* In the narrow 260px column the labels go above their controls, so 全部/本回合/上半场/下半场 stay on one line. */
+@media (min-width: 1001px) and (max-width: 1180px) {
+  .review-app .utility-finder-filter { grid-template-columns: minmax(0, 1fr); gap: 2px; }
+  .review-app .utility-finder-player { grid-column: 1; }
+}
+@media (max-width: 1000px) {
+  .review-app .utility-finder { grid-template-columns: minmax(0, 1fr); height: auto; }
+  .review-app .utility-finder-map { aspect-ratio: 1 / 1; max-height: min(560px, 72svh); }
+  .review-app .utility-finder-side { border-top: 1px solid var(--line-bold); border-left: 0; }
+  .review-app .utility-finder-list { max-height: 320px; }
 }

@@ -26,10 +26,17 @@ import { DetailSummary } from "@/components/replay/DetailSummary";
 import { FirstPersonExplainer } from "@/components/replay/FirstPersonExplainer";
 import { MatchScoreBanner } from "@/components/replay/MatchScoreBanner";
 import { ReviewCommandBar } from "@/components/replay/ReviewCommandBar";
-import { ReplayViewer } from "@/components/replay/ReplayViewer";
+import { ReplayViewer, type ReplayMapOverlayContext } from "@/components/replay/ReplayViewer";
 import { PLAYER_PICKER_ID, PersonalReviewPanel } from "@/components/replay/PersonalReviewPanel";
 import { RoundReviewPanel, RoundStrip } from "@/components/replay/RoundReviewPanel";
 import { Timeline } from "@/components/replay/Timeline";
+import {
+  DEFAULT_UTILITY_FINDER_STATE,
+  UtilityFinder,
+  UtilityFinderPending,
+  type UtilityFinderState
+} from "@/components/replay/UtilityFinder";
+import { UtilityLayer } from "@/components/replay/UtilityLayer";
 import { MatchAnalysis } from "@/components/stats/MatchAnalysis";
 import { Scoreboard } from "@/components/stats/Scoreboard";
 import {
@@ -91,6 +98,7 @@ import {
 } from "@/lib/render-worker";
 import { usePoll } from "@/lib/use-poll";
 import { requestFailureKind, userFacingError } from "@/lib/user-errors";
+import { utilityAvailability, utilityJumpTick } from "@/lib/utility";
 import { withFeedback } from "@/lib/coaching-review";
 import {
   coachingForPlayer,
@@ -104,7 +112,7 @@ import {
 } from "@/lib/personal-review";
 import type { CoachingEvent, CoachingFeedback, CoachingVerdict } from "@/types/coaching";
 import type { DemoProcessingStatus, DemoStatus } from "@/types/demo";
-import type { ReplayData, ReplayVideo } from "@/types/replay";
+import type { ReplayData, ReplayUtility, ReplayVideo } from "@/types/replay";
 
 // Operator and diagnostics panels only load once "高级工具" is opened.
 const RenderOperatorPanel = dynamic(
@@ -178,8 +186,13 @@ function DemoDetailContent() {
   const [speed, setSpeed] = useState(1);
   const [playing, setPlaying] = useState(false);
   // "auto" plays a clip when one covers the moment; "video" is the 第一人称 tab chosen on purpose,
-  // which explains itself when there is no clip instead of falling back to the map.
-  const [viewMode, setViewMode] = useState<"auto" | "map" | "video">("auto");
+  // which explains itself when there is no clip instead of falling back to the map. "utility" is
+  // 道具反查, which runs on the map clock and never plays.
+  const [viewMode, setViewMode] = useState<"auto" | "map" | "video" | "utility">("auto");
+  // 道具反查's filters and selection outlive a trip to 战术回放 and back.
+  const [finderState, setFinderState] = useState<UtilityFinderState>(DEFAULT_UTILITY_FINDER_STATE);
+  // "只看 X": the thrower a 看这颗 jump focused on; every other player is dimmed on the map.
+  const [focusedThrower, setFocusedThrower] = useState<{ demoId: string; id: string; name: string } | null>(null);
   const [mapLevelMode, setMapLevelMode] = useState<TacticalMapLevelMode>("auto");
   const [savedIdentity, setSavedIdentity] = useState("");
   const [preferenceSaved, setPreferenceSaved] = useState(true);
@@ -491,7 +504,14 @@ function DemoDetailContent() {
   const videoPlayback = replay
     ? videoPlaybackState(replay.video, currentTick, selectedPlayerId, videoUnavailable)
     : "unavailable";
-  const videoDrivesClock = usesVideoClock(viewMode === "map" ? "map" : "auto", videoPlayback);
+  const mapClock = viewMode === "map" || viewMode === "utility";
+  const videoDrivesClock = usesVideoClock(mapClock ? "map" : "auto", videoPlayback);
+  // v1 replays have no throws: the tab waits for the background upgrade, or is not offered.
+  const utilityTab = replay
+    ? utilityAvailability(replay, Boolean(status?.ingestion?.replayUpgradePending))
+    : "hidden";
+  const finderSelected = viewMode === "utility" && utilityTab !== "hidden";
+  const focusPlayer = focusedThrower?.demoId === demoId ? focusedThrower : null;
   const personalEvents = useMemo(
     () => coachingForPlayer(events, selectedPlayer?.id ?? null),
     [events, selectedPlayer?.id]
@@ -662,7 +682,7 @@ function DemoDetailContent() {
         setCurrentTick((tick) => {
           const nextTick = advanceReplayTick(
             tick, (elapsedMs / 1000) * replay.tickRate * speed, selectedRoundData.endTick,
-            replay.video, selectedPlayerId, videoUnavailable || viewMode === "map"
+            replay.video, selectedPlayerId, videoUnavailable || mapClock
           );
           if (nextTick >= selectedRoundData.endTick) {
             setPlaying(false);
@@ -677,7 +697,7 @@ function DemoDetailContent() {
     frameId = window.requestAnimationFrame(step);
 
     return () => window.cancelAnimationFrame(frameId);
-  }, [playing, replay, selectedPlayerId, selectedRoundData, speed, videoDrivesClock, videoUnavailable, viewMode]);
+  }, [mapClock, playing, replay, selectedPlayerId, selectedRoundData, speed, videoDrivesClock, videoUnavailable]);
 
   const updateCoordinateFromTick = useCallback((tick: number) => {
     setCurrentTick(tick);
@@ -806,8 +826,9 @@ function DemoDetailContent() {
       setPlaying(false);
       return;
     }
-    // Play from the first-person explanation shows the map again: the replay never runs unseen.
+    // Play from the first-person explanation or 道具反查 shows the map again: the replay never runs unseen.
     if (state.viewMode === "video" && !state.videoDrivesClock) setViewMode("auto");
+    if (state.viewMode === "utility") setViewMode("map");
     // At the end of a round, Play carries on into the next one instead of stopping at once.
     if (state.atRoundEnd && state.nextRoundData && !state.videoDrivesClock) {
       playNextRound();
@@ -839,13 +860,13 @@ function DemoDetailContent() {
   // covering the moment still plays) and scrolls into view.
   const jumpToTick = useCallback((tick: number) => {
     setPlaying(false);
-    setViewMode((mode) => (mode === "video" ? "auto" : mode));
+    setViewMode((mode) => (mode === "video" || mode === "utility" ? "auto" : mode));
     manualSeek(tick);
     revealStage();
   }, [manualSeek, revealStage]);
 
   const jumpToRound = useCallback((roundNumber: number) => {
-    setViewMode((mode) => (mode === "video" ? "auto" : mode));
+    setViewMode((mode) => (mode === "video" || mode === "utility" ? "auto" : mode));
     changeRound(roundNumber);
     revealStage();
   }, [changeRound, revealStage]);
@@ -855,6 +876,35 @@ function DemoDetailContent() {
     if (latest.current.replay && !latest.current.videoDrivesClock) setPlaying(false);
     setViewMode("video");
   }, []);
+
+  const showUtilityFinder = useCallback(() => {
+    setPlaying(false);
+    setViewMode("utility");
+  }, []);
+
+  // 看这颗: back to 战术回放 two seconds before the throw, through the shared seek, watching the thrower.
+  const jumpToUtility = useCallback((utility: ReplayUtility) => {
+    const current = latest.current.replay;
+    if (!current) return;
+    setPlaying(false);
+    setViewMode("map");
+    manualSeek(utilityJumpTick(utility, current.rounds, current.tickRate));
+    const name = current.players.find((player) => player.id === utility.throwerId)?.name ?? utility.throwerName ?? "";
+    setFocusedThrower(utility.throwerId ? { demoId, id: utility.throwerId, name } : null);
+    revealStage();
+  }, [demoId, manualSeek, revealStage]);
+
+  // 显示全部 unmounts its own strip: hand focus to the stage instead of letting it drop to the page.
+  const clearFocusPlayer = useCallback(() => {
+    setFocusedThrower(null);
+    stageRef.current?.focus({ preventScroll: true });
+  }, []);
+
+  // Grenades on the map during playback (over the players); the viewer hands over the floor and round it shows.
+  const utilityOverlay = useCallback((context: ReplayMapOverlayContext) => loadedReplay ? (
+    <UtilityLayer replay={loadedReplay} currentTick={context.currentTick} map={context.map} floor={context.floor}
+      roundNumber={context.roundNumber} focusPlayerId={context.focusPlayerId} unitsPerPixel={context.unitsPerPixel} />
+  ) : null, [loadedReplay]);
 
   const showSavedClips = useCallback(() => {
     const details = savedClipsRef.current;
@@ -1243,16 +1293,25 @@ function DemoDetailContent() {
             <div className="review-main-column">
             <section id="player" className="panel review-stage" aria-label="回放" tabIndex={-1} ref={stageRef}>
               <div className="panel-bar review-stage-toolbar">
-                {showVideoControls ? (
+                {showVideoControls || utilityTab !== "hidden" ? (
                   <div className="panel-bar-tabs review-view-switch" role="group" aria-label="回放视图">
-                    <button type="button" className={`panel-tab${firstPersonSelected ? "" : " selected"}`} aria-pressed={!firstPersonSelected} onClick={() => setViewMode("map")}>
+                    <button type="button" className={`panel-tab${firstPersonSelected || finderSelected ? "" : " selected"}`}
+                      aria-pressed={!firstPersonSelected && !finderSelected} onClick={() => setViewMode("map")}>
                       战术回放
                     </button>
+                    {utilityTab !== "hidden" ? (
+                      <button type="button" className={`panel-tab${finderSelected ? " selected" : ""}`} aria-pressed={finderSelected}
+                        onClick={showUtilityFinder}>
+                        道具反查
+                      </button>
+                    ) : null}
                     {/* Always clickable: without a clip for this moment the stage explains why and what to do. */}
-                    <button type="button" className={`panel-tab${firstPersonSelected ? " selected" : ""}`} aria-pressed={firstPersonSelected}
-                      onClick={showFirstPerson}>
-                      第一人称
-                    </button>
+                    {showVideoControls ? (
+                      <button type="button" className={`panel-tab${firstPersonSelected ? " selected" : ""}`} aria-pressed={firstPersonSelected}
+                        onClick={showFirstPerson}>
+                        第一人称
+                      </button>
+                    ) : null}
                   </div>
                 ) : <h2 className="panel-bar-title">战术回放</h2>}
                 {renderClips ? <button className="text-button review-clip-button" type="button"
@@ -1275,8 +1334,19 @@ function DemoDetailContent() {
                   </button>
                 </div>
               ) : null}
-              <div className={`review-main-canvas ${videoDrivesClock ? "showing-video" : showFirstPersonExplainer ? "showing-explainer" : "showing-map"}`}>
-              {videoDrivesClock ? (
+              {focusPlayer && !finderSelected && !videoDrivesClock && !showFirstPersonExplainer ? (
+                <div className="review-focus-strip" role="status">
+                  <span>只看 <strong>{focusPlayer.name || "这名玩家"}</strong></span>
+                  <button type="button" className="text-button" onClick={clearFocusPlayer}>显示全部</button>
+                </div>
+              ) : null}
+              <div className={`review-main-canvas ${finderSelected ? "showing-finder" : videoDrivesClock ? "showing-video" : showFirstPersonExplainer ? "showing-explainer" : "showing-map"}`}>
+              {finderSelected ? (
+                utilityTab === "available" ? (
+                  <UtilityFinder replay={replay} teams={teams} currentRound={selectedRound} state={finderState}
+                    onStateChange={setFinderState} onJump={jumpToUtility} />
+                ) : <UtilityFinderPending />
+              ) : videoDrivesClock ? (
               <FirstPersonReplay
                 compact
                 ref={firstPersonReplayRef}
@@ -1316,9 +1386,11 @@ function DemoDetailContent() {
                   onBackToMap={() => setViewMode("map")}
                 />
               ) : (
-                <ReplayViewer replay={scopedReplay ?? replay} currentTick={currentTick}
+                <ReplayViewer replay={scopedReplay ?? replay} matchReplay={replay} currentTick={currentTick}
                   selectedPlayerId={selectedPlayerId} onSelectPlayer={selectPlayer} variant="featured"
-                  levelMode={mapLevelMode} onLevelModeChange={setMapLevelMode} />
+                  levelMode={mapLevelMode} onLevelModeChange={setMapLevelMode} teamNames={matchSummaryTeams}
+                  overlayAbove={utilityTab === "available" ? utilityOverlay : undefined}
+                  focusPlayerId={focusPlayer?.id ?? null} />
               )}
               </div>
               <Timeline currentTick={currentTick} selectedRound={selectedRound} rounds={replay.rounds}

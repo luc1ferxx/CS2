@@ -1,7 +1,7 @@
 """Owner-scoped demo operations behind one entry point.
 
 `DemoService` is a facade: it owns the database session, the owner context and
-the artifact stores, and delegates every operation to one of nine components,
+the artifact stores, and delegates every operation to one of ten components,
 each a single responsibility in its own module:
 
     library       demo_library.py         list/search, read, rename, archive, status
@@ -13,6 +13,7 @@ each a single responsibility in its own module:
     video         video_registry.py       private video delivery and the manual MP4 bridge
     coaching      coaching_review.py      coaching suggestions and the owner's verdicts on them
     summary       match_summary.py        stored match summary (score, team names) and its backfill
+    upgrade       replay_upgrade.py       in-place upgrade of an older replay to the current contract
 
 Rules of the composition:
 
@@ -103,6 +104,7 @@ from app.services.demo_service.parse_lifecycle import ParseLifecycle
 from app.services.demo_service.render_lifecycle import RenderLifecycle
 from app.services.demo_service.render_worker_media import RenderWorkerMedia
 from app.services.demo_service.replay_blob import ReplayBlob
+from app.services.demo_service.replay_upgrade import ReplayUpgrade, ReplayUpgradeClaim, UpgradeOutcome
 from app.services.demo_service.video_registry import PrivateVideoHandle, VideoRegistry
 from app.services.storage import ArtifactStore, LocalStorageService, artifact_store_from_settings
 from app.services.upload_service import StoredVideoUpload
@@ -131,6 +133,7 @@ class DemoService:
         self.video = VideoRegistry(self)
         self.coaching = CoachingReview(self)
         self.summary = MatchSummaries(self)
+        self.upgrade = ReplayUpgrade(self)
 
     @classmethod
     def for_internal(
@@ -609,6 +612,53 @@ class DemoService:
     def backfill_match_summary(self, demo_id: str, read_team_names: TeamNamesReader) -> bool:
         return self.summary.backfill_match_summary(demo_id, read_team_names)
 
+    # -- ReplayUpgrade (replay_upgrade.py) ----------------------------------------
+    def demo_ids_due_for_replay_upgrade(
+        self,
+        *,
+        limit: int,
+        now: datetime | None = None,
+    ) -> list[str]:
+        return self.upgrade.demo_ids_due(limit=limit, now=now)
+
+    def claim_replay_upgrade(
+        self,
+        demo_id: str,
+        *,
+        now: datetime | None = None,
+    ) -> ReplayUpgradeClaim | None:
+        return self.upgrade.claim(demo_id, now=now)
+
+    def release_replay_upgrade(self, claim: ReplayUpgradeClaim) -> bool:
+        return self.upgrade.release(claim)
+
+    def mark_replay_upgrade_current(self, claim: ReplayUpgradeClaim, version: str) -> bool:
+        return self.upgrade.mark_current(claim, version)
+
+    def record_replay_upgrade_failure(
+        self,
+        claim: ReplayUpgradeClaim,
+        error_code: str,
+        *,
+        now: datetime | None = None,
+    ) -> bool:
+        return self.upgrade.record_failure(claim, error_code, now=now)
+
+    def complete_replay_upgrade(
+        self,
+        claim: ReplayUpgradeClaim,
+        *,
+        expected_replay_key: str | None,
+        replay: dict[str, Any],
+        team_names: Mapping[str, Any] | None = None,
+    ) -> UpgradeOutcome:
+        return self.upgrade.complete(
+            claim,
+            expected_replay_key=expected_replay_key,
+            replay=replay,
+            team_names=team_names,
+        )
+
 __all__ = [
     "ACTIVE_DEMO_STATUSES",
     "ACTIVE_PARSE_JOB_STATUSES",
@@ -647,6 +697,7 @@ __all__ = [
     "PrivateVideoHandle",
     "QueueClient",
     "ReplayBlobUnavailableError",
+    "ReplayUpgradeClaim",
     "get_redis_client",
     "utc_now",
 ]

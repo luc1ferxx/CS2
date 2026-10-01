@@ -8,6 +8,14 @@ from datetime import UTC, datetime
 from typing import Any, SupportsFloat, SupportsIndex, TypeGuard
 
 from app.parser.map_config import is_current_transform, legacy_radar_reprojection, map_metadata_for
+from app.parser.player_states import normalize_player_states
+from app.parser.utility_tracks import normalize_utility
+
+# v2 adds `playerStates` (equipment change points) and `utility` (grenade
+# trajectories). Older replays load with both empty; the worker's re-parse
+# backstop upgrades completed demos whose stored version is not current.
+REPLAY_CONTRACT_VERSION = "replay_contract_v2"
+_CONTRACT_VERSION_PATTERN = re.compile(r"replay_contract_v(\d{1,4})")
 
 PARSER_EVENT_TYPES = {
     "kill",
@@ -52,6 +60,14 @@ MAX_METADATA_STRING_LENGTH = 200
 MAX_METADATA_LIST_LENGTH = 16
 
 PositionNormalizer = Callable[[dict[str, Any]], dict[str, float] | None]
+
+
+def replay_contract_is_current(version: object) -> bool:
+    """Whether a stored replay's ``contractVersion`` already carries the v2 fields."""
+    if not isinstance(version, str):
+        return False
+    match = _CONTRACT_VERSION_PATTERN.fullmatch(version.strip())
+    return match is not None and int(match.group(1)) >= 2
 
 
 def normalize_bomb_site(value: Any) -> str | None:
@@ -104,6 +120,8 @@ def normalize_replay_contract(replay: dict[str, Any]) -> dict[str, Any]:
         [],
         rounds,
     )
+    normalized["playerStates"] = normalize_player_states(normalized.get("playerStates"))
+    normalized["utility"] = normalize_utility(normalized.get("utility"), rounds, tick_rate)
     normalized["video"] = _normalize_video(normalized.get("video"), tick_rate, tick_start, tick_end)
     normalized["generatedAt"] = str(normalized.get("generatedAt") or datetime.now(UTC).isoformat())
     normalized["contractVersion"] = _contract_version(raw)
@@ -160,6 +178,13 @@ def _with_current_radar_transform(replay: dict[str, Any]) -> dict[str, Any]:
     events = replay.get("events")
     if isinstance(events, list):
         replay["events"] = [moved(event) for event in events]
+    utility = replay.get("utility")
+    if isinstance(utility, list):
+        replay["utility"] = [
+            {**item, "points": [moved(point) for point in item["points"]]}
+            if isinstance(item, dict) and isinstance(item.get("points"), list) else item
+            for item in utility
+        ]
     replay["mapMetadata"] = {**metadata, **map_metadata_for(map_name)}
     if hidden:
         replay["mapMetadata"]["legacyEdgePositionsHidden"] = hidden
@@ -375,19 +400,29 @@ def _replay_diagnostics(raw: dict[str, Any], normalized: dict[str, Any]) -> dict
     ]
     if "video" in raw and not isinstance(raw.get("video"), dict):
         degraded_fields.append("video")
+    if "playerStates" in raw and not isinstance(raw.get("playerStates"), dict):
+        degraded_fields.append("playerStates")
+    if "utility" in raw and not isinstance(raw.get("utility"), list):
+        degraded_fields.append("utility")
     metadata = normalized.get("mapMetadata")
     if isinstance(metadata, dict) and (_optional_int(metadata.get("legacyEdgePositionsHidden")) or 0) > 0:
         degraded_fields.append("legacyRadarEdgePositions")
 
     events = _dict_list(normalized.get("events"))
     family_counts = _event_family_counts(events)
+    normalized_legacy = bool(normalized["contractVersion"] == "legacy" or missing_fields or degraded_fields)
+    utility_count = len(normalized.get("utility") or [])
+    player_state_count = len(normalized.get("playerStates") or {})
+    if replay_contract_is_current(normalized["contractVersion"]):
+        # A v2 parse whose grenade or equipment extraction came back empty is a
+        # partial success: flag it here, never as a failed parse.
+        if utility_count == 0 and "utility" not in degraded_fields:
+            degraded_fields.append("utility")
+        if player_state_count == 0 and "playerStates" not in degraded_fields:
+            degraded_fields.append("playerStates")
     return {
         "contractVersion": normalized["contractVersion"],
-        "normalizedLegacy": bool(
-            normalized["contractVersion"] == "legacy"
-            or missing_fields
-            or degraded_fields
-        ),
+        "normalizedLegacy": normalized_legacy,
         "parserEventCount": len(events),
         "roundCount": len(_dict_list(normalized.get("rounds"))),
         "playerCount": len(_dict_list(normalized.get("players"))),
@@ -398,6 +433,8 @@ def _replay_diagnostics(raw: dict[str, Any], normalized: dict[str, Any]) -> dict
         "missingEventFamilies": [
             family for family, count in family_counts.items() if count == 0
         ],
+        "utilityCount": utility_count,
+        "playerStateCount": player_state_count,
     }
 
 

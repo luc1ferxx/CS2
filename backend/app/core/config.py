@@ -294,6 +294,13 @@ class Settings:
     # forever. After this many claims it is failed for good, which also makes the
     # UI retry button available again.
     parse_max_attempts: int = int(os.getenv("PARSE_MAX_ATTEMPTS", "3"))
+    # Background upgrade of completed demos whose stored replay predates the
+    # current contract (app/workers/replay_upgrade.py): one re-parse of the
+    # stored .dem per idle pass. After this many attempts a demo keeps its old
+    # replay; the retry delay doubles per attempt from the base below.
+    replay_upgrade_enabled: bool = _bool_from_env("REPLAY_UPGRADE_ENABLED", True)
+    replay_upgrade_max_attempts: int = int(os.getenv("REPLAY_UPGRADE_MAX_ATTEMPTS", "3"))
+    replay_upgrade_retry_seconds: int = int(os.getenv("REPLAY_UPGRADE_RETRY_SECONDS", "900"))
     cors_origins_raw: str = os.getenv(
         "CORS_ORIGINS",
         "http://localhost:3000,http://127.0.0.1:3000",

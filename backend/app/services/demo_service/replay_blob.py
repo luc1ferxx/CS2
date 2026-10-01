@@ -4,7 +4,7 @@ import io
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from app.core.config import settings
 from app.models.demo import Demo
@@ -223,6 +223,12 @@ class ReplayBlob(ServiceComponent):
         demo: Demo,
         video: dict[str, Any],
     ) -> _PendingReplayUpdate:
+        # Read the replay key under the row lock: the background replay upgrade
+        # swaps the replay with a compare-and-set on this key, so a video write
+        # based on a replay read before that swap must not land after it.
+        current_key = self._locked_replay_key(demo)
+        if current_key != getattr(demo, "replay_storage_key", None):
+            demo.replay_storage_key = current_key
         replay = self.require_replay_blob(demo)
         self._service.worker_media.retain_current_render_video(demo, replay.get("video"))
         next_video = self._with_video_contract_defaults(video, replay)
@@ -236,6 +242,18 @@ class ReplayBlob(ServiceComponent):
             previous_reference=previous_reference,
             next_reference=next_reference,
         )
+
+    def _locked_replay_key(self, demo: Demo) -> str | None:
+        demo_id = row_identity(demo)
+        row = (
+            self.db.query(Demo.replay_storage_key)
+            .filter(Demo.id == demo_id)
+            .with_for_update()
+            .one_or_none()
+        )
+        if row is None:
+            raise DemoGoneError(f"Demo {demo_id} was deleted")
+        return cast(str | None, row[0])
 
     def _commit_replay_update(self, pending: _PendingReplayUpdate) -> None:
         with gone_rows_raise(self.db, demo_id=pending.demo_id):

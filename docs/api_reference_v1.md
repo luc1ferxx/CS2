@@ -237,6 +237,35 @@ Demo list items 和 `GET /demos/{demo_id}/status` 带可选的 `matchSummary`（
 
 队伍 = 首个有人可判定阵营的回合里同一阵营的玩家；A 队开局 T，B 队开局 CT。每名玩家每回合的阵营取该回合 `startTick`–`endTick` 之间玩家帧里的多数（平票取最早的一帧；该回合没有范围内的帧时用它的全部帧；仍没有就用该回合的击杀记录），队伍阵营由队员投票，无法判定的回合沿用最近一个已判定回合的阵营；不按回合号推断，所以半场和加时换边都算对。完整规则写在两边实现的文件头注释里，并由前后端共用的 `fixtures/match-rules/` 用例固定；比分 = 该队所在阵营获胜的回合数。`name` 是 demo 里的战队名（`team_clan_name`，匹配赛通常没有 → `null`）。解析完成时写入 `demos.match_summary`；此前已完成的比赛（没有摘要，或摘要 `version` 低于 2）由 worker 空闲时回填或重算（每 30 秒最多 3 场：比分读已存 replay，战队名在 parse 子进程里只读源 `.dem` 的几个 tick；读不到名字就只存比分；从不改 replay）。计算在 `backend/app/services/demo_service/match_summary.py`，与前端 `frontend/lib/match-stats.ts` 的定义保持一致。
 
+### Replay contract（`replay_contract_v2`）
+
+`GET /demos/{demo_id}/replay` 返回 `contractVersion`、`mapName`、`mapMetadata`（含 `transform` 与 `worldUnitsPerPercent: {x, y}`，一个雷达百分点对应的世界单位）、`tickRate`、`video`、`rounds`、`players`、`frames`（每帧每名玩家 `x/y` 雷达百分比、`z` 世界高度、`hp`、`alive`、`hasBomb`）、`events`、`diagnostics`，以及 v2 新增的两项：
+
+```json
+{
+  "playerStates": {
+    "76561198000000001": [
+      {"tick": 1000, "money": 800, "armor": 0, "helmet": false, "defuser": false,
+       "weapon": "Glock-18", "grenades": [], "equipValue": 200},
+      {"tick": 1104, "money": 100, "armor": 100, "helmet": false, "defuser": false,
+       "weapon": "Glock-18", "grenades": ["flash", "flash"], "equipValue": 900}
+    ]
+  },
+  "utility": [
+    {"id": "utility-smoke-633-10280", "type": "smoke",
+     "throwerId": "76561198000000001", "throwerName": "torzsi", "throwerSide": "CT",
+     "roundNumber": 1, "throwTick": 10280, "detonateTick": 10584, "endTick": 11996,
+     "points": [{"tick": 10280, "x": 62.51, "y": 47.3, "z": 32.2}, {"tick": 10584, "x": 29.0, "y": 64.02, "z": -166.0}]}
+  ]
+}
+```
+
+- `playerStates`：按玩家 id（与 `frames[].players[].id` 相同）存装备/经济的**变化点**，只有字段变化才新增一条，按 tick 升序；时刻 t 的状态 = 最后一条 `tick ≤ t`。每条是完整快照；某字段缺失表示这场 demo 没有该数据，不是 0。`weapon` 是 demo 里的武器显示名（≤32 字符，死亡或空手为 `null`）；`grenades` 每颗一项，取值 `smoke`/`flash`/`he`/`molotov`（燃烧瓶与燃烧弹）/`decoy`。在帧的采样 tick 上取样，不写进每一帧。
+- `utility`：每颗投掷物一条，`id` 确定（`utility-{type}-{实体id}-{throwTick}`）。`points` 与帧同一雷达百分比坐标（0–100，`z` 为世界高度），飞行中约每 4 tick 一个点，首尾必留，停在引爆处，每颗最多 120 点；最后一点即落点。`detonateTick` 取对应引爆事件（燃烧取 `inferno_startburn`），找不到时取最后移动的 tick；`endTick` 为效果结束（烟 `smokegrenade_expired`、火 `inferno_expire`，缺失时按烟 18 秒、火 7 秒；空中爆掉的燃烧瓶、闪光、手雷、诱饵弹 = `detonateTick`），且不晚于下一回合的 `startTick`（回合重置会清掉烟和火）。回合结束 10 秒以后才投出的道具（回合之间的暂停、重开）不属于任何回合，不收录。这两条在解析时和每次读取回放时都会执行，早先存下的回放读出来也一样。`throwerSide` 按比分摘要同一条阵营规则取该回合的阵营。
+- 抽取失败（例如 demo 没有投掷物数据）只让对应字段为空，不算解析失败；v2 回放缺数据时 `diagnostics.degradedFields` 含 `utility` / `playerStates`，`diagnostics.utilityCount`、`diagnostics.playerStateCount` 给出条数。
+- v1 回放照常加载：`playerStates: {}`、`utility: []`，前端隐藏依赖它们的部分；worker 空闲时在后台把已完成的 v1 比赛重新解析成 v2（状态保持 `completed`，教练建议和评价原样保留，不重新分析）。
+- 数据都来自上传的 `.dem`，与位置数据同属一类，随比赛一起删除。Mirage 样例从 23.2 MB 增至 25.6 MB（+10%）。
+
 ### Parser failure taxonomy
 
 短 `errorCode` 加一句安全文案：

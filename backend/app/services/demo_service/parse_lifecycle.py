@@ -100,6 +100,7 @@ class ParseLifecycle(ServiceComponent):
         )
         stale = active and (utc_now() - stale_since).total_seconds() > STALE_PARSE_AFTER_SECONDS
 
+        has_source = bool(source_key_for_ingestion)
         return DemoIngestionStatus(
             phase=_ingestion_phase(demo.status),
             active=active,
@@ -109,7 +110,7 @@ class ParseLifecycle(ServiceComponent):
             jobId=job.id if job is not None else None,
             jobType=job.job_type if job is not None else None,
             jobStatus=job.status if job is not None else None,
-            hasSourceDemo=bool(source_key_for_ingestion),
+            hasSourceDemo=has_source,
             updatedAt=updated_at,
             startedAt=(
                 _aware_datetime(job.started_at)
@@ -122,6 +123,10 @@ class ParseLifecycle(ServiceComponent):
                 else None
             ),
             failure=failure,
+            replayUpgradePending=(
+                not replay_missing
+                and self._service.upgrade.replay_upgrade_pending(demo, job, has_source=has_source)
+            ),
         )
 
     def retry_parse_job(
@@ -333,7 +338,12 @@ class ParseLifecycle(ServiceComponent):
             completed_at = utc_now()
             job.finished_at = completed_at
             job.error_message = None
-            job.metadata_json = _metadata_json({**_job_metadata(job), "phase": "ready"})
+            metadata = {**_job_metadata(job), "phase": "ready"}
+            # The background replay upgrade reads this marker instead of the
+            # (large) replay itself; see replay_upgrade.py.
+            metadata.pop("replayUpgrade", None)
+            metadata["replayContractVersion"] = replay.get("contractVersion")
+            job.metadata_json = _metadata_json(metadata)
             if job.job_type == "real_parse":
                 self._steam_matches.mark_ready(demo, replay, completed_at)
             self.db.commit()

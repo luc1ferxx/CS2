@@ -37,6 +37,7 @@ from app.services.storage import ArtifactStoreError, StorageKeyError
 from app.workers.match_summary_backfill import backfill_match_summaries
 from app.workers.parse_child import EXIT_PARSE_ERROR
 from app.workers.queue import ParseQueue, new_consumer_id
+from app.workers.replay_upgrade import queue_has_work, upgrade_stale_replays
 
 PARSE_CHILD_MODULE = "app.workers.parse_child"
 # backend/app/workers/worker.py -> backend/, the directory holding the `app`
@@ -665,6 +666,16 @@ def run_worker() -> None:
                 _run_backstop(
                     "match-summary-backfill",
                     lambda: backfill_match_summaries(on_tick=tick),
+                )
+                # Completed demos whose replay predates the current contract:
+                # one re-parse per pass, stopped as soon as a message waits.
+                _run_backstop(
+                    "replay-upgrade",
+                    lambda: upgrade_stale_replays(
+                        run_parse=run_parse_subprocess,
+                        should_yield=lambda: queue_has_work(queue),
+                        on_tick=tick,
+                    ),
                 )
                 continue
 

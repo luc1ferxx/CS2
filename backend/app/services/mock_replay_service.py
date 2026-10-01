@@ -5,6 +5,8 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
+from app.parser.replay_contract import REPLAY_CONTRACT_VERSION
+
 
 def build_mock_replay(demo_id: str) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     tick_rate = 64
@@ -65,7 +67,7 @@ def build_mock_replay(demo_id: str) -> tuple[dict[str, Any], list[dict[str, Any]
             )
 
     replay = {
-        "contractVersion": "replay_contract_v1",
+        "contractVersion": REPLAY_CONTRACT_VERSION,
         "demoId": demo_id,
         "mapName": "de_inferno",
         "tickRate": tick_rate,
@@ -86,6 +88,8 @@ def build_mock_replay(demo_id: str) -> tuple[dict[str, Any], list[dict[str, Any]
         "kills": _mock_kills(),
         "deaths": _mock_kills(),
         "events": _mock_replay_events(),
+        "playerStates": _mock_player_states(players, rounds, frames),
+        "utility": _mock_utility(rounds),
         "generatedAt": datetime.now(UTC).isoformat(),
     }
 
@@ -361,3 +365,91 @@ def _mock_replay_events() -> list[dict[str, Any]]:
 
 def _lerp(start: float, end: float, progress: float) -> float:
     return start + (end - start) * progress
+
+
+# Replay contract v2 extras for the synthetic match: a buy at freeze end, a
+# weapon-less entry once dead, and a handful of throws per round, so the roster
+# and the utility finder have something to show in a mock smoke test.
+_MOCK_LOADOUTS = {
+    "T": ("Glock-18", "AK-47", ["smoke", "flash", "molotov"]),
+    "CT": ("USP-S", "M4A1-S", ["smoke", "flash", "he"]),
+}
+_MOCK_THROWS: tuple[tuple[int, str, str, str, int, tuple[float, float], tuple[float, float]], ...] = (
+    # round, type, thrower id, thrower name, ticks after freeze end, from (x, y), to (x, y)
+    (1, "smoke", "t-support", "aimclub.flash", 32, (14.0, 80.0), (44.0, 58.0)),
+    (1, "flash", "t-entry", "aimclub.entry", 180, (40.0, 60.0), (60.0, 47.0)),
+    (1, "molotov", "ct-anchor", "ct.anchor", 96, (78.0, 34.0), (62.0, 47.0)),
+    (2, "smoke", "t-support", "aimclub.flash", 48, (13.0, 82.0), (70.0, 60.0)),
+    (2, "he", "ct-rifler", "ct.rifler", 260, (74.0, 57.0), (73.0, 64.0)),
+    (3, "smoke", "ct-rotate", "ct.rotate", 64, (70.0, 26.0), (52.0, 36.0)),
+    (3, "flash", "t-lurk", "aimclub.lurk", 120, (28.0, 60.0), (40.0, 40.0)),
+)
+_MOCK_FUSE_TICKS = {"smoke": 96, "flash": 64, "he": 96, "molotov": 64, "decoy": 96}
+_MOCK_EFFECT_TICKS = {"smoke": 1152, "molotov": 448}
+
+
+def _mock_player_states(
+    players: list[dict[str, str]],
+    rounds: list[dict[str, Any]],
+    frames: list[dict[str, Any]],
+) -> dict[str, list[dict[str, Any]]]:
+    death_ticks: dict[tuple[int, str], int] = {}
+    for frame in frames:
+        for player in frame["players"]:
+            if not player["alive"]:
+                death_ticks.setdefault((frame["roundNumber"], player["id"]), frame["tick"])
+    states: dict[str, list[dict[str, Any]]] = {}
+    for player in players:
+        side = player["side"]
+        pistol, rifle, grenades = _MOCK_LOADOUTS[side]
+        primary = "AWP" if player["id"].endswith("awp") else rifle
+        entries: list[dict[str, Any]] = []
+        for round_info in rounds:
+            number = round_info["roundNumber"]
+            money = 800 if number == 1 else 4200 + 250 * number
+            spent = 700 if number == 1 else (4750 if primary == "AWP" else 2900) + 650
+            carried = grenades[:1] if number == 1 else list(grenades)
+            base = {"armor": 100, "helmet": number > 1, "defuser": side == "CT" and number > 1}
+            entries.append({"tick": round_info["startTick"], "money": money, **base, "armor": 0,
+                            "helmet": False, "defuser": False, "weapon": "Knife", "grenades": [], "equipValue": 200})
+            entries.append({"tick": round_info["freezeEndTick"], "money": money - spent, **base,
+                            "weapon": pistol if number == 1 else primary, "grenades": carried,
+                            "equipValue": 200 + spent})
+            death = death_ticks.get((number, player["id"]))
+            if death is not None:
+                entries.append({"tick": death, "money": money - spent, **base, "armor": 0,
+                                "weapon": None, "grenades": [], "equipValue": 0})
+        states[player["id"]] = entries
+    return states
+
+
+def _mock_utility(rounds: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    by_number = {item["roundNumber"]: item for item in rounds}
+    throws: list[dict[str, Any]] = []
+    for number, utility_type, thrower, name, offset, start, end in _MOCK_THROWS:
+        round_info = by_number[number]
+        throw_tick = round_info["freezeEndTick"] + offset
+        detonate_tick = throw_tick + _MOCK_FUSE_TICKS[utility_type]
+        end_tick = min(round_info["endTick"], detonate_tick + _MOCK_EFFECT_TICKS.get(utility_type, 0))
+        steps = _MOCK_FUSE_TICKS[utility_type] // 8
+        points = [
+            {
+                "tick": throw_tick + 8 * step,
+                "x": round(_lerp(start[0], end[0], step / steps), 2),
+                "y": round(_lerp(start[1], end[1], step / steps), 2),
+            }
+            for step in range(steps + 1)
+        ]
+        throws.append({
+            "id": f"utility-{utility_type}-mock{len(throws) + 1}-{throw_tick}",
+            "type": utility_type,
+            "throwerId": thrower,
+            "throwerName": name,
+            "throwerSide": "CT" if thrower.startswith("ct-") else "T",
+            "roundNumber": number,
+            "throwTick": throw_tick,
+            "detonateTick": detonate_tick,
+            "endTick": end_tick,
+            "points": points,
+        })
+    return throws

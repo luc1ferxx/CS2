@@ -3,10 +3,13 @@ from __future__ import annotations
 import math
 import zipfile
 from collections import defaultdict
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from app.parser.player_states import PLAYER_STATE_PROPS, build_player_states
 from app.parser.replay_contract import normalize_bomb_site
+from app.parser.utility_tracks import parse_utility_tracks
 from app.services.upload_service import MAX_DEMO_UPLOAD_BYTES, safe_upload_filename
 
 if TYPE_CHECKING:
@@ -168,6 +171,12 @@ def parse_demo_file(source_path: Path) -> dict[str, Any]:
     players = _merge_players(player_records, tick_records)
     frames = _build_frames(tick_records, rounds, tick_rate, bomb_events)
     kills = _align_round_numbers(_build_kills(death_records), rounds)
+    # Replay contract v2 extras. Best effort: either one failing is a partial
+    # success (the replay just lacks it), never a parse failure.
+    player_states: dict[str, list[dict[str, Any]]] = _best_effort(lambda: build_player_states(tick_records), {})
+    utility: list[dict[str, Any]] = _best_effort(
+        lambda: parse_utility_tracks(parser, rounds, tick_rate, detonations=utility_records), [],
+    )
 
     return {
         "mapName": map_name,
@@ -178,6 +187,8 @@ def parse_demo_file(source_path: Path) -> dict[str, Any]:
         "kills": kills,
         "deaths": kills,
         "events": events,
+        "playerStates": player_states,
+        "utility": utility,
         # Not part of the replay contract: the worker folds it into the demo's
         # match summary, and the normalizer never copies it into the replay blob.
         "teamNames": parse_team_names(parser, team_name_sample_ticks(rounds)),
@@ -362,8 +373,11 @@ def _parse_first_event_records(parser: Any, event_names: list[str], **kwargs: An
 
 
 def _parse_tick_records(parser: Any, sample_ticks: list[int]) -> list[dict[str, Any]]:
+    frame_props = ["X", "Y", "Z", "health", "is_alive", "team_num", "inventory", "is_bomb_planted", "is_bomb_dropped"]
     prop_sets = [
-        ["X", "Y", "Z", "health", "is_alive", "team_num", "inventory", "is_bomb_planted", "is_bomb_dropped"],
+        # The frame props plus the playerStates props (money, armor, weapon ...).
+        [*frame_props, *PLAYER_STATE_PROPS],
+        frame_props,
         ["X", "Y", "Z", "health", "is_alive", "team_num"],
         ["X", "Y", "Z", "health", "team_num"],
         ["X", "Y", "Z"],
@@ -1032,6 +1046,13 @@ def _side_from_value(value: Any) -> str | None:
         if upper in {"3", "CT"} or "COUNTER" in upper:
             return "CT"
     return None
+
+
+def _best_effort[T](callback: Callable[[], T], default: T) -> T:
+    try:
+        return callback()
+    except Exception:
+        return default
 
 
 def _safe_records(callback: Any) -> list[dict[str, Any]]:

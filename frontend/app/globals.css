@@ -57,6 +57,11 @@
   --radar-line: #3a4756;
   --radar-text: #e8edf2;
   --radar-text-2: #a9b4c0;
+  /* Grenade effects on the radar (道具): smoke grey, fire orange-red, flash white, HE amber. */
+  --radar-smoke: #c3cad2;
+  --radar-fire: #e2532b;
+  --radar-flash: #ffffff;
+  --radar-he: #f2b04a;
 
   /* Type — one system family, like a hand-built stats site. No webfonts. */
   --font-cjk: "PingFang SC", "Microsoft YaHei", "Noto Sans SC", sans-serif;
@@ -537,12 +542,12 @@ meter {
 
 .parser-map-event circle {
   fill: var(--radar-bg);
-  stroke-width: 0.8;
+  stroke-width: 1.2;
 }
 
 .parser-map-event text {
   fill: var(--on-link);
-  font-size: 2.9px;
+  font-size: 7.5px;
   font-weight: 900;
 }
 

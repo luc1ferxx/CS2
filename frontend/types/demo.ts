@@ -28,6 +28,8 @@ export interface DemoIngestionStatus {
   startedAt: string | null;
   finishedAt: string | null;
   failure: ParseFailureMetadata | null;
+  /** Completed demo whose replay predates the current contract; a background re-parse will upgrade it. */
+  replayUpgradePending?: boolean;
 }
 
 /**

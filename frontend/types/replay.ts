@@ -71,6 +71,8 @@ export interface ReplayMapMetadata {
   attribution: string;
   source: string | null;
   transform: ReplayMapTransform;
+  /** World units per radar percentage point (v2 API responses; absent on older ones). */
+  worldUnitsPerPercent?: { x: number; y: number };
 }
 
 export interface ReplayFrame {
@@ -140,6 +142,55 @@ export type ReplayEmptyState =
   | "no-coaching-events"
   | "no-frames";
 
+/** The five grenade kinds carried in `playerStates` and thrown in `utility`. */
+export type UtilityType = "smoke" | "flash" | "he" | "molotov" | "decoy";
+
+/**
+ * One change point of a player's equipment/economy (replay contract v2).
+ * A new entry is written only when at least one field changes; entries are
+ * sorted by tick and the state at tick t is the last entry with tick <= t.
+ * Fields absent from an entry are unknown for that demo (not "zero").
+ */
+export interface ReplayPlayerState {
+  tick: number;
+  money?: number;
+  armor?: number;
+  helmet?: boolean;
+  defuser?: boolean;
+  /** Active weapon display name as the demo reports it (e.g. "AK-47"); null when dead or holding nothing. */
+  weapon?: string | null;
+  /** One entry per carried grenade (two flashes = ["flash", "flash"]). */
+  grenades?: UtilityType[];
+  equipValue?: number;
+}
+
+/** A trajectory point in the same radar-percent space as frame players (x/y 0..100). */
+export interface ReplayUtilityPoint {
+  tick: number;
+  x: number;
+  y: number;
+  /** World-unit z, kept for multi-floor maps (Nuke lower-level test). */
+  z?: number;
+}
+
+/** One thrown grenade (replay contract v2). */
+export interface ReplayUtility {
+  /** Deterministic: `utility-{type}-{entityId}-{throwTick}`. */
+  id: string;
+  type: UtilityType;
+  throwerId: string | null;
+  throwerName: string | null;
+  throwerSide: PlayerSide | null;
+  roundNumber: number;
+  throwTick: number;
+  /** Detonation / settle tick (the matching detonate event when found). */
+  detonateTick: number;
+  /** Effect end: smoke expired / fire expired; = detonateTick for flash, HE, decoy. */
+  endTick: number;
+  /** Flight path, sorted by tick, first point at throwTick, last at detonation (landing point). */
+  points: ReplayUtilityPoint[];
+}
+
 export interface ReplayContractDiagnostics {
   contractVersion: string;
   normalizedLegacy: boolean;
@@ -151,6 +202,10 @@ export interface ReplayContractDiagnostics {
   degradedFields: string[];
   eventFamilyCounts: Record<string, number>;
   missingEventFamilies: string[];
+  /** v2: number of utility throws kept. Absent on older API responses. */
+  utilityCount?: number;
+  /** v2: number of players with a playerStates track. Absent on older API responses. */
+  playerStateCount?: number;
 }
 
 export interface ReplayData {
@@ -164,6 +219,10 @@ export interface ReplayData {
   players: ReplayPlayer[];
   frames: ReplayFrame[];
   events: ReplayEvent[];
+  /** v2 only. The API always sends `{}` for older replays; optional so fixtures stay valid. */
+  playerStates?: Record<string, ReplayPlayerState[]>;
+  /** v2 only. The API always sends `[]` for older replays; optional so fixtures stay valid. */
+  utility?: ReplayUtility[];
   generatedAt: string;
   diagnostics?: ReplayContractDiagnostics | null;
 }

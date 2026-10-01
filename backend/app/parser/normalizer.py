@@ -5,7 +5,10 @@ from datetime import UTC, datetime
 from typing import Any, SupportsFloat, SupportsIndex, TypeGuard
 
 from app.parser.map_config import map_metadata_for, world_to_radar_percent
+from app.parser.player_states import normalize_player_states
+from app.parser.replay_contract import REPLAY_CONTRACT_VERSION
 from app.parser.replay_contract import normalize_replay_events as normalize_contract_events
+from app.parser.utility_tracks import normalize_utility
 
 SIDE_COLORS = {"T": "#f5b542", "CT": "#2ed3d0"}
 
@@ -28,9 +31,24 @@ def normalize_parser_output(demo_id: str, parsed: dict[str, Any]) -> dict[str, A
 
     tick_start = int(rounds[0]["startTick"]) if rounds else int(frames[0]["tick"])
     tick_end = int(rounds[-1]["endTick"]) if rounds else int(frames[-1]["tick"])
+    events = normalize_contract_events(
+        raw_events,
+        raw_kills,
+        rounds,
+        position_normalizer=_event_position_normalizer(map_name, bounds),
+    )
+    try:
+        utility = _with_thrower_sides(
+            normalize_utility(_utility_in_radar_percent(parsed.get("utility"), map_name, bounds), rounds, tick_rate),
+            rounds,
+            frames,
+            events,
+        )
+    except Exception:
+        utility = []  # a partial success: the replay just lacks trajectories
 
     return {
-        "contractVersion": "replay_contract_v1",
+        "contractVersion": REPLAY_CONTRACT_VERSION,
         "demoId": demo_id,
         "mapName": map_name,
         "mapMetadata": _resolved_map_metadata(map_name, bounds),
@@ -51,14 +69,55 @@ def normalize_parser_output(demo_id: str, parsed: dict[str, Any]) -> dict[str, A
         "frames": frames,
         "kills": raw_kills,
         "deaths": raw_deaths,
-        "events": normalize_contract_events(
-            raw_events,
-            raw_kills,
-            rounds,
-            position_normalizer=_event_position_normalizer(map_name, bounds),
-        ),
+        "events": events,
+        "playerStates": normalize_player_states(parsed.get("playerStates")),
+        "utility": utility,
         "generatedAt": datetime.now(UTC).isoformat(),
     }
+
+
+def _utility_in_radar_percent(value: Any, map_name: str, bounds: dict[str, float]) -> list[dict[str, Any]]:
+    """Parser utility tracks with their world-unit points moved into radar percent.
+
+    The same projection as the frames (map transform, or this replay's dynamic
+    bounds for an unknown map); ``normalize_utility`` then clamps and caps.
+    """
+    throws = []
+    for item in _dict_list(value):
+        points = [
+            {
+                "tick": point.get("tick"),
+                **_normalize_position(float(point["x"]), float(point["y"]), bounds, map_name),
+                **_world_z(point),
+            }
+            for point in _dict_list(item.get("points"))
+            if _has_position(point)
+        ]
+        throws.append({**item, "points": points})
+    return throws
+
+
+def _with_thrower_sides(
+    utility: list[dict[str, Any]],
+    rounds: list[dict[str, Any]],
+    frames: list[dict[str, Any]],
+    events: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Each thrower's side in the throw's round, by the shared match side rule."""
+    if not utility:
+        return utility
+    # Imported here: the rule lives with the match summary, which imports the parser.
+    from app.services.demo_service.match_summary import match_side_rules
+
+    try:
+        sides_by_round = match_side_rules({"rounds": rounds, "frames": frames, "events": events}).sides_by_round
+    except Exception:
+        return utility
+    for throw in utility:
+        thrower = throw.get("throwerId")
+        side = sides_by_round.get(throw["roundNumber"], {}).get(thrower) if isinstance(thrower, str) else None
+        throw["throwerSide"] = side if side in {"T", "CT"} else None
+    return utility
 
 
 def _event_position_normalizer(map_name: str, bounds: dict[str, float]):

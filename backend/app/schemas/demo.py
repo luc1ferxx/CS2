@@ -27,6 +27,9 @@ class DemoIngestionStatus(BaseModel):
     startedAt: datetime | None = None
     finishedAt: datetime | None = None
     failure: ParseFailureMetadata | None = None
+    # A completed demo whose replay predates the current contract and is queued
+    # for the background re-parse (app/workers/replay_upgrade.py).
+    replayUpgradePending: bool = False
 
 
 class MatchSummaryTeam(BaseModel):
