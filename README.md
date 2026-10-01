@@ -286,4 +286,4 @@ PYTHONPATH=backend .venv/bin/python -m unittest discover backend/tests
 
 ## 致谢
 
-雷达图由本项目用 [scripts/maps/build_radars.py](scripts/maps/README.md) 从运营者自己的 CS2 安装里的导航网格渲染，不含第三方或 Valve 的雷达美术素材，但图形由 Valve 的游戏数据派生，公开分发的条款尚未单独确认；导航网格的读取参考了 [awpy](https://github.com/pnxenopoulos/awpy)（MIT）。Nuke 的 overview 参数来自 [CS Demo Manager](https://github.com/akiver/cs-demo-manager)，Inferno 与 Anubis 的 overview 参数取自游戏 `game/csgo/pak01_dir.vpk` 里的 `resource/overviews`。详见 [ATTRIBUTION.md](frontend/public/maps/ATTRIBUTION.md)。
+雷达图由本项目用 [scripts/maps/build_radars.py](scripts/maps/README.md) 从运营者自己的 CS2 安装里的导航网格渲染（包点取自地图自带的 `func_bomb_target` 触发器，包点里的站立高度取自地图的碰撞数据），不含第三方或 Valve 的雷达美术素材，但图形由 Valve 的游戏数据派生，公开分发的条款尚未单独确认；导航网格的读取参考了 [awpy](https://github.com/pnxenopoulos/awpy)（MIT）。Nuke 的 overview 参数来自 [CS Demo Manager](https://github.com/akiver/cs-demo-manager)，Inferno 与 Anubis 的 overview 参数取自游戏 `game/csgo/pak01_dir.vpk` 里的 `resource/overviews`。详见 [ATTRIBUTION.md](frontend/public/maps/ATTRIBUTION.md)。

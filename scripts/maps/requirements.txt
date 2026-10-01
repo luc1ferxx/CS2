@@ -4,3 +4,11 @@ numpy==2.5.3
 pillow==12.3.0
 shapely==2.1.2
 vpk==1.4.0
+# Binary KeyValues3 (the compiled entity lump and brush-model physics the bomb
+# sites are read from); lz4/zstandard decompress it, parsimonious/regex are its
+# text-format dependencies.
+keyvalues3==0.7
+lz4==4.4.5
+zstandard==0.25.0
+parsimonious==0.11.0
+regex==2026.9.29
