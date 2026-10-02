@@ -1,0 +1,37 @@
+{
+  "name": "no-sides-anywhere",
+  "description": "Frames carry players without a side and there are no kill events: the side rule finds no teams, so there is no economy ([]) even with known buys.",
+  "replay": {
+    "tickRate": 64,
+    "rounds": [
+      {"roundNumber": 1, "startTick": 1000, "freezeEndTick": 1200, "endTick": 1900, "winnerSide": "T"},
+      {"roundNumber": 2, "startTick": 2000, "freezeEndTick": 2200, "endTick": 2900, "winnerSide": "CT"}
+    ],
+    "frames": [
+      {"tick": 1100, "roundNumber": 1, "players": [{"id": "a1"}, {"id": "a2"}, {"id": "b1"}, {"id": "b2"}]},
+      {"tick": 1300, "roundNumber": 1, "players": [{"id": "a1"}, {"id": "a2"}, {"id": "b1"}, {"id": "b2"}]},
+      {"tick": 2100, "roundNumber": 2, "players": [{"id": "a1"}, {"id": "a2"}, {"id": "b1"}, {"id": "b2"}]},
+      {"tick": 2300, "roundNumber": 2, "players": [{"id": "a1"}, {"id": "a2"}, {"id": "b1"}, {"id": "b2"}]}
+    ],
+    "events": [],
+    "playerStates": {
+      "a1": [
+        {"tick": 1150, "money": 0, "equipValue": 850},
+        {"tick": 2150, "money": 300, "equipValue": 4700}
+      ],
+      "a2": [
+        {"tick": 1150, "money": 0, "equipValue": 850},
+        {"tick": 2150, "money": 300, "equipValue": 4700}
+      ],
+      "b1": [
+        {"tick": 1150, "money": 0, "equipValue": 850},
+        {"tick": 2150, "money": 300, "equipValue": 4700}
+      ],
+      "b2": [
+        {"tick": 1150, "money": 0, "equipValue": 850},
+        {"tick": 2150, "money": 300, "equipValue": 4700}
+      ]
+    }
+  },
+  "expected": []
+}

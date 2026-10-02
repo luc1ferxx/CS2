@@ -9,6 +9,7 @@ from typing import Any
 
 from sqlalchemy import desc, or_, update
 
+from app.analysis.version import COACHING_RULES_VERSION
 from app.core.config import settings
 from app.models.coaching import CoachingEvent
 from app.models.demo import Demo
@@ -343,6 +344,11 @@ class ParseLifecycle(ServiceComponent):
             # (large) replay itself; see replay_upgrade.py.
             metadata.pop("replayUpgrade", None)
             metadata["replayContractVersion"] = replay.get("contractVersion")
+            # Same for the background coaching recompute: a real parse stores
+            # the current rules' output (mock jobs are never recomputed); see
+            # coaching_recompute.py.
+            metadata.pop("coachingRecompute", None)
+            metadata["coachingRulesVersion"] = COACHING_RULES_VERSION
             job.metadata_json = _metadata_json(metadata)
             if job.job_type == "real_parse":
                 self._steam_matches.mark_ready(demo, replay, completed_at)

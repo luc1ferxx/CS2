@@ -1,0 +1,57 @@
+{
+  "name": "pistol-round-one",
+  "description": "Round 1 is a pistol round for both teams (equipment that would read as eco elsewhere); round 2 full vs eco, round 3 full vs force. No side switch, so no second pistol round.",
+  "replay": {
+    "tickRate": 64,
+    "rounds": [
+      {"roundNumber": 1, "startTick": 1000, "freezeEndTick": 1200, "endTick": 1900, "winnerSide": "T"},
+      {"roundNumber": 2, "startTick": 2000, "freezeEndTick": 2200, "endTick": 2900, "winnerSide": "T"},
+      {"roundNumber": 3, "startTick": 3000, "freezeEndTick": 3200, "endTick": 3900, "winnerSide": "CT"}
+    ],
+    "frames": [
+      {"tick": 1100, "roundNumber": 1, "players": [{"id": "a1", "side": "T"}, {"id": "a2", "side": "T"}, {"id": "b1", "side": "CT"}, {"id": "b2", "side": "CT"}]},
+      {"tick": 1300, "roundNumber": 1, "players": [{"id": "a1", "side": "T"}, {"id": "a2", "side": "T"}, {"id": "b1", "side": "CT"}, {"id": "b2", "side": "CT"}]},
+      {"tick": 2100, "roundNumber": 2, "players": [{"id": "a1", "side": "T"}, {"id": "a2", "side": "T"}, {"id": "b1", "side": "CT"}, {"id": "b2", "side": "CT"}]},
+      {"tick": 2300, "roundNumber": 2, "players": [{"id": "a1", "side": "T"}, {"id": "a2", "side": "T"}, {"id": "b1", "side": "CT"}, {"id": "b2", "side": "CT"}]},
+      {"tick": 3100, "roundNumber": 3, "players": [{"id": "a1", "side": "T"}, {"id": "a2", "side": "T"}, {"id": "b1", "side": "CT"}, {"id": "b2", "side": "CT"}]},
+      {"tick": 3300, "roundNumber": 3, "players": [{"id": "a1", "side": "T"}, {"id": "a2", "side": "T"}, {"id": "b1", "side": "CT"}, {"id": "b2", "side": "CT"}]}
+    ],
+    "events": [],
+    "playerStates": {
+      "a1": [
+        {"tick": 1150, "money": 0, "equipValue": 850},
+        {"tick": 2150, "money": 300, "equipValue": 4700},
+        {"tick": 3150, "money": 2000, "equipValue": 4100}
+      ],
+      "a2": [
+        {"tick": 1150, "money": 0, "equipValue": 850},
+        {"tick": 2150, "money": 300, "equipValue": 4700},
+        {"tick": 3150, "money": 2000, "equipValue": 4100}
+      ],
+      "b1": [
+        {"tick": 1150, "money": 0, "equipValue": 850},
+        {"tick": 2150, "money": 2400, "equipValue": 200},
+        {"tick": 3150, "money": 200, "equipValue": 2900}
+      ],
+      "b2": [
+        {"tick": 1150, "money": 0, "equipValue": 850},
+        {"tick": 2150, "money": 2400, "equipValue": 200},
+        {"tick": 3150, "money": 100, "equipValue": 3100}
+      ]
+    }
+  },
+  "expected": [
+    { "roundNumber": 1, "freezeEndTick": 1200, "teams": [
+      {"teamKey": "A", "side": "T", "equipValue": 1700, "money": 0, "players": 2, "kind": "pistol", "won": true},
+      {"teamKey": "B", "side": "CT", "equipValue": 1700, "money": 0, "players": 2, "kind": "pistol", "won": false}
+    ] },
+    { "roundNumber": 2, "freezeEndTick": 2200, "teams": [
+      {"teamKey": "A", "side": "T", "equipValue": 9400, "money": 600, "players": 2, "kind": "full", "won": true},
+      {"teamKey": "B", "side": "CT", "equipValue": 400, "money": 4800, "players": 2, "kind": "eco", "won": false}
+    ] },
+    { "roundNumber": 3, "freezeEndTick": 3200, "teams": [
+      {"teamKey": "A", "side": "T", "equipValue": 8200, "money": 4000, "players": 2, "kind": "full", "won": false},
+      {"teamKey": "B", "side": "CT", "equipValue": 6000, "money": 300, "players": 2, "kind": "force", "won": true}
+    ] }
+  ]
+}

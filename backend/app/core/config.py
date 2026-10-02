@@ -301,6 +301,14 @@ class Settings:
     replay_upgrade_enabled: bool = _bool_from_env("REPLAY_UPGRADE_ENABLED", True)
     replay_upgrade_max_attempts: int = int(os.getenv("REPLAY_UPGRADE_MAX_ATTEMPTS", "3"))
     replay_upgrade_retry_seconds: int = int(os.getenv("REPLAY_UPGRADE_RETRY_SECONDS", "900"))
+    # Background recompute of the coaching suggestions of completed demos
+    # analyzed by older rules than COACHING_RULES_VERSION
+    # (app/workers/coaching_recompute.py): one demo per idle pass, from its
+    # stored replay. After this many attempts a demo keeps its older
+    # suggestions; the retry delay doubles per attempt from the base below.
+    coaching_recompute_enabled: bool = _bool_from_env("COACHING_RECOMPUTE_ENABLED", True)
+    coaching_recompute_max_attempts: int = int(os.getenv("COACHING_RECOMPUTE_MAX_ATTEMPTS", "3"))
+    coaching_recompute_retry_seconds: int = int(os.getenv("COACHING_RECOMPUTE_RETRY_SECONDS", "900"))
     cors_origins_raw: str = os.getenv(
         "CORS_ORIGINS",
         "http://localhost:3000,http://127.0.0.1:3000",

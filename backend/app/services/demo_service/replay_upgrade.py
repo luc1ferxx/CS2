@@ -134,7 +134,9 @@ class ReplayUpgrade(ServiceComponent):
 
         Non-archived first, newest first. The SQL only narrows the search to
         uploaded demos none of whose parse jobs carries the current version
-        marker or gave up; the latest parse job decides.
+        marker; the latest parse job decides. Exhaustion is checked here rather
+        than in SQL: the coaching recompute's state can hold the same
+        `"exhausted":true` text.
         """
         moment = _aware_datetime(now)
         marker = f'"{VERSION_KEY}":"{REPLAY_CONTRACT_VERSION}"'
@@ -154,7 +156,6 @@ class ReplayUpgrade(ServiceComponent):
                 Demo.source_storage_key.isnot(None),
                 real_parse_job(),
                 ~real_parse_job(DemoJob.metadata_json.contains(marker, autoescape=True)),
-                ~real_parse_job(DemoJob.metadata_json.contains('"exhausted":true', autoescape=True)),
             )
             .order_by(Demo.archived.asc(), Demo.created_at.desc(), Demo.id.asc())
             .all()

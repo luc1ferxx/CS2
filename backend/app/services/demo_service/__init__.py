@@ -1,8 +1,8 @@
 """Owner-scoped demo operations behind one entry point.
 
 `DemoService` is a facade: it owns the database session, the owner context and
-the artifact stores, and delegates every operation to one of ten components,
-each a single responsibility in its own module:
+the artifact stores, and delegates every operation to one of eleven
+components, each a single responsibility in its own module:
 
     library       demo_library.py         list/search, read, rename, archive, status
     ingest        demo_ingest.py          mock/real intake, parse dispatch, source artifact
@@ -14,6 +14,7 @@ each a single responsibility in its own module:
     coaching      coaching_review.py      coaching suggestions and the owner's verdicts on them
     summary       match_summary.py        stored match summary (score, team names) and its backfill
     upgrade       replay_upgrade.py       in-place upgrade of an older replay to the current contract
+    recompute     coaching_recompute.py   in-place recompute of older suggestions under the current rules
 
 Rules of the composition:
 
@@ -58,6 +59,12 @@ from app.schemas.demo import (
 )
 from app.services.artifact_binding import AcceptedArtifactSnapshot, VerifiedAcceptedArtifact
 from app.services.demo_service._helpers import utc_now
+from app.services.demo_service.coaching_recompute import (
+    CoachingRecompute,
+    CoachingRecomputeClaim,
+    RecomputeOutcome,
+    coaching_event_rows,
+)
 from app.services.demo_service.coaching_review import CoachingReview
 from app.services.demo_service.constants import (
     ACTIVE_DEMO_STATUSES,
@@ -134,6 +141,7 @@ class DemoService:
         self.coaching = CoachingReview(self)
         self.summary = MatchSummaries(self)
         self.upgrade = ReplayUpgrade(self)
+        self.recompute = CoachingRecompute(self)
 
     @classmethod
     def for_internal(
@@ -659,6 +667,48 @@ class DemoService:
             team_names=team_names,
         )
 
+    # -- CoachingRecompute (coaching_recompute.py) --------------------------------
+    def demo_ids_due_for_coaching_recompute(
+        self,
+        *,
+        limit: int,
+        now: datetime | None = None,
+    ) -> list[str]:
+        return self.recompute.demo_ids_due(limit=limit, now=now)
+
+    def claim_coaching_recompute(
+        self,
+        demo_id: str,
+        *,
+        now: datetime | None = None,
+    ) -> CoachingRecomputeClaim | None:
+        return self.recompute.claim(demo_id, now=now)
+
+    def release_coaching_recompute(self, claim: CoachingRecomputeClaim) -> bool:
+        return self.recompute.release(claim)
+
+    def record_coaching_recompute_failure(
+        self,
+        claim: CoachingRecomputeClaim,
+        error_code: str,
+        *,
+        now: datetime | None = None,
+    ) -> bool:
+        return self.recompute.record_failure(claim, error_code, now=now)
+
+    def complete_coaching_recompute(
+        self,
+        claim: CoachingRecomputeClaim,
+        *,
+        expected_replay_key: str | None,
+        events: list[dict[str, Any]],
+    ) -> RecomputeOutcome:
+        return self.recompute.complete(
+            claim,
+            expected_replay_key=expected_replay_key,
+            events=events,
+        )
+
 __all__ = [
     "ACTIVE_DEMO_STATUSES",
     "ACTIVE_PARSE_JOB_STATUSES",
@@ -689,6 +739,7 @@ __all__ = [
     "STEAM_MATCH_PLAYER_LIMIT",
     "STEAM_MATCH_PLAYER_NAME_LIMIT",
     "UNCLAIMED_RENDER_CLIP_STATUSES",
+    "CoachingRecomputeClaim",
     "DemoArtifactBindError",
     "DemoDispatchError",
     "DemoGoneError",
@@ -698,6 +749,7 @@ __all__ = [
     "QueueClient",
     "ReplayBlobUnavailableError",
     "ReplayUpgradeClaim",
+    "coaching_event_rows",
     "get_redis_client",
     "utc_now",
 ]

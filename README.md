@@ -4,7 +4,7 @@
 
 上传一场 CS2 比赛的 `.dem` 文件，在网页上复盘自己：战术回放、回合、时间轴，以及按回合整理、能直接跳到那一刻的规则建议。
 
-- **建议来自 8 条确定性规则**（`backend/app/analysis/rules.py`），每条都附带可查看的依据。仓库不调用 OpenAI 或任何大模型；"Coach" 是产品名，不是实现方式。
+- **建议来自 7 条确定性规则**（`backend/app/analysis/rules.py`），每条都附带可查看的依据。仓库不调用 OpenAI 或任何大模型；"Coach" 是产品名，不是实现方式。
 - **第一人称视频是可选增强**：由我们自己运维的渲染机离线生成短片段。没有视频，复盘照样完整可用。
 - **当前阶段**：准备以网站形式开放邀请制内测（Steam 登录、上传配额）。上线门槛见 [2D 内测上线计划](docs/rules_2d_beta_launch_v1.md)，进展见 [项目进展](docs/project_status_2026-09-13.md)。
 
@@ -31,8 +31,8 @@
 | 回合经济 | 回合条下标出两队每回合的经济类型（手枪局 / 全起 / 强起 / 半起 / ECO，按冻结时间结束时的装备价值和余钱判断），可按类型和队伍筛选回合；"经济"面板画出每回合两队的装备价值，并统计各经济类型的回合数和胜场。旧比赛没有经济数据时不显示 |
 | 道具反查 | 回放区的"道具反查"页：按道具类型、投掷队伍或玩家、回合范围筛选，在地图上拖框选出落点区域，列出落在选区里的每一颗；点"看这颗"回到战术回放、停在出手前 2 秒，并只突出投掷者（"显示全部"恢复）。旧比赛在后台补齐道具数据前，这一页会提示稍后刷新 |
 | 个人复盘 | 默认用登录的 Steam 账号匹配比赛中的玩家（本地 development 模式默认匹配 xelex），也可切换成其他玩家；只列出该玩家的建议，按回合分组、回合内按严重程度排序，一键跳到最值得回看的一条 |
-| 建议 | 按回合分组；可按严重程度、规则和关键词筛选；"查看这一刻"跳到事件前几秒；每条建议可评价"有帮助 / 无关 / 判断不足" |
-| 建议评价 | 评价按事件 ID 保存，重新解析后仍然有效；按规则汇总的评价是调整规则阈值的依据，见 [coaching_feedback_v1](docs/coaching_feedback_v1.md) |
+| 建议 | 按回合分组；可按严重程度、规则和关键词筛选；"查看这一刻"跳到事件前几秒；每条建议可评价"有帮助 / 无关 / 判断不足"。每次阵亡最多一张卡，标出击杀武器和阵亡前后双方人数，输掉的回合另标「回合输了」，站位过远等同一次阵亡的其他原因附在卡片里；建议多于 5 条时，「全部回合」视图（没有筛选和搜索时）顶部先列出「本场最值得回看」的 5 条（按回合输赢、首个阵亡、人数劣势排序），下面的回合分组只列其余的 |
+| 建议评价 | 评价按事件 ID 保存，重新解析和规则更新后的后台重算之后，建议还在就仍然有效；按规则汇总的评价是调整规则阈值的依据，见 [coaching_feedback_v1](docs/coaching_feedback_v1.md) |
 | 第一人称片段 | 围绕某条建议或当前时刻创建短片段任务，由独立渲染机完成；生产环境默认关闭（`RENDER_CLIPS_ENABLED=0`）。默认 `RENDER_WORKER_MODE=fallback` 下，片段任务会立即以 `RENDER_WORKER_UNAVAILABLE` 失败；`external` 模式由操作者启用的 Windows 渲染机（CSDM + HLAE + FFmpeg，FFprobe 校验）完成 |
 | 账户与数据 `/account` | 账户信息、网站保存了哪些数据；删除账户及全部数据（只对 Steam 登录的真实账户开放，所有设备上的登录同时失效） |
 | 隐私说明 `/privacy` | 公开页面，不需要登录：保存什么、存在哪里、保存多久、删除后还剩什么；每个页面的页脚都有链接和"与 Valve 无关联"声明 |
@@ -95,6 +95,10 @@ cd frontend && npm install && npm run dev
 - **存储与数据库**：所有文件都经过 `backend/app/services/storage/` 的统一接口读写；PostgreSQL 只存元数据和存储引用。
 - **任务队列**：带租约和数据库对账。worker 崩溃后，任务会自动回到队列。
 - **比分摘要**：解析完成时把双方战队名、开局阵营和最终比分存进 `demos.match_summary`（按玩家帧判定每回合阵营，半场和加时换边都算对），比赛库和复盘页从 `matchSummary` 读取；此前已完成、或摘要版本低于当前版本（2）的比赛由 worker 空闲时回填，只读 replay 和源 `.dem`，不改 replay。阵营、队伍和比分的判定规则前后端各实现一份，写在 `match_summary.py` 和 `frontend/lib/match-stats.ts` 的注释里，由共享用例 `fixtures/match-rules/` 固定。见 [api_reference_v1](docs/api_reference_v1.md)。
+- **后台补算**：worker 空闲时（队列里有任务就让出）每轮最多处理一场已完成的比赛，不改比赛状态和时间，也不占上传次数。
+  - 回放早于当前契约的比赛，从存储的 `.dem` 重新解析一次（`REPLAY_UPGRADE_ENABLED` / `REPLAY_UPGRADE_MAX_ATTEMPTS` / `REPLAY_UPGRADE_RETRY_SECONDS`）；这一步不重新分析建议。
+  - 建议早于当前规则版本 `COACHING_RULES_VERSION` 的比赛（真实解析的比赛和 Steam 导入，不含示例比赛；有待升级的回放时先等升级完成），用已存的回放重新跑规则、替换建议（`COACHING_RECOMPUTE_ENABLED` 默认开启，`COACHING_RECOMPUTE_MAX_ATTEMPTS` 默认 3 次，`COACHING_RECOMPUTE_RETRY_SECONDS` 默认 900 秒、每失败一次翻倍；次数用完的比赛保留旧建议，下次提升规则版本后重新计数）。id 没变的建议保留评价；不再生成的建议，评价行保留但不显示、不计入汇总。
+  - 改了规则输出就提升 `COACHING_RULES_VERSION`（`backend/app/analysis/version.py`），已有比赛会在后台逐场重算，见 [coaching_feedback_v1](docs/coaching_feedback_v1.md)。
 
 ```text
 frontend/        app/ 页面 · components/ 界面组件 · lib/ 客户端与纯函数 helper · public/maps/ 雷达图
@@ -104,7 +108,7 @@ render-worker/   独立渲染机的 runner 与适配器（fake / manual / CSDM�
 docs/            接口与配置参考、运维手册、验收记录
 deploy/          生产 Caddyfile 与 env 模板（配合 docker-compose.prod.yml）
 scripts/         verify.sh · rc_check.sh · cloud_preview_smoke.py · Windows 启动脚本 · deploy/ VPS 部署脚本
-fixtures/        前后端共用的测试用例（match-rules/：每回合阵营与比分规则）
+fixtures/        前后端共用的测试用例（match-rules/：每回合阵营与比分规则；round-economy/：每回合经济类型）
 ```
 
 ## 开发与验证
@@ -129,13 +133,13 @@ PYTHONPATH=backend .venv/bin/python -m unittest discover backend/tests
 .venv/bin/python -m mypy               # 范围与遗留问题见 mypy.ini
 ```
 
-- **测试约定**：交互组件和页面状态的改动（加载、轮询、失败、重试）要附带同目录下的 `*.test.tsx`，用 mock 掉的 `@/lib/api` 挂载组件；测试数据放在 `frontend/lib/test-fixtures/review.ts`。前后端必须一致的规则用 `fixtures/` 下的共享 JSON 用例固定：`fixtures/match-rules/*.json` 同时由 `backend/tests/test_match_side_rules.py` 和 `frontend/lib/match-side-rules.test.mjs` 逐个运行，改规则时两边和用例一起改。
+- **测试约定**：交互组件和页面状态的改动（加载、轮询、失败、重试）要附带同目录下的 `*.test.tsx`，用 mock 掉的 `@/lib/api` 挂载组件；测试数据放在 `frontend/lib/test-fixtures/review.ts`。前后端必须一致的规则用 `fixtures/` 下的共享 JSON 用例固定：`fixtures/match-rules/*.json` 同时由 `backend/tests/test_match_side_rules.py` 和 `frontend/lib/match-side-rules.test.mjs` 逐个运行；`fixtures/round-economy/*.json` 同时由 `backend/tests/test_round_economy.py` 和 `frontend/lib/round-economy-fixtures.test.mjs` 运行，固定 `frontend/lib/round-economy.ts` 与后端移植 `backend/app/analysis/round_economy.py` 的经济类型判定。改规则时两边和用例一起改。
 - **手动检查**：界面改动还需要在浏览器里走一遍比赛库和复盘页，清单见 [release_candidate_qa_v1](docs/release_candidate_qa_v1.md)。
 - **更多命令**：常用 API 调用（上传、状态轮询、回放、建议、评价、删除、渲染任务）见 [API Reference](docs/api_reference_v1.md) 和 `AGENTS.md`。
 
 ## 配置
 
-完整列表（84 项）见 [Configuration Reference](docs/configuration_reference_v1.md)。最常用的：
+完整列表（90 项）见 [Configuration Reference](docs/configuration_reference_v1.md)。最常用的：
 
 | 变量 | 默认值 | 说明 |
 | --- | --- | --- |
@@ -196,7 +200,7 @@ PYTHONPATH=backend .venv/bin/python -m unittest discover backend/tests
   - 服务器用 Steam Web API 读取公开昵称和头像地址并保存，每次登录更新。
   - 未受邀的账号不会被保存，但登录时仍会向 Steam 查询一次公开资料。
 - **上传的比赛**：
-  - 原始 `.dem` 按原样保存（用于重新解析），另外保存解析出的回放数据和建议。回放数据包括每名玩家的位置、血量、金钱、武器和携带的道具，以及每颗道具的轨迹和落点，全部来自 `.dem` 本身；较早上传的比赛会在后台用已保存的 `.dem` 重新解析一次来补上。
+  - 原始 `.dem` 按原样保存（用于重新解析），另外保存解析出的回放数据和建议。回放数据包括每名玩家的位置、血量、金钱、武器和携带的道具，以及每颗道具的轨迹和落点，全部来自 `.dem` 本身；较早上传的比赛会在后台用已保存的 `.dem` 重新解析一次来补上。规则更新后，网站会在后台用已保存的回放数据重新计算建议，不收集新的数据；有的建议可能因此不再显示，用户对它的评价仍随比赛保存，直到删除这场比赛或账户。
   - `.dem` 里包含同场所有玩家的 SteamID64、游戏内昵称、位置和击杀记录，只对上传者本人可见。其他玩家如希望移除，可以联系站长。
   - 另外保存的只有：用户对建议的评价（有帮助 / 无关 / 判断不足），以及改过的比赛名。
 - **Steam 比赛记录（可选）**：只有用户主动关联时才保存，内容是加密后的游戏验证码和比赛分享码。每次点"同步"才向 Valve 查询；断开关联即删除。

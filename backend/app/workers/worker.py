@@ -34,6 +34,7 @@ from app.services.demo_service import (
 from app.services.diagnostics import write_worker_heartbeat
 from app.services.mock_replay_service import build_mock_replay
 from app.services.storage import ArtifactStoreError, StorageKeyError
+from app.workers.coaching_recompute import recompute_stale_coaching
 from app.workers.match_summary_backfill import backfill_match_summaries
 from app.workers.parse_child import EXIT_PARSE_ERROR
 from app.workers.queue import ParseQueue, new_consumer_id
@@ -673,6 +674,16 @@ def run_worker() -> None:
                     "replay-upgrade",
                     lambda: upgrade_stale_replays(
                         run_parse=run_parse_subprocess,
+                        should_yield=lambda: queue_has_work(queue),
+                        on_tick=tick,
+                    ),
+                )
+                # Completed demos whose suggestions predate the current rules:
+                # one recompute from the stored replay per pass, after the
+                # replay upgrade so a demo is recomputed on its current replay.
+                _run_backstop(
+                    "coaching-recompute",
+                    lambda: recompute_stale_coaching(
                         should_yield=lambda: queue_has_work(queue),
                         on_tick=tick,
                     ),

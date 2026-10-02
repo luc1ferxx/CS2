@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import math
 import uuid
-from bisect import bisect_right
+from bisect import bisect_left, bisect_right
 from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
 
+from app.analysis.round_economy import buy_kinds_by_side
 from app.parser.map_config import REFERENCE_WORLD_UNITS_PER_PERCENT, get_map_config
 
 CoachingEventCandidate = dict[str, Any]
@@ -32,6 +33,14 @@ class RuleConfig:
     poor_spacing_min_distance: float = 112.0
     poor_spacing_max_distance: float = 1260.0
     max_stacked_vertical_distance: float = 128.0
+    # Spacing is judged on stretches of consecutive position samples, not on one
+    # sample: nothing is evaluated before this long after freeze end (spawn
+    # walks), a stacked pair needs a stretch this long -- or both of them killed
+    # by the same enemy within the multikill window -- and a too_far stretch
+    # this long becomes a reason on the death card that follows it.
+    poor_spacing_eval_delay_seconds: float = 15.0
+    poor_spacing_min_duration_seconds: float = 3.0
+    stacked_multikill_window_seconds: float = 3.0
     max_events_per_round_per_rule: int = 1
     dedupe_tick_window_seconds: float = 3.0
     max_events_total: int = 480
@@ -44,7 +53,6 @@ class RuleConfig:
     retake_desync_seconds: float = 4.0
     execute_utility_window_seconds: float = 12.0
     min_execute_utility_events: int = 2
-    post_plant_utility_grace_seconds: float = 6.0
 
 
 DEFAULT_RULE_CONFIG = RuleConfig()
@@ -54,6 +62,17 @@ ISOLATED_ENTRY_DISTANCE = DEFAULT_RULE_CONFIG.isolated_teammate_distance
 POOR_SPACING_NEAREST_DISTANCE = DEFAULT_RULE_CONFIG.poor_spacing_max_distance
 POOR_SPACING_STACKED_DISTANCE = DEFAULT_RULE_CONFIG.poor_spacing_min_distance
 MAX_EVENTS_PER_RULE = 8
+# Two evaluated position samples further apart than this break a spacing stretch.
+# Samples are ~0.25 s apart, with extra ones near deaths and events, so stretch
+# lengths are measured in ticks, never in sample counts.
+SPACING_STRETCH_MAX_GAP_SECONDS = 1.0
+# A stacked card keeps the 3 s tick_end the single-sample rule had, so a card
+# whose stretch starts where that sample was keeps its id.
+STACKED_CARD_SECONDS = 3
+# A too_far stretch becomes a reason on a death card when it overlaps this
+# window before the death.
+TOO_FAR_BEFORE_DEATH_SECONDS = 5.0
+DEATH_CARD_RULES = ("untraded_death", "isolated_entry")
 BOMB_PLANTED_EVENT_TYPE = "bomb_planted"
 UTILITY_EVENT_TYPES = {"smoke", "flash", "molotov", "he"}
 UTILITY_LABELS = {
@@ -82,7 +101,7 @@ _REVIEW_GUIDANCE = {
     ),
     "poor_spacing": (
         "Check the next contact: leave enough room to avoid a shared spray while keeping a teammate able to follow your fight.",
-        "One position sample is a review prompt. Lurks, crossfires, vertical separation and planned stacks can be intentional.",
+        "Sampled positions are a review prompt. Lurks, crossfires, vertical separation and planned stacks can be intentional.",
     ),
     "post_plant_spread_issue": (
         "Review whether your post-plant position covers a distinct angle while retaining a trade with another defender.",
@@ -99,10 +118,6 @@ _REVIEW_GUIDANCE = {
     "weak_utility_before_execute": (
         "Review the team's utility around your plant and decide whether an exposed approach needed a flash or smoke.",
         "This is team context, not a planter mistake. A plant is not an execute timestamp; older or unrecorded utility may still matter.",
-    ),
-    "late_post_plant_utility": (
-        "Review what triggered your utility and whether saving it for retake contact was appropriate.",
-        "A delay is not automatically late: saving utility can be correct and optional event families may be incomplete.",
     ),
 }
 
@@ -143,6 +158,10 @@ def find_untraded_deaths(
         round_end = _int_or_none(context.round_by_number.get(round_number, {}).get("endTick"))
         if round_end is None or tick + trade_window_ticks > round_end:
             continue
+        alive_before = context.alive_counts_before(tick, victim_id, victim_name, victim_side)
+        # The last player alive on his side cannot be traded. Unknown counts are not skipped.
+        if alive_before is not None and alive_before[0] <= 1:
+            continue
         if _has_trade(context, death, victim_side, death_position, trade_window_ticks, config):
             continue
 
@@ -174,6 +193,7 @@ def find_untraded_deaths(
                     "observationEndTick": tick + trade_window_ticks,
                     "distance": _round_or_none(distance),
                     "relatedEventIds": context.kill_event_ids(death),
+                    **_death_card_facts(context, death, round_number, victim_side, alive_before),
                 },
                 confidence=0.72,
             )
@@ -193,15 +213,10 @@ def find_isolated_entries(
         round_number = _int_or_none(round_info.get("roundNumber"))
         if round_number is None:
             continue
-        deaths = [
-            death
-            for death in context.deaths
-            if context.live_round_at(_int_or_none(death.get("tick")) or 0) == round_number
-        ]
-        if not deaths:
+        first_death = context.first_death_by_round.get(round_number)
+        if first_death is None:
             continue
 
-        first_death = min(deaths, key=lambda item: _int_or_none(item.get("tick")) or 0)
         tick = _int_or_none(first_death.get("tick"))
         victim_id = _optional_str(first_death.get("victimId"))
         victim_name = _optional_str(first_death.get("victimName")) or victim_id or "Unknown player"
@@ -212,9 +227,8 @@ def find_isolated_entries(
         if victim_side != "T":
             continue
         attacker_id = _optional_str(first_death.get("attackerId"))
-        attacker_side = first_death.get("attackerSide") or context.side_for_at(
-            attacker_id, _optional_str(first_death.get("attackerName")), tick,
-        )
+        attacker_name = _optional_str(first_death.get("attackerName"))
+        attacker_side = first_death.get("attackerSide") or context.side_for_at(attacker_id, attacker_name, tick)
         if not attacker_id or attacker_id == victim_id or attacker_side != "CT":
             continue
 
@@ -230,7 +244,7 @@ def find_isolated_entries(
 
         teammates = [
             player
-            for player in frame.get("players", [])
+            for player in _frame_players(frame)
             if player.get("id") != victim_id
             and player.get("name") != victim_name
             and player.get("side") == "T"
@@ -274,6 +288,11 @@ def find_isolated_entries(
                     "positionSampleTick": int(frame["tick"]),
                     "sampleAgeSeconds": round((tick - int(frame["tick"])) / context.tick_rate, 3),
                     "relatedEventIds": context.kill_event_ids(first_death),
+                    **({"attackerName": attacker_name} if attacker_name else {}),
+                    **_death_card_facts(
+                        context, first_death, round_number, "T",
+                        context.alive_counts_before(tick, victim_id, victim_name, "T"),
+                    ),
                 },
                 confidence=0.68,
             )
@@ -282,102 +301,260 @@ def find_isolated_entries(
     return events
 
 
-def find_poor_spacing(
+@dataclass
+class SpacingStretch:
+    """Consecutive evaluated position samples on which one spacing finding holds.
+
+    A stretch starts on a side's sample where the single-sample classification
+    picks it (too_far before stacked, as the original rule) and continues while
+    the same subject -- the isolated player, or the same stacked pair -- still
+    meets its own condition on the next evaluated samples of the same round.
+    The fields describe the starting sample; `last_tick` is the last sample on
+    which the condition still held.
+    """
+
+    spacing_type: str
+    side: str
+    round_number: int
+    start_tick: int
+    last_tick: int
+    focus_id: str
+    focus_name: str
+    partner_id: str | None
+    involved_player_ids: list[str]
+    distance: float
+    vertical_distance: float | None
+    nearby_count: int
+    max_nearest_distance: float
+    min_pair_distance: float
+
+    @property
+    def key(self) -> tuple[str, str, str, str | None]:
+        if self.spacing_type == "stacked" and self.partner_id is not None:
+            first, second = sorted((self.focus_id, self.partner_id))
+            return (self.side, self.spacing_type, first, second)
+        return (self.side, self.spacing_type, self.focus_id, None)
+
+    def duration_seconds(self, tick_rate: int) -> float:
+        return (self.last_tick - self.start_tick) / tick_rate
+
+
+def scan_spacing_stretches(
     replay: dict[str, Any],
     config: RuleConfig = DEFAULT_RULE_CONFIG,
-) -> list[CoachingEventCandidate]:
+) -> list[SpacingStretch]:
+    """Every spacing stretch of the live rounds, ordered by start tick."""
     context = ReplayContext(replay)
-    events: list[CoachingEventCandidate] = []
+    scale = context.world_units_per_percent
+    gap_ticks = context.tick_rate * SPACING_STRETCH_MAX_GAP_SECONDS
+    delay_ticks = context.tick_rate * config.poor_spacing_eval_delay_seconds
+    active: dict[tuple[str, str, str, str | None], SpacingStretch] = {}
+    closed: list[SpacingStretch] = []
+
+    def close(keys: Iterable[tuple[str, str, str, str | None]]) -> None:
+        for key in list(keys):
+            closed.append(active.pop(key))
 
     for frame in context.frames:
-        tick = int(frame.get("tick", 0))
+        tick = int(frame["tick"])
+        if context.live_round_at(tick) is None:
+            close(active)
+            continue
         round_number = context.round_for_tick(tick, frame.get("roundNumber"))
         round_info = context.round_by_number.get(round_number, {})
-        if context.live_round_at(tick) is None:
-            continue
         round_start_tick = _round_int(round_info, "freezeEndTick", _round_int(round_info, "startTick", 0))
-        if tick < round_start_tick + context.tick_rate * 8:
+        if tick < round_start_tick + delay_ticks:
+            close(active)
             continue
 
         for side in ("T", "CT"):
+            side_keys = [key for key in active if key[0] == side]
             alive_players = [
-                player
-                for player in frame.get("players", [])
+                player for player in _frame_players(frame)
                 if player.get("side") == side and _alive(player) and _has_xy(player)
             ]
-            if len(alive_players) < 3:
-                continue
-            if not context.geometry_valid(alive_players):
-                continue
-
-            spacing = _spacing_snapshot(alive_players, context.world_units_per_percent)
-            if spacing is None:
+            if len(alive_players) < 3 or not context.geometry_valid(alive_players):
+                close(side_keys)
                 continue
 
-            spacing_type = None
-            distance = None
-            vertical_distance = None
-            focus_player = spacing["focusPlayer"]
-            involved_player_ids = [_player_id(player) for player in alive_players]
-            if spacing["maxNearestDistance"] >= config.poor_spacing_max_distance:
-                spacing_type = "too_far"
-                distance = spacing["maxNearestDistance"]
-            elif spacing["minPairDistance"] <= config.poor_spacing_min_distance:
-                spacing_type = "stacked"
-                distance = spacing["minPairDistance"]
-                closest_pair = spacing["closestPair"]
-                vertical_distance = _vertical_distance_or_none(*closest_pair)
-                if vertical_distance is not None and vertical_distance > config.max_stacked_vertical_distance:
-                    continue
-                focus_player = closest_pair[0]
-                involved_player_ids = [_player_id(player) for player in closest_pair]
-            if spacing_type is None:
-                continue
-            if _round_rule_count(events, round_number, "poor_spacing", _player_id(focus_player)) >= config.max_events_per_round_per_rule:
+            by_id = {_player_id(player): player for player in alive_players}
+            for key in side_keys:
+                stretch = active[key]
+                if (
+                    stretch.round_number == round_number
+                    and tick - stretch.last_tick <= gap_ticks
+                    and _stretch_still_holds(stretch, by_id, alive_players, scale, config)
+                ):
+                    stretch.last_tick = tick
+                else:
+                    close([key])
+
+            started = _spacing_stretch_start(alive_players, side, round_number, tick, scale, config)
+            if started is not None and started.key not in active:
+                active[started.key] = started
+
+    close(active)
+    return sorted(
+        closed,
+        key=lambda item: (item.start_tick, item.side, item.spacing_type, item.focus_id, item.partner_id or ""),
+    )
+
+
+def find_poor_spacing(
+    replay: dict[str, Any],
+    config: RuleConfig = DEFAULT_RULE_CONFIG,
+    *,
+    stretches: list[SpacingStretch] | None = None,
+) -> list[CoachingEventCandidate]:
+    """Stacked pairs that stayed together, or were both killed by one enemy.
+
+    too_far is not a card of its own: it only ever becomes a reason on the death
+    card that follows it (see `merge_death_cards`).
+    """
+    context = ReplayContext(replay)
+    if stretches is None:
+        stretches = scan_spacing_stretches(replay, config)
+    events: list[CoachingEventCandidate] = []
+    min_duration_ticks = context.tick_rate * config.poor_spacing_min_duration_seconds
+
+    for stretch in stretches:
+        if stretch.spacing_type != "stacked" or stretch.partner_id is None:
+            continue
+        if (
+            _round_rule_count(events, stretch.round_number, "poor_spacing", stretch.focus_id)
+            >= config.max_events_per_round_per_rule
+        ):
+            continue
+        multikill: dict[str, Any] | None = None
+        if stretch.last_tick - stretch.start_tick < min_duration_ticks:
+            # Too short on its own: only a same-enemy double kill makes it a card,
+            # and only then does the card carry the multikill fields.
+            multikill = _stacked_multikill(context, stretch, config)
+            if multikill is None:
                 continue
 
-            title = "Review distance from teammates" if spacing_type == "too_far" else "Review close teammate spacing"
-            message = (
-                f"In this sample, {_player_name(focus_player)} is "
-                f"{spacing['maxNearestDistance']:.0f} world units from the nearest living teammate."
-                if spacing_type == "too_far"
-                else f"In this sample, the closest {side} teammates are "
-                f"{spacing['minPairDistance']:.0f} world units apart."
+        duration = stretch.duration_seconds(context.tick_rate)
+        message = (
+            f"The closest {stretch.side} teammates were {stretch.min_pair_distance:.0f} world units apart "
+            f"and stayed that close for {_format_seconds(duration)} seconds."
+        )
+        if multikill is not None:
+            message += " Both were then killed by the same enemy within a few seconds of each other."
+        events.append(
+            _event(
+                replay,
+                rule_id="poor_spacing",
+                round_number=stretch.round_number,
+                player_id=stretch.focus_id,
+                player_name=stretch.focus_name,
+                tick_start=stretch.start_tick,
+                tick_end=stretch.start_tick + int(context.tick_rate * STACKED_CARD_SECONDS),
+                category="positioning",
+                severity="low",
+                title="Review close teammate spacing",
+                message=message,
+                involved_player_ids=stretch.involved_player_ids,
+                evidence_ticks=[stretch.start_tick],
+                metadata={
+                    "side": stretch.side,
+                    "spacingType": "stacked",
+                    "distance": _round_or_none(stretch.distance),
+                    "nearbyCount": stretch.nearby_count,
+                    "poorSpacingMinDistance": config.poor_spacing_min_distance,
+                    "poorSpacingMaxDistance": config.poor_spacing_max_distance,
+                    "maxNearestDistance": round(stretch.max_nearest_distance, 2),
+                    "minPairDistance": round(stretch.min_pair_distance, 2),
+                    **({
+                        "verticalDistanceWorldUnits": round(stretch.vertical_distance, 2),
+                        "maxStackedVerticalDistanceWorldUnits": config.max_stacked_vertical_distance,
+                    } if stretch.vertical_distance is not None else {}),
+                    "durationSeconds": _format_number(duration),
+                    **(multikill or {}),
+                },
+                confidence=0.55,
             )
-            events.append(
-                _event(
-                    replay,
-                    rule_id="poor_spacing",
-                    round_number=round_number,
-                    player_id=_player_id(focus_player),
-                    player_name=_player_name(focus_player),
-                    tick_start=tick,
-                    tick_end=tick + int(context.tick_rate * 3),
-                    category="positioning",
-                    severity="low",
-                    title=title,
-                    message=message,
-                    involved_player_ids=involved_player_ids,
-                    evidence_ticks=[tick],
-                    metadata={
-                        "side": side,
-                        "spacingType": spacing_type,
-                        "distance": _round_or_none(distance),
-                        "nearbyCount": len(alive_players),
-                        "poorSpacingMinDistance": config.poor_spacing_min_distance,
-                        "poorSpacingMaxDistance": config.poor_spacing_max_distance,
-                        "maxNearestDistance": round(spacing["maxNearestDistance"], 2),
-                        "minPairDistance": round(spacing["minPairDistance"], 2),
-                        **({
-                            "verticalDistanceWorldUnits": round(vertical_distance, 2),
-                            "maxStackedVerticalDistanceWorldUnits": config.max_stacked_vertical_distance,
-                        } if vertical_distance is not None else {}),
-                    },
-                    confidence=0.55,
-                )
-            )
+        )
 
     return events
+
+
+def too_far_stretches(
+    stretches: Iterable[SpacingStretch],
+    config: RuleConfig = DEFAULT_RULE_CONFIG,
+    tick_rate: int = 64,
+) -> list[SpacingStretch]:
+    """The too_far stretches long enough to count as a reason on a death card."""
+    min_duration_ticks = tick_rate * config.poor_spacing_min_duration_seconds
+    return [
+        stretch
+        for stretch in stretches
+        if stretch.spacing_type == "too_far" and stretch.last_tick - stretch.start_tick >= min_duration_ticks
+    ]
+
+
+def merge_death_cards(
+    events: list[CoachingEventCandidate],
+    far_stretches: Iterable[SpacingStretch] = (),
+    tick_rate: int = 64,
+) -> list[CoachingEventCandidate]:
+    """One card per death.
+
+    The untraded_death card is the card; without one, the isolated_entry card
+    is. Both point at the same kill through `relatedEventIds`, which is the
+    merge key; (round, victim, death tick) only stands in when a kill event id
+    is missing. An isolated_entry of a death that has an untraded_death card
+    becomes an extra reason on that card, and a too_far stretch of the victim
+    overlapping the 5 s before the death becomes one on whichever card the
+    death has. Cards keep their own ids: `extraReasons` never enters an id.
+    """
+    untraded_by_death: dict[tuple[Any, ...], CoachingEventCandidate] = {}
+    for event in events:
+        if _context_of(event).get("ruleId") == "untraded_death":
+            untraded_by_death.setdefault(_death_key(event), event)
+
+    extra_reasons: dict[str, list[dict[str, Any]]] = {}
+    kept: list[CoachingEventCandidate] = []
+    for event in events:
+        if _context_of(event).get("ruleId") == "isolated_entry":
+            card = untraded_by_death.get(_death_key(event))
+            if card is not None:
+                extra_reasons.setdefault(str(card["id"]), []).append(_isolated_entry_reason(event))
+                continue
+        kept.append(event)
+
+    far_by_player: dict[tuple[int, str], list[SpacingStretch]] = {}
+    for stretch in far_stretches:
+        far_by_player.setdefault((stretch.round_number, stretch.focus_id), []).append(stretch)
+    before_death_ticks = tick_rate * TOO_FAR_BEFORE_DEATH_SECONDS
+
+    merged: list[CoachingEventCandidate] = []
+    for event in kept:
+        context = _context_of(event)
+        if context.get("ruleId") not in DEATH_CARD_RULES:
+            merged.append(event)
+            continue
+        reasons = list(extra_reasons.get(str(event["id"]), []))
+        death_tick = int(event["tick_start"])
+        overlapping = [
+            stretch
+            for stretch in far_by_player.get((int(event["round_number"]), str(event["player_id"])), [])
+            if stretch.start_tick <= death_tick and stretch.last_tick >= death_tick - before_death_ticks
+        ]
+        if overlapping:
+            # The stretch closest to the death; of equal ones, the longest.
+            stretch = max(overlapping, key=lambda item: (item.last_tick, -item.start_tick))
+            reasons.append({
+                "ruleId": "poor_spacing",
+                "spacingType": "too_far",
+                "distance": round(stretch.distance),
+                "durationSeconds": _format_number(stretch.duration_seconds(tick_rate)),
+                "tick": stretch.start_tick,
+            })
+        if reasons:
+            reasons.sort(key=lambda reason: (_tick_or(reason.get("tick"), death_tick), str(reason.get("ruleId"))))
+            event = {**event, "structured_context_json": {**context, "extraReasons": reasons}}
+        merged.append(event)
+    return merged
 
 
 def find_post_plant_spread_issues(
@@ -387,8 +564,15 @@ def find_post_plant_spread_issues(
     context = ReplayContext(replay)
     events: list[CoachingEventCandidate] = []
     min_duration_ticks = int(context.tick_rate * config.post_plant_min_duration_seconds)
+    # A round with a recorded plant is covered by post_plant_spacing_with_bomb_event.
+    rounds_with_plant_event = {
+        context.round_for_tick(int(event["tick"]), event.get("roundNumber"))
+        for event in context.bomb_plant_events()
+    }
 
     for round_number, frames in context.frames_by_round().items():
+        if round_number in rounds_with_plant_event:
+            continue
         segment: list[dict[str, Any]] = []
         for frame in frames:
             if not _planted_bomb_position(frame):
@@ -397,7 +581,7 @@ def find_post_plant_spread_issues(
 
             alive_t = [
                 player
-                for player in frame.get("players", [])
+                for player in _frame_players(frame)
                 if player.get("side") == "T" and _alive(player) and _has_xy(player)
             ]
             if len(alive_t) < config.post_plant_min_players:
@@ -413,15 +597,15 @@ def find_post_plant_spread_issues(
                 continue
 
             segment.append(frame)
-            start_tick = int(segment[0].get("tick", 0))
-            end_tick = int(segment[-1].get("tick", 0))
+            start_tick = int(segment[0]["tick"])
+            end_tick = int(segment[-1]["tick"])
             if end_tick - start_tick < min_duration_ticks:
                 continue
             if _round_rule_count(events, round_number, "post_plant_spread_issue") >= config.max_events_per_round_per_rule:
                 break
 
             focus_player = alive_t[0]
-            evidence_ticks = [int(item.get("tick", 0)) for item in segment]
+            evidence_ticks = [int(item["tick"]) for item in segment]
             events.append(
                 _event(
                     replay,
@@ -462,10 +646,13 @@ def find_weak_utility_before_execute(
     context = ReplayContext(replay)
     events: list[CoachingEventCandidate] = []
     window_ticks = int(context.tick_rate * config.execute_utility_window_seconds)
+    # A replay without any utility event has the family missing, not a team that threw nothing.
+    utility_recorded = any(_event_type(event) in UTILITY_EVENT_TYPES for event in context.events)
+    buy_kinds: dict[int, dict[str, str | None]] | None = None
 
     for plant_event in context.bomb_plant_events():
         plant_tick = _event_tick(plant_event)
-        if plant_tick is None:
+        if plant_tick is None or not utility_recorded:
             continue
         round_number = context.round_for_tick(plant_tick, plant_event.get("roundNumber"))
         if (
@@ -474,10 +661,14 @@ def find_weak_utility_before_execute(
         ):
             continue
 
+        if buy_kinds is None:
+            buy_kinds = buy_kinds_by_side(replay)
+        t_buy_kind = buy_kinds.get(round_number, {}).get("T")
         round_utility_events = [
             event for event in context.utility_events_for_round(round_number) if context.event_side(event) == "T"
         ]
-        if not round_utility_events:
+        # No T utility in the whole round still counts, unless the Ts were on an eco.
+        if not round_utility_events and t_buy_kind == "eco":
             continue
 
         window_start_tick = plant_tick - window_ticks
@@ -529,84 +720,9 @@ def find_weak_utility_before_execute(
                     "requiredUtilityCount": int(config.min_execute_utility_events),
                     "utilityTypes": utility_types,
                     "windowSeconds": _format_number(config.execute_utility_window_seconds),
+                    **({"tBuyKind": t_buy_kind} if t_buy_kind else {}),
                 },
                 confidence=0.64,
-            )
-        )
-
-    return events
-
-
-def find_late_post_plant_utility(
-    replay: dict[str, Any],
-    config: RuleConfig = DEFAULT_RULE_CONFIG,
-) -> list[CoachingEventCandidate]:
-    context = ReplayContext(replay)
-    events: list[CoachingEventCandidate] = []
-    grace_ticks = int(context.tick_rate * config.post_plant_utility_grace_seconds)
-
-    for plant_event in context.bomb_plant_events():
-        plant_tick = _event_tick(plant_event)
-        if plant_tick is None:
-            continue
-        round_number = context.round_for_tick(plant_tick, plant_event.get("roundNumber"))
-        if (
-            _round_rule_count(events, round_number, "late_post_plant_utility")
-            >= config.max_events_per_round_per_rule
-        ):
-            continue
-
-        round_utility_events = [
-            event for event in context.utility_events_for_round(round_number) if context.event_side(event) == "T"
-        ]
-        if not round_utility_events:
-            continue
-
-        post_plant_events = [
-            event
-            for event in round_utility_events
-            if (event_tick := _event_tick(event)) is not None and event_tick > plant_tick
-        ]
-        if not post_plant_events:
-            continue
-        first_utility = min(post_plant_events, key=lambda event: _event_tick(event) or plant_tick)
-        utility_tick = _event_tick(first_utility)
-        if utility_tick is None or utility_tick - plant_tick <= grace_ticks:
-            continue
-
-        delay_seconds = (utility_tick - plant_tick) / context.tick_rate
-        utility_type = _event_type(first_utility)
-        player_id = _event_player_id(first_utility) or "unknown"
-        player_name = _event_player_name(first_utility) or context.player_name(player_id)
-        events.append(
-            _event(
-                replay,
-                rule_id="late_post_plant_utility",
-                round_number=round_number,
-                player_id=player_id,
-                player_name=player_name,
-                tick_start=utility_tick,
-                tick_end=utility_tick,
-                category="utility",
-                severity="low",
-                title="Review post-plant utility timing",
-                message=(
-                    f"{player_name}'s utility is the first recorded T utility after the plant, "
-                    f"{_format_seconds(delay_seconds)} seconds later."
-                ),
-                involved_player_ids=[_event_player_id(plant_event), player_id],
-                evidence_ticks=[plant_tick, utility_tick],
-                metadata={
-                    "relatedEventIds": _related_event_ids([plant_event, first_utility]),
-                    "bombTick": plant_tick,
-                    "bombEventType": _event_type(plant_event),
-                    "bombEventLabel": _event_label(plant_event),
-                    "utilityType": utility_type,
-                    "utilityLabel": _utility_label(first_utility),
-                    "windowSeconds": _format_number(delay_seconds),
-                    "graceWindowSeconds": _format_number(config.post_plant_utility_grace_seconds),
-                },
-                confidence=0.61,
             )
         )
 
@@ -644,7 +760,7 @@ def find_post_plant_spacing_with_bomb_event(
 
             alive_t = [
                 player
-                for player in frame.get("players", [])
+                for player in _frame_players(frame)
                 if player.get("side") == "T" and _alive(player) and _has_xy(player)
             ]
             if len(alive_t) < config.post_plant_min_players:
@@ -714,17 +830,23 @@ def find_retake_desyncs(
     desync_ticks = int(context.tick_rate * config.retake_desync_seconds)
 
     for round_number, frames in context.frames_by_round().items():
-        first_entry_by_ct: dict[str, tuple[int, dict[str, Any]]] = {}
+        # CTs already near the bomb in the first planted sample did not arrive: they never count.
+        already_there: set[str] = set()
+        first_entry_by_ct: dict[str, tuple[int, dict[str, Any], dict[str, Any]]] = {}
+        planted_seen = False
         for frame in frames:
             bomb_position = _planted_bomb_position(frame)
             if bomb_position is None:
                 continue
+            first_planted_frame = not planted_seen
+            planted_seen = True
 
-            for player in frame.get("players", []):
+            for player in _frame_players(frame):
                 player_id = _player_id(player)
                 if (
                     player.get("side") != "CT"
                     or player_id in first_entry_by_ct
+                    or player_id in already_there
                     or not _alive(player)
                     or not _has_xy(player)
                 ):
@@ -732,7 +854,10 @@ def find_retake_desyncs(
                 if not context.geometry_valid([player, frame.get("bombState", {})]):
                     continue
                 if _distance_to_xy(player, bomb_position, context.world_units_per_percent) <= config.retake_site_distance:
-                    first_entry_by_ct[player_id] = (int(frame.get("tick", 0)), player)
+                    if first_planted_frame:
+                        already_there.add(player_id)
+                    else:
+                        first_entry_by_ct[player_id] = (int(frame["tick"]), player, frame)
 
         if len(first_entry_by_ct) < 2:
             continue
@@ -742,10 +867,14 @@ def find_retake_desyncs(
         last_tick = ordered_entries[-1][0]
         if last_tick - first_tick < desync_ticks:
             continue
+        # Once no T is alive the retake is over; a late arrival then is not a desync.
+        last_frame = ordered_entries[-1][2]
+        if not any(player.get("side") == "T" and _alive(player) for player in _frame_players(last_frame)):
+            continue
         if _round_rule_count(events, round_number, "retake_desync") >= config.max_events_per_round_per_rule:
             continue
 
-        involved_players = [player for _, player in ordered_entries]
+        involved_players = [player for _, player, _ in ordered_entries]
         focus_player = involved_players[0]
         events.append(
             _event(
@@ -764,7 +893,7 @@ def find_retake_desyncs(
                     f"{(last_tick - first_tick) / context.tick_rate:.1f} seconds apart."
                 ),
                 involved_player_ids=[_player_id(player) for player in involved_players],
-                evidence_ticks=[tick for tick, _ in ordered_entries],
+                evidence_ticks=[tick for tick, _, _ in ordered_entries],
                 metadata={
                     "windowSeconds": _format_number((last_tick - first_tick) / context.tick_rate),
                     "retakeSiteDistance": config.retake_site_distance,
@@ -781,23 +910,24 @@ class ReplayContext:
     def __init__(self, replay: dict[str, Any]):
         self.replay = replay
         self.tick_rate = max(1, int(replay.get("tickRate") or 64))
-        self.players = [item for item in replay.get("players", []) if isinstance(item, dict)]
+        self.players = _dict_items(replay.get("players"))
+        # A frame without a usable tick cannot be placed in time, so no rule reads it.
         self.frames = sorted(
-            [item for item in replay.get("frames", []) if isinstance(item, dict)],
-            key=lambda item: _int_or_none(item.get("tick")) or 0,
+            [item for item in _dict_items(replay.get("frames")) if _int_or_none(item.get("tick")) is not None],
+            key=lambda item: int(item["tick"]),
         )
-        self.frame_ticks = [int(frame.get("tick", 0)) for frame in self.frames]
-        self.rounds = [item for item in replay.get("rounds", []) if isinstance(item, dict)]
+        self.frame_ticks = [int(frame["tick"]) for frame in self.frames]
+        self.rounds = _dict_items(replay.get("rounds"))
         self.kills = sorted(
-            [item for item in replay.get("kills", []) if isinstance(item, dict)],
+            _dict_items(replay.get("kills")),
             key=lambda item: _int_or_none(item.get("tick")) or 0,
         )
         self.deaths = sorted(
-            [item for item in replay.get("deaths", self.kills) if isinstance(item, dict)],
+            _dict_items(replay["deaths"]) if isinstance(replay.get("deaths"), list) else self.kills,
             key=lambda item: _int_or_none(item.get("tick")) or 0,
         )
         self.events = sorted(
-            [item for item in replay.get("events", []) if isinstance(item, dict)],
+            _dict_items(replay.get("events")),
             key=lambda item: _int_or_none(item.get("tick")) or 0,
         )
         self.round_by_number = {
@@ -815,9 +945,26 @@ class ReplayContext:
             for player in self.players
             if player.get("name") is not None and player.get("side") in {"T", "CT"}
         }
-        map_config = {**(get_map_config(str(replay.get("mapName") or "")) or {}), **(replay.get("mapMetadata") or {})}
-        self.lower_level_max_z = map_config.get("lowerLevelMaxZ") if isinstance(map_config, dict) else None
+        map_metadata = replay.get("mapMetadata")
+        map_config = {
+            **(get_map_config(str(replay.get("mapName") or "")) or {}),
+            **(map_metadata if isinstance(map_metadata, dict) else {}),
+        }
+        self.lower_level_max_z = map_config.get("lowerLevelMaxZ")
         self.world_units_per_percent = _axis_scale(map_config.get("worldUnitsPerPercent"))
+        # Round -> its first death (by tick; of equal ticks, the first listed) among the live
+        # round's deaths. The opening-death rule and every death card's firstDeath read this.
+        self.first_death_by_round: dict[int, dict[str, Any]] = {}
+        # (round, victim id) -> that victim's first death in the live round.
+        self.death_by_round_and_victim: dict[tuple[int, str], dict[str, Any]] = {}
+        for death in self.deaths:
+            round_number = self.live_round_at(_int_or_none(death.get("tick")) or 0)
+            if round_number is None:
+                continue
+            self.first_death_by_round.setdefault(round_number, death)
+            victim_id = _optional_str(death.get("victimId"))
+            if victim_id is not None:
+                self.death_by_round_and_victim.setdefault((round_number, victim_id), death)
 
     def geometry_valid(self, players: list[dict[str, Any]]) -> bool:
         if self.lower_level_max_z is None:
@@ -893,6 +1040,42 @@ class ReplayContext:
         if frame is None or tick - int(frame["tick"]) > self.tick_rate * max_age_seconds:
             return None
         return frame
+
+    def frame_before(self, tick: int) -> dict[str, Any] | None:
+        """The last frame strictly before `tick`, if it belongs to the same round."""
+        index = bisect_left(self.frame_ticks, tick) - 1
+        if index < 0:
+            return None
+        frame = self.frames[index]
+        if self.round_for_tick(int(frame["tick"])) != self.round_for_tick(tick):
+            return None
+        return frame
+
+    def alive_counts_before(
+        self,
+        tick: int,
+        victim_id: str | None,
+        victim_name: str | None,
+        victim_side: str | None,
+    ) -> tuple[int, int] | None:
+        """(own, enemy) players alive in the last frame strictly before a death.
+
+        None when that frame is missing, or does not show the victim alive on
+        his side: the counts would be a guess.
+        """
+        if victim_side not in {"T", "CT"}:
+            return None
+        frame = self.frame_before(tick)
+        if frame is None:
+            return None
+        victim = _find_frame_player(frame, victim_id, victim_name)
+        if victim is None or victim.get("side") != victim_side or not _alive(victim):
+            return None
+        enemy_side = "CT" if victim_side == "T" else "T"
+        players = _frame_players(frame)
+        own = sum(1 for player in players if player.get("side") == victim_side and _alive(player))
+        enemy = sum(1 for player in players if player.get("side") == enemy_side and _alive(player))
+        return own, enemy
 
     def player_name(self, player_id: str) -> str:
         for player in self.players:
@@ -989,6 +1172,162 @@ def _has_trade(
     return False
 
 
+def _death_card_facts(
+    context: ReplayContext,
+    death: dict[str, Any],
+    round_number: int,
+    victim_side: str | None,
+    alive_before: tuple[int, int] | None,
+) -> dict[str, Any]:
+    """A death card's `impact` and `weapon`; what the replay does not record is left out."""
+    round_info = context.round_by_number.get(round_number, {})
+    winner = round_info.get("winnerSide")
+    # A round the parser saw end always has a winnerReason. Without one (a demo cut
+    # off before round_end) the normalizer still fills winnerSide with "CT", so the
+    # winner is unknown rather than CT.
+    known_winner = bool(round_info.get("winnerReason")) and winner in {"T", "CT"}
+    known_sides = known_winner and victim_side in {"T", "CT"}
+    impact: dict[str, Any] = {
+        "roundLost": winner != victim_side if known_sides else None,
+        "firstDeath": context.first_death_by_round.get(round_number) is death,
+    }
+    if alive_before is not None:
+        own, enemy = alive_before
+        impact["aliveBefore"] = {"own": own, "enemy": enemy}
+        impact["aliveAfter"] = {"own": own - 1, "enemy": enemy}
+        impact["manDisadvantage"] = own >= enemy and own - 1 < enemy
+    facts: dict[str, Any] = {"impact": impact}
+    weapon = death.get("weapon")
+    if isinstance(weapon, str) and weapon.strip():
+        facts["weapon"] = weapon
+    return facts
+
+
+def _spacing_stretch_start(
+    alive_players: list[dict[str, Any]],
+    side: str,
+    round_number: int,
+    tick: int,
+    scale: AxisScale,
+    config: RuleConfig,
+) -> SpacingStretch | None:
+    """The stretch this side's sample starts, classified as the single-sample rule did."""
+    spacing = _spacing_snapshot(alive_players, scale)
+    if spacing is None:
+        return None
+    max_nearest = float(spacing["maxNearestDistance"])
+    min_pair = float(spacing["minPairDistance"])
+    if max_nearest >= config.poor_spacing_max_distance:
+        focus = spacing["focusPlayer"]
+        return SpacingStretch(
+            spacing_type="too_far", side=side, round_number=round_number, start_tick=tick, last_tick=tick,
+            focus_id=_player_id(focus), focus_name=_player_name(focus), partner_id=None,
+            involved_player_ids=[_player_id(player) for player in alive_players],
+            distance=max_nearest, vertical_distance=None, nearby_count=len(alive_players),
+            max_nearest_distance=max_nearest, min_pair_distance=min_pair,
+        )
+    if min_pair <= config.poor_spacing_min_distance:
+        first, second = spacing["closestPair"]
+        vertical = _vertical_distance_or_none(first, second)
+        if vertical is not None and vertical > config.max_stacked_vertical_distance:
+            return None
+        return SpacingStretch(
+            spacing_type="stacked", side=side, round_number=round_number, start_tick=tick, last_tick=tick,
+            focus_id=_player_id(first), focus_name=_player_name(first), partner_id=_player_id(second),
+            involved_player_ids=[_player_id(first), _player_id(second)],
+            distance=min_pair, vertical_distance=vertical, nearby_count=len(alive_players),
+            max_nearest_distance=max_nearest, min_pair_distance=min_pair,
+        )
+    return None
+
+
+def _stretch_still_holds(
+    stretch: SpacingStretch,
+    by_id: dict[str, dict[str, Any]],
+    alive_players: list[dict[str, Any]],
+    scale: AxisScale,
+    config: RuleConfig,
+) -> bool:
+    """Whether the stretch's own subject still meets its condition in this sample."""
+    focus = by_id.get(stretch.focus_id)
+    if focus is None:
+        return False
+    if stretch.spacing_type == "too_far":
+        nearest = min((_distance(focus, other, scale) for other in alive_players if other is not focus), default=None)
+        return nearest is not None and nearest >= config.poor_spacing_max_distance
+    partner = by_id.get(stretch.partner_id) if stretch.partner_id is not None else None
+    if partner is None:
+        return False
+    vertical = _vertical_distance_or_none(focus, partner)
+    return _distance(focus, partner, scale) <= config.poor_spacing_min_distance and (
+        vertical is None or vertical <= config.max_stacked_vertical_distance
+    )
+
+
+def _stacked_multikill(
+    context: ReplayContext,
+    stretch: SpacingStretch,
+    config: RuleConfig,
+) -> dict[str, Any] | None:
+    """Both players of the pair killed by the same enemy within the multikill window.
+
+    The first of the two deaths has to fall inside [stretch start, stretch end
+    + window]. Returns the metadata the stacked card carries, or None.
+    """
+    if stretch.partner_id is None:
+        return None
+    deaths: list[dict[str, Any]] = []
+    for player_id in (stretch.focus_id, stretch.partner_id):
+        death = context.death_by_round_and_victim.get((stretch.round_number, player_id))
+        if death is None or _int_or_none(death.get("tick")) is None:
+            return None
+        deaths.append(death)
+    attacker_ids = {_optional_str(death.get("attackerId")) for death in deaths}
+    attacker_id = attacker_ids.pop() if len(attacker_ids) == 1 else None
+    if not attacker_id or attacker_id in {stretch.focus_id, stretch.partner_id}:
+        return None
+    first, second = sorted(deaths, key=lambda death: int(death["tick"]))
+    first_tick, second_tick = int(first["tick"]), int(second["tick"])
+    attacker_name = _optional_str(first.get("attackerName"))
+    attacker_side = first.get("attackerSide") or context.side_for_at(attacker_id, attacker_name, first_tick)
+    if attacker_side not in {"T", "CT"} or attacker_side == stretch.side:
+        return None
+    window_ticks = context.tick_rate * config.stacked_multikill_window_seconds
+    if second_tick - first_tick > window_ticks:
+        return None
+    if not stretch.start_tick <= first_tick <= stretch.last_tick + window_ticks:
+        return None
+    return {
+        "stackedMultikill": True,
+        "multikillAttackerId": attacker_id,
+        **({"multikillAttackerName": attacker_name} if attacker_name else {}),
+    }
+
+
+def _context_of(event: CoachingEventCandidate) -> dict[str, Any]:
+    context = event.get("structured_context_json")
+    return context if isinstance(context, dict) else {}
+
+
+def _death_key(event: CoachingEventCandidate) -> tuple[Any, ...]:
+    """The death a card is about: its kill event, else (round, victim, death tick)."""
+    related = _context_of(event).get("relatedEventIds")
+    for value in related if isinstance(related, list) else []:
+        if isinstance(value, str) and value:
+            return ("kill", value, str(event.get("player_id")))
+    return ("death", event.get("round_number"), str(event.get("player_id")), event.get("tick_start"))
+
+
+def _isolated_entry_reason(event: CoachingEventCandidate) -> dict[str, Any]:
+    context = _context_of(event)
+    reason: dict[str, Any] = {"ruleId": "isolated_entry"}
+    distance = context.get("distance")
+    if isinstance(distance, (int, float)) and not isinstance(distance, bool) and math.isfinite(distance):
+        reason["distance"] = round(distance)
+    reason["tick"] = _tick_or(context.get("positionSampleTick"), int(event["tick_start"]))
+    return reason
+
+
 def _event(
     replay: dict[str, Any],
     *,
@@ -1010,10 +1349,8 @@ def _event(
     normalized_player_ids = _unique_values(involved_player_ids)
     normalized_ticks = [int(tick) for tick in _unique_values(evidence_ticks)]
     action, limitation = _REVIEW_GUIDANCE[rule_id]
-    if rule_id == "poor_spacing" and metadata.get("spacingType") == "too_far":
-        action = "Before the next contact, check whether a teammate can follow up your fight; review the route and timing for a trade if you need support."
     map_metadata = replay.get("mapMetadata")
-    if rule_id not in {"untraded_death", "weak_utility_before_execute", "late_post_plant_utility"}:
+    if rule_id not in {"untraded_death", "weak_utility_before_execute"}:
         limitation += " Distances are straight-line world units, not travel distance."
         if isinstance(map_metadata, dict) and not map_metadata.get("calibrated"):
             limitation += " Map calibration is approximate."
@@ -1081,7 +1418,7 @@ def _find_frame_player(
     player_id: str | None,
     player_name: str | None,
 ) -> dict[str, Any] | None:
-    for player in frame.get("players", []):
+    for player in _frame_players(frame):
         if player_id is not None and str(player.get("id")) == player_id:
             return player
         if player_id is None and player_name is not None and str(player.get("name")) == player_name:
@@ -1229,10 +1566,6 @@ def _event_site(event: dict[str, Any]) -> str | None:
     return None
 
 
-def _utility_label(event: dict[str, Any]) -> str | None:
-    return _event_label(event)
-
-
 def _t_side_or_unknown(event: dict[str, Any]) -> bool:
     return _event_side(event) in {None, "T"}
 
@@ -1264,8 +1597,21 @@ def _player_name(player: dict[str, Any]) -> str:
 def _int_or_none(value: Any) -> int | None:
     try:
         return int(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return None
+
+
+def _tick_or(value: Any, default: int) -> int:
+    parsed = _int_or_none(value)
+    return default if parsed is None else parsed
+
+
+def _dict_items(value: Any) -> list[dict[str, Any]]:
+    return [item for item in value if isinstance(item, dict)] if isinstance(value, list) else []
+
+
+def _frame_players(frame: dict[str, Any]) -> list[dict[str, Any]]:
+    return _dict_items(frame.get("players"))
 
 
 def _round_int(item: dict[str, Any], key: str, default: int) -> int:

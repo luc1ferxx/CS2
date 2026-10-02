@@ -1,0 +1,68 @@
+{
+  "name": "half-time-switch-in-a-later-demo",
+  "description": "Recorded from round 11 of an MR12 match: team A is T in 11-12 and CT from 13 (read from the frames). The first switch, round 13, is a pistol round; round 11 is not (there is no round 1). Round 12 shows the second eco branch (equip < 2000n with money >= 1000n).",
+  "replay": {
+    "tickRate": 64,
+    "rounds": [
+      {"roundNumber": 11, "startTick": 11000, "freezeEndTick": 11200, "endTick": 11900, "winnerSide": "T"},
+      {"roundNumber": 12, "startTick": 12000, "freezeEndTick": 12200, "endTick": 12900, "winnerSide": "T"},
+      {"roundNumber": 13, "startTick": 13000, "freezeEndTick": 13200, "endTick": 13900, "winnerSide": "CT"},
+      {"roundNumber": 14, "startTick": 14000, "freezeEndTick": 14200, "endTick": 14900, "winnerSide": "T"}
+    ],
+    "frames": [
+      {"tick": 11100, "roundNumber": 11, "players": [{"id": "a1", "side": "T"}, {"id": "a2", "side": "T"}, {"id": "b1", "side": "CT"}, {"id": "b2", "side": "CT"}]},
+      {"tick": 11300, "roundNumber": 11, "players": [{"id": "a1", "side": "T"}, {"id": "a2", "side": "T"}, {"id": "b1", "side": "CT"}, {"id": "b2", "side": "CT"}]},
+      {"tick": 12100, "roundNumber": 12, "players": [{"id": "a1", "side": "T"}, {"id": "a2", "side": "T"}, {"id": "b1", "side": "CT"}, {"id": "b2", "side": "CT"}]},
+      {"tick": 12300, "roundNumber": 12, "players": [{"id": "a1", "side": "T"}, {"id": "a2", "side": "T"}, {"id": "b1", "side": "CT"}, {"id": "b2", "side": "CT"}]},
+      {"tick": 13100, "roundNumber": 13, "players": [{"id": "a1", "side": "CT"}, {"id": "a2", "side": "CT"}, {"id": "b1", "side": "T"}, {"id": "b2", "side": "T"}]},
+      {"tick": 13300, "roundNumber": 13, "players": [{"id": "a1", "side": "CT"}, {"id": "a2", "side": "CT"}, {"id": "b1", "side": "T"}, {"id": "b2", "side": "T"}]},
+      {"tick": 14100, "roundNumber": 14, "players": [{"id": "a1", "side": "CT"}, {"id": "a2", "side": "CT"}, {"id": "b1", "side": "T"}, {"id": "b2", "side": "T"}]},
+      {"tick": 14300, "roundNumber": 14, "players": [{"id": "a1", "side": "CT"}, {"id": "a2", "side": "CT"}, {"id": "b1", "side": "T"}, {"id": "b2", "side": "T"}]}
+    ],
+    "events": [],
+    "playerStates": {
+      "a1": [
+        {"tick": 11150, "money": 1500, "equipValue": 4500},
+        {"tick": 12150, "money": 1400, "equipValue": 4600},
+        {"tick": 13150, "money": 0, "equipValue": 1000},
+        {"tick": 14150, "money": 2500, "equipValue": 3000}
+      ],
+      "a2": [
+        {"tick": 11150, "money": 1500, "equipValue": 4500},
+        {"tick": 12150, "money": 1400, "equipValue": 4600},
+        {"tick": 13150, "money": 0, "equipValue": 1000},
+        {"tick": 14150, "money": 2500, "equipValue": 3000}
+      ],
+      "b1": [
+        {"tick": 11150, "money": 1500, "equipValue": 4500},
+        {"tick": 12150, "money": 3000, "equipValue": 1100},
+        {"tick": 13150, "money": 0, "equipValue": 900},
+        {"tick": 14150, "money": 0, "equipValue": 4000}
+      ],
+      "b2": [
+        {"tick": 11150, "money": 1500, "equipValue": 4500},
+        {"tick": 12150, "money": 3000, "equipValue": 1100},
+        {"tick": 13150, "money": 0, "equipValue": 900},
+        {"tick": 14150, "money": 0, "equipValue": 4000}
+      ]
+    }
+  },
+  "expected": [
+    { "roundNumber": 11, "freezeEndTick": 11200, "teams": [
+      {"teamKey": "A", "side": "T", "equipValue": 9000, "money": 3000, "players": 2, "kind": "full", "won": true},
+      {"teamKey": "B", "side": "CT", "equipValue": 9000, "money": 3000, "players": 2, "kind": "full", "won": false}
+    ] },
+    { "roundNumber": 12, "freezeEndTick": 12200, "teams": [
+      {"teamKey": "A", "side": "T", "equipValue": 9200, "money": 2800, "players": 2, "kind": "full", "won": true},
+      {"teamKey": "B", "side": "CT", "equipValue": 2200, "money": 6000, "players": 2, "kind": "eco", "won": false}
+    ] },
+    { "roundNumber": 13, "freezeEndTick": 13200, "teams": [
+      {"teamKey": "A", "side": "CT", "equipValue": 2000, "money": 0, "players": 2, "kind": "pistol", "won": true},
+      {"teamKey": "B", "side": "T", "equipValue": 1800, "money": 0, "players": 2, "kind": "pistol", "won": false}
+    ] },
+    { "roundNumber": 14, "freezeEndTick": 14200, "teams": [
+      {"teamKey": "A", "side": "CT", "equipValue": 6000, "money": 5000, "players": 2, "kind": "half", "won": false},
+      {"teamKey": "B", "side": "T", "equipValue": 8000, "money": 0, "players": 2, "kind": "full", "won": true}
+    ] }
+  ]
+}

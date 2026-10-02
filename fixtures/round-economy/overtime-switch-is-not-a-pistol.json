@@ -1,0 +1,66 @@
+{
+  "name": "overtime-switch-is-not-a-pistol",
+  "description": "Recorded from round 15 with the first side switch at round 17 (after round 16, so an overtime swap): no pistol round anywhere, every round reads by threshold.",
+  "replay": {
+    "tickRate": 64,
+    "rounds": [
+      {"roundNumber": 15, "startTick": 15000, "freezeEndTick": 15200, "endTick": 15900, "winnerSide": "T"},
+      {"roundNumber": 16, "startTick": 16000, "freezeEndTick": 16200, "endTick": 16900, "winnerSide": "CT"},
+      {"roundNumber": 17, "startTick": 17000, "freezeEndTick": 17200, "endTick": 17900, "winnerSide": "T"},
+      {"roundNumber": 18, "startTick": 18000, "freezeEndTick": 18200, "endTick": 18900, "winnerSide": "CT"}
+    ],
+    "frames": [
+      {"tick": 15100, "roundNumber": 15, "players": [{"id": "a1", "side": "T"}, {"id": "a2", "side": "T"}, {"id": "b1", "side": "CT"}, {"id": "b2", "side": "CT"}]},
+      {"tick": 15300, "roundNumber": 15, "players": [{"id": "a1", "side": "T"}, {"id": "a2", "side": "T"}, {"id": "b1", "side": "CT"}, {"id": "b2", "side": "CT"}]},
+      {"tick": 16100, "roundNumber": 16, "players": [{"id": "a1", "side": "T"}, {"id": "a2", "side": "T"}, {"id": "b1", "side": "CT"}, {"id": "b2", "side": "CT"}]},
+      {"tick": 16300, "roundNumber": 16, "players": [{"id": "a1", "side": "T"}, {"id": "a2", "side": "T"}, {"id": "b1", "side": "CT"}, {"id": "b2", "side": "CT"}]},
+      {"tick": 17100, "roundNumber": 17, "players": [{"id": "a1", "side": "CT"}, {"id": "a2", "side": "CT"}, {"id": "b1", "side": "T"}, {"id": "b2", "side": "T"}]},
+      {"tick": 17300, "roundNumber": 17, "players": [{"id": "a1", "side": "CT"}, {"id": "a2", "side": "CT"}, {"id": "b1", "side": "T"}, {"id": "b2", "side": "T"}]},
+      {"tick": 18100, "roundNumber": 18, "players": [{"id": "a1", "side": "CT"}, {"id": "a2", "side": "CT"}, {"id": "b1", "side": "T"}, {"id": "b2", "side": "T"}]},
+      {"tick": 18300, "roundNumber": 18, "players": [{"id": "a1", "side": "CT"}, {"id": "a2", "side": "CT"}, {"id": "b1", "side": "T"}, {"id": "b2", "side": "T"}]}
+    ],
+    "events": [],
+    "playerStates": {
+      "a1": [
+        {"tick": 15150, "money": 800, "equipValue": 5000},
+        {"tick": 17150, "money": 3000, "equipValue": 800},
+        {"tick": 18150, "money": 1000, "equipValue": 2500}
+      ],
+      "a2": [
+        {"tick": 15150, "money": 800, "equipValue": 5000},
+        {"tick": 17150, "money": 3000, "equipValue": 800},
+        {"tick": 18150, "money": 1100, "equipValue": 2600}
+      ],
+      "b1": [
+        {"tick": 15150, "money": 4000, "equipValue": 500},
+        {"tick": 16150, "money": 100, "equipValue": 3800},
+        {"tick": 17150, "money": 600, "equipValue": 4200},
+        {"tick": 18150, "money": 700, "equipValue": 4200}
+      ],
+      "b2": [
+        {"tick": 15150, "money": 4000, "equipValue": 500},
+        {"tick": 16150, "money": 50, "equipValue": 3900},
+        {"tick": 17150, "money": 600, "equipValue": 4200},
+        {"tick": 18150, "money": 700, "equipValue": 4200}
+      ]
+    }
+  },
+  "expected": [
+    { "roundNumber": 15, "freezeEndTick": 15200, "teams": [
+      {"teamKey": "A", "side": "T", "equipValue": 10000, "money": 1600, "players": 2, "kind": "full", "won": true},
+      {"teamKey": "B", "side": "CT", "equipValue": 1000, "money": 8000, "players": 2, "kind": "eco", "won": false}
+    ] },
+    { "roundNumber": 16, "freezeEndTick": 16200, "teams": [
+      {"teamKey": "A", "side": "T", "equipValue": 10000, "money": 1600, "players": 2, "kind": "full", "won": false},
+      {"teamKey": "B", "side": "CT", "equipValue": 7700, "money": 150, "players": 2, "kind": "force", "won": true}
+    ] },
+    { "roundNumber": 17, "freezeEndTick": 17200, "teams": [
+      {"teamKey": "A", "side": "CT", "equipValue": 1600, "money": 6000, "players": 2, "kind": "eco", "won": false},
+      {"teamKey": "B", "side": "T", "equipValue": 8400, "money": 1200, "players": 2, "kind": "full", "won": true}
+    ] },
+    { "roundNumber": 18, "freezeEndTick": 18200, "teams": [
+      {"teamKey": "A", "side": "CT", "equipValue": 5100, "money": 2100, "players": 2, "kind": "half", "won": true},
+      {"teamKey": "B", "side": "T", "equipValue": 8400, "money": 1400, "players": 2, "kind": "full", "won": false}
+    ] }
+  ]
+}

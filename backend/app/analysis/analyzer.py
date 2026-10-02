@@ -9,13 +9,15 @@ from app.analysis.rules import (
     RuleConfig,
     dedupe_events,
     find_isolated_entries,
-    find_late_post_plant_utility,
     find_poor_spacing,
     find_post_plant_spacing_with_bomb_event,
     find_post_plant_spread_issues,
     find_retake_desyncs,
     find_untraded_deaths,
     find_weak_utility_before_execute,
+    merge_death_cards,
+    scan_spacing_stretches,
+    too_far_stretches,
 )
 
 MAX_ANALYZER_EVENTS = DEFAULT_RULE_CONFIG.max_events_total
@@ -28,26 +30,32 @@ def analyze_replay(
     if not isinstance(replay, dict) or not replay.get("frames"):
         return []
 
+    tick_rate = max(1, int(replay.get("tickRate") or 64))
+    stretches = scan_spacing_stretches(replay, config)
     events = [
         *find_untraded_deaths(replay, config),
         *find_isolated_entries(replay, config),
-        *find_poor_spacing(replay, config),
+        *find_poor_spacing(replay, config, stretches=stretches),
         *find_post_plant_spread_issues(replay, config),
         *find_post_plant_spacing_with_bomb_event(replay, config),
         *find_retake_desyncs(replay, config),
         *find_weak_utility_before_execute(replay, config),
-        *find_late_post_plant_utility(replay, config),
     ]
-    tick_rate = max(1, int(replay.get("tickRate") or 64))
+    # One card per death, before the personal copies: a death card has one subject.
+    events = merge_death_cards(events, too_far_stretches(stretches, config, tick_rate), tick_rate)
     personal_events = _personal_subjects(events, replay)
     return _balanced_limit(dedupe_events(personal_events, config, tick_rate), config)
 
 
 def _personal_subjects(events: list[CoachingEventCandidate], replay: dict[str, Any]) -> list[CoachingEventCandidate]:
-    names = {str(player["id"]): str(player.get("name") or player["id"]) for player in replay.get("players", [])}
-    for frame in replay.get("frames", []):
-        for player in frame.get("players", []):
-            names.setdefault(str(player["id"]), str(player.get("name") or player["id"]))
+    names: dict[str, str] = {}
+    for player in _dicts(replay.get("players")):
+        if player.get("id") is not None:
+            names[str(player["id"])] = str(player.get("name") or player["id"])
+    for frame in _dicts(replay.get("frames")):
+        for player in _dicts(frame.get("players")):
+            if player.get("id") is not None:
+                names.setdefault(str(player["id"]), str(player.get("name") or player["id"]))
     personal = []
     for event in events:
         context = event["structured_context_json"]
@@ -66,6 +74,10 @@ def _personal_subjects(events: list[CoachingEventCandidate], replay: dict[str, A
                 "structured_context_json": {**context, "targetPlayerId": player_id},
             })
     return personal
+
+
+def _dicts(value: Any) -> list[dict[str, Any]]:
+    return [item for item in value if isinstance(item, dict)] if isinstance(value, list) else []
 
 
 def _balanced_limit(events: list[CoachingEventCandidate], config: RuleConfig) -> list[CoachingEventCandidate]:

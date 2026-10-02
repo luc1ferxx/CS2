@@ -115,7 +115,13 @@ class CoachingIdsAcrossContractsTest(unittest.TestCase):
         new_parse["utility"] = []
         old_events = analyze_replay(normalize_parser_output("demo-ids", old_parse))
         new_events = analyze_replay(normalize_parser_output("demo-ids", new_parse))
-        self.assertGreaterEqual(len(old_events), 2)
+        # One card per death: the isolated entry rides on the untraded-death card.
+        self.assertGreaterEqual(len(old_events), 1)
+        for events in (old_events, new_events):
+            self.assertIn(
+                "isolated_entry",
+                [reason.get("ruleId") for reason in events[0]["structured_context_json"].get("extraReasons", [])],
+            )
         self.assertEqual([item["id"] for item in new_events], [item["id"] for item in old_events])
 
 

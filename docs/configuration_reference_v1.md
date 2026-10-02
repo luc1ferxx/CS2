@@ -126,6 +126,19 @@ Docker Compose 在容器内使用 service 名（`postgres`、`redis`），面向
 
 这几个值互相牵制，`validate_worker_runtime_configuration()` 在启动时强制校验，配错直接 fail closed 而不是等到解析时才暴露：续租间隔必须短于租约 TTL；回收阈值必须**大于**解析超时，否则一次合法的长解析会在跑到一半时被对账判死、同一个 demo 被解析两遍。内存上限用 `RLIMIT_DATA` 而不是 `RLIMIT_AS`——解析一个 386 MB 的 demo 常驻内存峰值约 0.95 GiB，保留地址空间却高达 10.2 GiB（Rust 分配器预留的 arena），拿地址空间当尺子会让子进程在 `import` 阶段就被打死。同理，低于 2 GiB 的上限连解释器和原生依赖都装不下，所以被启动校验拒绝。
 
+### 已完成比赛的后台补算
+
+worker 空闲时（队列里有任务就让出）依次跑这两项，每项每轮最多处理一场比赛。状态记在这场比赛最新解析任务的元数据里；两项都不改比赛的 `status`、`completed_at`、`updated_at`，也不写上传账本。
+
+| Name | Default | Used by |
+| --- | --- | --- |
+| `REPLAY_UPGRADE_ENABLED` | `true` | worker; 回放早于当前 `REPLAY_CONTRACT_VERSION`、存有源 `.dem` 的已完成真实解析比赛，从存储的 `.dem` 重新解析一次（`app/workers/replay_upgrade.py`）；只换回放，不重新分析建议 |
+| `REPLAY_UPGRADE_MAX_ATTEMPTS` | `3` | worker; 回放升级的尝试上限，用完后这场比赛保留旧回放 |
+| `REPLAY_UPGRADE_RETRY_SECONDS` | `900` | worker; 回放升级失败后的重试间隔基数，每失败一次翻倍 |
+| `COACHING_RECOMPUTE_ENABLED` | `true` | worker; 建议早于当前 `COACHING_RULES_VERSION`（`backend/app/analysis/version.py`）的已完成真实解析比赛（含 Steam 导入，不含示例比赛），用已存的回放重新跑规则分析、替换建议（`app/workers/coaching_recompute.py`）；回放升级还没完成（且没用完次数）的比赛先等升级 |
+| `COACHING_RECOMPUTE_MAX_ATTEMPTS` | `3` | worker; 建议重算的尝试上限（进程中途退出、没跑完的那次也算），用完后这场比赛保留旧建议；上限按规则版本计，提升 `COACHING_RULES_VERSION` 后重新计数 |
+| `COACHING_RECOMPUTE_RETRY_SECONDS` | `900` | worker; 建议重算失败后的重试间隔基数，每失败一次翻倍 |
+
 ## Artifact storage 与上传上限
 
 | Name | Default | Used by |

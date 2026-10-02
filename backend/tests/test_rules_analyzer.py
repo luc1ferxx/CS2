@@ -1,4 +1,5 @@
 import unittest
+import uuid
 
 from app.analysis.analyzer import analyze_replay
 from app.analysis.rules import (
@@ -6,8 +7,13 @@ from app.analysis.rules import (
     RuleConfig,
     find_isolated_entries,
     find_poor_spacing,
+    find_post_plant_spread_issues,
+    find_retake_desyncs,
     find_untraded_deaths,
+    merge_death_cards,
+    scan_spacing_stretches,
 )
+from app.parser.normalizer import normalize_parser_output
 
 
 class RulesAnalyzerTest(unittest.TestCase):
@@ -282,6 +288,16 @@ class RulesAnalyzerTest(unittest.TestCase):
             kills=[],
             frames=[
                 planted_frame(
+                    150,
+                    [
+                        player("ct-1", "CT One", "CT", 30, 30),
+                        player("ct-2", "CT Two", "CT", 20, 20),
+                        player("ct-3", "CT Three", "CT", 22, 22),
+                        player("t-entry", "T Entry", "T", 50, 50),
+                    ],
+                    bomb=(52, 52),
+                ),
+                planted_frame(
                     200,
                     [
                         player("ct-1", "CT One", "CT", 54, 52),
@@ -384,7 +400,9 @@ class RulesAnalyzerTest(unittest.TestCase):
 
         self.assertNotIn("post_plant_spacing_with_bomb_event", rule_ids)
 
-    def test_late_post_plant_utility_includes_related_event_metadata(self) -> None:
+    def test_late_post_plant_utility_rule_is_removed(self) -> None:
+        import app.analysis.rules as rules
+
         replay = replay_fixture(
             kills=[],
             rounds=[{"roundNumber": 1, "startTick": 0, "freezeEndTick": 0, "endTick": 1400}],
@@ -398,18 +416,10 @@ class RulesAnalyzerTest(unittest.TestCase):
             ],
         )
 
-        events = analyze_replay(replay)
-
-        late_utility = [
-            event for event in events
-            if event["structured_context_json"]["ruleId"] == "late_post_plant_utility"
-        ]
-        self.assertEqual(len(late_utility), 1)
-        context = late_utility[0]["structured_context_json"]
-        self.assertEqual(context["relatedEventIds"], ["plant-a", "smoke-late"])
-        self.assertEqual(context["utilityType"], "smoke")
-        self.assertEqual(context["utilityLabel"], "Smoke")
-        self.assertGreater(context["windowSeconds"], context["graceWindowSeconds"])
+        rule_ids = {event["structured_context_json"]["ruleId"] for event in analyze_replay(replay)}
+        self.assertNotIn("late_post_plant_utility", rule_ids)
+        self.assertFalse(hasattr(rules, "find_late_post_plant_utility"))
+        self.assertNotIn("post_plant_utility_grace_seconds", RuleConfig.__dataclass_fields__)
 
     def test_parser_event_v1_player_ids_feed_evidence_metadata(self) -> None:
         replay = replay_fixture(
@@ -726,7 +736,9 @@ class CoachingEvidenceTest(unittest.TestCase):
                     {**player(f"t-{index}", f"T {index}", "T", 20 + index, 20), "z": z}
                     for index, z in enumerate(heights)
                 ]
-                self.assertEqual(find_poor_spacing(replay), [])
+                single_sample = RuleConfig(poor_spacing_eval_delay_seconds=0, poor_spacing_min_duration_seconds=0)
+                self.assertEqual(find_poor_spacing(replay, single_sample), [])
+                self.assertEqual(scan_spacing_stretches(replay, single_sample), [])
 
     def test_ct_utility_does_not_count_as_terrorist_utility(self):
         replay = self.death_replay()
@@ -736,7 +748,11 @@ class CoachingEvidenceTest(unittest.TestCase):
             replay_event("ct-smoke", "smoke", 120, player_id="ct-1", side="CT"),
             replay_event("plant", "bomb_planted", 1200, player_id="t-entry", side="T"),
         ]
-        self.assertFalse(any(event["category"] == "utility" for event in analyze_replay(replay)))
+        utility = [event for event in analyze_replay(replay) if event["category"] == "utility"]
+        # The CT smoke is not T utility: the plant reads as an execute with none at all.
+        self.assertEqual(len(utility), 1)
+        self.assertEqual(utility[0]["structured_context_json"]["utilityCount"], 0)
+        self.assertEqual(utility[0]["structured_context_json"]["relatedEventIds"], ["plant"])
 
     def test_parser_kill_reference_points_at_the_victim_event(self):
         replay = self.death_replay()
@@ -823,6 +839,468 @@ class MalformedRoundRecordTest(unittest.TestCase):
                 self.assertIn(context.round_for_tick(tick), context.round_by_number)
                 live_round = context.live_round_at(tick)
                 self.assertTrue(live_round is None or live_round in context.round_by_number)
+
+
+NAMES = {"t-a": "T A", "t-b": "T B", "t-c": "T C", "ct-1": "CT One", "ct-2": "CT Two", "ct-3": "CT Three"}
+ROSTER = [{"id": pid, "name": name, "side": "CT" if pid.startswith("ct") else "T"} for pid, name in NAMES.items()]
+# de_dust2: 45.056 world units per radar percent. Stacked <= 112 units (2.49 %),
+# too_far >= 1260 units (27.97 %), isolated entry > 990 units (21.97 %).
+STACKED = {"t-a": (20, 20), "t-b": (21, 20), "t-c": (30, 20), "ct-1": (70, 70)}
+APART = {"t-a": (20, 20), "t-b": (24, 20), "t-c": (30, 20), "ct-1": (70, 70)}
+FAR = {"t-a": (20, 20), "t-b": (24, 20), "t-c": (80, 80), "ct-1": (70, 70)}
+EVAL_START = 960  # 15 s after freeze end (tick 0) at 64 tick
+
+
+def plan_a_replay(frames, *, kills=(), events=(), rounds=None, player_states=None):
+    replay = {
+        "demoId": "demo-plan-a",
+        "mapName": "de_dust2",
+        "tickRate": 64,
+        "rounds": rounds or [{"roundNumber": 1, "startTick": 0, "freezeEndTick": 0, "endTick": 6400, "winnerSide": "CT"}],
+        "players": [dict(item) for item in ROSTER],
+        "frames": frames,
+        "kills": list(kills),
+        "deaths": list(kills),
+        "events": list(events),
+    }
+    if player_states is not None:
+        replay["playerStates"] = player_states
+    return replay
+
+
+def layout_frame(tick, layout, round_number=1, dead=()):
+    players = []
+    for player_id, spot in layout.items():
+        side = "CT" if player_id.startswith("ct") else "T"
+        entry = player(player_id, NAMES[player_id], side, *spot)
+        # A dead player stays where he fell.
+        players.append({**entry, "alive": False, "hp": 0} if player_id in dead else entry)
+    return frame(tick, players, round_number)
+
+
+def sampled(start, end, layout, *, step=16, round_number=1, dead=()):
+    return [layout_frame(tick, layout, round_number, dead) for tick in range(start, end + 1, step)]
+
+
+def death(tick, attacker_id, victim_id, *, weapon="ak47", attacker_side="CT", victim_side="T"):
+    return {
+        "tick": tick, "roundNumber": 1,
+        "attackerId": attacker_id, "attackerName": NAMES[attacker_id], "attackerSide": attacker_side,
+        "victimId": victim_id, "victimName": NAMES[victim_id], "victimSide": victim_side,
+        "weapon": weapon, "headshot": False,
+    }
+
+
+def kill_event(kill):
+    return {
+        "id": f"kill-{kill['tick']}-{kill['attackerId']}-{kill['victimId']}", "type": "kill",
+        "tick": kill["tick"], "roundNumber": kill["roundNumber"],
+        "playerIds": [kill["attackerId"], kill["victimId"]], "playerId": kill["attackerId"],
+        "metadata": {key: kill[key] for key in ("attackerId", "attackerSide", "victimId", "victimSide")},
+    }
+
+
+def raw_id(demo_id, rule_id, player_id, round_number, tick_start, tick_end):
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"{demo_id}:{rule_id}:{player_id}:{round_number}:{tick_start}:{tick_end}"))
+
+
+def personal_id(raw, player_id):
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"{raw}:{player_id}"))
+
+
+def of_rule(events, rule_id, spacing_type=None):
+    return [
+        event for event in events
+        if event["structured_context_json"]["ruleId"] == rule_id
+        and (spacing_type is None or event["structured_context_json"].get("spacingType") == spacing_type)
+    ]
+
+
+class StackedStretchTest(unittest.TestCase):
+    def test_a_stacked_pair_needs_three_seconds(self):
+        short = plan_a_replay(sampled(EVAL_START, EVAL_START + 176, STACKED) + sampled(EVAL_START + 192, 1600, APART))
+        self.assertEqual(find_poor_spacing(short), [])
+
+        held = plan_a_replay(sampled(EVAL_START, EVAL_START + 192, STACKED) + sampled(EVAL_START + 208, 1600, APART))
+        events = find_poor_spacing(held)
+        self.assertEqual(len(events), 1)
+        context = events[0]["structured_context_json"]
+        self.assertEqual((events[0]["player_id"], events[0]["tick_start"], events[0]["tick_end"]), ("t-a", 960, 1152))
+        self.assertEqual(context["involvedPlayerIds"], ["t-a", "t-b"])
+        self.assertEqual(context["evidenceTicks"], [960])
+        self.assertEqual(context["durationSeconds"], 3)
+        self.assertNotIn("stackedMultikill", context)
+        # The shape of the single-sample card is kept.
+        for key in ("side", "spacingType", "distance", "nearbyCount", "poorSpacingMinDistance",
+                    "poorSpacingMaxDistance", "maxNearestDistance", "minPairDistance"):
+            self.assertIn(key, context)
+
+    def test_evaluation_starts_fifteen_seconds_after_freeze_end(self):
+        replay = plan_a_replay(sampled(640, 1600, STACKED))
+        events = find_poor_spacing(replay)
+        self.assertEqual([event["tick_start"] for event in events], [EVAL_START])
+        self.assertEqual(events[0]["structured_context_json"]["durationSeconds"], 10)
+        # Spawn walks: a pair together only before 15 s gives nothing.
+        self.assertEqual(find_poor_spacing(plan_a_replay(sampled(512, 944, STACKED) + sampled(960, 1600, APART))), [])
+
+    def test_a_gap_of_more_than_one_second_breaks_the_stretch(self):
+        broken = sampled(960, 1088, STACKED) + sampled(1168, 1296, STACKED)
+        self.assertEqual(find_poor_spacing(plan_a_replay(broken)), [])
+        joined = sampled(960, 1088, STACKED) + sampled(1152, 1296, STACKED)
+        self.assertEqual([event["tick_start"] for event in find_poor_spacing(plan_a_replay(joined))], [960])
+
+    def test_the_first_qualifying_stretch_wins_and_a_short_one_takes_no_slot(self):
+        frames = (
+            sampled(960, 1024, STACKED) + sampled(1040, 1200, APART)
+            + sampled(1216, 1600, STACKED) + sampled(1616, 2000, APART)
+            + sampled(2016, 2400, STACKED)
+        )
+        events = find_poor_spacing(plan_a_replay(frames))
+        self.assertEqual([event["tick_start"] for event in events], [1216])
+        self.assertEqual(events[0]["structured_context_json"]["durationSeconds"], 6)
+
+    def test_a_card_whose_first_stretch_qualifies_keeps_its_id(self):
+        replay = plan_a_replay(sampled(EVAL_START, 1600, STACKED))
+        raw = raw_id("demo-plan-a", "poor_spacing", "t-a", 1, 960, 960 + 192)
+        self.assertEqual([event["id"] for event in find_poor_spacing(replay)], [raw])
+        personal = of_rule(analyze_replay(replay), "poor_spacing", "stacked")
+        self.assertEqual(
+            sorted(event["id"] for event in personal),
+            sorted(personal_id(raw, player_id) for player_id in ("t-a", "t-b")),
+        )
+
+    def test_a_short_stack_counts_when_one_enemy_kills_both_within_three_seconds(self):
+        frames = sampled(EVAL_START, 1008, STACKED) + sampled(1024, 1600, APART)
+        kills = [death(1100, "ct-1", "t-a"), death(1200, "ct-1", "t-b")]
+        events = find_poor_spacing(plan_a_replay(frames, kills=kills))
+        self.assertEqual(len(events), 1)
+        context = events[0]["structured_context_json"]
+        self.assertTrue(context["stackedMultikill"])
+        self.assertEqual(context["multikillAttackerId"], "ct-1")
+        self.assertEqual(context["multikillAttackerName"], "CT One")
+        self.assertEqual(context["durationSeconds"], 0.75)
+        self.assertEqual(events[0]["tick_start"], 960)
+
+    def test_a_stack_that_already_lasted_three_seconds_does_not_carry_the_multikill_fields(self):
+        frames = sampled(EVAL_START, EVAL_START + 320, STACKED) + sampled(EVAL_START + 336, 1800, APART)
+        kills = [death(1300, "ct-1", "t-a"), death(1400, "ct-1", "t-b")]
+        events = find_poor_spacing(plan_a_replay(frames, kills=kills))
+        self.assertEqual(len(events), 1)
+        context = events[0]["structured_context_json"]
+        self.assertEqual(context["durationSeconds"], 5)
+        for key in ("stackedMultikill", "multikillAttackerId", "multikillAttackerName"):
+            self.assertNotIn(key, context)
+
+    def test_the_multikill_path_needs_one_enemy_close_deaths_and_a_first_death_near_the_stretch(self):
+        frames = sampled(EVAL_START, 1008, STACKED) + sampled(1024, 1800, APART)
+        for label, kills in (
+            ("two killers", [death(1100, "ct-1", "t-a"), death(1200, "ct-2", "t-b")]),
+            ("more than 3 s apart", [death(1100, "ct-1", "t-a"), death(1100 + 193, "ct-1", "t-b")]),
+            ("first death after stretch end + 3 s", [death(1008 + 193, "ct-1", "t-a"), death(1250, "ct-1", "t-b")]),
+            ("first death before the stretch", [death(900, "ct-1", "t-a"), death(1000, "ct-1", "t-b")]),
+            ("a teamkill", [
+                death(1100, "t-c", "t-a", attacker_side="T"), death(1200, "t-c", "t-b", attacker_side="T"),
+            ]),
+        ):
+            with self.subTest(label):
+                self.assertEqual(find_poor_spacing(plan_a_replay(frames, kills=kills)), [])
+
+
+class DeathCardTest(unittest.TestCase):
+    def far_then_death(self, death_tick, far_until, *, also_far_at_death=False):
+        layout_after = FAR if also_far_at_death else APART
+        frames = sampled(EVAL_START, far_until, FAR) + sampled(far_until + 16, death_tick - 16, layout_after)
+        frames += sampled(death_tick + 16, 2800, layout_after, dead=("t-c",))
+        kill = death(death_tick, "ct-1", "t-c", weapon="awp")
+        return plan_a_replay(frames, kills=[kill], events=[kill_event(kill)])
+
+    def test_too_far_is_no_card_and_becomes_a_reason_within_five_seconds_before_the_death(self):
+        replay = self.far_then_death(1216 + 4 * 64, 1216)
+        events = analyze_replay(replay)
+        self.assertEqual(of_rule(events, "poor_spacing", "too_far"), [])
+        cards = of_rule(events, "untraded_death")
+        self.assertEqual(len(cards), 1)
+        reasons = cards[0]["structured_context_json"]["extraReasons"]
+        self.assertEqual(len(reasons), 1)
+        self.assertEqual(
+            {key: reasons[0][key] for key in ("ruleId", "spacingType", "durationSeconds", "tick")},
+            {"ruleId": "poor_spacing", "spacingType": "too_far", "durationSeconds": 4, "tick": 960},
+        )
+        self.assertIsInstance(reasons[0]["distance"], int)
+        self.assertGreaterEqual(reasons[0]["distance"], 1260)
+        # The reason never enters the id.
+        untraded = find_untraded_deaths(replay)[0]
+        self.assertEqual(cards[0]["id"], personal_id(untraded["id"], "t-c"))
+
+    def test_too_far_outside_the_window_or_too_short_adds_no_reason(self):
+        for label, replay in (
+            ("ended 6 s before the death", self.far_then_death(1216 + 6 * 64, 1216)),
+            ("lasted 2.75 s", self.far_then_death(1136 + 64, 1136)),
+        ):
+            with self.subTest(label):
+                cards = of_rule(analyze_replay(replay), "untraded_death")
+                self.assertEqual(len(cards), 1)
+                self.assertNotIn("extraReasons", cards[0]["structured_context_json"])
+
+    def test_an_isolated_opening_death_folds_into_its_untraded_card(self):
+        replay = self.far_then_death(1600, 1584, also_far_at_death=True)
+        events = analyze_replay(replay)
+        self.assertEqual(of_rule(events, "isolated_entry"), [])
+        cards = of_rule(events, "untraded_death")
+        self.assertEqual(len(cards), 1)
+        context = cards[0]["structured_context_json"]
+        self.assertEqual([reason["ruleId"] for reason in context["extraReasons"]], ["poor_spacing", "isolated_entry"])
+        isolated = context["extraReasons"][1]
+        self.assertEqual(isolated["tick"], 1584)
+        self.assertGreater(isolated["distance"], 990)
+        self.assertEqual(context["relatedEventIds"], ["kill-1600-ct-1-t-c"])
+        self.assertEqual(cards[0]["id"], personal_id(find_untraded_deaths(replay)[0]["id"], "t-c"))
+
+    def test_without_an_untraded_card_the_isolated_entry_is_the_card(self):
+        replay = self.far_then_death(1600, 1584, also_far_at_death=True)
+        trade = death(1650, "t-a", "ct-1", attacker_side="T", victim_side="CT")
+        replay["kills"].append(trade)
+        replay["events"].append(kill_event(trade))
+        events = analyze_replay(replay)
+        self.assertNotIn("t-c", [event["player_id"] for event in of_rule(events, "untraded_death")])
+        cards = of_rule(events, "isolated_entry")
+        self.assertEqual([card["player_id"] for card in cards], ["t-c"])
+        context = cards[0]["structured_context_json"]
+        self.assertEqual([reason["ruleId"] for reason in context["extraReasons"]], ["poor_spacing"])
+        self.assertEqual(context["attackerName"], "CT One")
+        self.assertEqual(context["weapon"], "awp")
+        self.assertTrue(context["impact"]["firstDeath"])
+
+    def test_cards_merge_by_kill_id_never_by_tick(self):
+        def card(rule_id, event_id, tick, related):
+            return {
+                "id": event_id, "round_number": 1, "player_id": "t-c", "tick_start": tick,
+                "structured_context_json": {
+                    "ruleId": rule_id, "relatedEventIds": related, "distance": 1500.4, "positionSampleTick": tick - 10,
+                },
+            }
+
+        merged = merge_death_cards([card("untraded_death", "u", 100, ["kill-a"]), card("isolated_entry", "i", 104, ["kill-a"])])
+        self.assertEqual([event["id"] for event in merged], ["u"])
+        self.assertEqual(merged[0]["structured_context_json"]["extraReasons"], [{"ruleId": "isolated_entry", "distance": 1500, "tick": 94}])
+        apart = merge_death_cards([card("untraded_death", "u", 100, ["kill-a"]), card("isolated_entry", "i", 100, ["kill-b"])])
+        self.assertEqual([event["id"] for event in apart], ["u", "i"])
+        fallback = merge_death_cards([card("untraded_death", "u", 100, []), card("isolated_entry", "i", 100, [])])
+        self.assertEqual([event["id"] for event in fallback], ["u"])
+        no_match = merge_death_cards([card("untraded_death", "u", 100, []), card("isolated_entry", "i", 120, [])])
+        self.assertEqual([event["id"] for event in no_match], ["u", "i"])
+
+
+def two_death_round(*, winner="CT", second_victim_alone=False):
+    """t-a dies at 1200 (ct-1, ak47), then t-b at 1600 (ct-2): 3v2 -> 2v2, then 2v2 -> 1v2.
+
+    With `second_victim_alone`, t-c is already dead before t-b's death, so t-b dies as the last T.
+    """
+    layout = {"t-a": (20, 20), "t-b": (24, 20), "t-c": (30, 20), "ct-1": (70, 70), "ct-2": (72, 70)}
+    dead_between = ("t-a", "t-c") if second_victim_alone else ("t-a",)
+    frames = (
+        sampled(EVAL_START, 1184, layout)
+        + sampled(1200, 1584, layout, dead=dead_between)
+        + sampled(1600, 2400, layout, dead=(*dead_between, "t-b"))
+    )
+    kills = [death(1200, "ct-1", "t-a"), death(1600, "ct-2", "t-b", weapon="m4a1_silencer")]
+    rounds = [{"roundNumber": 1, "startTick": 0, "freezeEndTick": 0, "endTick": 6400}]
+    if winner is not None:
+        # A round the parser saw end carries both.
+        rounds[0].update(winnerSide=winner, winnerReason="t_killed" if winner == "CT" else "ct_killed")
+    return plan_a_replay(frames, kills=kills, events=[kill_event(kill) for kill in kills], rounds=rounds)
+
+
+class DeathImpactTest(unittest.TestCase):
+    def round_with_two_deaths(self, **options):
+        return two_death_round(**options)
+
+    def test_every_death_card_carries_its_impact_weapon_and_attacker(self):
+        cards = {event["player_id"]: event["structured_context_json"] for event in of_rule(
+            analyze_replay(self.round_with_two_deaths()), "untraded_death"
+        )}
+        self.assertEqual(cards["t-a"]["impact"], {
+            "roundLost": True, "firstDeath": True,
+            "aliveBefore": {"own": 3, "enemy": 2}, "aliveAfter": {"own": 2, "enemy": 2}, "manDisadvantage": False,
+        })
+        self.assertEqual(cards["t-b"]["impact"], {
+            "roundLost": True, "firstDeath": False,
+            "aliveBefore": {"own": 2, "enemy": 2}, "aliveAfter": {"own": 1, "enemy": 2}, "manDisadvantage": True,
+        })
+        self.assertEqual((cards["t-b"]["weapon"], cards["t-b"]["attackerName"]), ("m4a1_silencer", "CT Two"))
+
+    def test_round_result_reads_null_when_the_winner_is_unknown_and_false_on_a_win(self):
+        unknown = of_rule(analyze_replay(self.round_with_two_deaths(winner=None)), "untraded_death")
+        self.assertIsNone(unknown[0]["structured_context_json"]["impact"]["roundLost"])
+        won = of_rule(analyze_replay(self.round_with_two_deaths(winner="T")), "untraded_death")
+        self.assertFalse(won[0]["structured_context_json"]["impact"]["roundLost"])
+
+    def test_a_round_that_never_ended_reads_null_after_normalization(self):
+        # A demo cut off before round_end: the parser has no winner and no reason,
+        # and the normalizer fills winnerSide with "CT". That is not a known winner.
+        parsed = self.round_with_two_deaths(winner=None)
+        replay = normalize_parser_output("demo-plan-a", parsed)
+        self.assertEqual([item.get("winnerSide") for item in replay["rounds"]], ["CT"])
+        self.assertNotIn("winnerReason", replay["rounds"][0])
+        cards = of_rule(analyze_replay(replay), "untraded_death")
+        self.assertTrue(cards)
+        for card in cards:
+            self.assertIsNone(card["structured_context_json"]["impact"]["roundLost"])
+
+    def test_a_winner_without_a_reason_is_not_trusted(self):
+        replay = self.round_with_two_deaths(winner="CT")
+        del replay["rounds"][0]["winnerReason"]
+        cards = of_rule(analyze_replay(replay), "untraded_death")
+        self.assertTrue(cards)
+        for card in cards:
+            self.assertIsNone(card["structured_context_json"]["impact"]["roundLost"])
+
+    def test_missing_alive_data_leaves_the_counts_out(self):
+        replay = self.round_with_two_deaths()
+        # No frame before the first death: counts unknown, never guessed.
+        replay["frames"] = [item for item in replay["frames"] if item["tick"] >= 1200]
+        cards = {event["player_id"]: event["structured_context_json"] for event in of_rule(analyze_replay(replay), "untraded_death")}
+        self.assertEqual(cards["t-a"]["impact"], {"roundLost": True, "firstDeath": True})
+        self.assertIn("aliveBefore", cards["t-b"]["impact"])
+
+    def test_the_last_player_alive_is_not_reported_as_untraded(self):
+        events = of_rule(analyze_replay(self.round_with_two_deaths(second_victim_alone=True)), "untraded_death")
+        self.assertEqual([event["player_id"] for event in events], ["t-a"])
+
+
+class RetakeAndUtilityTest(unittest.TestCase):
+    def retake_replay(self, *, ts_alive_at_last_arrival=True, ct1_at_bomb_on_plant=False):
+        def planted(tick, ct_spots, t_alive=True):
+            players = [player(pid, NAMES[pid], "CT", *spot) for pid, spot in ct_spots.items()]
+            t_player = player("t-a", "T A", "T", 50, 50)
+            if not t_alive:
+                t_player = {**t_player, "alive": False, "hp": 0}
+            return planted_frame(tick, [*players, t_player], bomb=(52, 52))
+
+        frames = [
+            planted(150, {"ct-1": (52, 53) if ct1_at_bomb_on_plant else (30, 30), "ct-2": (20, 20), "ct-3": (22, 22)}),
+            planted(200, {"ct-1": (52, 53), "ct-2": (20, 20), "ct-3": (22, 22)}),
+            planted(300, {"ct-1": (52, 53), "ct-2": (53, 52), "ct-3": (22, 22)}),
+            planted(600, {"ct-1": (52, 53), "ct-2": (53, 52), "ct-3": (52, 51)}, t_alive=ts_alive_at_last_arrival),
+        ]
+        return replay_fixture(kills=[], frames=frames, extra_players=[
+            {"id": "ct-2", "name": "CT Two", "side": "CT"}, {"id": "ct-3", "name": "CT Three", "side": "CT"},
+        ])
+
+    def retake(self, replay):
+        return find_retake_desyncs(replay, RuleConfig(retake_site_distance=225))
+
+    def test_retake_desync_counts_arrivals_only(self):
+        events = self.retake(self.retake_replay())
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["structured_context_json"]["involvedPlayerIds"], ["ct-1", "ct-2", "ct-3"])
+        self.assertEqual((events[0]["tick_start"], events[0]["tick_end"]), (200, 600))
+        # ct-1 was already at the bomb in the first planted sample: he did not arrive.
+        events = self.retake(self.retake_replay(ct1_at_bomb_on_plant=True))
+        self.assertEqual(events[0]["structured_context_json"]["involvedPlayerIds"], ["ct-2", "ct-3"])
+        self.assertEqual((events[0]["tick_start"], events[0]["tick_end"]), (300, 600))
+
+    def test_retake_desync_skips_a_round_whose_ts_are_all_dead_at_the_last_arrival(self):
+        self.assertEqual(self.retake(self.retake_replay(ts_alive_at_last_arrival=False)), [])
+
+    def utility_replay(self, *, t_equip=None, round_number=2, ct_smoke=True):
+        rounds = [
+            {"roundNumber": 1, "startTick": 0, "freezeEndTick": 100, "endTick": 1400, "winnerSide": "T"},
+            {"roundNumber": 2, "startTick": 1500, "freezeEndTick": 1600, "endTick": 2900, "winnerSide": "T"},
+        ]
+        layout = {"t-a": (20, 20), "t-b": (24, 20), "ct-1": (70, 70), "ct-2": (72, 70)}
+        frames = sampled(0, 1400, layout, step=200, round_number=1) + sampled(1500, 2900, layout, step=200, round_number=2)
+        start = 0 if round_number == 1 else 1500
+        events = [replay_event("plant", "bomb_planted", start + 1200, player_id="t-a", player_name="T A", side="T",
+                               round_number=round_number)]
+        if ct_smoke:
+            events.append(replay_event("ct-smoke", "smoke", start + 300, player_id="ct-1", side="CT", round_number=round_number))
+        states = None
+        if t_equip is not None:
+            buy_tick = start + 50
+            states = {
+                pid: [{"tick": buy_tick, "money": money, "equipValue": equip}]
+                for pid, (equip, money) in {
+                    "t-a": t_equip, "t-b": t_equip, "ct-1": (4500, 1000), "ct-2": (4500, 1000),
+                }.items()
+            }
+        return plan_a_replay(frames, events=events, rounds=rounds, player_states=states)
+
+    def weak_utility(self, replay):
+        return of_rule(analyze_replay(replay), "weak_utility_before_execute")
+
+    def test_a_plant_without_any_t_utility_reads_as_a_weak_execute_unless_the_ts_were_on_an_eco(self):
+        unknown = self.weak_utility(self.utility_replay())
+        self.assertEqual(len(unknown), 1)
+        self.assertEqual(unknown[0]["structured_context_json"]["utilityCount"], 0)
+        self.assertNotIn("tBuyKind", unknown[0]["structured_context_json"])
+
+        full = self.weak_utility(self.utility_replay(t_equip=(4500, 500)))
+        self.assertEqual([event["structured_context_json"]["tBuyKind"] for event in full], ["full"])
+        self.assertEqual(self.weak_utility(self.utility_replay(t_equip=(700, 3000))), [])
+        force = self.weak_utility(self.utility_replay(t_equip=(1500, 200)))
+        self.assertEqual([event["structured_context_json"]["tBuyKind"] for event in force], ["force"])
+        pistol = self.weak_utility(self.utility_replay(t_equip=(700, 100), round_number=1))
+        self.assertEqual([event["structured_context_json"]["tBuyKind"] for event in pistol], ["pistol"])
+
+    def test_a_replay_without_any_utility_event_has_the_family_missing(self):
+        self.assertEqual(self.weak_utility(self.utility_replay(ct_smoke=False)), [])
+
+    def test_clustering_in_a_round_with_a_recorded_plant_is_only_the_bomb_event_version(self):
+        frames = [
+            planted_frame(500, cluster_t_players(50, 50), bomb=(52, 52)),
+            planted_frame(700, cluster_t_players(50.5, 50.5), bomb=(52, 52)),
+            planted_frame(900, cluster_t_players(51, 51), bomb=(52, 52)),
+        ]
+        config = RuleConfig(post_plant_min_duration_seconds=4, post_plant_cluster_distance=270)
+        without_event = replay_fixture(kills=[], frames=frames, rounds=[
+            {"roundNumber": 1, "startTick": 0, "freezeEndTick": 0, "endTick": 1000},
+        ])
+        self.assertEqual(len(find_post_plant_spread_issues(without_event, config)), 1)
+        with_event = replay_fixture(kills=[], frames=frames, rounds=without_event["rounds"], events=[
+            replay_event("plant-a", "bomb_planted", 500, player_id="t-entry", player_name="T Entry", side="T"),
+        ])
+        self.assertEqual(find_post_plant_spread_issues(with_event, config), [])
+        rule_ids = {event["structured_context_json"]["ruleId"] for event in analyze_replay(with_event, config)}
+        self.assertIn("post_plant_spacing_with_bomb_event", rule_ids)
+        self.assertNotIn("post_plant_spread_issue", rule_ids)
+
+
+class StableIdTest(unittest.TestCase):
+    def test_ids_of_rules_this_change_leaves_alone_are_unchanged(self):
+        replay = replay_fixture(
+            kills=[kill(100, "ct-1", "CT One", "t-entry", "T Entry")],
+            rounds=[{"roundNumber": 1, "startTick": 0, "freezeEndTick": 0, "endTick": 1400}],
+            frames=[
+                frame(100, [player("t-entry", "T Entry", "T", 20, 20), player("t-trade", "T Trade", "T", 60, 60),
+                            player("ct-1", "CT One", "CT", 21, 21)]),
+                frame(1200, [player("t-entry", "T Entry", "T", 50, 50)]),
+            ],
+            events=[
+                replay_event("smoke-early", "smoke", 120, player_id="t-entry", player_name="T Entry", side="T"),
+                replay_event("plant-a", "bomb_planted", 1200, player_id="t-entry", player_name="T Entry", side="T"),
+            ],
+        )
+        ids = {event["structured_context_json"]["ruleId"]: event["id"] for event in analyze_replay(replay)}
+        self.assertEqual(ids["untraded_death"], personal_id(raw_id("demo-rules", "untraded_death", "t-entry", 1, 100, 420), "t-entry"))
+        self.assertEqual(
+            ids["weak_utility_before_execute"],
+            personal_id(raw_id("demo-rules", "weak_utility_before_execute", "t-entry", 1, 1200, 1200), "t-entry"),
+        )
+
+    def test_partial_and_malformed_replays_never_raise(self):
+        base = two_death_round()
+        broken_cases = {
+            "v1 without playerStates or events": {key: value for key, value in base.items() if key != "events"},
+            "frames without ticks": {**base, "frames": [{**item, "tick": None} for item in base["frames"]][:3] + base["frames"]},
+            "players not a list": {**base, "frames": [{**item, "players": None} for item in base["frames"][:3]] + base["frames"]},
+            "deaths missing": {**base, "deaths": None},
+            "junk player states": {**base, "playerStates": {"t-a": "x", "t-b": [None, {"tick": "x"}]}},
+            "junk map metadata": {**base, "mapMetadata": ["x"]},
+        }
+        for label, replay in broken_cases.items():
+            with self.subTest(label):
+                self.assertIsInstance(analyze_replay(replay), list)
 
 
 if __name__ == "__main__":

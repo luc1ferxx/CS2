@@ -47,7 +47,7 @@ Production 的上传额度（`DEMO_UPLOAD_DAILY_LIMIT`、`DEMO_ACTIVE_PARSE_LIMI
 
 - `GET /demos/{demo_id}/replay`（紧凑 JSON；客户端发送 `Accept-Encoding: gzip` 时 gzip 压缩。JSON 响应 ≥1 KB 时都按此压缩，媒体、Range 与流式响应不压缩）
 - `GET /demos/{demo_id}/coaching`（每条事件附带当前 owner 自己的 `feedback`：`{verdict, note, updated_at}` 或 `null`）
-- `PUT /demos/{demo_id}/coaching/{event_id}/feedback`（body `{"verdict": "helpful" | "irrelevant" | "unsure", "note"?: ≤240 字符}`；事件不属于该 demo → 404）
+- `PUT /demos/{demo_id}/coaching/{event_id}/feedback`（body `{"verdict": "helpful" | "irrelevant" | "unsure", "note"?: ≤240 字符}`；事件不属于该 demo（包括后台重算后已不存在的建议）→ 404）
 - `DELETE /demos/{demo_id}/coaching/{event_id}/feedback`（204，幂等）
 - `GET /coaching/feedback/summary?demo_id=`（owner 全部或指定 demo 的按规则判定汇总；见 `docs/coaching_feedback_v1.md`）
 
@@ -263,8 +263,55 @@ Demo list items 和 `GET /demos/{demo_id}/status` 带可选的 `matchSummary`（
 - `playerStates`：按玩家 id（与 `frames[].players[].id` 相同）存装备/经济的**变化点**，只有字段变化才新增一条，按 tick 升序；时刻 t 的状态 = 最后一条 `tick ≤ t`。每条是完整快照；某字段缺失表示这场 demo 没有该数据，不是 0。`weapon` 是 demo 里的武器显示名（≤32 字符，死亡或空手为 `null`）；`grenades` 每颗一项，取值 `smoke`/`flash`/`he`/`molotov`（燃烧瓶与燃烧弹）/`decoy`。在帧的采样 tick 上取样，不写进每一帧。
 - `utility`：每颗投掷物一条，`id` 确定（`utility-{type}-{实体id}-{throwTick}`）。`points` 与帧同一雷达百分比坐标（0–100，`z` 为世界高度），飞行中约每 4 tick 一个点，首尾必留，停在引爆处，每颗最多 120 点；最后一点即落点。`detonateTick` 取对应引爆事件（燃烧取 `inferno_startburn`），找不到时取最后移动的 tick；`endTick` 为效果结束（烟 `smokegrenade_expired`、火 `inferno_expire`，缺失时按烟 18 秒、火 7 秒；空中爆掉的燃烧瓶、闪光、手雷、诱饵弹 = `detonateTick`），且不晚于下一回合的 `startTick`（回合重置会清掉烟和火）。回合结束 10 秒以后才投出的道具（回合之间的暂停、重开）不属于任何回合，不收录。这两条在解析时和每次读取回放时都会执行，早先存下的回放读出来也一样。`throwerSide` 按比分摘要同一条阵营规则取该回合的阵营。
 - 抽取失败（例如 demo 没有投掷物数据）只让对应字段为空，不算解析失败；v2 回放缺数据时 `diagnostics.degradedFields` 含 `utility` / `playerStates`，`diagnostics.utilityCount`、`diagnostics.playerStateCount` 给出条数。
-- v1 回放照常加载：`playerStates: {}`、`utility: []`，前端隐藏依赖它们的部分；worker 空闲时在后台把已完成的 v1 比赛重新解析成 v2（状态保持 `completed`，教练建议和评价原样保留，不重新分析）。
+- v1 回放照常加载：`playerStates: {}`、`utility: []`，前端隐藏依赖它们的部分；worker 空闲时在后台把已完成的 v1 比赛重新解析成 v2（状态保持 `completed`；这一步不重新分析，建议和评价原样保留，建议之后由后台的建议重算按 `COACHING_RULES_VERSION` 单独更新，见下方“建议事件的结构化上下文”）。
 - 数据都来自上传的 `.dem`，与位置数据同属一类，随比赛一起删除。Mirage 样例从 23.2 MB 增至 25.6 MB（+10%）。
+
+### 建议事件的结构化上下文（`structured_context_json`）
+
+`GET /demos/{demo_id}/coaching` 的每条事件带 `structured_context_json`：通用字段（`ruleId`、`involvedPlayerIds`、`evidenceTicks`、`targetPlayerId`、`action`、`limitation`，用到解析事件时还有 `relatedEventIds`）加上各规则自己的依据。规则版本 `coaching_rules_v2`（`backend/app/analysis/version.py` 的 `COACHING_RULES_VERSION`）新增了下列字段。它们都是**可选**的：旧版规则生成、还没重算的事件没有这些字段，数据不足时也会省略（不猜），读取方按缺失处理。
+
+| 字段 | 出现在 | 含义 |
+| --- | --- | --- |
+| `extraReasons` | 阵亡卡片 | 同一次阵亡的附加原因，见下文。不参与事件 id 的生成 |
+| `impact` | 阵亡卡片 | 这次阵亡对回合的影响，见下文 |
+| `weapon` | 阵亡卡片 | 击杀用的武器，原样取回放里该击杀事件存的字符串 |
+| `attackerName` | 阵亡卡片 | 击杀者昵称（`untraded_death` 原本就有；`isolated_entry` 卡片现在也带） |
+| `durationSeconds` | `poor_spacing`（`spacingType: "stacked"`） | 两人站位过近持续的秒数 |
+| `stackedMultikill` | `poor_spacing`（`spacingType: "stacked"`） | `true`：没有持续满 3 秒，但这两人在 3 秒内被同一名敌人先后击杀，因此触发；同时带 `multikillAttackerId`（那名敌人的 id），有名字时还有 `multikillAttackerName`。已经持续满 3 秒的卡片不带这三个字段 |
+| `tBuyKind` | `weak_utility_before_execute` | T 方这一回合的经济类型（`pistol` / `full` / `force` / `half` / `eco`），与回合条的经济类型是同一判定（`backend/app/analysis/round_economy.py` 移植自 `frontend/lib/round-economy.ts`）；判定不出来时省略该字段。T 方整回合一个道具都没用时，这条规则现在也会报，只有 ECO 回合不报 |
+
+**阵亡卡片**：每次阵亡最多一张卡。有 `untraded_death` 时它就是这张卡；没有时，`isolated_entry` 是这张卡。同一次阵亡按击杀事件的 id（`relatedEventIds`）对应。
+
+`extraReasons` 每项都带 `ruleId` 和 `tick`：
+
+```json
+[
+  {"ruleId": "poor_spacing", "spacingType": "too_far", "distance": 1430, "durationSeconds": 4.5, "tick": 51200},
+  {"ruleId": "isolated_entry", "distance": 1120, "tick": 51840}
+]
+```
+
+- `poor_spacing` / `too_far`：阵亡者有一段站位过远，并且这段和阵亡前 5 秒有重叠。站位过远指：冻结时间结束 15 秒之后的采样里，他是本方离队友最远的人，离最近的存活队友不少于 `poor_spacing_max_distance`，连续至少 3 秒；T、CT 都算。`distance` 是这段开始时他与最近存活队友的距离（世界单位，取整），`durationSeconds` 是这段的长度，`tick` 是这段的开始。站位过远不再单独出卡片，只作为阵亡卡片的附加原因。
+- `isolated_entry`：同一次阵亡同时满足孤立进场时，它并入 `untraded_death` 卡片，不再单独出卡片。
+
+`impact`：
+
+```json
+{
+  "roundLost": true,
+  "firstDeath": true,
+  "aliveBefore": {"own": 4, "enemy": 4},
+  "aliveAfter": {"own": 3, "enemy": 4},
+  "manDisadvantage": true
+}
+```
+
+- `roundLost`：阵亡者一方输掉了这一回合；回合胜方未知时为 `null`。回合没有 `winnerReason`（例如 demo 在这一回合结束前截断）时视为胜方未知，即使回放里的 `winnerSide` 被补成了 `CT`。
+- `firstDeath`：这一回合的第一个阵亡。
+- `aliveBefore`：阵亡 tick 之前最后一帧里双方的存活人数（`own` 是阵亡者一方）；`aliveAfter` 为 `own` 减一、`enemy` 不变。
+- `manDisadvantage`：阵亡前人数不少于对方，阵亡后少于对方。
+
+旧比赛在重算之前，或重算失败、尝试次数用完的比赛，仍可能有已不再生成的事件：`late_post_plant_utility`、单独的 `poor_spacing`（`spacingType: "too_far"`）等，前端照常显示。
 
 ### Parser failure taxonomy
 

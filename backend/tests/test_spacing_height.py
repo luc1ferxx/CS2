@@ -4,7 +4,11 @@ import json
 import unittest
 from pathlib import Path
 
-from app.analysis.rules import RuleConfig, find_poor_spacing
+from app.analysis.rules import RuleConfig, find_poor_spacing, scan_spacing_stretches
+
+# Stacked cards need the pair to hold for poor_spacing_min_duration_seconds (3 s);
+# the samples repeat the same positions every second for exactly that long.
+STRETCH_OFFSETS = (0, 64, 128, 192)
 
 
 class StackedHeightEvidenceTest(unittest.TestCase):
@@ -18,7 +22,10 @@ class StackedHeightEvidenceTest(unittest.TestCase):
         return {
             "demoId": "height-regression", "mapName": map_name, "tickRate": 64, "players": players,
             "rounds": [{"roundNumber": round_number, "startTick": 0, "freezeEndTick": 0, "endTick": tick + 320}],
-            "frames": [{"tick": tick, "roundNumber": round_number, "players": players}], "kills": [],
+            "frames": [
+                {"tick": tick + offset, "roundNumber": round_number, "players": players} for offset in STRETCH_OFFSETS
+            ],
+            "kills": [],
         }
 
     def flat_pair(self, difference=0):
@@ -97,12 +104,14 @@ class StackedHeightEvidenceTest(unittest.TestCase):
     def test_height_filter_does_not_change_far_spacing(self):
         pair = self.flat_pair(300)
         pair[1]["x"] = 90
-        events = find_poor_spacing(self.sample_replay(pair))
-        self.assertEqual(len(events), 1)
-        self.assertEqual(events[0]["structured_context_json"]["spacingType"], "too_far")
-        self.assertNotIn("verticalDistanceWorldUnits", events[0]["structured_context_json"])
-        self.assertIn("route and timing for a trade", events[0]["structured_context_json"]["action"])
-        self.assertNotIn("leave enough room", events[0]["structured_context_json"]["action"])
+        replay = self.sample_replay(pair)
+        # too_far is never a card of its own; the stretch only becomes a reason on a death card.
+        self.assertEqual(find_poor_spacing(replay), [])
+        stretches = scan_spacing_stretches(replay)
+        self.assertEqual([stretch.spacing_type for stretch in stretches], ["too_far"])
+        self.assertEqual(stretches[0].focus_id, "two")
+        self.assertIsNone(stretches[0].vertical_distance)
+        self.assertEqual(stretches[0].last_tick - stretches[0].start_tick, 192)
 
 
 if __name__ == "__main__":

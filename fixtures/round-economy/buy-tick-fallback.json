@@ -1,0 +1,59 @@
+{
+  "name": "buy-tick-fallback",
+  "description": "freezeEndTick outside [startTick, endTick]: the buy is read at the first frame tick at or after startTick + 20 s (1280 ticks at 64 tick): round 2 reads frame tick 21300; with no frame that late it is that tick itself (round 3: 31280), capped at endTick (round 4: 41000). Team A's real buy lands just before each of those ticks; team B keeps its early state.",
+  "replay": {
+    "tickRate": 64,
+    "rounds": [
+      {"roundNumber": 2, "startTick": 20000, "freezeEndTick": 25100, "endTick": 25000, "winnerSide": "T"},
+      {"roundNumber": 3, "startTick": 30000, "freezeEndTick": 29950, "endTick": 35000, "winnerSide": "T"},
+      {"roundNumber": 4, "startTick": 40000, "freezeEndTick": 39950, "endTick": 41000, "winnerSide": "T"}
+    ],
+    "frames": [
+      {"tick": 20100, "roundNumber": 2, "players": [{"id": "a1", "side": "T"}, {"id": "a2", "side": "T"}, {"id": "b1", "side": "CT"}, {"id": "b2", "side": "CT"}]},
+      {"tick": 21300, "roundNumber": 2, "players": [{"id": "a1", "side": "T"}, {"id": "a2", "side": "T"}, {"id": "b1", "side": "CT"}, {"id": "b2", "side": "CT"}]},
+      {"tick": 23000, "roundNumber": 2, "players": [{"id": "a1", "side": "T"}, {"id": "a2", "side": "T"}, {"id": "b1", "side": "CT"}, {"id": "b2", "side": "CT"}]},
+      {"tick": 30100, "roundNumber": 3, "players": [{"id": "a1", "side": "T"}, {"id": "a2", "side": "T"}, {"id": "b1", "side": "CT"}, {"id": "b2", "side": "CT"}]},
+      {"tick": 40100, "roundNumber": 4, "players": [{"id": "a1", "side": "T"}, {"id": "a2", "side": "T"}, {"id": "b1", "side": "CT"}, {"id": "b2", "side": "CT"}]},
+      {"tick": 40900, "roundNumber": 4, "players": [{"id": "a1", "side": "T"}, {"id": "a2", "side": "T"}, {"id": "b1", "side": "CT"}, {"id": "b2", "side": "CT"}]}
+    ],
+    "events": [],
+    "playerStates": {
+      "b1": [
+        {"tick": 20200, "money": 3000, "equipValue": 800}
+      ],
+      "b2": [
+        {"tick": 20200, "money": 3000, "equipValue": 800}
+      ],
+      "a1": [
+        {"tick": 20200, "money": 3000, "equipValue": 800},
+        {"tick": 21290, "money": 300, "equipValue": 4500},
+        {"tick": 30200, "money": 2900, "equipValue": 800},
+        {"tick": 31280, "money": 200, "equipValue": 4400},
+        {"tick": 40200, "money": 2800, "equipValue": 800},
+        {"tick": 41000, "money": 100, "equipValue": 4300}
+      ],
+      "a2": [
+        {"tick": 20200, "money": 3000, "equipValue": 800},
+        {"tick": 21290, "money": 300, "equipValue": 4500},
+        {"tick": 30200, "money": 2900, "equipValue": 800},
+        {"tick": 31280, "money": 200, "equipValue": 4400},
+        {"tick": 40200, "money": 2800, "equipValue": 800},
+        {"tick": 41000, "money": 100, "equipValue": 4300}
+      ]
+    }
+  },
+  "expected": [
+    { "roundNumber": 2, "freezeEndTick": 21300, "teams": [
+      {"teamKey": "A", "side": "T", "equipValue": 9000, "money": 600, "players": 2, "kind": "full", "won": true},
+      {"teamKey": "B", "side": "CT", "equipValue": 1600, "money": 6000, "players": 2, "kind": "eco", "won": false}
+    ] },
+    { "roundNumber": 3, "freezeEndTick": 31280, "teams": [
+      {"teamKey": "A", "side": "T", "equipValue": 8800, "money": 400, "players": 2, "kind": "full", "won": true},
+      {"teamKey": "B", "side": "CT", "equipValue": 1600, "money": 6000, "players": 2, "kind": "eco", "won": false}
+    ] },
+    { "roundNumber": 4, "freezeEndTick": 41000, "teams": [
+      {"teamKey": "A", "side": "T", "equipValue": 8600, "money": 200, "players": 2, "kind": "full", "won": true},
+      {"teamKey": "B", "side": "CT", "equipValue": 1600, "money": 6000, "players": 2, "kind": "eco", "won": false}
+    ] }
+  ]
+}
