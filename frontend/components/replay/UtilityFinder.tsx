@@ -3,6 +3,7 @@
 import { memo, useCallback, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 
 import { teamDisplayName } from "@/components/replay/MatchScoreBanner";
+import { RadarGraticule } from "@/components/replay/RadarGraticule";
 import { UTILITY_ICONS } from "@/components/replay/UtilityLayer";
 import {
   getTacticalMapPresentation,
@@ -209,8 +210,11 @@ export const UtilityFinder = memo(function UtilityFinder({
           onPointerCancel={cancelDrag}
         >
           {floor.radarImagePath ? (
-            <image className="map-radar-image" href={floor.radarImagePath} x="0" y="0" width="100" height="100"
-              preserveAspectRatio="none" />
+            <>
+              <image className="map-radar-image" href={floor.radarImagePath} x="0" y="0" width="100" height="100"
+                preserveAspectRatio="none" />
+              <RadarGraticule />
+            </>
           ) : (
             <rect className="utility-finder-fallback" x="0" y="0" width="100" height="100" />
           )}

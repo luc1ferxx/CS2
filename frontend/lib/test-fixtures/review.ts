@@ -2,7 +2,7 @@
 // complete, valid object with the smallest realistic content, and takes
 // overrides so a test states only what it cares about.
 import type { RenderJobStatus, RenderWorkerStatus } from "@/lib/api";
-import type { CoachingEvent } from "@/types/coaching";
+import type { CoachingDeathImpact, CoachingEvent, CoachingExtraReason } from "@/types/coaching";
 import type { DemoIngestionStatus, DemoStatus, DemoSummary } from "@/types/demo";
 import type { ReplayData, ReplayFrame, ReplayPlayer, ReplayRound, ReplayVideo } from "@/types/replay";
 
@@ -156,6 +156,58 @@ export function coachingEvent(overrides: Partial<CoachingEvent> = {}): CoachingE
     created_at: FIXTURE_TIME,
     ...overrides
   };
+}
+
+// A death card as coaching_rules_v2 stores it: the analyzer's death impact, the
+// kill's weapon string and the other rules folded into this death. Context
+// overrides merge into the default context.
+export function deathCoachingEvent(
+  overrides: Partial<CoachingEvent> = {},
+  context: Record<string, unknown> = {}
+): CoachingEvent {
+  const impact: CoachingDeathImpact = {
+    roundLost: true,
+    firstDeath: true,
+    aliveBefore: { own: 4, enemy: 4 },
+    aliveAfter: { own: 3, enemy: 4 },
+    manDisadvantage: true
+  };
+  const extraReasons: CoachingExtraReason[] = [
+    { ruleId: "poor_spacing", spacingType: "too_far", distance: 1240, durationSeconds: 4.5, tick: 300 }
+  ];
+  return coachingEvent({
+    id: "death-1",
+    title: "Review an untraded death",
+    message: "T Entry died; the recorded killer was not killed by a teammate within 5 seconds.",
+    structured_context_json: {
+      ruleId: "untraded_death",
+      attackerName: "CT Anchor",
+      windowSeconds: 5,
+      weapon: "ak47",
+      relatedEventIds: ["kill-400-76561198000000002-76561198000000001"],
+      impact,
+      extraReasons,
+      ...context
+    },
+    ...overrides
+  });
+}
+
+// A stacked poor_spacing card with the stretch length the v2 analyzer records.
+export function stackedSpacingEvent(
+  overrides: Partial<CoachingEvent> = {},
+  context: Record<string, unknown> = {}
+): CoachingEvent {
+  return coachingEvent({
+    id: "stacked-1",
+    severity: "low",
+    title: "Review close teammate spacing",
+    message: "Two teammates stayed close together.",
+    structured_context_json: {
+      ruleId: "poor_spacing", spacingType: "stacked", minPairDistance: 88.4, durationSeconds: 3.5, ...context
+    },
+    ...overrides
+  });
 }
 
 export function renderJob(overrides: Partial<RenderJobStatus> = {}): RenderJobStatus {

@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { CoachingPanel } from "@/components/coaching/CoachingPanel";
 import { coachingCopy } from "@/lib/coaching-copy";
-import { coachingEvent, replayPlayers, replayRounds } from "@/lib/test-fixtures/review";
+import { coachingEvent, deathCoachingEvent, replayPlayers, replayRounds } from "@/lib/test-fixtures/review";
 import type { CoachingEvent } from "@/types/coaching";
 
 // Wraps the real helper so a test can count how often cards render.
@@ -216,11 +216,117 @@ describe("CoachingPanel", () => {
     expect(within(card).getByRole("group", { name: /这条建议是否有帮助/ })).not.toHaveAttribute("aria-busy");
   });
 
+  it("asks for a reload with no re-send when the save says the suggestion is gone", async () => {
+    const user = userEvent.setup();
+    const onFeedback = vi.fn().mockResolvedValueOnce("stale").mockRejectedValueOnce({ status: 404 });
+    renderPanel([untradedLate, entryMiddle], { onFeedback });
+
+    await user.click(within(cardFor(untradedLate)).getByRole("button", { name: "有帮助" }));
+    expect(await within(cardFor(untradedLate)).findByText("建议已按新规则更新，请刷新页面")).toBeInTheDocument();
+    expect(within(cardFor(untradedLate)).queryByRole("button", { name: "重新保存" })).not.toBeInTheDocument();
+
+    // A rejected 404 means the same.
+    await user.click(within(cardFor(entryMiddle)).getByRole("button", { name: "无关" }));
+    expect(await within(cardFor(entryMiddle)).findByText("建议已按新规则更新，请刷新页面")).toBeInTheDocument();
+  });
+
   it("shows no save note for a handler that returns nothing", async () => {
     const user = userEvent.setup();
     renderPanel([untradedLate]);
 
     await user.click(within(cardFor(untradedLate)).getByRole("button", { name: "有帮助" }));
     expect(within(cardFor(untradedLate)).getByRole("status")).toBeEmptyDOMElement();
+  });
+});
+
+describe("CoachingPanel 本场最值得回看", () => {
+  // Seven suggestions for the reviewed player; the importance order is e, b, c, d, a, then f and g.
+  const death = (id: string, round: number, tick: number, impact: Record<string, unknown>) =>
+    deathCoachingEvent({ id, round_number: round, tick_start: tick, tick_end: tick }, { impact, extraReasons: [] });
+  const a = death("a", 1, 200, { roundLost: false, firstDeath: false, manDisadvantage: false });
+  const b = death("b", 2, 1200, { roundLost: true });
+  const c = death("c", 3, 3200, { roundLost: false, firstDeath: true });
+  const d = death("d", 3, 3400, { roundLost: false, manDisadvantage: true });
+  const e = death("e", 4, 4200, { roundLost: true, firstDeath: true });
+  const f = coachingEvent({ id: "f", tick_start: 300, tick_end: 300, severity: "low",
+    structured_context_json: { ruleId: "poor_spacing", spacingType: "stacked", minPairDistance: 80 } });
+  const g = coachingEvent({ id: "g", round_number: 2, tick_start: 1300, tick_end: 1300, severity: "medium",
+    structured_context_json: { ruleId: "retake_desync", nearbyCount: 2, windowSeconds: 3 } });
+  const seven = [a, b, c, d, e, f, g];
+
+  const block = () => screen.queryByRole("region", { name: "本场最值得回看" });
+  const ids = (container: HTMLElement | Document = document) =>
+    Array.from(container.querySelectorAll("article"), (card) => card.id.replace("coaching-event-", ""));
+
+  async function showAllRounds(user: ReturnType<typeof userEvent.setup>) {
+    await user.click(screen.getByRole("button", { name: /^全部回合/ }));
+  }
+
+  it("leads 全部回合 with the five most important suggestions and lists only the rest by round", async () => {
+    const user = userEvent.setup();
+    renderPanel(seven);
+    expect(block()).not.toBeInTheDocument();
+
+    await showAllRounds(user);
+    const top = block() as HTMLElement;
+    expect(within(top).getByText("本场最值得回看")).toBeInTheDocument();
+    expect(within(top).getByText("按回合输赢、首个阵亡、人数劣势排序")).toBeInTheDocument();
+    expect(ids(top)).toEqual(["e", "b", "c", "d", "a"]);
+    // Cards out of their round group name the round above the clock.
+    expect(top.querySelector(".coaching-feed-round")).toHaveTextContent("第 4 回合");
+
+    // Rounds 3 and 4 had only top suggestions; rounds 1 and 2 keep the rest, one card each.
+    expect(screen.queryByRole("button", { name: /第 3 回合/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /第 4 回合/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /第 1 回合/ })).toHaveTextContent("1 条建议");
+    await user.click(screen.getByRole("button", { name: /第 2 回合/ }));
+    expect(ids(screen.getByRole("region", { name: "第 1 回合建议" }))).toEqual(["f"]);
+    expect(ids(screen.getByRole("region", { name: "第 2 回合建议" }))).toEqual(["g"]);
+
+    // Every suggestion once: the page finds cards by id for P/N and 返回建议.
+    expect(ids().sort()).toEqual(["a", "b", "c", "d", "e", "f", "g"]);
+    // The totals elsewhere still count every suggestion.
+    expect(screen.getByRole("button", { name: /^全部回合/ })).toHaveTextContent("全部回合 7 条");
+    expect(screen.getByText("已评价 0/7")).toBeInTheDocument();
+  });
+
+  it("seeks, rates and highlights from a card in the block like from any other card", async () => {
+    const user = userEvent.setup();
+    const panel = renderPanel(seven, { currentTick: undefined, activeEventIds: new Set(["b"]) });
+    await showAllRounds(user);
+    const top = block() as HTMLElement;
+
+    await user.click(within(top).getAllByRole("button", { name: /^查看这一刻/ })[0]);
+    expect(panel.onSeek).toHaveBeenCalledWith(4200, "e", "card");
+    expect(cardFor(b)).toHaveClass("active");
+    expect(top).toContainElement(cardFor(b));
+
+    await user.click(within(cardFor(c)).getByRole("button", { name: "判断不足" }));
+    expect(panel.onFeedback).toHaveBeenCalledWith(c, "unsure");
+  });
+
+  it("stays out of 当前回合, of a player with five suggestions or fewer, and of any filter or search", async () => {
+    const user = userEvent.setup();
+    const five = renderPanel(seven.slice(0, 5));
+    await showAllRounds(user);
+    expect(block()).not.toBeInTheDocument();
+    five.rerender({ events: seven });
+    expect(block()).toBeInTheDocument();
+
+    await user.click(screen.getByText("筛选建议"));
+    await user.type(screen.getByRole("textbox", { name: "搜索建议" }), "CT Anchor");
+    expect(block()).not.toBeInTheDocument();
+    expect(ids().length).toBeGreaterThan(0);
+    await user.click(screen.getAllByRole("button", { name: "清除筛选" })[0]);
+    expect(block()).toBeInTheDocument();
+
+    await user.selectOptions(screen.getByRole("combobox", { name: "建议类型" }), "poor_spacing");
+    expect(block()).not.toBeInTheDocument();
+    expect(ids()).toEqual(["f"]);
+    await user.click(screen.getAllByRole("button", { name: "清除筛选" })[0]);
+
+    await user.click(screen.getByRole("button", { name: /^当前回合/ }));
+    expect(block()).not.toBeInTheDocument();
+    expect(ids().sort()).toEqual(["a", "f"]);
   });
 });

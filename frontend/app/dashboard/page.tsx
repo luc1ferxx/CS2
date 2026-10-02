@@ -839,7 +839,7 @@ function DashboardContent() {
           }}
         >
           <summary className="panel-bar lib-head">
-            <span className="lib-head-name">Steam 比赛记录</span>
+            <span className="panel-bar-title">Steam 比赛记录</span>
             <span className="lib-steam-note">当前版本暂不支持自动导入，请手动上传 .dem</span>
             <span className="lib-steam-toggle" aria-hidden="true" />
           </summary>

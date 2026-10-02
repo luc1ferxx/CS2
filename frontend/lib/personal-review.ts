@@ -1,5 +1,5 @@
 import type { AuthAccount } from "@/lib/auth";
-import { compareFindingPriority, isPriorityFinding } from "@/lib/coaching-review";
+import { compareImportance, isPriorityFinding } from "@/lib/coaching-review";
 import type { CoachingEvent } from "@/types/coaching";
 import type { ReplayEvent, ReplayPlayer } from "@/types/replay";
 
@@ -178,8 +178,9 @@ export function personalReviewSummary(events: CoachingEvent[], playerId: string 
     findingCount: findings.length,
     priorityCount: findings.filter(isPriorityFinding).length,
     roundCount: new Set(findings.map((event) => event.round_number)).size,
+    // The first card of the importance order (本场最值得回看), so the button and the block agree.
     topFinding: findings.reduce<CoachingEvent | null>(
-      (best, event) => (best === null || compareFindingPriority(event, best) < 0 ? event : best),
+      (best, event) => (best === null || compareImportance(event, best) < 0 ? event : best),
       null
     )
   };

@@ -27,7 +27,7 @@
 
 /* === B2: coaching === moved into the "V-B2" section at the end of this file. */
 
-/* === S8 V-LIB: library, upload, Steam import (spec S8 数据站风) ===
+/* === S8 V-LIB: library, upload, Steam import (spec S8 数据站风, recoloured S13 战术终端) ===
    One panel "我的比赛（N 场）": the header bar holds the one primary button, the toolbar
    sits under it, then the ledger as a dense zebra table. Panel, buttons, inputs, status
    text, notices, menus and zebra rows are the shared primitives (globals.css "S8 FOUNDATION"). */
@@ -40,7 +40,8 @@
 /* Header bar: 我的比赛（N 场）, then what is still running, then 示例比赛 / 上传 .dem on the right. */
 .lib-head { justify-content: flex-start; }
 .lib-count { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 12px; margin: 0 0 0 -12px; font-variant-numeric: tabular-nums; }
-.lib-count > span:first-child { color: var(--ink); font-size: var(--step-md); font-weight: 700; }
+/* "（9 场）" finishes the title, so it takes the title's amber. */
+.lib-count > span:first-child { color: var(--accent); font-size: var(--step-md); font-weight: 600; }
 .lib-count-failed { color: var(--danger-text); }
 .lib-upload-hint { color: var(--ink-2); font-size: var(--step-sm); }
 /* A spent quota is a limit, not an error: neutral text under the bar. */
@@ -53,7 +54,7 @@
 .lib-filters, .lib-help, .lib-menu { position: relative; }
 :is(.lib-filters, .lib-help, .lib-menu, .lib-steam) > summary { list-style: none; cursor: pointer; }
 :is(.lib-filters, .lib-help, .lib-menu, .lib-steam) > summary::-webkit-details-marker { display: none; }
-.lib-filters-on { color: var(--link); }
+.lib-filters-on { color: var(--accent); }
 /* 筛选与排序 matches the search box and map select beside it. */
 .lib-toolbar .compact-button:not(.text-button) { min-height: 28px; }
 .lib-filter-pop { position: absolute; top: calc(100% + 4px); left: 0; z-index: 40; display: grid; gap: 10px; width: 280px; padding: 10px 12px 12px; }
@@ -64,17 +65,26 @@
 .lib-check { display: flex; align-items: center; gap: 6px; }
 .lib-filter-pop > .text-button { justify-self: start; }
 .lib-toolbar-end { display: flex; align-items: center; gap: 16px; margin-left: auto; }
-.lib-help > summary { color: var(--link); }
-.lib-help > summary:hover { color: var(--link-hover); text-decoration: underline; }
+/* Summaries that act as text links get the link look: bright ink on a thin amber underline. */
+:is(.lib-help > summary, .lib-steam-toggle) { color: var(--link); text-decoration: underline 1px var(--accent); text-underline-offset: 3px; }
+.lib-help > summary:hover,
+.lib-steam > .lib-head:hover .lib-steam-toggle { color: var(--link-hover); }
 .lib-help ul { display: grid; gap: 4px; max-width: 64ch; margin: 4px 0 0; padding-left: 18px; color: var(--ink-2); }
 .lib-help-pop ul { position: absolute; top: calc(100% + 4px); right: 0; z-index: 40; width: min(440px, calc(100vw - 24px)); margin: 0; padding: 8px 12px 8px 28px; color: var(--ink); }
 
 /* Ledger: column heads, then zebra rows (.data-rows). Numbers right-aligned and tabular. */
 .lib-table { position: relative; }
 /* The name column stops at 440 px so the facts sit near it; the spare width goes to the status. */
-.lib-row { position: relative; display: grid; grid-template-columns: 26px minmax(0, 440px) 90px 48px 64px 104px minmax(140px, 1fr) 118px; column-gap: 12px; align-items: center; min-height: 36px; padding: 3px 10px; }
+.lib-row { position: relative; display: grid; grid-template-columns: 26px minmax(0, 440px) 90px 64px 48px 64px 104px minmax(140px, 1fr) 118px; column-gap: 12px; align-items: center; min-height: 36px; padding: 3px 10px; }
 .lib-row-head { min-height: 28px; padding-block: 0; border-bottom: 1px solid var(--line-bold); color: var(--ink-2); font-size: var(--step-sm); }
 .lib-row .c-num { text-align: right; }
+/* The final score after the map, the colon lined up down the column; the winner in bright ink. */
+.lib-row .c-score { text-align: right; }
+.lib-score { display: inline-grid; grid-template-columns: 2.2ch auto 2.2ch; column-gap: 3px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.lib-score > :first-child { text-align: right; }
+.lib-score > :last-child { text-align: left; }
+.lib-score > b { color: var(--ink); font-weight: 600; }
+.lib-score > span { color: var(--ink-2); }
 .lib-row :is(.c-map, .c-date) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .lib-row .c-date { padding-left: 12px; color: var(--ink-2); }
 .lib-row-head .c-date { color: inherit; }
@@ -83,8 +93,15 @@
 .lib-thumb { width: 26px; height: 26px; border-radius: var(--radius-control); background: var(--radar-bg) center / cover no-repeat; }
 .lib-name { display: grid; min-width: 0; line-height: 1.35; }
 .lib-name > a,
-.lib-name-text { overflow: hidden; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+.lib-name-text { overflow: hidden; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
 .lib-name-text { color: var(--ink); }
+/* Every row has two links; the 进入复盘 column carries the underline, the name shows its own on hover.
+   A column of nine amber lines would dilute the amber, so 进入复盘 rests on a neutral control-line
+   underline and turns amber on the row under the pointer or on focus. */
+.lib-name > a { text-decoration: none; }
+.lib-name > a:hover { text-decoration: underline 1px var(--accent); text-underline-offset: 3px; }
+.lib-enter { text-decoration-color: var(--control-line); }
+:is(.lib-row:hover, .lib-row:focus-within) .lib-enter { text-decoration-color: var(--accent); }
 .lib-file { display: flex; gap: 10px; min-width: 0; color: var(--ink-3); font-size: var(--step-sm); white-space: nowrap; }
 .lib-file > span { overflow: hidden; text-overflow: ellipsis; }
 .lib-archived { flex: none; color: var(--ink-2); }
@@ -93,7 +110,7 @@
 .lib-video { color: var(--ink-2); font-size: var(--step-sm); }
 .lib-reason { flex-basis: 100%; margin: 0; color: var(--ink-2); font-size: var(--step-sm); line-height: 1.4; }
 .lib-row .c-actions { display: flex; align-items: center; justify-content: flex-end; gap: 12px; white-space: nowrap; }
-.lib-menu[open] > summary { background: var(--row-alt); }
+.lib-menu[open] > summary { border-color: var(--accent); background: var(--row-hover); }
 .lib-menu-items { position: absolute; top: calc(100% + 3px); right: 0; z-index: 20; display: grid; min-width: 140px; padding: 3px 0; }
 .lib-menu-items .menu-item { width: 100%; }
 .lib-row:has(.lib-menu[open]) { z-index: 30; }
@@ -101,13 +118,20 @@
 .lib-rename input { flex: 1; min-width: 0; }
 .lib-rename-error { margin: 2px 0 0; color: var(--danger-text); font-size: var(--step-sm); }
 
-/* Upload in progress: a ledger row with a thin blue track; verifying holds it full. */
+/* Upload in progress: the live row is the current item (selected tint, 2 px amber mark)
+   with a segmented meter (10 blocks, 1 px gaps; the mask cuts the fill and the empty
+   track alike); verifying holds it full in steel. */
+.lib-rows > .lib-row.is-uploading { background: var(--row-selected); box-shadow: inset 2px 0 0 var(--accent); }
 .lib-progress-facts { display: flex; flex-wrap: wrap; gap: 0 10px; color: var(--ink-2); font-size: var(--step-sm); font-variant-numeric: tabular-nums; }
 .lib-progress-pct { color: var(--ink); }
-.lib-progress { height: 3px; margin: 2px 0 1px; overflow: hidden; background: var(--line-subtle); }
-.lib-progress > span { display: block; height: 100%; background: var(--link); transition: width var(--motion); }
+.lib-progress {
+  height: 6px; margin: 3px 0 1px; overflow: hidden; background: var(--line-bold);
+  -webkit-mask: repeating-linear-gradient(90deg, #000 0 calc(10% - 1px), transparent calc(10% - 1px) 10%);
+  mask: repeating-linear-gradient(90deg, #000 0 calc(10% - 1px), transparent calc(10% - 1px) 10%);
+}
+.lib-progress > span { display: block; height: 100%; background: var(--accent); transition: width var(--motion); }
 .lib-progress.verifying > span { background: var(--ink-3); }
-.lib-drop { position: absolute; inset: 0; z-index: 35; display: grid; place-items: center; border: 2px dashed var(--link); background: var(--row-selected); color: var(--link-hover); font-weight: 700; pointer-events: none; }
+.lib-drop { position: absolute; inset: 0; z-index: 35; display: grid; place-items: center; border: 2px dashed var(--accent); background: var(--panel); color: var(--accent); font-size: var(--step-md); font-weight: 600; pointer-events: none; }
 .lib-rows > .lib-skel-row { background: none; pointer-events: none; }
 .lib-skel-row .skeleton-bar { display: block; width: 70%; }
 .lib-skel-row .c-name .skeleton-bar { width: 40%; }
@@ -116,21 +140,21 @@
 
 /* Empty, fetch-failed and no-result states: a plain paragraph and links inside the panel. */
 .lib-empty { display: grid; justify-items: start; gap: 6px; padding: 12px 12px 14px; }
+.lib-empty > strong { font-size: var(--step-md); font-weight: 600; }
 .lib-empty > p { max-width: 72ch; margin: 0; color: var(--ink-2); }
-.lib-empty.is-error { border-left: 3px solid var(--danger); }
+/* Fetch failed: an error notice inset in the panel, so its red mark stands apart from the amber edge. */
+.lib-empty.is-error { margin: 10px 12px 12px; padding: 2px 0 2px 10px; border-left: 3px solid var(--danger); }
 .lib-empty-actions { display: flex; flex-wrap: wrap; gap: 4px 18px; }
 
 /* Steam import: a normal panel whose header bar is the disclosure, collapsed by default. */
-.lib-steam > .lib-head { border-bottom-color: transparent; border-radius: 2px; }
-.lib-steam[open] > .lib-head { border-bottom-color: var(--line-bold); border-radius: 2px 2px 0 0; }
-.lib-head-name { font-size: var(--step-md); font-weight: 700; }
+.lib-steam > .lib-head { border-bottom-color: transparent; }
+.lib-steam[open] > .lib-head { border-bottom-color: var(--line-subtle); }
 .lib-steam-note { color: var(--ink-2); font-size: var(--step-sm); }
-.lib-steam-toggle { margin-left: auto; color: var(--link); font-size: var(--step-sm); }
+.lib-steam-toggle { margin-left: auto; font-size: var(--step-sm); }
 .lib-steam-toggle::after { content: "展开"; }
 .lib-steam[open] .lib-steam-toggle::after { content: "收起"; }
-.lib-steam > .lib-head:hover .lib-steam-toggle { color: var(--link-hover); text-decoration: underline; }
 .stm-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; padding: 7px 10px; border-bottom: 1px solid var(--line-subtle); }
-.stm-bar h2 { margin: 0; font-size: var(--step-body); font-weight: 700; }
+.stm-bar h2 { margin: 0; font-size: var(--step-body); font-weight: 600; }
 .stm-state { color: var(--ink-2); white-space: nowrap; }
 .stm-state.ready { color: var(--ok-text); }
 .stm-state.danger { color: var(--danger-text); }
@@ -139,7 +163,8 @@
 .stm-message { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; margin: 8px 10px 0; }
 .stm-loading { margin: 0; padding: 10px; color: var(--ink-2); }
 .stm-layout { display: grid; grid-template-columns: minmax(240px, 320px) minmax(0, 1fr); gap: 12px 20px; padding: 10px; }
-.stm-sub { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 10px; margin: 0 0 6px; font-size: var(--step-body); font-weight: 700; }
+.stm-sub { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 10px; margin: 0 0 6px; font-size: var(--step-body); font-weight: 600; }
+:is(.stm-form-head, .stm-empty, .stm-match) strong { font-weight: 600; }
 .stm-sub > span { color: var(--ink-2); font-size: var(--step-sm); font-weight: 400; }
 .stm-facts { margin: 0; border-top: 1px solid var(--line-subtle); }
 .stm-facts > div { display: flex; justify-content: space-between; gap: 12px; padding: 4px 0; border-bottom: 1px solid var(--line-subtle); }
@@ -169,7 +194,7 @@
 
 /* Laptop: narrower fixed columns. */
 @media (max-width: 1100px) {
-  .lib-row { grid-template-columns: 26px minmax(0, 1fr) 76px 40px 60px 96px minmax(120px, 160px) 104px; column-gap: 10px; }
+  .lib-row { grid-template-columns: 26px minmax(0, 1fr) 76px 58px 40px 60px 96px minmax(120px, 160px) 104px; column-gap: 10px; }
 }
 /* Phone: stacked rows. Name (+ file name) and actions, then one meta line of labelled fields;
    the status joins that line only when it says something ("可以复盘" is the default, so it is
@@ -179,19 +204,27 @@
   .lib-row { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 12px; padding: 7px 8px 7px 44px; }
   .lib-row > .lib-thumb { position: absolute; top: 8px; left: 8px; }
   .lib-row > .c-name { flex: 1 1 calc(100% - 132px); min-width: 0; }
-  .lib-row > .c-actions { flex: none; margin-left: auto; }
-  .lib-row > :is(.c-map, .c-num, .c-date, .c-state) { order: 1; flex: none; text-align: left; }
+  /* Wide enough that name and actions fill the first line even when only the menu is there,
+     so the map never climbs up beside the menu. */
+  .lib-row > .c-actions { flex: none; min-width: 116px; margin-left: auto; }
+  .lib-row > :is(.c-map, .c-score, .c-num, .c-date, .c-state) { order: 1; flex: none; text-align: left; }
   .lib-row > .c-state { flex: 0 1 auto; }
+  .lib-row > .c-score.is-missing { display: none; }
+  .lib-score { display: inline; }
   .lib-row > .c-date { padding-left: 0; }
   .lib-row > :empty:not(.lib-thumb),
   .lib-row.is-composed > :is(.c-map, .c-rounds) { display: none; }
   .lib-row .lib-cell-label { position: static; width: auto; height: auto; margin-right: 4px; overflow: visible; clip: auto; color: var(--ink-2); }
   .lib-row .c-state > .status-text.ok,
-  .lib-row > .c-state:has(> .status-text.ok:only-child) { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  .lib-row > .c-state:has(> .status-text.ok:only-child),
+  .lib-row.is-uploading > .c-state { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
   .lib-name > a { white-space: normal; overflow-wrap: anywhere; }
   /* Controls that share a row share a height: 28 px, like the search box and the map select. */
   :is(.lib-head, .lib-row) .compact-button:not(.text-button) { min-height: 28px; }
   .lib-row .icon-button.compact-button { width: 28px; }
+  /* With progress or failures to report, the count stays beside the title and the buttons take their own line. */
+  .lib-head:has(.lib-count > span + span) > .lib-count { flex: 1 1 0; min-width: 0; }
+  .lib-head:has(.lib-count > span + span) > .panel-bar-actions { flex-basis: 100%; justify-content: flex-end; padding-bottom: 5px; }
   .lib-search { flex-basis: 100%; }
   .lib-toolbar .lib-select { min-width: 0; }
   .lib-toolbar-end { gap: 12px; }
@@ -214,23 +247,30 @@
 /* === V-B2 / S8 V-COACH: coaching column, personal review bar, saved clips, 高级工具 (spec S8 数据站风) === */
 /* Personal review: plain text at the right of the match header bar — who is being
    reviewed, how many to look at first, one secondary button and a text-link menu. */
+/* Part of the match header, not a panel of its own: no edge, no cut (its settings menu hangs below it). */
 .review-app .personal-review-panel { position: relative; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; min-width: 0; margin: 0; padding: 0; border: 0; border-radius: 0; background: none; box-shadow: none; }
+.review-app .personal-review-panel::after { content: none; }
 .review-app .personal-review-heading { display: flex; flex: 1 1 auto; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 4px 14px; min-width: 0; }
 .review-app .personal-review-heading > div { min-width: 0; }
 .review-app .personal-review-heading h2 { display: flex; align-items: baseline; gap: 6px; min-width: 0; margin: 0; color: var(--ink-2); font-family: var(--font-body); font-size: var(--step-body); font-weight: 400; line-height: var(--leading-tight); white-space: nowrap; }
 /* Nobody picked yet: the heading is the question the picker below answers. */
 .review-app .personal-review-panel:has(.personal-player-picker) .personal-review-heading { justify-content: flex-start; }
-.review-app .personal-review-panel:has(.personal-player-picker) .personal-review-heading h2 { color: var(--ink); font-weight: 700; white-space: normal; }
-.review-app .personal-review-name { min-width: 0; max-width: 20ch; overflow: hidden; color: var(--ink); font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+.review-app .personal-review-panel:has(.personal-player-picker) .personal-review-heading h2 { color: var(--ink); font-weight: 600; white-space: normal; }
+/* The reviewed player is amber wherever the page names them outside a kill line. */
+.review-app .personal-review-name { min-width: 0; max-width: 20ch; overflow: hidden; color: var(--accent); font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
 .review-app .personal-review-status { max-width: 68ch; margin: 2px 0 0; color: var(--ink-2); font-size: var(--step-sm); line-height: var(--leading-body); }
 .review-app .personal-review-metrics { display: flex; flex-wrap: wrap; gap: 2px 12px; color: var(--ink-2); font-size: var(--step-sm); font-variant-numeric: tabular-nums; }
 /* The match header already says "N 条建议"; the count stays for screen readers and tests' text. */
 .review-app .personal-review-metrics .personal-review-count { display: none; }
 .review-app .personal-first-finding { min-height: 24px; margin: 0; padding: 0 10px; font-size: var(--step-sm); }
 .review-app .personal-review-settings { position: static; }
-.review-app .personal-review-settings > summary { display: inline-flex; align-items: center; min-height: 26px; color: var(--link); font-size: var(--step-sm); cursor: pointer; list-style: none; }
+/* Summaries that act as text links follow the link rule: bright ink, a 1 px amber underline. */
+.review-app :is(.personal-review-settings, .coaching-filter-toggle, .coaching-technical-details, .clip-library-history) > summary,
+.review-app .personal-player-picker .personal-player-chip { color: var(--link); text-decoration: underline; text-decoration-color: var(--accent); text-decoration-thickness: 1px; text-underline-offset: 3px; }
+.review-app :is(.personal-review-settings, .coaching-filter-toggle, .coaching-technical-details, .clip-library-history) > summary:hover,
+.review-app .personal-player-picker .personal-player-chip:hover { color: var(--link-hover); }
+.review-app .personal-review-settings > summary { display: inline-flex; align-items: center; min-height: 26px; font-size: var(--step-sm); cursor: pointer; list-style: none; }
 .review-app .personal-review-settings > summary::-webkit-details-marker { display: none; }
-.review-app .personal-review-settings > summary:hover { color: var(--link-hover); text-decoration: underline; }
 /* The settings open as a menu under the bar, not as a new row pushing the page down. */
 .review-app .personal-review-popover { position: absolute; top: calc(100% + 4px); right: 0; z-index: 30; width: min(560px, calc(100vw - 16px)); padding: 10px 12px; text-align: left; }
 .review-app .personal-review-controls { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px 16px; margin: 0; padding: 0; border: 0; background: none; }
@@ -246,57 +286,61 @@
 .review-app .personal-player-select-row button { flex-shrink: 0; min-height: 28px; }
 .review-app .personal-review-popover > .personal-review-status { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line-subtle); font-size: var(--step-sm); }
 /* Player picker: a small two-row table, the side named in its tinted cell. */
-.review-app .personal-player-picker { flex-basis: 100%; display: grid; min-width: 0; margin-top: 4px; border: 1px solid var(--line-bold); border-radius: var(--radius-panel); background: var(--panel); text-align: left; }
+.review-app .personal-player-picker { flex-basis: 100%; display: grid; min-width: 0; margin-top: 4px; border: 1px solid var(--line-bold); border-radius: 0; background: var(--panel); text-align: left; }
 .review-app .personal-player-picker-side { display: grid; grid-template-columns: 88px minmax(0, 1fr); min-width: 0; }
 .review-app .personal-player-picker-side + .personal-player-picker-side { border-top: 1px solid var(--line-subtle); }
-.review-app .personal-player-picker-label { display: flex; align-items: center; padding: 6px 10px; font-size: var(--step-sm); font-weight: 700; }
+.review-app .personal-player-picker-label { display: flex; align-items: center; padding: 6px 10px; font-size: var(--step-sm); font-weight: 600; }
 .review-app .personal-player-picker-side.side-t .personal-player-picker-label { background: var(--t-soft); color: var(--t-text); }
 .review-app .personal-player-picker-side.side-ct .personal-player-picker-label { background: var(--ct-soft); color: var(--ct-text); }
 .review-app .personal-player-picker-chips { display: flex; flex-wrap: wrap; gap: 0 18px; min-width: 0; padding: 3px 10px; }
 /* Each name is a text link; the names that match a saved identity are bold. */
-.review-app .personal-player-picker .personal-player-chip { display: inline-flex; align-items: baseline; gap: 4px; max-width: 100%; min-height: 26px; padding: 0; overflow: hidden; border: 0; border-radius: 0; background: none; color: var(--link); font-family: var(--font-body); font-size: var(--step-body); font-weight: 400; line-height: 26px; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
-.review-app .personal-player-picker .personal-player-chip:hover { color: var(--link-hover); text-decoration: underline; }
-.review-app .personal-player-picker .personal-player-chip.active { font-weight: 700; }
+.review-app .personal-player-picker .personal-player-chip { display: inline-flex; align-items: baseline; gap: 4px; max-width: 100%; min-height: 26px; padding: 0; overflow: hidden; border: 0; border-radius: 0; background: none; font-family: var(--font-body); font-size: var(--step-body); font-weight: 400; line-height: 26px; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+.review-app .personal-player-picker .personal-player-chip.active { font-weight: 600; }
 .review-app .personal-player-chip small { color: var(--ink-3); font-size: var(--step-sm); font-variant-numeric: tabular-nums; }
 
 /* Coaching column: a .panel whose .panel-bar holds the round scope. */
 /* Sticky under the 40 px top bar with a 12 px gap; the panel ends where its rows end. */
 .review-app .coaching-panel { position: sticky; top: 52px; display: flex; flex-direction: column; width: auto; min-height: 0; max-height: calc(100dvh - 64px); overflow: hidden; }
-.review-app .coaching-panel .coaching-header { flex: none; flex-wrap: nowrap; padding-right: 8px; }
+/* The right padding keeps 全部回合 and its focus ring clear of the panel's 12 px corner cut. */
+.review-app .coaching-panel .coaching-header { flex: none; flex-wrap: nowrap; padding-right: 18px; }
 .review-app .coaching-count { font-variant-numeric: tabular-nums; }
 /* 当前回合 / 全部回合: two joined secondary buttons. */
 .review-app .coaching-panel .coaching-round-scope { display: inline-flex; margin: 0; padding: 0; border: 0; }
-.review-app .coaching-panel .coaching-round-scope button { min-height: 24px; margin: 0; padding: 0 8px; border: 1px solid var(--control-line); border-radius: 0; background: var(--panel); color: var(--ink); font-family: var(--font-body); font-size: var(--step-sm); font-weight: 400; white-space: nowrap; cursor: pointer; }
-.review-app .coaching-panel .coaching-round-scope button:first-child { border-radius: var(--radius-control) 0 0 var(--radius-control); }
-.review-app .coaching-panel .coaching-round-scope button + button { margin-left: -1px; border-radius: 0 var(--radius-control) var(--radius-control) 0; }
-.review-app .coaching-panel .coaching-round-scope button:hover { background: var(--row-alt); }
-.review-app .coaching-panel .coaching-round-scope button[aria-pressed="true"] { position: relative; border-color: var(--link); background: var(--row-selected); font-weight: 700; }
+.review-app .coaching-panel .coaching-round-scope button { min-height: 24px; margin: 0; padding: 0 8px; border: 1px solid var(--control-line); border-radius: 0; background: transparent; color: var(--ink); font-family: var(--font-body); font-size: var(--step-sm); font-weight: 400; white-space: nowrap; cursor: pointer; }
+.review-app .coaching-panel .coaching-round-scope button + button { margin-left: -1px; }
+.review-app .coaching-panel .coaching-round-scope button:hover { position: relative; z-index: 1; border-color: var(--accent); background: var(--row-hover); }
+/* Selected segments everywhere: the selected tint and a 2 px amber top marker (the tab's language),
+   no amber border, so the amber focus ring around a neighbour never reads as a second selection. */
+.review-app .coaching-panel .coaching-round-scope button[aria-pressed="true"] { position: relative; background: var(--row-selected); box-shadow: inset 0 2px 0 var(--accent); font-weight: 600; }
 .review-app .coaching-panel .coaching-round-scope button:focus-visible { position: relative; z-index: 1; outline-offset: 1px; }
 /* Toolbar: whose suggestions, which round, how many rated; 筛选建议 is a text link
    pinned right whose filters open in the flow below it. */
 .review-app .coaching-panel .coaching-toolbar { position: relative; display: flex; flex: none; flex-wrap: wrap; align-items: center; gap: 6px 12px; min-height: 30px; padding: 5px 10px; border-bottom: 1px solid var(--line-subtle); }
 .review-app .coaching-panel .coaching-header-meta { display: flex; flex: 1 1 auto; flex-wrap: wrap; gap: 0 12px; min-width: 0; margin: 0; padding-right: 74px; color: var(--ink-2); font-size: var(--step-sm); line-height: 20px; font-variant-numeric: tabular-nums; }
-.review-app .coaching-header-player { min-width: 0; max-width: 16ch; overflow: hidden; color: var(--ink); font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+.review-app .coaching-header-player { min-width: 0; max-width: 16ch; overflow: hidden; color: var(--accent); font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
 .review-app .coaching-panel .coaching-filter-toggle { margin: 0; padding: 0; border: 0; }
 .review-app .coaching-panel .coaching-filter-toggle[open] { flex-basis: 100%; }
-.review-app .coaching-panel .coaching-filter-toggle > summary { position: absolute; top: 5px; right: 10px; color: var(--link); font-size: var(--step-sm); line-height: 20px; white-space: nowrap; cursor: pointer; list-style: none; }
+.review-app .coaching-panel .coaching-filter-toggle > summary { position: absolute; top: 5px; right: 10px; font-size: var(--step-sm); line-height: 20px; white-space: nowrap; cursor: pointer; list-style: none; }
 .review-app .coaching-panel .coaching-filter-toggle > summary::-webkit-details-marker { display: none; }
-.review-app .coaching-panel .coaching-filter-toggle > summary:hover { color: var(--link-hover); text-decoration: underline; }
 .review-app .coaching-filter-active { color: var(--ink-2); }
 .review-app .coaching-panel .coaching-controls { display: grid; gap: 6px; margin: 0; padding: 2px 0 4px; border: 0; background: none; }
 .review-app .coaching-panel .coaching-search,
-.review-app .coaching-panel .rule-filter-select { width: 100%; min-width: 0; min-height: 28px; padding: 0 8px; border: 1px solid var(--control-line); border-radius: var(--radius-control); background: var(--panel); color: var(--ink); font-size: var(--step-body); }
+.review-app .coaching-panel .rule-filter-select { width: 100%; min-width: 0; min-height: 28px; padding: 0 8px; border: 1px solid var(--control-line); border-radius: 0; background: var(--row-alt); color: var(--ink); font-size: var(--step-body); }
 .review-app .coaching-panel .coaching-search::placeholder { color: var(--ink-3); }
 .review-app .coaching-panel .severity-filter { display: flex; flex-wrap: wrap; gap: 4px; margin: 0; padding: 0; border: 0; }
-.review-app .coaching-panel .filter-button { display: inline-flex; align-items: center; gap: 6px; min-width: 0; min-height: 26px; padding: 0 8px; border: 1px solid var(--control-line); border-radius: var(--radius-control); background: var(--panel); color: var(--ink); font-size: var(--step-sm); font-weight: 400; cursor: pointer; }
-.review-app .coaching-panel .filter-button:hover { background: var(--row-alt); }
-.review-app .coaching-panel .filter-button[aria-pressed="true"] { border-color: var(--link); background: var(--row-selected); font-weight: 700; }
+.review-app .coaching-panel .filter-button { display: inline-flex; align-items: center; gap: 6px; min-width: 0; min-height: 26px; padding: 0 8px; border: 1px solid var(--control-line); border-radius: 0; background: transparent; color: var(--ink); font-size: var(--step-sm); font-weight: 400; cursor: pointer; }
+.review-app .coaching-panel .filter-button:hover { border-color: var(--accent); background: var(--row-hover); }
+.review-app .coaching-panel .filter-button[aria-pressed="true"] { background: var(--row-selected); box-shadow: inset 0 2px 0 var(--accent); font-weight: 600; }
 /* The severity filter doubles as the legend for the rows' left mark. */
 .review-app .coaching-severity-mark { flex: none; width: 3px; height: 12px; background: var(--sev-mark, var(--line-bold)); }
 
 /* The column's .text-button links at 12px on a 20px line; grey, not faded, when not available. */
 .review-app .coaching-link { display: inline; font-size: var(--step-sm); line-height: 20px; text-align: left; white-space: nowrap; }
-.review-app .coaching-link:disabled { color: var(--ink-3); opacity: 1; cursor: default; }
+.review-app .coaching-link:disabled { color: var(--ink-3); text-decoration: none; opacity: 1; cursor: default; }
+/* On a card's quiet second line (生成视频) the link steps down: ink-2 text on the neutral control-line
+   underline the page's repeated links use, so 查看这一刻 stays the one amber action in the row. */
+.review-app .coaching-feed-meta .coaching-link:not(:disabled) { color: var(--ink-2); text-decoration-color: var(--control-line); }
+.review-app .coaching-feed-meta .coaching-link:hover:not(:disabled) { color: var(--link-hover); text-decoration-color: var(--accent); }
 
 /* The list scrolls inside the panel on desktop. */
 .review-app .coaching-panel .coaching-body { display: block; flex: 1; min-height: 0; max-height: none; margin: 0; padding: 0; overflow: auto; }
@@ -305,37 +349,41 @@
 /* 全部回合: each round is a collapsible group row. */
 .review-app .coaching-panel .coaching-round-header { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; justify-content: flex-start; gap: 8px; width: 100%; min-height: 28px; margin: 0; padding: 0 10px; border: 0; border-bottom: 1px solid var(--line-bold); border-radius: 0; background: var(--panel); color: var(--ink); font-family: var(--font-body); font-size: var(--step-sm); text-align: left; cursor: pointer; }
 .review-app .coaching-panel .coaching-round-header:hover { background: var(--row-hover); }
-.review-app .coaching-panel .coaching-round-header strong { color: inherit; font-size: var(--step-sm); font-weight: 700; font-variant-numeric: tabular-nums; }
+.review-app .coaching-panel .coaching-round-header strong { color: inherit; font-size: var(--step-sm); font-weight: 600; font-variant-numeric: tabular-nums; }
 .review-app .coaching-panel .coaching-round-header small { color: var(--ink-2); font-size: var(--step-sm); }
-.review-app .coaching-round-toggle { flex: none; width: 10px; color: var(--ink-2); font-weight: 700; text-align: center; }
+.review-app .coaching-round-toggle { flex: none; width: 10px; color: var(--ink-2); font-weight: 600; text-align: center; }
 .review-app .coaching-panel .coaching-round-header:focus-visible { outline-offset: -2px; }
 .review-app .coaching-panel .coaching-round-events { display: block; margin: 0; padding: 0; }
 
 /* A suggestion is a table row: m:ss | the finding (names in side colours) | 查看这一刻.
    The second line holds 查看依据, 生成视频 and the verdict question, quieter; what to do next
-   shows only on the selected row (or with its evidence open), so the other rows stay two lines. Severity is the
-   3 px left mark: red 优先回看, T gold 值得留意, a grey line for the rest. */
-.review-app .coaching-panel .event-card.coaching-feed-row { position: relative; display: grid; grid-template-columns: 30px minmax(0, 1fr) auto; column-gap: 8px; align-items: baseline; margin: 0; padding: 6px 8px 5px 7px; border: 0; border-left: 3px solid var(--sev-mark); border-bottom: 1px solid var(--line-subtle); border-radius: 0; background: var(--panel); box-shadow: none; transform: none; }
+   shows only on the selected row (or with its evidence open), so the other rows stay two lines. Severity is a
+   3 × 12 px tick by the first line, the same mark as in the severity filter: red 优先回看, light ink 值得留意,
+   a dim tick for the rest (gold and blue mean sides only, so never a severity). A tick, not a full-height edge, so it never merges with the panel's amber edge. */
+.review-app .coaching-panel .event-card.coaching-feed-row { position: relative; display: grid; grid-template-columns: 30px minmax(0, 1fr) auto; column-gap: 8px; align-items: baseline; margin: 0; padding: 6px 8px 5px 12px; border: 0; border-bottom: 1px solid var(--line-subtle); border-radius: 0; background: var(--panel); box-shadow: none; transform: none; }
+.review-app .coaching-panel .event-card.coaching-feed-row::before { content: ""; position: absolute; top: 10px; left: 5px; width: 3px; height: 12px; background: var(--sev-mark); }
 .review-app .coaching-panel :is(.coaching-feed-row, .filter-button.severity-low, .filter-button.severity-info) { --sev-mark: var(--line-bold); }
-.review-app .coaching-panel :is(.coaching-feed-row.medium, .filter-button.severity-medium) { --sev-mark: var(--t); }
+.review-app .coaching-panel :is(.coaching-feed-row.medium, .filter-button.severity-medium) { --sev-mark: var(--ink); }
 .review-app .coaching-panel :is(.coaching-feed-row.high, .coaching-feed-row.critical, .filter-button.severity-high, .filter-button.severity-critical) { --sev-mark: var(--danger); }
 .review-app .coaching-panel .coaching-round-events > .coaching-feed-row:nth-child(even) { background: var(--row-alt); }
 .review-app .coaching-panel .coaching-round-events > .coaching-feed-row:hover { background: var(--row-hover); }
 /* At the playhead: the selected row. */
-.review-app .coaching-panel .coaching-round-events > .coaching-feed-row.active { background: var(--row-selected); }
+.review-app .coaching-panel .coaching-round-events > .coaching-feed-row.active { background: var(--row-selected); box-shadow: inset 2px 0 0 var(--accent); }
 .review-app .coaching-panel .event-card:focus { outline: none; }
 .review-app .coaching-panel .event-card:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
 .review-app .coaching-feed-clock { grid-column: 1; grid-row: 1; color: var(--ink-2); font-size: var(--step-sm); line-height: 20px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.review-app .coaching-panel .coaching-top-group .event-card.coaching-feed-row { grid-template-columns: 56px minmax(0, 1fr) auto; }
+.review-app .coaching-feed-round { display: block; line-height: 16px; }
 .review-app .coaching-feed-main { grid-column: 2; grid-row: 1; min-width: 0; }
 .review-app .coaching-panel .coaching-feed-line { min-width: 0; margin: 0; overflow: visible; color: var(--ink); font-family: var(--font-body); font-size: var(--step-body); font-weight: 400; line-height: 20px; letter-spacing: 0; text-overflow: clip; text-transform: none; white-space: normal; }
 /* killer ✕ victim, names in their side colour, then the finding. */
 .review-app .coaching-feed-kill { display: inline-flex; align-items: baseline; gap: 4px; max-width: 100%; margin: 0 6px 0 0; padding: 0; overflow: hidden; border-radius: 0; background: none; white-space: nowrap; vertical-align: baseline; }
-.review-app .coaching-feed-player { min-width: 0; max-width: 14ch; overflow: hidden; font-weight: 700; text-overflow: ellipsis; }
+.review-app .coaching-feed-player { min-width: 0; max-width: 14ch; overflow: hidden; font-weight: 600; text-overflow: ellipsis; }
 .review-app .coaching-feed-player.side-t { color: var(--t-text); }
 .review-app .coaching-feed-player.side-ct { color: var(--ct-text); }
 .review-app .coaching-feed-player.side-unknown { color: var(--ink); }
 /* The reviewed player's death: the one red mark in the row. */
-.review-app .coaching-feed-cross { flex: none; color: var(--danger); font-size: var(--step-sm); font-weight: 700; }
+.review-app .coaching-feed-cross { flex: none; color: var(--danger-text); font-size: var(--step-sm); font-weight: 600; }
 .review-app .coaching-feed-finding { overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
 .review-app .coaching-panel .coaching-card-guidance { max-width: 62ch; margin: 1px 0 0; color: var(--ink-2); font-size: var(--step-sm); line-height: 18px; }
 .review-app .coaching-panel .coaching-feed-row:not(.active, .inspected) .coaching-card-guidance { display: none; }
@@ -350,21 +398,21 @@
 .review-app .coaching-panel .coaching-feedback { display: inline-flex; flex-wrap: wrap; align-items: baseline; gap: 0 3px; margin: 0; }
 .review-app .coaching-panel .coaching-feedback > span:first-child { margin-right: 2px; color: var(--ink-3); }
 .review-app .coaching-verdict-divider { color: var(--line-bold); }
-.review-app .coaching-verdict[aria-pressed="true"] { color: var(--ink); font-weight: 700; }
+.review-app .coaching-verdict[aria-pressed="true"] { color: var(--ink); font-weight: 600; }
 .review-app .coaching-feedback[aria-busy="true"] .coaching-verdict { cursor: progress; }
 .review-app .coaching-feedback-status { margin: 2px 0 0; color: var(--danger-text); font-size: var(--step-sm); line-height: var(--leading-body); }
 .review-app .coaching-feedback-status:empty { margin: 0; }
 .review-app .coaching-feedback-status .coaching-link { margin-left: 6px; }
 /* ink-3 is only 4.5:1 on white, zebra and hover rows; on the selected row the quiet line moves to ink-2. */
-.review-app .coaching-panel .coaching-feed-row.active :is(.coaching-feed-meta, .coaching-evidence-toggle, .coaching-verdict, .coaching-feedback > span:first-child, .coaching-technical-details) { color: var(--ink-2); }
+.review-app .coaching-panel .coaching-feed-row.active :is(.coaching-feed-meta, .coaching-evidence-toggle, .coaching-verdict, .coaching-feedback > span:first-child, .coaching-technical-details, .coaching-link:disabled) { color: var(--ink-2); }
 .review-app .coaching-panel .coaching-feed-row.active .coaching-verdict[aria-pressed="true"] { color: var(--ink); }
-/* 查看依据: a white definition list inside the row. */
-.review-app .coaching-panel .event-ledger-inspector { display: grid; gap: 8px; margin: 6px 0 3px; padding: 8px 10px; border: 1px solid var(--line-subtle); border-radius: var(--radius-control); background: var(--panel); font-size: var(--step-sm); }
+/* 查看依据: a definition list sunk into the row, on the page's deeper navy. */
+.review-app .coaching-panel .event-ledger-inspector { display: grid; gap: 8px; margin: 6px 0 3px; padding: 8px 10px; border: 0; border-radius: 0; background: var(--page); font-size: var(--step-sm); }
 .review-app .coaching-panel .event-ledger-inspector p { margin: 0; font-size: var(--step-sm); line-height: var(--leading-body); }
-.review-app .coaching-inspector-title { color: var(--ink); font-weight: 700; }
+.review-app .coaching-inspector-title { color: var(--ink); font-weight: 600; }
 .review-app .coaching-panel .coaching-card-facts { color: var(--ink-2); font-variant-numeric: tabular-nums; }
 .review-app .coaching-panel .coaching-guidance { margin: 0; padding: 0; border: 0; }
-.review-app .coaching-panel .coaching-guidance strong { color: var(--ink); font-size: var(--step-sm); font-weight: 700; }
+.review-app .coaching-panel .coaching-guidance strong { color: var(--ink); font-size: var(--step-sm); font-weight: 600; }
 .review-app .coaching-panel .coaching-guidance p { margin: 2px 0 0; color: var(--ink-2); }
 .review-app .coaching-panel :is(.coaching-inspector-facts, .event-ledger-inspector .event-evidence) { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 3px 12px; margin: 0; font-size: var(--step-sm); }
 .review-app .coaching-panel :is(.coaching-inspector-facts > div, .event-evidence-chip) { display: contents; }
@@ -372,7 +420,7 @@
 .review-app .coaching-panel :is(.coaching-inspector-facts, .event-evidence) dd { min-width: 0; margin: 0; color: var(--ink); font-weight: 400; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .review-app .coaching-clip-error { color: var(--danger-text); font-size: var(--step-sm); }
 .review-app .coaching-panel .coaching-technical-details { margin: 0; color: var(--ink-3); font-size: var(--step-sm); }
-.review-app .coaching-panel .coaching-technical-details > summary { display: inline-flex; align-items: center; min-height: 20px; color: var(--link); cursor: pointer; }
+.review-app .coaching-panel .coaching-technical-details > summary { display: inline-flex; align-items: center; min-height: 20px; cursor: pointer; }
 .review-app .coaching-panel .coaching-technical-details p { margin: 6px 0 0; color: var(--ink-2); font-size: var(--step-sm); overflow-wrap: anywhere; }
 .review-app .coaching-panel .coaching-technical-details .event-evidence { margin-top: 6px; }
 /* True technical IDs, so monospace is right here and only here. */
@@ -382,48 +430,52 @@
 .review-app .coaching-panel .coaching-empty-state .coaching-link { font-size: var(--step-body); }
 
 /* 已保存的视频: a panel whose summary is the header bar; the clips are a zebra table. */
-.review-app .review-saved-clips { margin: 12px 0 0; border: 1px solid var(--line-bold); border-radius: var(--radius-panel); background: var(--panel); box-shadow: none; }
-.review-app .review-saved-clips > summary { display: flex; align-items: center; gap: 12px; min-height: 34px; padding: 0 10px; border-radius: var(--radius-panel); background: var(--panel-head); color: var(--ink); font-size: var(--step-md); font-weight: 700; cursor: pointer; list-style: none; }
-.review-app .review-saved-clips[open] > summary { border-bottom: 1px solid var(--line-bold); border-radius: var(--radius-panel) var(--radius-panel) 0 0; }
-.review-app .review-saved-clips > summary::-webkit-details-marker { display: none; }
+/* 已保存的视频 and 高级工具 are panels (amber left edge, cut corner: see .panel) whose summary is the
+   header bar: amber title, the count beside it, 展开 / 收起 as a text link at the right. */
+.review-app :is(.review-saved-clips, .review-inspector) { margin: 12px 0 0; padding: 0; }
+.review-app :is(.review-saved-clips, .review-inspector) > summary { display: flex; align-items: center; gap: 12px; min-height: 33px; padding: 0 22px 0 10px; border: 0; border-radius: 0; background: var(--panel-head); color: var(--ink); cursor: pointer; list-style: none; }
+.review-app :is(.review-saved-clips, .review-inspector)[open] > summary { border-bottom: 1px solid var(--line-subtle); }
+.review-app :is(.review-saved-clips, .review-inspector) > summary::-webkit-details-marker { display: none; }
+.review-app :is(.review-saved-clips, .review-inspector) > summary:focus-visible { outline-offset: -2px; }
+.review-app :is(.review-saved-clips, .review-inspector) > summary > span:first-of-type { color: var(--accent); font-size: var(--step-md); font-weight: 600; letter-spacing: 0; text-transform: none; }
 .review-app .review-saved-clips > summary > span:not(:first-of-type) { color: var(--ink-2); font-size: var(--step-sm); font-weight: 400; }
 .review-app .review-saved-clips .saved-clips-count { margin-left: auto; font-variant-numeric: tabular-nums; }
 /* Collapsed panels say so, like the Steam panel on the library. */
-.review-app :is(.review-saved-clips, .review-inspector) > summary::after { content: "展开"; flex: none; color: var(--link); font-size: var(--step-sm); font-weight: 400; }
+.review-app :is(.review-saved-clips, .review-inspector) > summary::after { content: "展开"; flex: none; color: var(--link); font-size: var(--step-sm); font-weight: 400; text-decoration: underline 1px var(--accent); text-underline-offset: 3px; }
 .review-app :is(.review-saved-clips, .review-inspector)[open] > summary::after { content: "收起"; }
-.review-app :is(.review-saved-clips, .review-inspector) > summary:hover::after { color: var(--link-hover); text-decoration: underline; }
+.review-app :is(.review-saved-clips, .review-inspector) > summary:hover::after { color: var(--link-hover); }
 .review-app .review-inspector > summary::after { margin-left: auto; }
 /* Inside 已保存的视频 the summary is the bar: the library drops its own frame and heading. */
-.review-app .review-saved-clips .clip-library { border: 0; border-radius: 0; }
+.review-app .review-saved-clips .clip-library { border: 0; border-radius: 0; box-shadow: none; }
 .review-app .review-saved-clips .clip-library-heading { display: none; }
 .review-app .clip-library-empty { margin: 0; padding: 10px; color: var(--ink-2); font-size: var(--step-body); }
 /* Rows are .data-rows (zebra, hover, .selected): place | length | status | 观看视频. */
 .review-app .clip-library-item { display: grid; grid-template-columns: minmax(0, 1fr) auto auto 72px; align-items: baseline; column-gap: 16px; min-height: 32px; padding: 6px 10px; }
+/* The clip in the player is the current item: the selected tint plus the 2 px amber inset mark. */
+.review-app .clip-library-item.selected { box-shadow: inset 2px 0 0 var(--accent); }
 .review-app .clip-library-place { min-width: 0; font-weight: 400; font-variant-numeric: tabular-nums; }
 .review-app .clip-library-duration { color: var(--ink-2); font-size: var(--step-sm); font-variant-numeric: tabular-nums; }
 .review-app .clip-job-status { font-size: var(--step-sm); }
 .review-app .clip-library-play { grid-column: 4; justify-self: end; }
 .review-app .clip-library-error { grid-column: 1 / -1; color: var(--danger-text); font-size: var(--step-sm); }
 .review-app .clip-library-history { margin: 0; }
-.review-app .clip-library-history > summary { display: flex; align-items: center; min-height: 30px; padding: 0 10px; color: var(--link); font-size: var(--step-sm); cursor: pointer; }
-.review-app .clip-library-history > summary:hover { color: var(--link-hover); text-decoration: underline; }
+.review-app .clip-library-history > summary { display: flex; align-items: center; min-height: 30px; padding: 0 10px; font-size: var(--step-sm); cursor: pointer; }
 
 /* 高级工具: the disclosure is a panel whose summary is the header bar; inside it every
    tool is its own small panel with a header bar and a plain label | value table. */
-.review-app .review-inspector { margin: 12px 0 0; padding: 0; border: 1px solid var(--line-bold); border-radius: var(--radius-panel); background: var(--panel); box-shadow: none; }
-.review-app .review-inspector > summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 34px; padding: 0 10px; border: 0; border-radius: var(--radius-panel); background: var(--panel-head); color: var(--ink); cursor: pointer; list-style: none; }
-.review-app .review-inspector[open] > summary { border-bottom: 1px solid var(--line-bold); border-radius: var(--radius-panel) var(--radius-panel) 0 0; }
-.review-app .review-inspector > summary::-webkit-details-marker { display: none; }
-.review-app .review-inspector > summary > span { color: var(--ink); font-size: var(--step-md); font-weight: 700; letter-spacing: 0; text-transform: none; }
 /* The caption stays for screen readers; the panel title says enough. */
 .review-app .review-inspector > summary small { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 .review-app .review-inspector-content { display: grid; gap: 10px; margin: 0; padding: 10px; }
 .review-app .review-inspector-content > .compact-button { justify-self: start; }
 .review-app .review-inspector .review-support-bay { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 360px), 1fr)); align-items: start; gap: 10px; margin: 0; padding: 0; overflow: visible; border: 0; border-radius: 0; background: none; }
 .review-app .review-inspector .review-support-bay > * { min-width: 0; margin: 0; padding: 0; border: 0; }
-/* Each tool is a .panel with a .panel-bar: title, a grey note beside it, the action at the right. */
-.review-app :is(.render-operator-panel, .video-setup-panel, .replay-diagnostics-panel, .detail-summary-strip) { display: block; margin: 0; padding: 0; overflow: hidden; border: 1px solid var(--line-bold); border-radius: var(--radius-panel); background: var(--panel); }
+/* Each tool is a .panel with a .panel-bar: title, a grey note beside it, the action at the right.
+   Nested in 高级工具, so no amber edge and no cut: a plain 1 px frame. */
+.review-app :is(.render-operator-panel, .video-setup-panel, .replay-diagnostics-panel, .detail-summary-strip) { display: block; margin: 0; padding: 0; overflow: hidden; border: 1px solid var(--line-bold); border-radius: 0; background: var(--panel); box-shadow: none; }
 .review-app .review-inspector .review-support-bay > :is(.render-operator-panel, .video-setup-panel) { border: 1px solid var(--line-bold); }
+/* Nested bars match 数据's sub-bars: zebra fill, ink title. Amber titles belong to top-level panels. */
+.review-app .review-inspector-content .panel-bar { background: var(--row-alt); }
+.review-app .review-inspector-content .panel-bar-title { color: var(--ink); }
 .review-app :is(.render-operator-header, .video-setup-header, .replay-diagnostics-header) { justify-content: flex-start; padding: 3px 8px 3px 10px; }
 .review-app :is(.render-operator-header, .video-setup-header) > :is(button, label),
 .review-app .replay-contract-version { margin-left: auto; }
@@ -454,7 +506,7 @@
 .review-app .replay-diagnostics-warnings li { margin: 6px 10px; padding: 0 0 0 8px; border: 0; border-left: 3px solid var(--t); border-radius: 0; background: none; color: var(--ink); font-size: var(--step-sm); line-height: var(--leading-body); }
 /* Render state: plain coloured text, no icon. */
 .review-app .operator-state-row { display: block; margin: 0; padding: 6px 10px; border: 0; border-bottom: 1px solid var(--line-subtle); background: none; }
-.review-app .operator-state-label { color: var(--ink); font-size: var(--step-body); font-weight: 700; }
+.review-app .operator-state-label { color: var(--ink); font-size: var(--step-body); font-weight: 600; }
 .review-app .operator-state-label.ready { color: var(--ok-text); }
 .review-app .operator-state-label.failed { color: var(--danger-text); }
 .review-app .operator-state-row p { margin: 2px 0 0; color: var(--ink-2); font-size: var(--step-sm); line-height: var(--leading-body); }
@@ -463,7 +515,7 @@
 .review-app .video-setup-panel .calibration-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 8px 10px; min-width: 0; padding: 8px 10px 0; }
 .review-app .video-setup-panel .calibration-grid label { display: grid; gap: 2px; }
 .review-app .video-setup-panel .calibration-grid span { color: var(--ink-2); font-size: var(--step-sm); letter-spacing: 0; text-transform: none; }
-.review-app .video-setup-panel .setup-input { width: 100%; min-width: 0; min-height: 28px; padding: 0 8px; border: 1px solid var(--control-line); border-radius: var(--radius-control); background: var(--panel); color: var(--ink); font-size: var(--step-body); font-variant-numeric: tabular-nums; }
+.review-app .video-setup-panel .setup-input { width: 100%; min-width: 0; min-height: 28px; padding: 0 8px; border: 1px solid var(--control-line); border-radius: 0; background: var(--row-alt); color: var(--ink); font-size: var(--step-body); font-variant-numeric: tabular-nums; }
 .review-app .video-setup-panel .calibration-actions { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; padding: 8px 10px 10px; }
 .review-app .video-setup-panel .calibration-actions button { min-height: 28px; }
 
@@ -479,7 +531,8 @@
   .review-app .personal-player-picker-side { grid-template-columns: 76px minmax(0, 1fr); }
   .review-app .personal-review-popover { right: auto; left: 0; width: min(560px, calc(100vw - 32px)); }
   .review-app .coaching-panel .coaching-feed-line { font-size: var(--step-md); line-height: 21px; }
-  .review-app .coaching-panel .event-card.coaching-feed-row { padding: 8px 8px 7px 6px; column-gap: 8px; }
+  .review-app .coaching-panel .event-card.coaching-feed-row { padding: 8px 8px 7px 12px; column-gap: 8px; }
+  .review-app .coaching-panel .event-card.coaching-feed-row::before { top: 12px; }
   .review-app .clip-library-item { grid-template-columns: minmax(0, 1fr) auto; row-gap: 2px; }
   .review-app .clip-library-duration { grid-column: 1; grid-row: 2; }
   .review-app .clip-job-status { grid-column: 2; grid-row: 1; justify-self: end; }
@@ -493,29 +546,29 @@
   .review-app .coaching-panel .coaching-round-scope button { min-height: 32px; }
 }
 
-/* === V-B1 / S8 V-STAGE: review stage (spec S8, 数据站风) === */
+/* === V-B1 / S8 V-STAGE: review stage (spec S8 数据站风, retoned S13 战术终端) === */
 /* Breadcrumb, then the match bar: name and plain facts on the left, the reviewed player on the right. */
 .review-app .page { padding-top: 10px; }
 .review-app .review-breadcrumb { display: flex; align-items: baseline; gap: 6px; min-width: 0; margin: 0 0 8px; color: var(--ink-2); font-size: var(--step-sm); }
-.review-app .review-breadcrumb a { flex: none; color: var(--link); text-decoration: none; }
-.review-app .review-breadcrumb a:hover { color: var(--link-hover); text-decoration: underline; }
+.review-app .review-breadcrumb a { flex: none; color: var(--link); text-decoration: underline; text-decoration-color: var(--accent); text-underline-offset: 3px; }
+.review-app .review-breadcrumb a:hover { color: var(--link-hover); }
 .review-app .review-breadcrumb [aria-current] { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* The bar and the reviewed player share one grey row (the player wraps under it on narrow screens);
-   before anyone is picked, the question and the picker are the panel body, on white. */
+/* The bar and the reviewed player share one header row (the player wraps under it on narrow screens);
+   before anyone is picked, the question and the picker are the panel body. */
 .review-app .review-header { display: flex; flex-wrap: wrap; margin: 0 0 12px; }
-.review-app .review-header > .review-header-bar { flex: 1 1 420px; min-width: 0; border-radius: 2px 0 0 2px; }
-.review-app .review-header:not(:has(> .personal-review-panel)) > .review-header-bar { border-radius: 2px; }
-.review-app .review-header > .personal-review-panel { flex: 1 1 auto; min-width: 0; padding: 4px 10px; border-radius: 0 2px 2px 0; background: var(--panel-head); }
-.review-app .review-header:has(.personal-player-picker) > .review-header-bar { flex-basis: 100%; border-radius: 2px 2px 0 0; }
-.review-app .review-header > .personal-review-panel:has(.personal-player-picker) { flex-basis: 100%; padding: 8px 10px 10px; border-top: 1px solid var(--line-bold); border-radius: 0 0 2px 2px; background: var(--panel); }
+.review-app .review-header > .review-header-bar { flex: 1 1 420px; min-width: 0; }
+.review-app .review-header > .personal-review-panel { flex: 1 1 auto; min-width: 0; padding: 4px 10px; background: var(--panel-head); }
+.review-app .review-header:has(.personal-player-picker) > .review-header-bar { flex-basis: 100%; }
+.review-app .review-header > .personal-review-panel:has(.personal-player-picker) { flex-basis: 100%; padding: 8px 10px 10px; border-top: 1px solid var(--line-subtle); background: var(--panel); }
 .review-app .review-header-bar { flex-wrap: wrap; justify-content: flex-start; height: auto; min-height: 33px; padding: 4px 10px; gap: 4px 20px; border-bottom: 0; }
 .review-app .detail-title { display: flex; flex: 1 1 420px; flex-wrap: wrap; align-items: baseline; gap: 2px 18px; min-width: 0; }
 .review-app .detail-title h1 { min-width: 0; margin: 0; font-size: 16px; line-height: var(--leading-tight); overflow-wrap: anywhere; }
 .review-app .detail-meta { margin: 0; color: var(--ink); font-size: var(--step-sm); font-variant-numeric: tabular-nums; }
 .review-app .detail-meta .fact-label { margin-right: 4px; }
 
-/* 回合记录: one small square per round in the winning side's colour, its number under it, my death and
-   the suggestion count under that; a gap where the teams swap sides. The selected round is outlined in ink. */
+/* 回合记录: one small square per round in the winning side's colour (its round-end icon dark on the fill),
+   its number under it, my death and the suggestion count under that; a gap where the teams swap sides.
+   The selected round is outlined in amber. */
 .review-app .round-strip { margin: 0 0 12px; }
 .review-app .round-strip-head { gap: 12px; }
 .review-app .round-strip-legend { display: flex; flex-wrap: wrap; gap: 2px 14px; margin: 0; color: var(--ink-2); font-size: var(--step-xs); }
@@ -523,9 +576,9 @@
 .review-app .round-strip-legend i { width: 10px; height: 10px; }
 .review-app .round-strip-legend i.side-t { background: var(--t); }
 .review-app .round-strip-legend i.side-ct { background: var(--ct); }
-.review-app .round-strip-legend-dot { width: 4px; height: 4px; border-radius: 50%; background: var(--ink); }
+.review-app .round-strip-legend-dot { width: 4px; height: 4px; background: var(--ink); }
 .review-app .round-strip-track { display: flex; align-items: stretch; gap: 2px; padding: 8px 10px 6px; overflow-x: auto; overscroll-behavior-inline: contain; scroll-padding-inline: 10px; scrollbar-width: thin; scrollbar-color: var(--line-bold) transparent; }
-.review-app .round-strip-cell { display: grid; flex: 0 0 30px; grid-template-rows: 24px 17px 12px; justify-items: center; align-items: end; width: 30px; min-height: 0; padding: 3px 0 2px; border: 0; border-radius: var(--radius-control); background: transparent; color: var(--ink-2); font: inherit; cursor: pointer; }
+.review-app .round-strip-cell { display: grid; flex: 0 0 30px; grid-template-rows: 24px 17px 12px; justify-items: center; align-items: end; width: 30px; min-height: 0; padding: 3px 0 2px; border: 0; border-radius: 0; background: transparent; color: var(--ink-2); font: inherit; cursor: pointer; }
 .review-app .round-strip-fill { width: 24px; height: 24px; background: var(--line-bold); }
 .review-app .round-strip-cell.winner-t .round-strip-fill { background: var(--t); }
 .review-app .round-strip-cell.winner-ct .round-strip-fill { background: var(--ct); }
@@ -533,11 +586,11 @@
 .review-app .round-strip-marks { display: flex; align-items: center; justify-content: center; gap: 2px; height: 12px; }
 .review-app .round-strip-death { flex: none; color: var(--danger); }
 .review-app .round-strip-dots { display: inline-flex; align-items: center; gap: 2px; color: var(--ink); }
-.review-app .round-strip-dots i { width: 4px; height: 4px; border-radius: 50%; background: currentColor; }
-.review-app .round-strip-dots b { margin-left: 1px; font-size: 11px; font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; }
+.review-app .round-strip-dots i { width: 4px; height: 4px; background: currentColor; }
+.review-app .round-strip-dots b { margin-left: 1px; font-size: 11px; font-weight: 600; line-height: 1; font-variant-numeric: tabular-nums; }
 .review-app .round-strip-cell:hover { background: var(--row-hover); }
-.review-app .round-strip-cell.selected .round-strip-fill { outline: 2px solid var(--ink); outline-offset: 1px; }
-.review-app .round-strip-cell.selected .round-strip-number { color: var(--ink); font-weight: 700; }
+.review-app .round-strip-cell.selected .round-strip-fill { outline: 2px solid var(--accent); outline-offset: 1px; }
+.review-app .round-strip-cell.selected .round-strip-number { color: var(--accent); font-weight: 600; }
 .review-app .round-strip-cell:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
 .review-app .round-strip-half { flex: none; width: 1px; margin: 0 7px; background: var(--control-line); }
 .review-app .round-strip.empty .round-review-empty { display: flex; flex-wrap: wrap; gap: 4px 10px; margin: 0; padding: 10px 12px; color: var(--ink-2); font-size: var(--step-sm); }
@@ -545,27 +598,31 @@
 .review-app .round-detail-panel { margin-top: 12px; }
 .review-app .round-detail-head { justify-content: flex-start; gap: 12px; }
 .review-app .round-detail-title { white-space: nowrap; font-variant-numeric: tabular-nums; }
-.review-app .round-detail-winner { font-size: var(--step-sm); font-weight: 700; white-space: nowrap; }
+.review-app .round-detail-winner { font-size: var(--step-sm); font-weight: 600; white-space: nowrap; }
 .review-app .round-detail-winner.side-t { color: var(--t-text); }
 .review-app .round-detail-winner.side-ct { color: var(--ct-text); }
 .review-app .round-detail-outcome { color: var(--ink-2); font-size: var(--step-sm); white-space: nowrap; }
 .review-app .round-detail-count { color: var(--ink-2); font-size: var(--step-sm); white-space: nowrap; }
-/* Key moments: a tidy grid of label link + m:ss, not a run of inline links. */
+/* Key moments: a tidy grid of label link + m:ss, not a run of inline links. Six of them in a row,
+   so they rest on a neutral control-line underline and take the amber one on hover or focus;
+   本回合详情 below keeps the card's one amber underline. */
 .review-app .round-quick-jumps { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 0 16px; margin: 0; padding: 6px 12px 2px; }
 .review-app .round-ribbon-jump { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; min-width: 0; min-height: 26px; padding: 0; border: 0; border-bottom: 1px solid var(--line-subtle); background: none; color: var(--link); font: inherit; font-size: var(--step-body); text-align: left; cursor: pointer; }
-.review-app .round-ribbon-jump:not(:disabled):hover span { color: var(--link-hover); text-decoration: underline; }
+.review-app .round-ribbon-jump:not(:disabled) span { text-decoration: underline; text-decoration-color: var(--control-line); text-underline-offset: 3px; }
+.review-app .round-ribbon-jump:not(:disabled):is(:hover, :focus-visible) span { color: var(--link-hover); text-decoration-color: var(--accent); }
 .review-app .round-ribbon-jump small { color: var(--ink-2); font-size: var(--step-xs); font-variant-numeric: tabular-nums; }
 .review-app .round-ribbon-jump:disabled { color: var(--ink-3); cursor: default; }
 .review-app .round-review-details { padding: 0 12px 8px; }
-.review-app .round-review-details > summary { display: inline-flex; align-items: center; min-height: 24px; color: var(--link); font-size: var(--step-xs); }
+.review-app .round-review-details > summary { display: inline-flex; align-items: center; min-height: 24px; color: var(--link); font-size: var(--step-xs); text-decoration: underline; text-decoration-color: var(--accent); text-underline-offset: 3px; }
+.review-app .round-review-details > summary:hover { color: var(--link-hover); }
 .review-app .round-review-scope { margin: 4px 0 0; color: var(--ink-2); font-size: var(--step-xs); }
 .review-app .round-ribbon-metrics { display: flex; flex-wrap: wrap; gap: 6px 28px; margin: 6px 0 2px; }
 .review-app .round-ribbon-metric { display: grid; gap: 2px; min-width: 0; padding: 0; border: 0; }
 .review-app .round-ribbon-metric dt { color: var(--ink-2); font-size: var(--step-xs); }
 .review-app .round-ribbon-metric dd { margin: 0; color: var(--ink); font-size: var(--step-body); font-variant-numeric: tabular-nums; }
 
-/* Workspace: the stage and the suggestions side by side. The stage is one white panel: a header bar with
-   the view tabs, the dark radar canvas with the rosters beside it, the timeline, then the transport strip. */
+/* Workspace: the stage and the suggestions side by side. The stage is one panel: a header bar with
+   the view tabs, the radar canvas with the rosters beside it, the timeline, then the transport strip. */
 .review-app .review-layout { display: grid; grid-template-columns: minmax(0, 1fr) 380px; align-items: start; gap: 12px; }
 .review-app .review-main-column { min-width: 0; }
 .review-app .review-stage { display: flex; flex-direction: column; overflow: hidden; scroll-margin-top: 52px; }
@@ -582,15 +639,19 @@
 .review-app .review-main-canvas .first-person-video { width: 100%; height: 100%; object-fit: contain; }
 .review-app .first-person-hud { pointer-events: none; }
 .review-app .first-person-loading { position: absolute; inset: 0; display: grid; place-items: center; margin: 0; color: var(--radar-text-2); font-size: var(--step-sm); pointer-events: none; }
-.review-app .hud-chip { gap: 4px; padding: 2px 6px; border: 1px solid var(--radar-line); border-radius: var(--radius-control); background: var(--radar-panel); color: var(--radar-text); font-size: var(--step-xs); box-shadow: none; }
-.review-app .render-status-overlay { border: 1px solid var(--radar-line); border-left: 3px solid var(--link); border-radius: var(--radius-panel); background: var(--radar-panel); color: var(--radar-text); box-shadow: none; }
+.review-app .hud-chip { gap: 4px; padding: 2px 6px; border: 1px solid var(--radar-line); border-radius: 0; background: var(--radar-panel); color: var(--radar-text); font-size: var(--step-xs); box-shadow: none; }
+.review-app .render-status-overlay { border: 1px solid var(--radar-line); border-left: 3px solid var(--accent); border-radius: 0; background: var(--radar-panel); color: var(--radar-text); box-shadow: none; }
 .review-app .render-status-overlay.failed { border-left-color: var(--danger); }
 .review-app .render-status-overlay > span { color: var(--radar-text-2); font-size: var(--step-xs); font-weight: 400; letter-spacing: 0; text-transform: none; }
 .review-app .render-status-overlay p { color: var(--radar-text-2); }
 .review-app .video-progress { background: var(--radar-line); }
 .review-app .video-progress span { background: var(--radar-text); }
 .review-app .review-main-canvas .replay-panel { display: grid; grid-template-columns: minmax(0, 1fr) 216px; height: 100%; min-height: 0; margin: 0; padding: 0; border: 0; border-radius: 0; background: var(--radar-bg); box-shadow: none; }
+/* The radar sits on the dark canvas like a scope in its bezel. The one graticule in the app is drawn
+   on the radar itself, over the image and under every mark (RadarGraticule), in the stage and the
+   utility finder; a CSS grid behind the image would only show in the margins around it. */
 .review-app .review-main-canvas .map-frame { position: relative; display: block; min-height: 0; height: 100%; aspect-ratio: auto; padding: 0; border: 0; border-radius: 0; background: var(--radar-bg); }
+.map-graticule { fill: none; stroke: var(--grid-line); stroke-width: 1px; vector-effect: non-scaling-stroke; pointer-events: none; }
 .review-app .review-main-canvas .map-frame > svg { position: absolute; inset: 8px; width: calc(100% - 16px); height: calc(100% - 16px); min-height: 0; aspect-ratio: auto; }
 .review-app :is(.radar-map-frame, .fallback-map-frame) { background: var(--radar-bg); }
 
@@ -606,9 +667,9 @@
 .review-app .map-floor-control [data-testid="map-floor-label"] { color: var(--radar-text); }
 .review-app .map-highlight-card { position: absolute; right: 8px; bottom: 8px; z-index: 3; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; max-width: calc(100% - 16px); padding: 4px 4px 4px 10px; border: 1px solid var(--radar-line); border-radius: var(--radius-panel); background: var(--radar-panel); color: var(--radar-text); box-shadow: none; font-size: var(--step-body); }
 .review-app .map-highlight-card small { color: var(--radar-text-2); font-size: var(--step-xs); }
-.review-app .map-highlight-side { font-weight: 700; }
-.review-app .map-highlight-side.side-t { color: var(--t); }
-.review-app .map-highlight-side.side-ct { color: var(--ct); }
+.review-app .map-highlight-side { font-weight: 600; }
+.review-app .map-highlight-side.side-t { color: var(--t-text); }
+.review-app .map-highlight-side.side-ct { color: var(--ct-text); }
 .review-app .map-highlight-close { display: grid; place-items: center; width: 24px; height: 24px; padding: 0; border: 0; border-radius: var(--radius-control); background: transparent; color: var(--radar-text-2); }
 .review-app .map-highlight-close:hover { background: var(--radar-line); color: var(--radar-text); }
 .review-app .map-empty-state { border: 1px solid var(--radar-line); border-radius: var(--radius-panel); background: var(--radar-panel); color: var(--radar-text); box-shadow: none; }
@@ -616,44 +677,49 @@
 /* The map's own svg sizing must not reach the icons in its overlays. */
 .review-app .map-frame :is(.map-overlay-bar, .map-highlight-card) svg { position: static; width: 14px; height: 14px; min-height: 0; aspect-ratio: auto; flex: none; }
 
-/* Rosters: two small tables beside the map, header bars tinted by side, zebra rows, HP right-aligned. */
+/* Rosters: two small tables beside the map, a header bar per side (title in the side's text colour),
+   zebra rows; the reviewed player's row is the amber one. Nested in the stage: no frame, no edge. */
 .review-app .review-main-canvas .player-list { position: static; inset: auto; display: grid; grid-template-columns: minmax(0, 1fr); align-content: start; gap: 8px; width: auto; max-height: none; min-height: 0; padding: 8px; overflow: auto; border-left: 1px solid var(--line-bold); background: var(--panel); pointer-events: auto; scrollbar-width: thin; }
-.review-app .side-roster { overflow: hidden; border: 1px solid var(--line-bold); border-radius: var(--radius-panel); background: var(--panel); box-shadow: none; }
+.review-app .side-roster { overflow: hidden; border: 0; border-radius: 0; background: var(--panel); box-shadow: none; }
 .review-app .side-roster .roster-head { height: 26px; min-height: 26px; padding: 0 8px; }
 .review-app .side-roster .roster-head .panel-bar-title { font-size: var(--step-sm); }
 .review-app .side-roster .roster-head > span { color: var(--ink-2); font-size: var(--step-xs); }
-.review-app .roster-side { font-weight: 700; }
+.review-app .roster-side { font-weight: 600; }
 .review-app .review-main-canvas .roster-row { display: grid; grid-template-columns: 18px minmax(0, 1fr) 30px; align-items: center; gap: 6px; min-height: 26px; padding: 0 8px; border-top: 1px solid var(--line-subtle); background: var(--panel); color: var(--ink); font-size: var(--step-sm); }
 .review-app .review-main-canvas .roster-row:nth-child(odd) { background: var(--row-alt); }
 .review-app .review-main-canvas .roster-row:hover { background: var(--row-hover); }
-.review-app .review-main-canvas .roster-row.reviewed { background: var(--row-selected); }
+.review-app .review-main-canvas .roster-row.reviewed { background: var(--row-selected); box-shadow: inset 2px 0 0 var(--accent); }
 .review-app .roster-row.dead { color: var(--ink-3); text-decoration: none; }
 .review-app .roster-row.dead .roster-name { text-decoration: line-through; }
-/* Numbered side dots, the same numbers as on the map. */
-.review-app .roster-index { display: grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; color: var(--ink); font-size: var(--step-xs); font-weight: 700; line-height: 1; }
+/* Numbered side dots, the same numbers as on the map: dark numbers on the side fill. */
+.review-app .roster-index { display: grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; color: var(--page); font-size: var(--step-xs); font-weight: 600; line-height: 1; }
 .review-app .roster-index.side-t { background: var(--t); }
-.review-app .roster-index.side-ct { background: var(--ct-text); color: var(--on-link); }
-.review-app .roster-name { min-width: 0; min-height: 24px; padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.review-app .roster-name:hover { color: var(--link); text-decoration: underline; }
-.review-app .roster-row.reviewed .roster-name { font-weight: 700; }
-.review-app .roster-name[aria-pressed="true"] { color: var(--link); }
-.review-app .roster-floor, .review-app .roster-reviewed-tag { color: var(--ink-2); font-size: var(--step-xs); font-weight: 400; }
+.review-app .roster-index.side-ct { background: var(--ct); }
+.review-app .roster-name { min-width: 0; min-height: 24px; padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; text-decoration-color: var(--accent); text-underline-offset: 3px; }
+.review-app .roster-name:hover { color: var(--link); text-decoration-line: underline; }
+.review-app .roster-row.reviewed .roster-name { font-weight: 600; }
+/* Ringed on the map: the name stays underlined while the ring is up. */
+.review-app .roster-name[aria-pressed="true"] { color: var(--link); text-decoration-line: underline; }
+.review-app .roster-floor { color: var(--ink-2); font-size: var(--step-xs); font-weight: 400; }
+.review-app .roster-reviewed-tag { color: var(--accent); font-size: var(--step-xs); font-weight: 400; }
 .review-app .roster-hp { color: var(--ink); text-align: right; font-variant-numeric: tabular-nums; }
 
-/* Map marks (SVG) on the radar canvas: side colours for players and kills, my player ringed in radar text. */
+/* Map marks (SVG) on the radar canvas: side colours for players and kills; the reviewed player ringed in
+   amber, the same amber as their roster row. */
 .map-player-body { stroke: var(--radar-bg); stroke-width: 1.5px; }
 .map-player-dot.side-t .map-player-body { fill: var(--t); }
 .map-player-dot.side-ct .map-player-body { fill: var(--ct); }
-.map-player-index { fill: var(--radar-bg); font-family: var(--font-body); font-size: 9.5px; font-weight: 700; }
-.map-player-reviewed { fill: none; stroke: var(--radar-text); stroke-width: 2px; }
-.map-player-dot.reviewed .map-player-body { stroke: var(--radar-text); stroke-width: 1.5px; }
+.map-player-index { fill: var(--radar-bg); font-family: var(--font-body); font-size: 9.5px; font-weight: 600; }
+/* The ring sits on a dark disc: a band of canvas between the gold T dot and the amber ring, so the
+   two near colours read as a dot in a ring, not one bigger T dot. */
+.map-player-reviewed { fill: var(--radar-bg); stroke: var(--accent); stroke-width: 2px; }
+.map-player-dot.reviewed .map-player-body { stroke: var(--radar-bg); stroke-width: 1.5px; }
 .map-player-highlight { fill: none; stroke: var(--radar-text-2); stroke-width: 1.5px; stroke-dasharray: 3 2; }
 .map-player-dead { stroke: var(--radar-text); stroke-width: 1.8px; }
-.review-app .map-player-name { fill: var(--radar-text); stroke: var(--radar-bg); stroke-width: 3px; paint-order: stroke; font-family: var(--font-body); font-size: 11px; font-weight: 700; }
-.map-bomb-marker rect { fill: var(--radar-text); stroke: var(--radar-bg); stroke-width: 1.5px; }
+.review-app .map-player-name { fill: var(--radar-text); stroke: var(--radar-bg); stroke-width: 3px; paint-order: stroke; font-family: var(--font-body); font-size: 11px; font-weight: 600; }.map-bomb-marker rect { fill: var(--radar-text); stroke: var(--radar-bg); stroke-width: 1.5px; }
 .map-bomb-marker circle { fill: none; stroke: var(--danger); stroke-width: 1.5px; }
 .review-app .parser-map-event circle { fill: var(--radar-panel); stroke: var(--radar-line); stroke-width: 1.2px; }
-.review-app .parser-map-event text { fill: var(--radar-text); font-size: 7.5px; font-weight: 700; }
+.review-app .parser-map-event text { fill: var(--radar-text); font-size: 7.5px; font-weight: 600; }
 .review-app .parser-map-event.side-t circle { fill: var(--t); stroke: var(--radar-bg); }
 .review-app .parser-map-event.side-ct circle { fill: var(--ct); stroke: var(--radar-bg); }
 .review-app .parser-map-event.own-kill circle { fill: var(--radar-text); stroke: var(--radar-bg); }
@@ -668,18 +734,18 @@
 .fallback-map-text { fill: var(--radar-text-2); }
 
 /* "当前建议" strip: what is being watched, and the way back to its card (an info notice). */
-.review-app .review-finding-strip { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 10px; padding: 3px 4px 3px 9px; border-bottom: 1px solid var(--line-bold); border-left: 3px solid var(--link); background: var(--panel); font-size: var(--step-body); }
+.review-app .review-finding-strip { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 10px; padding: 3px 4px 3px 9px; border-bottom: 1px solid var(--line-bold); border-left: 3px solid var(--accent); background: var(--panel); font-size: var(--step-body); }
 .review-app .review-finding-strip-label { color: var(--ink-2); font-size: var(--step-xs); }
-.review-app .review-finding-strip strong { min-width: 0; font-weight: 700; overflow-wrap: anywhere; }
+.review-app .review-finding-strip strong { min-width: 0; font-weight: 600; overflow-wrap: anywhere; }
 .review-app .review-finding-strip small { color: var(--ink-2); font-size: var(--step-xs); }
 .review-app .review-finding-strip-time { font-variant-numeric: tabular-nums; }
 .review-app .review-finding-strip .text-button { margin-left: auto; }
 .review-app .review-finding-strip-close { display: grid; place-items: center; width: 24px; height: 24px; padding: 0; border: 0; border-radius: var(--radius-control); background: transparent; color: var(--ink-2); }
-.review-app .review-finding-strip-close:hover { background: var(--row-alt); color: var(--ink); }
+.review-app .review-finding-strip-close:hover { background: var(--row-hover); color: var(--ink); }
 
-/* Timeline on white: kills in the killer's side colour (mine outlined in ink), my death in red, events
-   too close to tell apart as one chip with their count, suggestions marked by severity; freeze time a
-   grey block; the playhead in ink. */
+/* Timeline: kills in the killer's side colour (mine outlined in ink), my death in red, events too close
+   to tell apart as one chip with their count, suggestions marked by severity; freeze time a dim block;
+   the playhead in amber. */
 .review-app .timeline-panel { min-height: 0; margin: 0; padding: 6px 10px 2px; border: 0; border-top: 1px solid var(--line-bold); border-radius: 0; background: var(--panel); box-shadow: none; }
 .review-app .timeline-heading { display: none; }
 .review-app .timeline-lane-stack { grid-template-columns: 34px minmax(0, 1fr); gap: 8px; min-height: 0; }
@@ -690,54 +756,56 @@
 .review-app .timeline-lane-track { height: 24px; border: 0; background: none; }
 .review-app .round-lane::before { content: ""; position: absolute; top: 6px; bottom: 6px; left: 0; width: var(--timeline-freeze-end, 0%); background: var(--line-subtle); pointer-events: none; }
 .review-app .round-duration-track { left: 36px; right: 36px; height: 1px; background: var(--line-bold); }
-.review-app .round-boundary-marker { min-width: 32px; min-height: 24px; padding: 0 4px; border: 0; border-radius: var(--radius-control); background: var(--panel); color: var(--link); font-size: var(--step-xs); box-shadow: none; }
-.review-app .round-boundary-marker:hover { color: var(--link-hover); text-decoration: underline; }
-.review-app .timeline-current-spine { width: 1px; background: var(--ink); box-shadow: none; }
+.review-app .round-boundary-marker { min-width: 32px; min-height: 24px; padding: 0 4px; border: 0; border-radius: 0; background: var(--panel); color: var(--link); font-size: var(--step-xs); text-decoration: underline; text-decoration-color: var(--control-line); text-underline-offset: 3px; box-shadow: none; }
+.review-app .round-boundary-marker:is(:hover, :focus-visible) { color: var(--link-hover); text-decoration-color: var(--accent); }
+.review-app .timeline-current-spine { width: 2px; margin-left: -1px; background: var(--accent); box-shadow: none; }
 /* Mirror check: the playhead keeps its line only; the transport right under it already shows the clock. */
 .review-app .timeline-current-spine span { display: none; }
-.review-app .timeline-lane-track .parser-event-marker { display: grid; place-items: center; width: 18px; height: 16px; padding: 0; border: 0; border-radius: var(--radius-control); background: var(--panel); color: var(--ink-2); box-shadow: inset 0 0 0 1px var(--control-line), 0 0 0 1px var(--panel); font-size: 11px; font-weight: 700; line-height: 1; }
-.review-app .timeline-lane-track .parser-event-marker.side-t { background: var(--t); color: var(--ink); box-shadow: 0 0 0 1px var(--panel); }
-.review-app .timeline-lane-track .parser-event-marker.side-ct { background: var(--ct-text); color: var(--on-link); box-shadow: 0 0 0 1px var(--panel); }
+.review-app .timeline-lane-track .parser-event-marker { display: grid; place-items: center; width: 18px; height: 16px; padding: 0; border: 0; border-radius: 0; background: var(--panel); color: var(--ink-2); box-shadow: inset 0 0 0 1px var(--control-line), 0 0 0 1px var(--panel); font-size: 11px; font-weight: 600; line-height: 1; }
+.review-app .timeline-lane-track .parser-event-marker.side-t { background: var(--t); color: var(--page); box-shadow: 0 0 0 1px var(--panel); }
+.review-app .timeline-lane-track .parser-event-marker.side-ct { background: var(--ct); color: var(--page); box-shadow: 0 0 0 1px var(--panel); }
 .review-app .timeline-lane-track .parser-event-marker.own-kill { box-shadow: inset 0 0 0 2px var(--ink), 0 0 0 1px var(--panel); }
 .review-app .timeline-lane-track .parser-event-marker.cluster { background: var(--panel); color: var(--ink); box-shadow: inset 0 0 0 1px var(--ink-2), 0 0 0 1px var(--panel); font-variant-numeric: tabular-nums; }
 .review-app .timeline-lane-track .parser-event-marker.cluster.has-own-kill { box-shadow: inset 0 0 0 2px var(--ink), 0 0 0 1px var(--panel); }
 .review-app .timeline-lane-track .parser-event-marker.cluster.has-own-death { color: var(--danger-text); box-shadow: inset 0 0 0 2px var(--danger), 0 0 0 1px var(--panel); }
-.review-app .timeline-lane-track .parser-event-marker.own-death { background: var(--danger); color: var(--on-link); box-shadow: 0 0 0 1px var(--panel); }
+.review-app .timeline-lane-track .parser-event-marker.own-death { background: var(--danger); color: var(--page); box-shadow: 0 0 0 1px var(--panel); }
 /* My own kills, and above all my death, stay on top of neighbouring markers. */
 .review-app .timeline-lane-track .parser-event-marker:is(.own-kill, .has-own-kill) { z-index: 1; }
 .review-app .timeline-lane-track .parser-event-marker:is(.own-death, .has-own-death) { z-index: 2; }
 .review-app .timeline-lane-track :is(.event-marker, .parser-event-marker):is(:hover, :focus-visible) { z-index: 4; }
-.review-app .timeline-lane-track .event-marker { width: 6px; height: 16px; padding: 0; border: 0; border-radius: 1px; background: var(--danger); box-shadow: 0 0 0 2px var(--panel); }
-.review-app .timeline-lane-track .event-marker.medium { background: var(--t); }
+.review-app .timeline-lane-track .event-marker { width: 6px; height: 16px; padding: 0; border: 0; border-radius: 0; background: var(--danger); box-shadow: 0 0 0 2px var(--panel); }
+.review-app .timeline-lane-track .event-marker.medium { background: var(--ink); }
 .review-app .timeline-lane-track .event-marker:is(.low, .info) { background: var(--ink-3); }
 .review-app .timeline-lane-track :is(.event-marker, .parser-event-marker):focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 /* Hit areas of at least 24 × 24 that stay inside their 24px lane. */
 .review-app :is(.event-marker, .parser-event-marker)::before { content: ""; position: absolute; inset: -4px -5px; }
 .review-app .event-marker::before { inset: -4px -9px; }
 .review-app .timeline-scrubber { padding: 0; border: 0; background: none; }
-.review-app .timeline-panel input[type="range"] { display: block; width: 100%; height: 16px; margin: 4px 0 2px; accent-color: var(--ink); }
-/* The scrubber: played part in ink-2, the rest a line, a hard stop between them. */
+.review-app .timeline-panel input[type="range"] { display: block; width: 100%; height: 16px; margin: 4px 0 2px; accent-color: var(--accent); }
+/* The scrubber: played part in ink-2, the rest a line, a hard stop between them; the handle is the
+   amber playhead, a square like everything else. */
 .review-app .timeline-slider { -webkit-appearance: none; appearance: none; background: transparent; cursor: pointer; }
-.review-app .timeline-slider::-webkit-slider-runnable-track { height: 4px; border-radius: 2px; background: linear-gradient(to right, var(--ink-2) var(--timeline-current-tick, 0%), var(--line-bold) var(--timeline-current-tick, 0%)); }
-.review-app .timeline-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 12px; height: 12px; margin-top: -4px; border: 2px solid var(--panel); border-radius: 50%; background: var(--ink); box-shadow: 0 0 0 1px var(--ink); }
-.review-app .timeline-slider::-moz-range-track { height: 4px; border-radius: 2px; background: var(--line-bold); }
-.review-app .timeline-slider::-moz-range-progress { height: 4px; border-radius: 2px; background: var(--ink-2); }
-.review-app .timeline-slider::-moz-range-thumb { width: 8px; height: 8px; border: 2px solid var(--panel); border-radius: 50%; background: var(--ink); }
+.review-app .timeline-slider::-webkit-slider-runnable-track { height: 4px; border-radius: 0; background: linear-gradient(to right, var(--ink-2) var(--timeline-current-tick, 0%), var(--line-bold) var(--timeline-current-tick, 0%)); }
+.review-app .timeline-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 10px; height: 14px; margin-top: -5px; border: 0; border-radius: 0; background: var(--accent); box-shadow: 0 0 0 2px var(--panel); }
+.review-app .timeline-slider::-moz-range-track { height: 4px; border-radius: 0; background: var(--line-bold); }
+.review-app .timeline-slider::-moz-range-progress { height: 4px; border-radius: 0; background: var(--ink-2); }
+.review-app .timeline-slider::-moz-range-thumb { width: 10px; height: 14px; border: 0; border-radius: 0; background: var(--accent); box-shadow: 0 0 0 2px var(--panel); }
 .review-app .timeline-slider:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 @media (pointer: coarse) {
   .review-app .timeline-panel input[type="range"] { height: 32px; }
   .review-app .roster-name { min-height: 32px; }
 }
 
-/* Transport: a light toolbar strip. Play, seek, speed and the round clock left; suggestion stepping right. */
-.review-app .review-command-bar { position: static; display: flex; flex-direction: row; flex-wrap: wrap; justify-content: flex-start; align-items: center; gap: 6px 10px; min-height: 40px; margin: 0; padding: 5px 10px; border: 0; border-top: 1px solid var(--line-bold); border-radius: 0; background: var(--row-alt); box-shadow: none; backdrop-filter: none; }
+/* Transport: the stage's bottom bar. Play, seek, speed and the round clock left; suggestion stepping right. */
+.review-app .review-command-bar { position: static; display: flex; flex-direction: row; flex-wrap: wrap; justify-content: flex-start; align-items: center; gap: 6px 10px; min-height: 40px; margin: 0; padding: 5px 10px; border: 0; border-top: 1px solid var(--line-subtle); border-radius: 0; background: var(--panel-head); box-shadow: none; backdrop-filter: none; }
 .review-app .review-command-actions { display: flex; flex: none; flex-wrap: nowrap; align-items: center; gap: 4px; width: auto; }
 .review-app .review-command-bar .icon-button { color: var(--ink); }
 .review-app .review-seek-button { width: auto; min-width: 34px; padding: 0 6px; font-size: var(--step-sm); font-variant-numeric: tabular-nums; }
 .review-app .review-speed-control { display: inline-flex; align-items: center; gap: 6px; margin-left: 8px; color: var(--ink-2); font-size: var(--step-xs); }
 .review-app .review-speed-control select { width: auto; min-width: 58px; height: 28px; min-height: 28px; font-size: var(--step-body); font-weight: 400; }
-.review-app .review-clock { margin-left: 10px; color: var(--ink); font-size: var(--step-body); font-weight: 400; line-height: 1; white-space: nowrap; font-variant-numeric: tabular-nums; }
-.review-app .review-clock strong { font-weight: 700; }
+/* The running clock uses the tabular number face so the digits do not jitter during playback. */
+.review-app .review-clock { margin-left: 10px; color: var(--ink); font-family: var(--font-num, var(--font-body)); font-size: var(--step-body); font-weight: 400; line-height: 1; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.review-app .review-clock strong { font-weight: 600; }
 .review-app .review-clock span { color: var(--ink-2); font-weight: 400; }
 .review-app .review-command-coordinate { display: none; min-width: 0; }
 .review-app .review-transport-readouts { display: flex; flex-wrap: wrap; gap: 4px 12px; }
@@ -751,7 +819,7 @@
 .review-app .review-shortcuts dd { margin: 0; }
 
 /* Under the stage: media note, saved videos, advanced tools. */
-.review-app .review-media-note { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 14px; margin: 12px 0 0; padding: 6px 10px; border: 1px solid var(--line-bold); border-left: 3px solid var(--link); border-radius: var(--radius-panel); background: var(--panel); color: var(--ink); }
+.review-app .review-media-note { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 14px; margin: 12px 0 0; padding: 6px 10px; border: 0; border-left: 3px solid var(--accent); border-radius: 0; background: var(--panel); color: var(--ink); }
 .review-app .review-media-note.is-error { border-left-color: var(--danger); }
 /* 已保存的视频 and 高级工具: see the V-B2 section. */
 
@@ -778,13 +846,13 @@
 .demo-progress-steps li { display: flex; flex: 1; align-items: center; gap: 8px; min-width: 0; padding: 6px 10px; color: var(--ink-3); font-size: var(--step-body); }
 .demo-progress-steps li + li { border-left: 1px solid var(--line-subtle); }
 .demo-progress-steps li[data-state="done"] { color: var(--ok-text); }
-.demo-progress-steps li[data-state="current"] { background: var(--row-selected); color: var(--ink); font-weight: 700; }
+.demo-progress-steps li[data-state="current"] { background: var(--row-selected); box-shadow: inset 2px 0 0 var(--accent); color: var(--ink); font-weight: 600; }
 .demo-progress-marker { display: grid; flex: none; place-items: center; width: 18px; height: 18px; border: 1px solid currentColor; border-radius: 50%; font-size: var(--step-xs); font-weight: 400; }
 .demo-state-meta { color: var(--ink-2); font-size: var(--step-xs); font-variant-numeric: tabular-nums; }
-.demo-state-warning { padding: 6px 10px; border: 1px solid var(--line-bold); border-left: 3px solid var(--t); color: var(--ink); font-size: var(--step-body); }
+.demo-state-warning { padding: 6px 10px; border: 0; border-left: 3px solid var(--t); background: none; color: var(--ink); font-size: var(--step-body); }
 .demo-state-hint { color: var(--ink-2); font-size: var(--step-sm); }
 .demo-state-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
-.demo-state-technical summary { display: inline-flex; align-items: center; min-height: 24px; color: var(--link); font-size: var(--step-xs); }
+.demo-state-technical summary { display: inline-flex; align-items: center; min-height: 24px; color: var(--link); font-size: var(--step-xs); text-decoration: underline; text-decoration-color: var(--accent); text-underline-offset: 3px; }
 .demo-state-facts { display: flex; flex-wrap: wrap; gap: 6px 20px; margin: 4px 0 12px; font-size: var(--step-xs); }
 .demo-state-facts div { display: flex; gap: 8px; }
 .demo-state-facts dt { color: var(--ink-2); }
@@ -810,9 +878,9 @@
   .review-app .review-main-column > :is(.review-media-note, .round-detail-panel, .review-saved-clips) { margin: 0; }
   .review-app .review-main-canvas { width: 100%; height: auto; }
   .review-app .review-main-canvas.review-skeleton-canvas { height: min(360px, 72svh); }
-  /* The reviewed player moves out of the grey bar into the panel body, so the bar stays one bar. */
-  .review-app .review-header > .review-header-bar { flex-basis: 100%; border-radius: 2px 2px 0 0; }
-  .review-app .review-header > .personal-review-panel { flex-basis: 100%; padding: 6px 10px; border-top: 1px solid var(--line-bold); border-radius: 0 0 2px 2px; background: var(--panel); }
+  /* The reviewed player moves out of the header bar into the panel body, so the bar stays one bar. */
+  .review-app .review-header > .review-header-bar { flex-basis: 100%; }
+  .review-app .review-header > .personal-review-panel { flex-basis: 100%; padding: 6px 10px; border-top: 1px solid var(--line-subtle); background: var(--panel); }
   .review-app .review-header .personal-review-heading { justify-content: flex-start; }
   .review-app .review-main-canvas.showing-video { aspect-ratio: 16 / 9; min-height: 240px; max-height: 520px; }
   .review-app .review-main-canvas.showing-video > .first-person-panel { position: absolute; inset: 0; }
@@ -838,8 +906,7 @@
   .review-app .timeline-lane-track .parser-event-marker.side-t { background: var(--t); }
   .review-app .timeline-lane-track .parser-event-marker.side-ct { background: var(--ct); }
   .review-app .timeline-lane-track .parser-event-marker:is(.own-kill, .has-own-kill) { height: 18px; box-shadow: none; }
-  .review-app .timeline-lane-track .parser-event-marker.has-own-kill { background: var(--ink); }
-  .review-app .timeline-lane-track .parser-event-marker:is(.own-death, .has-own-death) { height: 18px; background: var(--danger); box-shadow: none; }
+  .review-app .timeline-lane-track .parser-event-marker.has-own-kill { background: var(--ink); }  .review-app .timeline-lane-track .parser-event-marker:is(.own-death, .has-own-death) { height: 18px; background: var(--danger); box-shadow: none; }
   .review-app .review-command-bar { padding: 6px 8px; }
   .review-app .review-command-actions { width: 100%; }
   .review-app .review-speed-control { margin-left: 2px; }
@@ -857,9 +924,10 @@
   .demo-progress-steps li + li { border-top: 1px solid var(--line-subtle); border-left: 0; }
 }
 
-/* === D1: 账户与数据 and 隐私说明 (spec D1, S8 look) ===
+/* === D1: 账户与数据 and 隐私说明 (spec D1, S13 战术终端 look) ===
    Both are a left-aligned column of panels with header bars; the privacy page
-   is one panel whose sections carry lighter grey bars, lines kept near 72ch. */
+   is one panel whose sections carry quieter zebra-fill bars (ink titles under the
+   panel's amber one), lines kept near 72ch. 删除账户 swaps the amber edge for a red mark. */
 .account-page { display: grid; align-content: start; gap: 12px; }
 .account-panel { max-width: 760px; }
 .account-facts { margin: 0; }
@@ -872,12 +940,14 @@
 .account-panel-body ul { padding-left: 20px; }
 .account-panel-body li + li { margin-top: 2px; }
 .account-danger { border-left: 3px solid var(--danger); }
+/* The destructive panel says so once, in red: its edge and its title agree. */
+.account-danger .panel-bar-title { color: var(--danger-text); }
 .account-error { color: var(--danger-text); }
 .account-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
 
 .privacy-doc { max-width: calc(72ch + 24px); font-size: var(--step-md); }
 .privacy-section + .privacy-section { border-top: 1px solid var(--line-bold); }
-.privacy-section-bar { margin: 0; padding: 6px 12px; border-bottom: 1px solid var(--line-subtle); background: var(--row-alt); color: var(--ink); font-size: var(--step-md); font-weight: 700; line-height: var(--leading-tight); }
+.privacy-section-bar { margin: 0; padding: 6px 12px; border-bottom: 1px solid var(--line-subtle); background: var(--row-alt); color: var(--ink); font-size: var(--step-md); font-weight: 600; line-height: var(--leading-tight); }
 .privacy-section-body { display: grid; gap: 6px; padding: 10px 12px 12px; }
 .privacy-section-body :is(p, ul) { margin: 0; }
 .privacy-section-body ul { padding-left: 20px; }
@@ -886,44 +956,42 @@
 .privacy-updated { margin: 0; padding: 8px 12px; border-top: 1px solid var(--line-bold); color: var(--ink-2); font-size: var(--step-sm); }
 .auth-note-link { margin-left: 6px; }
 
-/* === S9 UI-A: score banner, round-end icons, 计分板, first-person explanation, library score (spec S9 A) ===
-   The banner is the one navy surface below the top bar: the final score large (the subject's own
-   vernacular), half scores in the colour of the side each team played. Everything else is S8 panels,
-   header bars and zebra tables. */
+/* === S9 UI-A: score banner, round-end icons, 计分板, first-person explanation (spec S9 A, retoned S13) ===
+   The banner is the header panel's body: the final score as the page's one set of hero numerals
+   (amber, the subject's own vernacular), half scores in the colour of the side each team played.
+   Everything else is panels, header bars and zebra tables. */
 /* Score banner: replaces the match bar once the replay is loaded; the reviewed player sits under it. */
 .review-app .review-header.has-banner { display: block; }
-.review-app .review-header.has-banner > .personal-review-panel { border-top: 1px solid var(--line-bold); border-radius: 0 0 2px 2px; }
-/* Side colours lifted for the navy band (T 7.5:1, CT 6.3:1 on --topbar). */
-.match-banner { --banner-t: #e8b04f; --banner-ct: #8fbbe8; --banner-rule: #3a4b5d; padding: 14px 16px 10px; border-radius: 2px 2px 0 0; background: var(--topbar); color: var(--topbar-text); }
-.review-header.has-banner:not(:has(> .personal-review-panel)) > .match-banner { border-radius: 2px; }
+.review-app .review-header.has-banner > .personal-review-panel { border-top: 1px solid var(--line-subtle); }
+.match-banner { padding: 14px 16px 10px; background: var(--panel); color: var(--ink); }
 /* A scoreline: each team's name and halves lean in towards the score. */
 .match-banner-board { display: grid; grid-template-columns: minmax(0, 1fr) auto auto auto minmax(0, 1fr); align-items: center; column-gap: 20px; }
 .match-banner-team { display: grid; gap: 5px; min-width: 0; }
 .match-banner-team.team-a { justify-items: end; text-align: right; }
 .match-banner-name-line { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; min-width: 0; }
 .match-banner-team.team-a .match-banner-name-line { flex-direction: row-reverse; }
-.match-banner-name { min-width: 0; color: var(--topbar-text); font-size: 22px; font-weight: 700; line-height: 1.2; overflow-wrap: anywhere; }
-.match-banner-mine { color: var(--topbar-muted); font-size: var(--step-sm); }
-.match-banner-halves { display: flex; flex-wrap: wrap; gap: 2px 16px; color: var(--topbar-muted); font-size: var(--step-sm); font-variant-numeric: tabular-nums; }
+.match-banner-name { min-width: 0; color: var(--ink); font-size: 22px; font-weight: 600; line-height: 1.2; overflow-wrap: anywhere; }
+.match-banner-mine { color: var(--ink-2); font-size: var(--step-sm); }
+.match-banner-halves { display: flex; flex-wrap: wrap; gap: 2px 16px; color: var(--ink-2); font-size: var(--step-sm); font-variant-numeric: tabular-nums; }
 .match-banner-team.team-a .match-banner-halves { justify-content: flex-end; }
 .match-banner-half-label { margin-right: 6px; }
-.match-banner-half-score { color: var(--topbar-text); font-weight: 700; }
-.match-banner-half-score.side-t { color: var(--banner-t); }
-.match-banner-half-score.side-ct { color: var(--banner-ct); }
-.match-banner-score { color: var(--topbar-muted); font-size: 44px; font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; }
-.match-banner-score.leading { color: var(--topbar-text); }
-.match-banner-colon { color: var(--topbar-muted); font-size: 30px; line-height: 1; }
-.match-banner-meta { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 16px; margin-top: 12px; padding-top: 8px; border-top: 1px solid var(--banner-rule); font-size: var(--step-sm); font-variant-numeric: tabular-nums; }
-.match-banner-meta:first-child { margin-top: 0; padding-top: 0; border-top: 0; }
-.match-banner-title { min-width: 0; margin: 0 4px 0 0; color: var(--topbar-text); font-size: var(--step-md); font-weight: 700; line-height: var(--leading-tight); overflow-wrap: anywhere; }
-.match-banner .fact { color: var(--topbar-text); }
-.match-banner .fact-label, .match-banner .status-badge { color: var(--topbar-muted); }
+.match-banner-half-score { color: var(--ink); font-weight: 600; }
+.match-banner-half-score.side-t { color: var(--t-text); }
+.match-banner-half-score.side-ct { color: var(--ct-text); }
+/* The scores are the shared hero numerals (.hero-num: amber, 40 px, 30 px on phones); both amber, the
+   numbers already say who leads. The colon stays quiet. */
+.match-banner-colon { color: var(--ink-3); font-size: 28px; line-height: 1; }
+/* Mirror check (S13): no rule between the scoreline and the facts; the gap separates them. */
+.match-banner-meta { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 16px; margin-top: 16px; font-size: var(--step-sm); font-variant-numeric: tabular-nums; }
+.match-banner-meta:first-child { margin-top: 0; }
+.match-banner-title { min-width: 0; margin: 0 4px 0 0; color: var(--ink); font-size: var(--step-md); font-weight: 600; line-height: var(--leading-tight); overflow-wrap: anywhere; }
+.match-banner .fact { color: var(--ink); }
+.match-banner .fact-label, .match-banner .status-badge { color: var(--ink-2); }
 
-/* 回合记录: how each round ended, as a small white icon inside its side-coloured square; the legend
-   names the icons in words (on phones it wraps under the track instead of scrolling). */
-.review-app .round-strip-fill { display: grid; place-items: center; color: #ffffff; }
-/* White on the gold T fill is 2.5:1; the dark icon reads at 6.5:1 (white on CT blue is 3.8:1). */
-.review-app .round-strip-cell.winner-t .round-strip-fill { color: var(--ink); }
+/* 回合记录: how each round ended, as a small icon inside its side-coloured square, dark on the fill
+   (page navy on gold and on blue); the legend names the icons in words (on phones it wraps under the
+   track instead of scrolling). */
+.review-app .round-strip-fill { display: grid; place-items: center; color: var(--page); }
 .review-app .round-strip-reason { display: block; }
 .review-app .round-strip-legend-reason { flex: none; color: var(--ink-2); }
 
@@ -932,7 +1000,7 @@
 .review-app .scoreboard { margin-top: 12px; }
 .scoreboard-team-bar { gap: 4px 12px; justify-content: flex-start; border-radius: 0; }
 .scoreboard-team + .scoreboard-team > .scoreboard-team-bar { border-top: 1px solid var(--line-bold); }
-.scoreboard-team-score { margin-left: auto; font-size: var(--step-lg); font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; }
+.scoreboard-team-score { margin-left: auto; font-size: var(--step-lg); font-weight: 600; line-height: 1; font-variant-numeric: tabular-nums; }
 .scoreboard-team.start-t .scoreboard-team-score { color: var(--t-text); }
 .scoreboard-team.start-ct .scoreboard-team-score { color: var(--ct-text); }
 .scoreboard-scroll { overflow-x: auto; overscroll-behavior-inline: contain; scrollbar-width: thin; }
@@ -945,21 +1013,20 @@
 .scoreboard-table thead th.scoreboard-adr-head { width: 13%; }
 .scoreboard-table tbody tr:nth-child(even) > th { background: var(--row-alt); }
 .scoreboard-table tbody tr:hover > th { background: var(--row-hover); }
-.scoreboard-table tbody tr.selected > th { background: var(--row-selected); }
+/* The reviewed player's row: the amber tint and the 2 px amber mark at its left. */
+.scoreboard-table tbody tr.selected > th { background: var(--row-selected); box-shadow: inset 2px 0 0 var(--accent); }
 .scoreboard-table tbody tr:last-child > th { border-bottom: 0; }
-.scoreboard-player-name { font-weight: 700; }
-.scoreboard-reviewing { margin-left: 8px; color: var(--link-hover); font-size: var(--step-sm); font-weight: 400; }
+.scoreboard-player-name { font-weight: 600; }
+.scoreboard-reviewing { margin-left: 8px; color: var(--accent); font-size: var(--step-sm); font-weight: 400; }
 .scoreboard-diff.plus { color: var(--ok-text); }
 .scoreboard-diff.minus { color: var(--danger-text); }
 .scoreboard-adr { white-space: nowrap; }
 .scoreboard-adr > .num { display: inline-block; min-width: 3.4em; }
-.scoreboard-adr-bar { display: inline-block; width: 72px; height: 6px; margin-right: 8px; background: var(--line-subtle); vertical-align: middle; }
-/* Gold on white is 2.5:1, so T bars get a 1 px edge in the darker T text colour (5.2:1). */
-.scoreboard-adr-bar > i { display: block; box-sizing: border-box; height: 100%; border: 1px solid var(--t-text); background: var(--t); }
-.scoreboard-team.start-ct .scoreboard-adr-bar > i { border: 0; }
+.scoreboard-adr-bar { display: inline-block; width: 72px; height: 6px; margin-right: 8px; background: var(--line-bold); vertical-align: middle; }
+.scoreboard-adr-bar > i { display: block; height: 100%; background: var(--t); }
 .scoreboard-team.start-ct .scoreboard-adr-bar > i { background: var(--ct); }
 
-/* 第一人称 with no clip for this moment: a white panel in the stage that says why and what to do. */
+/* 第一人称 with no clip for this moment: a panel in the stage that says why and what to do. */
 .review-app .review-main-canvas.showing-explainer { background: var(--panel); }
 .first-person-explainer { display: grid; align-content: center; height: 100%; min-height: 260px; padding: 24px 28px; background: var(--panel); }
 .first-person-explainer-body { display: grid; justify-items: start; gap: 10px; max-width: 60ch; }
@@ -968,23 +1035,7 @@
 .first-person-explainer-body .first-person-explainer-hint { color: var(--ink-2); font-size: var(--step-sm); }
 .first-person-explainer-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 18px; margin-top: 4px; }
 
-/* 我的比赛: the final score after the map, the colon lined up down the column; the higher score bold. */
-.lib-row { grid-template-columns: 26px minmax(0, 440px) 90px 64px 48px 64px 104px minmax(140px, 1fr) 118px; }
-.lib-row .c-score { text-align: right; }
-.lib-score { display: inline-grid; grid-template-columns: 2.2ch auto 2.2ch; column-gap: 3px; font-variant-numeric: tabular-nums; white-space: nowrap; }
-.lib-score > :first-child { text-align: right; }
-.lib-score > :last-child { text-align: left; }
-.lib-score > b { font-weight: 700; }
-.lib-score > span:not(:first-child, :last-child) { color: var(--ink-2); }
-@media (max-width: 1100px) {
-  .lib-row { grid-template-columns: 26px minmax(0, 1fr) 76px 58px 40px 60px 96px minmax(120px, 160px) 104px; }
-}
-@media (max-width: 760px) {
-  .lib-row > .c-score { order: 1; flex: none; text-align: left; }
-  .lib-row > .c-score.is-missing { display: none; }
-  .lib-score { display: inline; }
-  .lib-score > span:not(:first-child, :last-child) { color: inherit; }
-}
+/* 我的比赛 score cells: see "S8 V-LIB" near the top. */
 @media (max-width: 700px) {
   .match-banner { padding: 10px 12px 8px; }
   .match-banner-board { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "a sa" "b sb"; row-gap: 10px; }
@@ -996,16 +1047,17 @@
   .match-banner-team.team-b { grid-area: b; }
   .match-banner-colon { display: none; }
   .match-banner-name { font-size: 17px; }
-  .match-banner-score { font-size: 30px; }
   .scoreboard-table { min-width: 620px; }
   .scoreboard-table thead th:first-child { width: 128px; }
+  /* The table runs on past the screen: a hard edge where it is cut says there is more to swipe to. */
+  .scoreboard-scroll { border-right: 2px solid var(--line-bold); }
   .first-person-explainer { padding: 16px; }
 }
 
-/* === S9 UI-B: 数据 section (spec S9 B) ===
-   One panel under the workspace: four cells in a 2×2 grid (stacked under 900 px), each with a light
-   grey sub-bar like the privacy sections. Charts are plain SVG/HTML on S8 tokens; the death map keeps
-   the dark radar canvas because the radar art is dark. Nothing animates. */
+/* === S9 UI-B: 数据 section (spec S9 B, retoned S13) ===
+   One panel under the workspace: four cells in a 2×2 grid (stacked under 900 px), each with a quiet
+   sub-bar like the privacy sections. Charts are plain SVG/HTML on the tokens; the death map sits on
+   the radar canvas colour. Nothing animates. */
 .review-app .match-analysis { margin-top: 12px; }
 .match-analysis-empty { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; margin: 0; padding: 10px 12px; color: var(--ink-2); }
 .match-analysis-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -1013,7 +1065,7 @@
 .match-analysis-cell:nth-child(odd) { border-right: 1px solid var(--line-bold); }
 .match-analysis-cell:nth-last-child(-n + 2) { border-bottom: 0; }
 .match-analysis-cell-bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 4px 12px; min-height: 30px; padding: 3px 12px; border-bottom: 1px solid var(--line-subtle); background: var(--row-alt); }
-.match-analysis-cell-bar h3 { margin: 0; font-size: var(--step-md); }
+.match-analysis-cell-bar h3 { margin: 0; font-size: var(--step-md); font-weight: 600; }
 .match-analysis-cell-meta { color: var(--ink-2); font-size: var(--step-sm); font-variant-numeric: tabular-nums; }
 .match-analysis-caption { margin: 0; padding: 8px 12px 0; color: var(--ink-2); font-size: var(--step-sm); font-variant-numeric: tabular-nums; }
 
@@ -1021,7 +1073,8 @@
    where deaths repeat; the facts sit beside it, or under it when the cell is narrow. */
 .death-map { container-type: inline-size; }
 .death-map-body { display: grid; grid-template-columns: minmax(0, 340px) minmax(0, 1fr); align-items: start; gap: 12px 16px; padding: 10px 12px 12px; }
-.death-map-canvas { position: relative; aspect-ratio: 1 / 1; overflow: hidden; border-radius: var(--radius-control); background: var(--radar-bg); }
+/* The radar PNG's own baked background colour, so the zoomed death map has no lighter block in it. */
+.death-map-canvas { position: relative; aspect-ratio: 1 / 1; overflow: hidden; border-radius: var(--radius-control); background: var(--radar-image-bg); }
 .death-map-canvas > svg { position: absolute; inset: 0; width: 100%; height: 100%; }
 .death-map-grid-line { stroke: var(--radar-line); }
 .death-map-halo { fill: var(--danger); opacity: 0.22; }
@@ -1040,9 +1093,9 @@
 .death-map-empty { margin: 0; font-variant-numeric: tabular-nums; }
 .death-map-note { margin: 0; color: var(--ink-2); font-size: var(--step-sm); }
 .death-map-floors { display: flex; gap: 4px; }
-.death-map-floor { min-height: 22px; padding: 0 8px; border: 1px solid var(--control-line); border-radius: var(--radius-control); background: var(--panel); color: var(--ink-2); font-size: var(--step-sm); font-variant-numeric: tabular-nums; cursor: pointer; }
-.death-map-floor:hover { color: var(--ink); }
-.death-map-floor[aria-pressed="true"] { border-color: var(--ink-2); background: var(--row-selected); color: var(--ink); font-weight: 700; }
+.death-map-floor { min-height: 22px; padding: 0 8px; border: 1px solid var(--control-line); border-radius: 0; background: transparent; color: var(--ink-2); font-size: var(--step-sm); font-variant-numeric: tabular-nums; cursor: pointer; }
+.death-map-floor:hover { background: var(--row-hover); color: var(--ink); }
+.death-map-floor[aria-pressed="true"] { background: var(--row-selected); box-shadow: inset 0 2px 0 var(--accent); color: var(--ink); font-weight: 600; }
 @container (max-width: 520px) {
   .death-map-body { grid-template-columns: minmax(0, 1fr); }
 }
@@ -1052,7 +1105,7 @@
 .kills-chart-legend { display: flex; flex-wrap: wrap; gap: 2px 12px; color: var(--ink-2); font-size: var(--step-sm); }
 .kills-chart-legend > span { display: inline-flex; align-items: center; gap: 4px; }
 .kills-chart-legend .swatch { display: inline-block; width: 10px; height: 10px; }
-.kills-chart-legend .swatch.side-t { box-sizing: border-box; border: 1px solid var(--t-text); background: var(--t); }
+.kills-chart-legend .swatch.side-t { background: var(--t); }
 .kills-chart-legend .swatch.side-ct { background: var(--ct); }
 .kills-chart-legend .swatch.died { height: 3px; background: var(--danger); }
 .kills-chart-frame { min-width: 0; margin: 6px 12px 10px; overflow: hidden; }
@@ -1065,8 +1118,7 @@
 .kills-chart-hit { fill: transparent; }
 .kills-chart-bar:hover .kills-chart-hit { fill: var(--row-hover); }
 .kills-chart-bar:focus-visible .kills-chart-hit { fill: var(--row-hover); stroke: var(--focus-ring); stroke-width: 2; }
-/* The gold T fill is 2.5:1 on white; its 1 px edge in the T text colour carries the shape. */
-.kills-chart-fill.side-t { fill: var(--t); stroke: var(--t-text); stroke-width: 1; }
+.kills-chart-fill.side-t { fill: var(--t); }
 .kills-chart-fill.side-ct { fill: var(--ct); }
 .kills-chart-fill.side-unknown { fill: var(--ink-3); }
 .kills-chart-death { fill: var(--danger); }
@@ -1085,7 +1137,7 @@
 .utility-table thead th:nth-child(3) { width: 20%; }
 .utility-table :is(tbody, tfoot) th { height: 30px; padding: 4px 10px; border-bottom: 1px solid var(--line-subtle); background: transparent; color: var(--ink); font-size: var(--step-body); font-weight: 400; }
 .utility-table td { height: 30px; font-variant-numeric: tabular-nums; }
-.utility-table tfoot :is(th, td) { border-top: 1px solid var(--line-bold); border-bottom: 0; font-weight: 700; }
+.utility-table tfoot :is(th, td) { border-top: 1px solid var(--line-bold); border-bottom: 0; font-weight: 600; }
 /* Collapsed borders: the last body row's subtle line would win over the 合计 rule under 道具. */
 .utility-table tbody tr:last-child > th { border-bottom: 0; }
 .utility-bar { display: block; height: 8px; background: var(--ink-3); }
@@ -1123,9 +1175,9 @@
 .review-app .live-roster-row .roster-money { color: var(--ink); }
 .review-app .live-roster-row .roster-kd { min-width: 30px; color: var(--ink-2); text-align: right; }
 .review-app .live-roster-row .roster-line-detail { display: flex; align-items: center; gap: 6px; min-width: 0; min-height: 17px; padding-left: 24px; color: var(--ink-2); font-size: var(--step-xs); }
-.review-app .live-roster-row .roster-hp-bar { flex: none; width: 44px; height: 5px; overflow: hidden; border-radius: 1px; background: var(--line-subtle); }
-.review-app .live-roster-row .roster-hp-bar > span { display: block; height: 100%; background: var(--ink-3); }
-.review-app .live-roster-row .roster-hp-bar > span.low { background: var(--danger); }
+/* HP is the shared segmented meter (.seg-meter: ten blocks, the fill's inline width already on the
+   memoised row is the only thing that changes); here only its size. */
+.review-app .live-roster-row .roster-hp-bar { flex: none; width: 60px; }
 .review-app .live-roster-row .roster-hp { flex: none; min-width: 20px; color: var(--ink); text-align: left; font-variant-numeric: tabular-nums; }
 .review-app .live-roster-row .roster-weapon { flex: 1 1 auto; min-width: 0; overflow: hidden; color: var(--ink); white-space: nowrap; text-overflow: ellipsis; }
 .review-app .live-roster-row .roster-grenades { display: inline-flex; flex: none; gap: 1px; }
@@ -1134,7 +1186,7 @@
 .review-app .live-roster-row .roster-defuser { color: var(--ct-text); }
 .review-app .live-roster-row .roster-death { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 /* v1 replays: HP sits on the name line and an alive row is one line. */
-.review-app .live-roster-row.compact .roster-stats .roster-hp-bar { width: 32px; }
+.review-app .live-roster-row.compact .roster-stats .roster-hp-bar { width: 40px; }
 /* Laptop widths (a 440 px canvas): tighter lines, so ten rows and both headers fit without scrolling. */
 @media (min-width: 1001px) and (max-width: 1180px) {
   .review-app .review-main-canvas .player-list { gap: 6px; padding: 6px; }
@@ -1152,7 +1204,7 @@
   .review-app .live-roster-row .roster-stats { gap: 5px; }
   .review-app .live-roster-row .roster-kd { min-width: 0; }
   .review-app .live-roster-row .roster-line-detail { gap: 4px; padding-left: 0; }
-  .review-app .live-roster-row .roster-hp-bar { width: 22px; }
+  .review-app .live-roster-row .roster-hp-bar { width: 40px; }
   /* The death line wraps instead of losing the weapon. */
   .review-app .live-roster-row .roster-death { overflow: visible; white-space: normal; }
 }
@@ -1205,7 +1257,8 @@
 .review-app .utility-finder-throw.dimmed { opacity: 0.2; }
 .review-app .utility-finder-throw:is(:hover, .hovered) { opacity: 1; }
 .review-app .utility-finder-throw:is(:hover, .hovered) .utility-finder-path { stroke-width: 0.75px; stroke-opacity: 1; }
-.review-app .utility-finder-throw:is(:hover, .hovered) .utility-finder-landing { fill: var(--link); stroke: var(--radar-text); stroke-width: 0.45px; }
+.review-app .utility-finder-throw:is(:hover, .hovered) .utility-finder-landing { fill: var(--accent); stroke: var(--radar-bg); stroke-width: 0.45px; }
+.review-app .utility-finder-throw:is(:hover, .hovered) .utility-finder-landing-icon { color: var(--on-accent); }
 .review-app .utility-finder-selection { fill: var(--radar-text); fill-opacity: 0.08; stroke: var(--radar-text); stroke-width: 0.35px; stroke-dasharray: 1 0.8; pointer-events: none; }
 /* While a rectangle is drawn the trajectories do not react to the pointer. */
 .review-app .utility-finder-map > svg.drafting .utility-finder-throw { pointer-events: none; }
@@ -1214,16 +1267,15 @@
 .review-app .utility-finder-filter { display: grid; grid-template-columns: 40px minmax(0, 1fr); align-items: center; gap: 4px 6px; }
 .review-app .utility-finder-filter-label { color: var(--ink-2); font-size: var(--step-xs); }
 .review-app .utility-finder-segments { display: flex; flex-wrap: wrap; min-width: 0; }
-.review-app .utility-finder-segment { height: 24px; margin-left: -1px; padding: 0 6px; border: 1px solid var(--control-line); border-radius: 0; background: var(--panel); color: var(--ink); font-family: var(--font-body); font-size: var(--step-sm); white-space: nowrap; cursor: pointer; }
-.review-app .utility-finder-segment:first-child { margin-left: 0; border-radius: var(--radius-control) 0 0 var(--radius-control); }
-.review-app .utility-finder-segment:last-child { border-radius: 0 var(--radius-control) var(--radius-control) 0; }
-.review-app .utility-finder-segment:hover { background: var(--row-alt); }
-.review-app .utility-finder-segment[aria-pressed="true"] { position: relative; z-index: 1; border-color: var(--link); background: var(--row-selected); font-weight: 700; }
+.review-app .utility-finder-segment { height: 24px; margin-left: -1px; padding: 0 6px; border: 1px solid var(--control-line); border-radius: 0; background: transparent; color: var(--ink); font-family: var(--font-body); font-size: var(--step-sm); white-space: nowrap; cursor: pointer; }
+.review-app .utility-finder-segment:first-child { margin-left: 0; }
+.review-app .utility-finder-segment:hover { background: var(--row-hover); }
+.review-app .utility-finder-segment[aria-pressed="true"] { position: relative; background: var(--row-selected); box-shadow: inset 0 2px 0 var(--accent); font-weight: 600; }
 .review-app .utility-finder-player { grid-column: 2; max-width: 100%; height: 24px; font-size: var(--step-sm); }
 .review-app .utility-finder-filter select { height: 24px; font-size: var(--step-sm); }
 .review-app .utility-finder-results { display: flex; flex: 1 1 auto; flex-direction: column; min-height: 0; }
 .review-app .utility-finder-results-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 30px; padding: 0 10px; border-bottom: 1px solid var(--line-bold); background: var(--panel-head); }
-.review-app .utility-finder-count { margin: 0; font-size: var(--step-body); font-weight: 700; }
+.review-app .utility-finder-count { margin: 0; color: var(--accent); font-size: var(--step-body); font-weight: 600; }
 .review-app .utility-finder-list { flex: 1 1 auto; min-height: 0; margin: 0; padding: 0; overflow: auto; list-style: none; scrollbar-width: thin; }
 .review-app .utility-finder-row { display: grid; grid-template-columns: 64px 34px minmax(0, 1fr) auto; align-items: center; gap: 6px; width: 100%; min-height: 28px; padding: 0 10px; border: 0; border-radius: 0; background: transparent; color: var(--ink); font-family: var(--font-body); font-size: var(--step-sm); text-align: left; cursor: pointer; }
 .review-app .utility-finder-row:is(:hover, :focus-visible) { background: var(--row-hover); }
@@ -1232,8 +1284,10 @@
 .review-app .utility-finder-thrower::before { content: ""; display: inline-block; width: 7px; height: 7px; margin-right: 5px; border-radius: 50%; background: var(--ink-3); vertical-align: 1px; }
 .review-app .utility-finder-thrower.side-t::before { background: var(--t); }
 .review-app .utility-finder-thrower.side-ct::before { background: var(--ct); }
-.review-app .utility-finder-go { color: var(--link); }
-.review-app .utility-finder-row:hover .utility-finder-go { text-decoration: underline; }
+/* One 看这颗 per row, a whole column of them: a neutral underline at rest, amber on the row under the
+   pointer or keyboard focus (the library's 进入复盘 column does the same). */
+.review-app .utility-finder-go { color: var(--link); text-decoration: underline; text-decoration-color: var(--control-line); text-underline-offset: 3px; }
+.review-app .utility-finder-row:is(:hover, :focus-visible) .utility-finder-go { color: var(--link-hover); text-decoration-color: var(--accent); }
 .review-app .utility-finder-empty { margin: 0; padding: 10px; color: var(--ink-2); font-size: var(--step-body); }
 .review-app .utility-finder-pending { height: 100%; min-height: 220px; padding: 12px; }
 .review-app .utility-finder-pending-notice { margin: 0; padding: 6px 10px; border-left: 3px solid var(--radar-text-2); background: var(--radar-panel); color: var(--radar-text); font-size: var(--step-body); text-align: left; }
@@ -1261,7 +1315,7 @@
 /* Two groups (round key, economy key): a wrap falls between them, or inside one, never leaving an orphan item. */
 .review-app .round-strip-legend > .round-strip-legend-group { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 2px 14px; min-width: 0; }
 .review-app .round-strip-legend-group > span { white-space: nowrap; }
-.review-app .round-strip-legend-econ b { color: var(--ink); font-weight: 700; }
+.review-app .round-strip-legend-econ b { color: var(--ink); font-weight: 600; }
 
 .review-app .round-strip-track.has-economy { padding-left: 0; }
 .review-app .round-strip-track.has-economy .round-strip-cell { grid-template-rows: 24px 17px 12px 20px 15px; }
@@ -1274,7 +1328,7 @@
 .review-app .round-strip-team.team-a { grid-row: 4; color: var(--ink); }
 .review-app .round-strip-team.team-b { grid-row: 5; color: var(--ink-2); }
 /* Faded: the cell's contents, never the button itself, so its focus ring and the selected round's
-   ink outline keep full strength. The fill is mixed with the panel instead of made transparent. */
+   amber outline keep full strength. The fill is mixed with the panel instead of made transparent. */
 .review-app .round-strip-cell.econ-faded :is(.round-strip-number, .round-strip-marks, .round-strip-econ, .round-strip-reason) { opacity: 0.25; }
 .review-app .round-strip-cell.econ-faded .round-strip-fill { background: color-mix(in srgb, var(--line-bold) 25%, var(--panel)); }
 .review-app .round-strip-cell.econ-faded.winner-t .round-strip-fill { background: color-mix(in srgb, var(--t) 25%, var(--panel)); }
@@ -1284,9 +1338,9 @@
 .review-app .round-strip-cell.econ-faded.winner-t:is(:hover, :focus-visible, .selected) .round-strip-fill { background: color-mix(in srgb, var(--t) 55%, var(--panel)); }
 .review-app .round-strip-cell.econ-faded.winner-ct:is(:hover, :focus-visible, .selected) .round-strip-fill { background: color-mix(in srgb, var(--ct) 55%, var(--panel)); }
 /* While filtering, the chosen team's name and its letters in the matching rounds are bold ink. */
-.review-app :is(.round-strip-track.filter-team-a .round-strip-team.team-a, .round-strip-track.filter-team-b .round-strip-team.team-b) { color: var(--ink); font-weight: 700; }
+.review-app :is(.round-strip-track.filter-team-a .round-strip-team.team-a, .round-strip-track.filter-team-b .round-strip-team.team-b) { color: var(--ink); font-weight: 600; }
 .review-app .round-strip-track.filter-team-a .round-strip-cell:not(.econ-faded) .round-strip-econ.team-a,
-.review-app .round-strip-track.filter-team-b .round-strip-cell:not(.econ-faded) .round-strip-econ.team-b { color: var(--ink); font-weight: 700; }
+.review-app .round-strip-track.filter-team-b .round-strip-cell:not(.econ-faded) .round-strip-econ.team-b { color: var(--ink); font-weight: 600; }
 
 /* 筛选 beside the controls; on a phone the team segments wrap under the kind segments, not under 筛选. */
 .review-app .round-strip-filter { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: start; gap: 0 8px; min-width: 0; padding: 3px 0; }
@@ -1295,14 +1349,13 @@
 .review-app .round-strip-filter-count { color: var(--ink-2); font-size: var(--step-sm); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .review-app .round-strip-filter-count:empty { display: none; }
 .review-app .econ-segments { display: flex; min-width: 0; }
-.review-app .econ-segment { height: 24px; margin-left: -1px; padding: 0 8px; border: 1px solid var(--control-line); border-radius: 0; background: var(--panel); color: var(--ink); font-family: var(--font-body); font-size: var(--step-sm); white-space: nowrap; cursor: pointer; }
-.review-app .econ-segment:first-child { margin-left: 0; border-radius: var(--radius-control) 0 0 var(--radius-control); }
-.review-app .econ-segment:last-child { border-radius: 0 var(--radius-control) var(--radius-control) 0; }
-.review-app .econ-segment:hover { background: var(--row-alt); }
-.review-app .econ-segment[aria-pressed="true"] { position: relative; z-index: 1; border-color: var(--link); background: var(--row-selected); font-weight: 700; }
+.review-app .econ-segment { height: 24px; margin-left: -1px; padding: 0 8px; border: 1px solid var(--control-line); border-radius: 0; background: transparent; color: var(--ink); font-family: var(--font-body); font-size: var(--step-sm); white-space: nowrap; cursor: pointer; }
+.review-app .econ-segment:first-child { margin-left: 0; }
+.review-app .econ-segment:hover { background: var(--row-hover); }
+.review-app .econ-segment[aria-pressed="true"] { position: relative; background: var(--row-selected); box-shadow: inset 0 2px 0 var(--accent); font-weight: 600; }
 .review-app .econ-segment-team { max-width: 10em; overflow: hidden; text-overflow: ellipsis; }
 /* Under 全部 the team choice filters nothing: it reads as unavailable, not as a pressed filter. */
-.review-app .econ-segment[aria-disabled="true"] { z-index: 0; border-color: var(--control-line); background: var(--panel); color: var(--ink-3); font-weight: 400; cursor: default; }
+.review-app .econ-segment[aria-disabled="true"] { z-index: 0; border-color: var(--control-line); background: transparent; box-shadow: none; color: var(--ink-3); font-weight: 400; cursor: default; }
 
 .review-app .economy-panel { margin-top: 12px; }
 .economy-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(300px, 380px); }
@@ -1311,7 +1364,7 @@
 .economy-legend { display: flex; flex-wrap: wrap; gap: 2px 12px; color: var(--ink-2); font-size: var(--step-sm); }
 .economy-legend > span { display: inline-flex; align-items: center; gap: 4px; }
 .economy-legend .swatch { display: inline-block; width: 10px; height: 10px; }
-.economy-legend .swatch.side-t { border: 1px solid var(--t-text); background: var(--t); }
+.economy-legend .swatch.side-t { background: var(--t); }
 .economy-legend .swatch.side-ct { background: var(--ct); }
 .economy-legend .swatch.won { width: 5px; height: 5px; background: var(--ink); }
 .economy-legend .swatch.threshold { width: 14px; height: 0; border-top: 1px dashed var(--ink-3); }
@@ -1329,12 +1382,14 @@
 .economy-chart-pair.selected .economy-chart-hit { fill: var(--row-selected); }
 .economy-chart-pair:hover .economy-chart-hit { fill: var(--row-hover); }
 .economy-chart-pair:focus-visible .economy-chart-hit { fill: var(--row-hover); stroke: var(--focus-ring); stroke-width: 2; }
-/* Gold on white is 2.5:1: T bars keep the 1 px T-text edge. Team B is the lighter fill, edged in its side's text colour. */
-.economy-chart-bar.side-t { fill: var(--t); stroke: var(--t-text); stroke-width: 1; }
+/* Team B is the darker fill (its side colour sunk into the panel, legend "深色"), edged in the full side
+   colour: on navy a fill mixed towards ink would be the brightest bar and pull the eye to the second team. */
+.economy-chart-bar.side-t { fill: var(--t); }
 .economy-chart-bar.side-ct { fill: var(--ct); }
 .economy-chart-bar.side-unknown { fill: var(--ink-3); }
-.economy-chart-bar.team-b { fill-opacity: 0.5; stroke-width: 1; }
-.economy-chart-bar.team-b.side-ct { stroke: var(--ct-text); }
+.economy-chart-bar.team-b { stroke-width: 1; }
+.economy-chart-bar.team-b.side-t { fill: color-mix(in srgb, var(--t) 45%, var(--panel)); stroke: var(--t); }
+.economy-chart-bar.team-b.side-ct { fill: color-mix(in srgb, var(--ct) 45%, var(--panel)); stroke: var(--ct); }
 .economy-chart-win { fill: var(--ink); }
 
 .economy-table { table-layout: fixed; }
@@ -1344,7 +1399,7 @@
 .economy-table .economy-col-wins { width: 24%; }
 .economy-table thead th { height: 26px; overflow: hidden; text-overflow: ellipsis; }
 .economy-table thead th[rowspan] { vertical-align: bottom; }
-.economy-table thead .economy-team-head { border-bottom-color: var(--line-subtle); color: var(--ink); font-weight: 700; text-align: center; }
+.economy-table thead .economy-team-head { border-bottom-color: var(--line-subtle); color: var(--ink); font-weight: 600; text-align: center; }
 .economy-table tbody th { height: 30px; padding: 4px 10px; border-bottom: 1px solid var(--line-subtle); background: transparent; color: var(--ink); font-size: var(--step-body); }
 .economy-table tbody tr:last-child > th { border-bottom: 0; }
 .economy-table td { height: 30px; white-space: nowrap; }
@@ -1367,3 +1422,15 @@
   .economy-chart-frame { margin: 6px 8px 8px; }
   .economy-table :is(th, td) { padding-inline: 6px; }
 }
+
+/* === S12 === quieter coaching column (spec S12 UI)
+   本场最值得回看: a static group header like the round headers (not a toggle) over up to five cards
+   in the importance order; the rounds below list the rest. Death cards carry small bordered chips after
+   the finding (weapon, 4v4→3v4, 回合输了) and one quiet "另外：…" line per reason folded into the death. */
+.review-app .coaching-panel .coaching-top-header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 8px; min-height: 28px; margin: 0; padding: 4px 10px; border-bottom: 1px solid var(--line-bold); background: var(--panel); color: var(--ink); font-size: var(--step-sm); line-height: 20px; }
+.review-app .coaching-panel .coaching-top-header strong { color: inherit; font-size: var(--step-sm); font-weight: 600; }
+.review-app .coaching-panel .coaching-top-header small { color: var(--ink-3); font-size: var(--step-sm); }
+.review-app .coaching-panel .coaching-top-group { border-bottom: 1px solid var(--line-bold); }
+/* Chips: square amber tags, a thin amber frame, no fill. */
+.review-app .coaching-feed-chip { display: inline-block; margin: 0 0 0 6px; padding: 0 4px; border: 1px solid var(--accent-line); border-radius: 0; color: var(--accent); font-size: 11px; font-weight: 400; line-height: 15px; font-variant-numeric: tabular-nums; white-space: nowrap; vertical-align: 1px; }
+.review-app .coaching-panel .coaching-card-reason { max-width: 62ch; margin: 1px 0 0; color: var(--ink-2); font-size: var(--step-sm); line-height: 18px; font-variant-numeric: tabular-nums; }

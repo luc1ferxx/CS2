@@ -39,9 +39,9 @@ export const MatchScoreBanner = memo(function MatchScoreBanner({
           <p className="visually-hidden">{scoreSentence(teamA, teamB, mark)}</p>
           <div className="match-banner-board" aria-hidden="true">
             <BannerTeam team={teamA} mark={mark("A")} />
-            <span className={`match-banner-score score-a${teamA.score >= teamB.score ? " leading" : ""}`}>{teamA.score}</span>
+            <span className={`hero-num match-banner-score score-a${teamA.score >= teamB.score ? " leading" : ""}`}>{teamA.score}</span>
             <span className="match-banner-colon">:</span>
-            <span className={`match-banner-score score-b${teamB.score >= teamA.score ? " leading" : ""}`}>{teamB.score}</span>
+            <span className={`hero-num match-banner-score score-b${teamB.score >= teamA.score ? " leading" : ""}`}>{teamB.score}</span>
             <BannerTeam team={teamB} mark={mark("B")} />
           </div>
         </>

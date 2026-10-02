@@ -25,6 +25,8 @@ interface CoachingEventCardProps {
   clock?: string | null;
   // Where the card sits, spelled out ("第 2 回合 1:11"); the time column's tooltip.
   locationLabel?: string;
+  // Put the round above the clock (cards listed outside their round group).
+  showRound?: boolean;
   // The reviewed player's side in this card's round, when known; colors the names.
   side?: PlayerSide | null;
   renderJob?: RenderJobStatus;
@@ -37,7 +39,7 @@ interface CoachingEventCardProps {
 }
 
 export const CoachingEventCard = memo(function CoachingEventCard({
-  reviewEvent, active, inspected, clock, locationLabel, side, renderJob, clipRequesting, feedbackState,
+  reviewEvent, active, inspected, clock, locationLabel, showRound = false, side, renderJob, clipRequesting, feedbackState,
   onToggleInspect, onSeek, onGenerateClip, onFeedback
 }: CoachingEventCardProps) {
   const { event } = reviewEvent;
@@ -57,6 +59,9 @@ export const CoachingEventCard = memo(function CoachingEventCard({
   const cardId = coachingCardId(event.id);
   const inspectorId = `${cardId}-evidence`;
   const feedbackFailed = feedbackState?.status === "failed";
+  const feedbackStale = feedbackState?.status === "stale";
+  const chips = reviewEvent.chips ?? [];
+  const reasonLines = reviewEvent.extraReasonLines ?? [];
   const roundLabel = `第 ${event.round_number} 回合`;
   const ownSide = side ? `side-${side.toLowerCase()}` : "side-unknown";
   const otherSide = side ? `side-${side === "T" ? "ct" : "t"}` : "side-unknown";
@@ -68,7 +73,9 @@ export const CoachingEventCard = memo(function CoachingEventCard({
       className={`event-card evidence-ledger-item coaching-feed-row ${event.severity} ${active ? "active" : ""} ${inspected ? "inspected" : ""}`}
       aria-label={copy.title}
     >
-      <span className="coaching-feed-clock" title={locationLabel ?? roundLabel}>{clock ?? roundLabel}</span>
+      <span className="coaching-feed-clock" title={locationLabel ?? roundLabel}>
+        {showRound ? <><span className="coaching-feed-round">{roundLabel}</span>{clock}</> : clock ?? roundLabel}
+      </span>
       <div className="coaching-feed-main">
         <h3 className="event-title coaching-feed-line">
           {feed.died ? (
@@ -79,8 +86,15 @@ export const CoachingEventCard = memo(function CoachingEventCard({
             </span>
           ) : null}
           <span className="coaching-feed-finding">{finding}</span>
+          {chips.map((chip) => (
+            <Fragment key={chip}>
+              <span className="visually-hidden">，</span>
+              <span className="coaching-feed-chip">{chip}</span>
+            </Fragment>
+          ))}
           <span className="visually-hidden">，{coachingSeverityLabel(event.severity)}</span>
         </h3>
+        {reasonLines.map((line) => <p key={line} className="coaching-card-reason">{line}</p>)}
         {/* What to do next: shown on the row at the playhead or with its evidence open, not on every row. */}
         <p className="coaching-card-guidance">{copy.guidance}</p>
       </div>
@@ -137,14 +151,15 @@ export const CoachingEventCard = memo(function CoachingEventCard({
             ))}
           </div>
         </div>
-        {/* Always mounted so a failed save is announced where the player tapped. */}
+        {/* Always mounted so a failed save is announced where the player tapped. A 404 means the
+            suggestion was recomputed away: re-sending cannot help, only a reload. */}
         <p className="coaching-feedback-status" role="status">
           {feedbackFailed ? (
             <>
               <span>评价没有保存。</span>
               <button className="text-button coaching-link" type="button" onClick={() => onFeedback(event, feedbackState.verdict)}>重新保存</button>
             </>
-          ) : null}
+          ) : feedbackStale ? <span>建议已按新规则更新，请刷新页面</span> : null}
         </p>
 
         {inspected ? (

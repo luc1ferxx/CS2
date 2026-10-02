@@ -47,7 +47,7 @@ describe("PrivacyPage", () => {
     const deletion = screen.getByRole("region", { name: "删除" });
     expect(within(deletion).getByRole("link", { name: "账户与数据" })).toHaveAttribute("href", "/account");
     expect(deletion).toHaveTextContent("删除比赛不会恢复当天的上传次数。");
-    expect(screen.getByText("最近更新：2026-09-26")).toBeInTheDocument();
+    expect(screen.getByText("最近更新：2026-10-02")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "隐私说明" })).toHaveAttribute("aria-current", "page");
   });
 

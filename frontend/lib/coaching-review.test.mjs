@@ -38,7 +38,14 @@ function loadTypeScriptModule(relativePath) {
 const {
   activeCoachingEventIds,
   buildCoachingReviewModel,
+  byImportance,
   coachingEventSide,
+  coachingExtraReasons,
+  coachingImpact,
+  coachingWeapon,
+  compareImportance,
+  deathChips,
+  extraReasonLines,
   coachingFacts,
   coachingFeed,
   coachingMomentLabel,
@@ -447,6 +454,110 @@ const events = [
   assert.equal(sameIdSet(new Set(["a", "b"]), new Set(["b", "a"])), true);
   assert.equal(sameIdSet(new Set(["a"]), new Set(["b"])), false);
   assert.equal(sameIdSet(new Set(), new Set(["a"])), false);
+}
+
+{
+  // 本场最值得回看: round lost > first death > man disadvantage > more reasons > severity > round > tick;
+  // events without the death impact follow, in their existing (severity, round, tick) order.
+  const death = (id, round, tick, impact, extra = 0, severity = "medium") => coachingEvent({
+    id, round_number: round, tick_start: tick, severity, structured_context_json: {
+      ruleId: "untraded_death", impact,
+      extraReasons: Array.from({ length: extra }, () => ({ ruleId: "poor_spacing", spacingType: "too_far", distance: 1200 }))
+    }
+  });
+  const plain = (id, round, tick, severity, ruleId = "poor_spacing") =>
+    coachingEvent({ id, round_number: round, tick_start: tick, severity, structured_context_json: { ruleId } });
+  const events = [
+    plain("stacked-high", 1, 50, "high"),
+    death("nothing", 2, 2000, { roundLost: false, firstDeath: false, manDisadvantage: false }),
+    plain("retake-medium", 1, 60, "medium", "retake_desync"),
+    death("disadvantage", 3, 3000, { roundLost: false, firstDeath: false, manDisadvantage: true }),
+    death("first-late", 5, 5000, { roundLost: false, firstDeath: true }),
+    death("first-early", 4, 4000, { roundLost: false, firstDeath: true }),
+    death("lost-unknown-first", 6, 6000, { roundLost: null, firstDeath: true }),
+    death("lost-reasons", 8, 8000, { roundLost: true }, 1),
+    death("lost", 7, 7000, { roundLost: true }),
+    death("nothing-reasons", 9, 9000, {}, 2, "low"),
+    plain("legacy-low", 1, 10, "low", "untraded_death")
+  ];
+  const order = [...events].sort(compareImportance).map((event) => event.id);
+  assert.deepEqual(order, [
+    "lost-reasons", "lost",
+    "first-early", "first-late", "lost-unknown-first",
+    "disadvantage",
+    "nothing-reasons", "nothing",
+    "stacked-high", "retake-medium", "legacy-low"
+  ]);
+  assert.deepEqual(normalize(byImportance(events.map((event) => ({ event }))).map((item) => item.event.id)), order);
+  assert.equal(events[0].id, "stacked-high", "byImportance sorts a copy");
+  // Without any impact the order is exactly the existing priority order.
+  const legacy = events.filter((event) => !event.structured_context_json.impact);
+  assert.deepEqual([...legacy].sort(compareImportance).map((event) => event.id), [...legacy].sort(compareFindingPriority).map((event) => event.id));
+}
+
+{
+  // Readers keep only well-formed fields and never guess.
+  const withContext = (context) => coachingEvent({ id: "reader", round_number: 1, tick_start: 1, severity: "medium", structured_context_json: context });
+  assert.equal(coachingImpact(withContext({ ruleId: "untraded_death" })), null);
+  assert.equal(coachingImpact(withContext({ impact: [] })), null);
+  assert.equal(coachingImpact({ ...withContext({}), structured_context_json: undefined }), null);
+  assert.deepEqual(normalize(coachingImpact(withContext({ impact: {
+    roundLost: null, firstDeath: "yes", manDisadvantage: true, aliveBefore: { own: 4, enemy: 4 }, aliveAfter: { own: 3.5, enemy: 4 }
+  } }))), { roundLost: null, manDisadvantage: true, aliveBefore: { own: 4, enemy: 4 } });
+  assert.deepEqual(normalize(coachingExtraReasons(withContext({ extraReasons: [
+    { ruleId: "isolated_entry", distance: 980, tick: 400 }, { distance: 5 }, null, "x",
+    { ruleId: "poor_spacing", spacingType: "too_far", distance: "far", durationSeconds: 3 }
+  ] }))), [
+    { ruleId: "isolated_entry", distance: 980, tick: 400 },
+    { ruleId: "poor_spacing", spacingType: "too_far", durationSeconds: 3 }
+  ]);
+  assert.deepEqual(normalize(coachingExtraReasons(withContext({ extraReasons: "nope" }))), []);
+  assert.equal(coachingWeapon(withContext({ weapon: " awp " })), "awp");
+  assert.equal(coachingWeapon(withContext({ weapon: 7 })), null);
+}
+
+{
+  // Death cards: chips after the finding and one "另外" line per folded reason.
+  const card = (context, ruleId = "untraded_death") => coachingEvent({ id: "chips", round_number: 1, tick_start: 1, severity: "medium",
+    structured_context_json: { ruleId, ...context } });
+  const full = card({
+    weapon: "ak47",
+    impact: { roundLost: true, firstDeath: true, aliveBefore: { own: 4, enemy: 4 }, aliveAfter: { own: 3, enemy: 4 }, manDisadvantage: true },
+    extraReasons: [
+      { ruleId: "poor_spacing", spacingType: "too_far", distance: 1240, durationSeconds: 4.5, tick: 300 },
+      { ruleId: "isolated_entry", distance: 980.4, tick: 400 },
+      { ruleId: "future_rule" }
+    ]
+  });
+  assert.deepEqual(normalize(deathChips(full)), ["ak47", "4v4→3v4", "回合输了"], "the stored weapon string without a label function");
+  assert.deepEqual(normalize(deathChips(full, (weapon) => weapon === "ak47" ? "AK-47" : null)), ["AK-47", "4v4→3v4", "回合输了"]);
+  assert.equal(deathChips(full, () => null)[0], "ak47", "an unmapped weapon falls back to the stored string");
+  assert.deepEqual(normalize(extraReasonLines(full)), [
+    "另外：阵亡前已经离最近的队友 1240 单位，持续 4.5 秒",
+    "另外：这是本回合 T 方第一个阵亡，最近的队友约 980 单位外"
+  ]);
+  assert.deepEqual(normalize(extraReasonLines(card({ extraReasons: [{ ruleId: "poor_spacing", spacingType: "too_far" }, { ruleId: "isolated_entry" }] }))),
+    ["另外：阵亡前已经离最近的队友较远", "另外：这是本回合 T 方第一个阵亡"]);
+  // Missing data leaves the chip out rather than guessing it.
+  assert.deepEqual(normalize(deathChips(card({ impact: { roundLost: false, aliveBefore: { own: 2, enemy: 1 } } }))), []);
+  assert.deepEqual(normalize(deathChips(card({ impact: { roundLost: null, aliveBefore: { own: 2, enemy: 1 }, aliveAfter: { own: 1, enemy: 1 } } }, "isolated_entry"))),
+    ["2v1→1v1"]);
+  assert.deepEqual(normalize(deathChips(card({ weapon: "awp", impact: { roundLost: true } }, "poor_spacing"))), [], "only death cards carry chips");
+  assert.deepEqual(normalize(deathChips(card({}))), []);
+  assert.deepEqual(normalize(extraReasonLines(card({}))), []);
+  const reviewEvent = reviewEventForEvent(full, new Map(), { weaponLabel: (weapon) => weapon.toUpperCase() });
+  assert.deepEqual(normalize(reviewEvent.chips), ["AK47", "4v4→3v4", "回合输了"]);
+  assert.equal(reviewEvent.extraReasonLines.length, 2);
+  assert.deepEqual(normalize(reviewEventForEvent(card({}), new Map()).chips), []);
+
+  // Stacked cards say how long the pair stayed together; isolated entries name the killer when recorded.
+  const fact = (context) => coachingFacts(card({ spacingType: "stacked", ...context }, "poor_spacing"));
+  assert.equal(fact({ minPairDistance: 88.4, durationSeconds: 3.5 }), "两名队友相距约 88 单位，持续 3.5 秒");
+  assert.equal(fact({ minPairDistance: 88.4, durationSeconds: 4 }), "两名队友相距约 88 单位，持续 4 秒");
+  assert.equal(fact({ durationSeconds: 3.25 }), "队友站位较近，持续 3.3 秒");
+  assert.equal(fact({ minPairDistance: 88.4 }), "两名队友相距约 88 单位", "older stacked cards keep their line");
+  assert.deepEqual(normalize(coachingFeed(card({ attackerName: "donk", distance: 980, isolatedTeammateDistance: 900 }, "isolated_entry"))),
+    { died: true, killer: "donk", finding: "T 方首个阵亡，最近的队友约 980 单位外" });
 }
 
 function coachingEvent(overrides) {

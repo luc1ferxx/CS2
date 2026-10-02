@@ -1,71 +1,109 @@
 /* ============================================================
-   TOKENS — the one token set (spec S8, 数据站风). A light stats-site
-   look: grey page, white panels with a grey header bar, dense zebra
-   tables, blue links and one solid blue primary button. T gold and
-   CT blue mean the sides only; red means my death, errors and
-   destructive/failed states. The tactical map keeps a dark radar
-   canvas because the radar art is dark.
+   TOKENS — the one token set (spec S13 "A 战术终端"). A CS tactical
+   radar / ops terminal: deep navy page, navy panels with a 2 px amber
+   left edge and a cut top-right corner, header bars with amber titles,
+   dense zebra rows, one solid amber primary button. Amber is the
+   interface (edges, titles, focus, playhead, the reviewed player),
+   never a side: T gold and CT blue mean the sides only; red means my
+   death, errors and destructive/failed states. No glow, no blur, no
+   gradients except the segmented bars and the one graticule.
    ============================================================ */
 :root {
-  color-scheme: light;
+  color-scheme: dark;
 
   /* 页底 / 面板 / 表头 / 表格 */
-  --page: #e9ecef;
-  --panel: #ffffff;
-  --panel-head: #dde2e7;
-  --row-alt: #f4f6f8;
-  --row-hover: #eaf1f8;
-  --row-selected: #dcebf8;
-  --line-subtle: #e3e7eb;
-  --line-bold: #cfd5db;
-  --control-line: #b3bcc5;
+  --page: #0f1c28;
+  --panel: #14273a;
+  --panel-head: #172e45;
+  /* Zebra: ~1.13:1 on the panel, so the alternation reads; ink-3 stays >= 4.5:1 on it. */
+  --row-alt: #19304a;
+  --row-hover: #1c3550;
+  /* Amber ~11 % over the panel; the reviewed player / current item adds a 2 px amber inset mark. */
+  --row-selected: #2c363a;
+  --line-subtle: #1f3851;
+  --line-bold: #2a4a66;
+  /* The edge of every input, select and secondary button: >= 3:1 on the panel,
+     header bar and zebra fill (WCAG 1.4.11), since an input's fill barely differs from the panel. */
+  --control-line: #5a7fa0;
 
-  /* 文字: ink-3 passes 4.5:1 on white, zebra and hover rows only —
-     never on the header bar (use ink-2 there). */
-  --ink: #1f2328;
-  --ink-2: #5b6570;
-  --ink-3: #646e79;
+  /* 文字: ink-3 is #869fb2, not the drafted #7f98ab — that was 4.17:1 on
+     row-hover. ink-3 passes 4.5:1 on panel, header bar, zebra and hover
+     rows; on row-selected / side-soft fills use ink-2. */
+  --ink: #d6e2ea;
+  --ink-2: #93abbd;
+  --ink-3: #869fb2;
 
-  /* 顶栏 */
-  --topbar: #223140;
-  --topbar-text: #ffffff;
-  --topbar-muted: #c3cdd7;
+  /* 顶栏: a darker band than the page, 1 px line-bold underneath. */
+  --topbar: #0a141d;
+  --topbar-text: #e6eef4;
+  --topbar-muted: #8ea6b8;
 
-  /* Links and the one solid primary button. */
-  --link: #2862a3;
-  --link-hover: #1d4e86;
-  --on-link: #ffffff;
+  /* Amber phosphor: panel edges, header-bar titles, the primary button,
+     the selected tab, focus, the reviewed player, hero numerals, playhead. */
+  --accent: #f0b23a;
+  --accent-hover: #ffc65c;
+  --on-accent: #17120a;
+  /* Amber ~14 % over the panel (tinted rows), and ~45 % (chip borders). */
+  --accent-soft: #333a3a;
+  --accent-line: #77663a;
+
+  /* Text links are bright ink with a 1 px amber underline, not amber text:
+     T names are gold, so amber links would read as T players. Where S8
+     filled with --link (primary button, progress, selected segment) use --accent. */
+  --link: #e8f0f5;
+  --link-hover: var(--accent-hover);
+  --on-link: var(--on-accent);
 
   /* Team sides — meaning only. Fills for cells and dots, -text for
-     words on white, -soft for tinted header bars and rows. */
-  --t: #d89a2b;
-  --t-text: #97620f;
-  --t-soft: #fbf0dc;
-  --ct: #4a86c5;
-  --ct-text: #2a64a0;
-  --ct-soft: #e3eef9;
+     words on navy, -soft for tinted cells and rows (T ~14 %, CT ~16 %
+     over the panel). A team header bar keeps --panel-head and carries
+     its side in the title colour: --t-soft is nearly --accent-soft. */
+  --t: #e0a43a;
+  --t-text: #f0b54d;
+  --t-soft: #31393a;
+  --ct: #4a90d9;
+  --ct-text: #82b8ee;
+  --ct-soft: #1d3853;
 
   /* 警示红 and the one status green ("可以复盘" as text, not a pill). */
-  --danger: #c93a32;
-  --danger-text: #b3261e;
-  --danger-soft: #fbeaea;
-  --ok-text: #2c7a3b;
+  --danger: #ef5350;
+  --danger-text: #ff7b76;
+  --danger-soft: #332d3d;
+  --ok-text: #5fd08a;
 
   /* Radar canvas: the map stage and anything drawn over it. */
-  --radar-bg: #1d2732;
-  --radar-panel: #26323f;
-  --radar-line: #3a4756;
+  --radar-bg: #0a1520;
+  --radar-panel: #12212e;
+  --radar-line: #24405a;
   --radar-text: #e8edf2;
-  --radar-text-2: #a9b4c0;
+  --radar-text-2: #a3b6c5;
+  /* The background baked into public/maps/*_radar.png (BACKGROUND in scripts/maps/build_radars.py,
+     the pre-S13 canvas colour). Temporary: once the radars are re-rendered on a transparent or
+     --radar-bg background, drop this token and its one use (the death map canvas). */
+  --radar-image-bg: #1d2732;
   /* Grenade effects on the radar (道具): smoke grey, fire orange-red, flash white, HE amber. */
   --radar-smoke: #c3cad2;
   --radar-fire: #e2532b;
   --radar-flash: #ffffff;
   --radar-he: #f2b04a;
 
-  /* Type — one system family, like a hand-built stats site. No webfonts. */
+  /* The one graticule (drawn on the stage's radar, RadarGraticule): line-subtle at 50 %,
+     translucent so it reads on the radar image's floor and background alike. */
+  --grid-line: rgba(31, 56, 81, 0.5);
+  /* Behind the confirm dialog. */
+  --scrim: rgba(3, 8, 13, 0.66);
+
+  /* Type — Chakra Petch (next/font, app/layout.tsx sets --font-tech on
+     <html>) for Latin names and numbers; Chinese falls through to the
+     system CJK face. The fallback inside var() keeps the stack valid
+     where --font-tech is not set (tests). */
   --font-cjk: "PingFang SC", "Microsoft YaHei", "Noto Sans SC", sans-serif;
-  --font-body: Arial, "Helvetica Neue", Helvetica, var(--font-cjk);
+  --font-body: var(--font-tech, "Chakra Petch"), Bahnschrift, "DIN Alternate", var(--font-cjk);
+  /* Chakra Petch has no tabular figures (measured: "1" is 57 % of "0" wide and
+     tabular-nums changes nothing), so running clocks and timers — transport
+     m:ss, the timeline readouts — use this face with tabular-nums, or their
+     digits jitter during playback. Bahnschrift's tnum is real. */
+  --font-num: Bahnschrift, "DIN Alternate", "Segoe UI", system-ui, sans-serif;
   /* True code / technical IDs inside 技术详情 only. */
   --font-mono: ui-monospace, "SFMono-Regular", Consolas, monospace;
   --step-xs: 12px;
@@ -77,12 +115,14 @@
   --leading-body: 1.5;
   --leading-tight: 1.25;
 
-  /* Shape — small radii; structure comes from borders, header bars and
-     zebra rows. Only popovers and menus cast a shadow. */
-  --radius-panel: 3px;
-  --radius-control: 2px;
-  --shadow-pop: 0 4px 14px rgba(31, 35, 40, 0.18);
-  --focus-ring: var(--link-hover);
+  /* Shape — square; the shape language is the cut corner, not rounding.
+     Structure comes from the amber edge, header bars and zebra rows.
+     Only menus, popovers and dialogs cast a shadow. */
+  --radius-panel: 0;
+  --radius-control: 0;
+  --panel-cut: 12px;
+  --shadow-pop: 0 8px 22px rgba(0, 0, 0, 0.5);
+  --focus-ring: var(--accent-hover);
   --motion: 100ms ease-out;
 }
 
@@ -111,21 +151,25 @@ h3,
 h4 {
   color: var(--ink);
   font-family: var(--font-body);
-  font-weight: 700;
+  /* 600: the heaviest Chakra Petch weight loaded. */
+  font-weight: 600;
   line-height: var(--leading-tight);
   letter-spacing: 0;
 }
 
-/* Links are blue text, underlined on hover — the stats-site vernacular.
-   :where keeps them below any class rule, so button-links keep their look. */
+/* Links are bright ink on a 1 px amber underline; hover turns the text amber.
+   Not amber text: T names are gold. :where keeps them below any class rule,
+   so button-links and nav links keep their own look. */
 :where(a) {
   color: var(--link);
-  text-decoration: none;
+  text-decoration: underline;
+  text-decoration-color: var(--accent);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
 }
 
 :where(a):hover {
   color: var(--link-hover);
-  text-decoration: underline;
 }
 
 button,
@@ -413,9 +457,9 @@ meter {
   border: 1px solid var(--radar-line);
   border-radius: var(--radius-control);
   background: var(--radar-panel);
-  color: var(--ink);
+  color: var(--radar-text);
   font-size: 12px;
-  font-weight: 750;
+  font-weight: 600;
 }
 
 .render-status-overlay span {
@@ -423,7 +467,7 @@ meter {
   margin-bottom: 4px;
   color: var(--ink-3);
   font-size: 11px;
-  font-weight: 800;
+  font-weight: 600;
   text-transform: none;
   letter-spacing: 0;
 }
@@ -463,7 +507,7 @@ meter {
 .video-progress span {
   display: block;
   height: 100%;
-  background: var(--link);
+  background: var(--accent);
 }
 
 .map-calibration-pill.calibrated {
@@ -485,10 +529,10 @@ meter {
   justify-content: center;
   width: 100%;
   min-height: 536px;
-  border: 1px solid var(--line-subtle);
+  border: 1px solid var(--radar-line);
   border-radius: var(--radius-panel);
   overflow: hidden;
-  background: var(--page);
+  background: var(--radar-bg);
 }
 
 .map-empty-state {
@@ -507,11 +551,12 @@ meter {
 }
 
 .map-empty-state strong {
+  color: var(--radar-text);
   font-size: 13px;
 }
 
 .map-empty-state span {
-  color: var(--ink-2);
+  color: var(--radar-text-2);
   font-size: 12px;
   line-height: 1.38;
 }
@@ -524,12 +569,9 @@ meter {
   aspect-ratio: 1;
 }
 
-.radar-map-frame {
-  background: var(--page);
-}
-
+.radar-map-frame,
 .fallback-map-frame {
-  background: var(--page);
+  background: var(--radar-bg);
 }
 
 .map-radar-image {
@@ -540,30 +582,29 @@ meter {
   pointer-events: none;
 }
 
+/* Parser markers on the radar: a dark disc, light glyph; the family is the ring. */
 .parser-map-event circle {
-  fill: var(--radar-bg);
+  fill: var(--radar-panel);
+  stroke: var(--radar-line);
   stroke-width: 1.2;
 }
 
 .parser-map-event text {
-  fill: var(--on-link);
+  fill: var(--radar-text);
   font-size: 7.5px;
-  font-weight: 900;
+  font-weight: 600;
 }
 
 .parser-map-event.objective circle {
-  stroke: var(--ink);
-  fill: var(--ink-2);
+  stroke: var(--radar-text-2);
 }
 
 .parser-map-event.utility circle {
-  stroke: var(--ink);
-  fill: var(--link);
+  stroke: var(--radar-smoke);
 }
 
 .parser-map-event.damage circle {
-  stroke: var(--ink-3);
-  fill: var(--ink-2);
+  stroke: var(--radar-line);
 }
 
 .fallback-map-label {
@@ -679,7 +720,7 @@ meter {
   height: 18px;
   border-radius: 50%;
   font-size: 11px;
-  font-weight: 800;
+  font-weight: 600;
 }
 
 .speed-select,
@@ -687,7 +728,7 @@ meter {
   min-height: 28px;
   border: 1px solid var(--control-line);
   border-radius: var(--radius-control);
-  background: var(--panel);
+  background: var(--row-alt);
   color: var(--ink);
   padding: 0 8px;
 }
@@ -742,7 +783,7 @@ meter {
 
 .event-marker.low,
 .event-marker.info {
-  background: var(--link);
+  background: var(--ink-3);
 }
 
 .parser-event-marker {
@@ -756,9 +797,9 @@ meter {
   transform: translateX(-9px);
   border: 0;
   border-radius: var(--radius-control);
-  color: var(--on-link);
+  color: var(--page);
   font-size: 10px;
-  font-weight: 900;
+  font-weight: 600;
   line-height: 1;
   box-shadow: 0 0 0 1px var(--panel);
 }
@@ -778,7 +819,7 @@ meter {
 }
 
 .parser-event-marker.utility {
-  background: var(--link);
+  background: var(--ink);
 }
 
 .parser-event-marker.damage {
@@ -911,7 +952,7 @@ meter {
 /* Tactical Review Workbench visual layer */
 
 ::selection {
-  background: var(--row-selected);
+  background: var(--accent-soft);
   color: var(--ink);
 }
 
@@ -948,7 +989,7 @@ select:disabled {
 .round-select {
   border-color: var(--control-line);
   border-radius: var(--radius-control);
-  background: var(--panel);
+  background: var(--row-alt);
 }
 
 .speed-select:focus-visible,
@@ -959,7 +1000,7 @@ select:disabled {
 .viewer-map-name {
   color: var(--ink);
   font-size: 16px;
-  font-weight: 760;
+  font-weight: 600;
   letter-spacing: -0.015em;
 }
 
@@ -979,8 +1020,7 @@ select:disabled {
 }
 
 .parser-map-event.combat circle {
-  stroke: var(--ink);
-  fill: var(--ink-2);
+  stroke: var(--danger);
 }
 
 .timeline-panel {
@@ -1000,22 +1040,23 @@ select:disabled {
 .timeline-heading span {
   color: var(--ink-3);
   font-size: 10px;
-  font-weight: 820;
+  font-weight: 600;
   letter-spacing: 0;
   text-transform: none;
 }
 
+/* Running clock: --font-num, whose tabular figures hold still during playback. */
 .timeline-heading strong {
   color: var(--ink);
-  font-family: inherit; font-variant-numeric: tabular-nums;
+  font-family: var(--font-num);
   font-size: 11px;
-  font-weight: 720;
+  font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
 
 .timeline-slider {
   width: 100%;
-  accent-color: var(--link);
+  accent-color: var(--accent);
 }
 
 .first-person-panel {
@@ -1168,7 +1209,7 @@ select:disabled {
 .review-transport-readout small {
   color: var(--ink-3);
   font-size: 8px;
-  font-weight: 800;
+  font-weight: 600;
   letter-spacing: 0;
   line-height: 1;
   text-transform: none;
@@ -1177,7 +1218,7 @@ select:disabled {
 .review-transport-readout strong {
   overflow: hidden;
   color: var(--ink-2);
-  font-family: inherit; font-variant-numeric: tabular-nums;
+  font-family: var(--font-num);
   font-size: 11px;
   font-variant-numeric: tabular-nums;
   letter-spacing: 0;
@@ -1202,7 +1243,7 @@ select:disabled {
   gap: 6px;
   color: var(--ink-3);
   font-size: 9px;
-  font-weight: 800;
+  font-weight: 600;
   letter-spacing: 0;
   text-transform: none;
 }
@@ -1248,7 +1289,7 @@ select:disabled {
   color: var(--ink-3);
   font-family: inherit;
   font-size: 9px;
-  font-weight: 760;
+  font-weight: 600;
   letter-spacing: 0;
   text-transform: none;
 }
@@ -1273,7 +1314,7 @@ select:disabled {
   background: var(--panel);
   color: var(--link);
   font-size: 10px;
-  font-weight: 720;
+  font-weight: 600;
 }
 
 .round-ribbon-jump:not(:disabled):hover {
@@ -1341,7 +1382,7 @@ select:disabled {
   border-bottom: 1px solid var(--line-bold);
   color: var(--ink-3);
   font-size: 9px;
-  font-weight: 780;
+  font-weight: 600;
   letter-spacing: 0;
   text-transform: none;
 }
@@ -1378,7 +1419,7 @@ select:disabled {
   bottom: 0;
   left: var(--timeline-current-tick);
   width: 1px;
-  background: var(--link);
+  background: var(--accent);
   box-shadow: none;
   pointer-events: none;
 }
@@ -1389,10 +1430,11 @@ select:disabled {
   left: 5px;
   padding: 2px 4px;
   background: var(--page);
-  color: var(--link);
-  font-family: inherit; font-variant-numeric: tabular-nums;
+  color: var(--accent);
+  font-family: var(--font-num);
+  font-variant-numeric: tabular-nums;
   font-size: 8px;
-  font-weight: 760;
+  font-weight: 600;
   white-space: nowrap;
 }
 
@@ -1430,7 +1472,7 @@ select:disabled {
 
 .round-boundary-marker:hover,
 .round-boundary-marker:focus-visible {
-  color: var(--link);
+  color: var(--link-hover);
 }
 
 .timeline-lane-track.parser-event-markers,
@@ -1574,8 +1616,9 @@ select:disabled {
    S8 FOUNDATION (V-SHELL) — base elements and the shared primitives
    every page reuses: page layout, top bar, panel + header bar,
    buttons, inputs, status text, tables, facts, notices, menus,
-   skeletons and the auth pages. Defined once, unscoped; components
-   scope sizes only. Class list: scratchpad s8_primitives.md.
+   skeletons and the auth pages; restyled for S13 战术终端, which adds
+   the identity primitives (.hero-num, .chip, .seg-meter, .round-cell,
+   .graticule). Defined once, unscoped; components scope sizes only.
    ============================================================ */
 
 /* --- Headings: one family, bold, no display face --- */
@@ -1611,7 +1654,7 @@ select:disabled {
   padding: 12px 16px 32px;
 }
 
-/* --- Top bar: a 40 px navy band; wordmark, one nav link, the account --- */
+/* --- Top bar: a 40 px band darker than the page; wordmark, one nav link, the account --- */
 .topbar {
   position: sticky;
   top: 0;
@@ -1625,6 +1668,7 @@ select:disabled {
   /* Wordmark and account line up with the page column once it stops growing. */
   padding: 0 max(16px, calc((100% - 1320px) / 2 + 16px));
   border: 0;
+  border-bottom: 1px solid var(--line-bold);
   background: var(--topbar);
   color: var(--topbar-text);
   box-shadow: none;
@@ -1637,13 +1681,25 @@ select:disabled {
   min-width: 0;
 }
 
+/* The wordmark: a small solid amber square, then the name. No logo tile. */
 .brand-wordmark {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   color: var(--topbar-text);
   font-size: 15px;
-  font-weight: 700;
+  font-weight: 600;
   line-height: 1;
   text-decoration: none;
   white-space: nowrap;
+}
+
+.brand-wordmark::before {
+  content: "";
+  flex: none;
+  width: 8px;
+  height: 8px;
+  background: var(--accent);
 }
 
 .topbar-nav {
@@ -1655,13 +1711,17 @@ select:disabled {
 .topbar-nav a {
   color: var(--topbar-muted);
   font-size: var(--step-body);
+  text-decoration: none;
   white-space: nowrap;
 }
 
-.topbar-nav a:hover,
+.topbar-nav a:hover {
+  color: var(--topbar-text);
+}
+
 .topbar-nav a[aria-current="page"],
 .library-app .topbar-nav a[href="/dashboard"] {
-  color: var(--topbar-text);
+  color: var(--accent);
 }
 
 .topbar-actions,
@@ -1672,28 +1732,42 @@ select:disabled {
   min-width: 0;
 }
 
+/* The account: plain text (a link to 账户与数据), amber while on that page. */
 .account-name {
   overflow: hidden;
   max-width: 220px;
   color: var(--topbar-text);
   font-size: var(--step-body);
+  text-decoration: none;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-/* Text links on the navy band (sign out, and a way back on error pages). */
+.account-name:hover {
+  color: var(--topbar-text);
+  text-decoration: underline;
+  text-decoration-color: var(--accent);
+}
+
+.account-name[aria-current="page"] {
+  color: var(--accent);
+}
+
+/* Text links on the dark band (sign out, and a way back on error pages). */
 .topbar-link {
   padding: 0;
   border: 0;
   background: none;
   color: var(--topbar-muted);
   font-size: var(--step-sm);
+  text-decoration: none;
   white-space: nowrap;
 }
 
 .topbar-link:hover:not(:disabled) {
   color: var(--topbar-text);
   text-decoration: underline;
+  text-decoration-color: var(--accent);
 }
 
 .auth-beta-tag {
@@ -1701,21 +1775,48 @@ select:disabled {
   font-size: var(--step-sm);
 }
 
-.topbar :focus-visible {
-  outline-color: var(--topbar-text);
-}
-
-/* --- Panel + header bar: the signature structure of every surface --- */
+/* --- Panel + header bar: the signature structure of every surface.
+   A navy fill, no outer border, a 2 px amber left edge and the top-right
+   corner cut 12 px. The cut is a --page triangle drawn by ::after, not a
+   clip-path on the panel: menus and popovers (row menus, filters, the
+   personal-review settings) and focus rings inside a panel must stay
+   visible past its edges. So a .panel must not use its own ::after, and
+   must not become a stacking context (isolation, z-index) either — that
+   would trap its popovers under the next panel. --- */
 .panel {
   position: relative;
   min-width: 0;
   max-width: 100%;
-  border: 1px solid var(--line-bold);
-  border-radius: var(--radius-panel);
+  border: 0;
+  border-left: 2px solid var(--accent);
+  border-radius: 0;
   background: var(--panel);
   box-shadow: none;
 }
 
+.panel::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: var(--panel-cut);
+  height: var(--panel-cut);
+  background: var(--page);
+  clip-path: polygon(0 0, 100% 0, 100% 100%);
+  pointer-events: none;
+}
+
+/* Panels and cards inside a panel: no edge, no cut. */
+.panel .panel {
+  border-left: 0;
+}
+
+.panel .panel::after {
+  content: none;
+}
+
+/* Header bar: amber title, actions right. The right padding keeps the last
+   action clear of the cut corner. */
 .panel-bar {
   display: flex;
   flex-wrap: wrap;
@@ -1723,18 +1824,18 @@ select:disabled {
   justify-content: space-between;
   gap: 4px 12px;
   min-height: 33px;
-  padding: 0 10px;
-  border-bottom: 1px solid var(--line-bold);
-  border-radius: 2px 2px 0 0;
+  padding: 0 14px 0 10px;
+  border-bottom: 1px solid var(--line-subtle);
+  border-radius: 0;
   background: var(--panel-head);
   color: var(--ink);
 }
 
 .panel-bar-title {
   margin: 0;
-  color: var(--ink);
+  color: var(--accent);
   font-size: var(--step-md);
-  font-weight: 700;
+  font-weight: 600;
   line-height: var(--leading-tight);
 }
 
@@ -1751,16 +1852,15 @@ select:disabled {
   margin-left: auto;
 }
 
-.panel-bar-t {
-  background: var(--t-soft);
+/* A team header bar: the side lives in the title colour; the bar stays
+   --panel-head (a gold wash would read as the amber "reviewed" tint). */
+.panel-bar-t,
+.panel-bar-ct {
+  background: var(--panel-head);
 }
 
 .panel-bar-t .panel-bar-title {
   color: var(--t-text);
-}
-
-.panel-bar-ct {
-  background: var(--ct-soft);
 }
 
 .panel-bar-ct .panel-bar-title {
@@ -1771,7 +1871,8 @@ select:disabled {
   padding: 10px 12px;
 }
 
-/* Header-bar tabs: the selected tab is white and joins the panel body. */
+/* Header-bar tabs: the selected tab takes the panel fill, joins the panel
+   body over the bar's bottom line and carries a 2 px amber top marker. */
 .panel-bar-tabs {
   display: flex;
   align-self: flex-end;
@@ -1782,9 +1883,9 @@ select:disabled {
 .panel-tab {
   height: 28px;
   padding: 0 12px;
-  border: 1px solid transparent;
-  border-bottom: 0;
-  border-radius: 2px 2px 0 0;
+  border: 0;
+  border-top: 2px solid transparent;
+  border-radius: 0;
   background: none;
   color: var(--ink-2);
   font-size: var(--step-body);
@@ -1794,13 +1895,20 @@ select:disabled {
   color: var(--ink);
 }
 
+/* The ring's bottom edge falls over the panel body (the radar canvas is positioned):
+   lift the focused tab above it so the whole ring shows. */
+.panel-tab:focus-visible {
+  position: relative;
+  z-index: 1;
+}
+
 .panel-tab[aria-selected="true"],
 .panel-tab.selected {
   height: 29px;
-  border-color: var(--line-bold);
+  border-top-color: var(--accent);
   background: var(--panel);
   color: var(--ink);
-  font-weight: 700;
+  font-weight: 600;
 }
 
 /* --- Facts: labelled values spaced apart, no middle dots --- */
@@ -1828,8 +1936,100 @@ select:disabled {
   font-variant-numeric: tabular-nums;
 }
 
-/* --- Buttons: one solid blue primary per view, white secondary, blue
-   text links for everything else. No icons inside labelled buttons. --- */
+/* --- Identity primitives (S13): hero numerals, chips, segmented meters,
+   round cells, the graticule. Components scope sizes only. --- */
+
+/* Hero numerals: the score banner only (maybe the roster money). The one
+   place that spends boldness: amber, 40 px, weight 500. */
+.hero-num {
+  color: var(--accent);
+  font-size: 40px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+/* Chip: weapon, 4v4→3v4, 回合输了 and other small tags. Square, no fill,
+   a thin amber border. Statuses stay plain coloured text, never chips. */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 4px;
+  border: 1px solid var(--accent-line);
+  border-radius: 0;
+  background: none;
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 16px;
+  white-space: nowrap;
+}
+
+/* Segmented meter (HP and any 0–100 value): 10 blocks with 1 px gaps.
+   <span class="seg-meter"><span class="[low]" style="width: 70%"></span></span>
+   The mask on the track cuts the same gaps through the fill. Keep the number
+   or an aria value next to it: the blocks are decoration. */
+.seg-meter {
+  display: block;
+  width: 60px;
+  height: 6px;
+  overflow: hidden;
+  background: var(--line-bold);
+  -webkit-mask: repeating-linear-gradient(to right, #000 0 calc(10% - 1px), transparent calc(10% - 1px) 10%);
+  mask: repeating-linear-gradient(to right, #000 0 calc(10% - 1px), transparent calc(10% - 1px) 10%);
+}
+
+.seg-meter > span {
+  display: block;
+  height: 100%;
+  background: var(--ink-2);
+}
+
+.seg-meter > span.low {
+  background: var(--danger);
+}
+
+/* Round cell: filled with the winning side, the number dark on it; the
+   current round carries a 2 px amber outline. */
+.round-cell {
+  display: inline-grid;
+  place-items: center;
+  min-width: 20px;
+  height: 20px;
+  border: 0;
+  border-radius: 0;
+  background: var(--line-subtle);
+  color: var(--ink-2);
+  font-size: var(--step-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+.round-cell.t {
+  background: var(--t);
+  color: var(--page);
+}
+
+.round-cell.ct {
+  background: var(--ct);
+  color: var(--page);
+}
+
+.round-cell:is([aria-current="true"], [aria-pressed="true"], .current) {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* The one faint 24 px graticule, behind the score banner or the map stage
+   frame — never behind text panels. */
+.graticule {
+  background-image:
+    linear-gradient(var(--grid-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+
+/* --- Buttons: one solid amber primary per view, outlined secondary, text
+   links for everything else. No icons inside labelled buttons. --- */
 .primary-button,
 .secondary-button,
 .icon-button,
@@ -1842,7 +2042,7 @@ select:disabled {
   padding: 0 12px;
   border: 1px solid var(--control-line);
   border-radius: var(--radius-control);
-  background: var(--panel);
+  background: transparent;
   color: var(--ink);
   font-family: var(--font-body);
   font-size: var(--step-body);
@@ -1855,24 +2055,43 @@ select:disabled {
   box-shadow: none;
 }
 
+/* Primary: solid amber, square, the bottom-right corner cut 6 px. The fill
+   is a clipped ::before so the clip never cuts the button's focus ring;
+   isolation keeps the z-index:-1 fill inside the button. */
 .primary-button {
-  border-color: var(--link);
-  background: var(--link);
-  color: var(--on-link);
-  font-weight: 700;
+  position: relative;
+  isolation: isolate;
+  border-color: transparent;
+  background: none;
+  color: var(--on-accent);
+  font-weight: 600;
+}
+
+.primary-button::before {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  z-index: -1;
+  background: var(--accent);
+  clip-path: polygon(0 0, 100% 0, 100% calc(100% - 6px), calc(100% - 6px) 100%, 0 100%);
 }
 
 .primary-button:hover:not(:disabled) {
-  border-color: var(--link-hover);
-  background: var(--link-hover);
-  color: var(--on-link);
+  color: var(--on-accent);
   text-decoration: none;
 }
 
+.primary-button:hover:not(:disabled)::before {
+  background: var(--accent-hover);
+}
+
+/* Secondary (and icon-only, danger): transparent, a 1 px control line;
+   hover lifts the fill and turns the line amber. */
 .secondary-button:hover:not(:disabled),
 .icon-button:hover:not(:disabled),
 .danger-button:hover:not(:disabled) {
-  background: var(--row-alt);
+  border-color: var(--accent);
+  background: var(--row-hover);
   color: var(--ink);
   text-decoration: none;
 }
@@ -1888,7 +2107,7 @@ select:disabled {
   padding: 0;
 }
 
-/* Tertiary: a plain blue text link. */
+/* Tertiary: a text link — bright ink on a 1 px amber underline. */
 .text-button {
   display: inline-flex;
   align-items: center;
@@ -1903,7 +2122,10 @@ select:disabled {
   font-size: inherit;
   font-weight: 400;
   line-height: inherit;
-  text-decoration: none;
+  text-decoration: underline;
+  text-decoration-color: var(--accent);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
   text-transform: none;
 }
 
@@ -1911,6 +2133,7 @@ select:disabled {
   background: none;
   color: var(--link-hover);
   text-decoration: underline;
+  text-decoration-color: var(--accent);
 }
 
 .text-button.danger,
@@ -1939,13 +2162,14 @@ select:disabled {
   opacity: 0.5;
 }
 
-/* --- Inputs and selects --- */
+/* --- Inputs and selects: a zebra-row fill, a 1 px control line, square;
+   focus is the 2 px ring. color-scheme: dark gives native popups dark. --- */
 :where(input:not([type="range"], [type="checkbox"], [type="radio"], [type="file"], [type="color"]), select, textarea) {
   min-height: 28px;
   padding: 0 8px;
   border: 1px solid var(--control-line);
   border-radius: var(--radius-control);
-  background: var(--panel);
+  background: var(--row-alt);
   color: var(--ink);
   font-size: var(--step-body);
 }
@@ -1960,7 +2184,7 @@ select:disabled {
 }
 
 :where(input[type="checkbox"], input[type="radio"], input[type="range"]) {
-  accent-color: var(--link);
+  accent-color: var(--accent);
 }
 
 /* --- Status: plain coloured text, no pill and no icon --- */
@@ -2069,9 +2293,16 @@ select:disabled {
   background: var(--row-hover);
 }
 
-.data-table tbody tr:is(.selected, [aria-selected="true"]),
+.data-table tbody tr:is(.selected, [aria-selected="true"], [aria-current="true"]),
 .data-rows > :is(.selected, [aria-selected="true"], [aria-current="true"]) {
   background: var(--row-selected);
+}
+
+/* The current item (the reviewed player, the row at the playhead) also
+   carries a 2 px amber mark inside its left edge. */
+.data-table tbody tr[aria-current="true"] > :first-child,
+.data-rows > [aria-current="true"] {
+  box-shadow: inset 2px 0 0 var(--accent);
 }
 
 .num,
@@ -2080,12 +2311,13 @@ select:disabled {
   text-align: right;
 }
 
-/* --- Notices, toasts and error panels: white, a 3 px left mark --- */
+/* --- Notices, toasts and error panels: a panel with a 3 px left mark
+   (amber info, red error, T gold warning), no wash, no cut. --- */
 .notice,
 .error-panel {
   padding: 8px 12px;
-  border: 1px solid var(--line-bold);
-  border-left: 3px solid var(--link);
+  border: 0;
+  border-left: 3px solid var(--accent);
   border-radius: var(--radius-panel);
   background: var(--panel);
   color: var(--ink);
@@ -2113,11 +2345,12 @@ select:disabled {
   cursor: pointer;
 }
 
-/* --- Menus, popovers, dialogs, tooltips: the only surfaces with a shadow --- */
+/* --- Menus, popovers, dialogs, tooltips: the only surfaces with a shadow.
+   The header-bar fill lifts them off the panel they open over. --- */
 :where([role="menu"], [role="listbox"], [role="tooltip"], [role="dialog"]:not(dialog[open]), .menu, .popover, .tooltip) {
   border: 1px solid var(--line-bold);
   border-radius: var(--radius-panel);
-  background: var(--panel);
+  background: var(--panel-head);
   color: var(--ink);
   box-shadow: var(--shadow-pop);
 }
@@ -2163,12 +2396,20 @@ select:disabled {
   justify-content: center;
   overflow-y: auto;
   padding: max(48px, 14vh) 16px 16px;
-  background: rgba(31, 35, 40, 0.45);
+  background: var(--scrim);
 }
 
+/* The dialog sits on the scrim, so a --page triangle would show: it cuts its
+   corner with a clip-path instead (nothing pops out of it, and the scrim
+   already separates it, so the clipped shadow is not missed). */
 .panel.confirm-dialog {
   width: min(440px, 100%);
-  box-shadow: var(--shadow-pop);
+  box-shadow: none;
+  clip-path: polygon(0 0, calc(100% - var(--panel-cut)) 0, 100% var(--panel-cut), 100% 100%, 0 100%);
+}
+
+.panel.confirm-dialog::after {
+  content: none;
 }
 
 .confirm-dialog:focus {
@@ -2216,8 +2457,7 @@ select:disabled {
   margin-top: 4px;
 }
 
-/* --- Site footer: the privacy link and the Valve line, 12 px grey under the page.
-   ink-2, not ink-3: ink-3 on the grey page is under 4.5:1. --- */
+/* --- Site footer: the privacy link and the Valve line, 12 px ink-2 under the page. --- */
 .site-footer {
   display: flex;
   flex-wrap: wrap;
@@ -2232,13 +2472,14 @@ select:disabled {
   line-height: var(--leading-body);
 }
 
-/* --- Skeleton: static grey bars; no shimmer on page load --- */
+/* --- Skeleton: static bars; no shimmer on page load. line-subtle, not
+   row-alt: the zebra fill is invisible on the panel. --- */
 .skeleton-bar {
   display: block;
   width: 38%;
   height: 12px;
   border-radius: var(--radius-control);
-  background: var(--row-alt);
+  background: var(--line-subtle);
 }
 
 .skeleton-bar.wide {
@@ -2340,6 +2581,10 @@ select:disabled {
 
   .account-name {
     max-width: 96px;
+  }
+
+  .hero-num {
+    font-size: 30px;
   }
 }
 

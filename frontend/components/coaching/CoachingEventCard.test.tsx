@@ -5,14 +5,16 @@ import { describe, expect, it, vi } from "vitest";
 
 import { CoachingEventCard, coachingCardId } from "@/components/coaching/CoachingEventCard";
 import { reviewEventForEvent } from "@/lib/coaching-review";
-import { coachingEvent, renderJob } from "@/lib/test-fixtures/review";
+import { weaponName } from "@/lib/replay-events";
+import { coachingEvent, deathCoachingEvent, renderJob, stackedSpacingEvent } from "@/lib/test-fixtures/review";
 import type { CoachingEvent } from "@/types/coaching";
 
 type CardProps = ComponentProps<typeof CoachingEventCard>;
 
 function renderCard(event: CoachingEvent, overrides: Partial<CardProps> = {}) {
   const props: CardProps = {
-    reviewEvent: reviewEventForEvent(event, new Map([[event.player_id, event.player_name]])),
+    // The review panel maps weapon strings with replay-events' weaponName; so does this helper.
+    reviewEvent: reviewEventForEvent(event, new Map([[event.player_id, event.player_name]]), { weaponLabel: weaponName }),
     active: false,
     inspected: false,
     clipRequesting: false,
@@ -151,6 +153,68 @@ describe("CoachingEventCard", () => {
     expect(screen.getByRole("status")).toHaveTextContent("评价没有保存。");
     await user.click(screen.getByRole("button", { name: "重新保存" }));
     expect(props.onFeedback).toHaveBeenCalledWith(untradedDeath, "helpful");
+  });
+
+  it("asks for a reload without a re-send when the suggestion no longer exists", () => {
+    renderCard(untradedDeath, { feedbackState: { status: "stale", verdict: "helpful" } });
+
+    expect(screen.getByRole("status")).toHaveTextContent("建议已按新规则更新，请刷新页面");
+    expect(screen.queryByRole("button", { name: "重新保存" })).not.toBeInTheDocument();
+    expect(screen.queryByText("评价没有保存。")).not.toBeInTheDocument();
+  });
+
+  it("follows a death card's finding with the weapon, the player counts and a lost round as small chips", () => {
+    renderCard(deathCoachingEvent(), { side: "T" });
+    const line = screen.getByRole("heading", { level: 3 });
+    const chips = Array.from(line.querySelectorAll(".coaching-feed-chip"), (chip) => chip.textContent);
+
+    expect(chips).toEqual(["AK-47", "4v4→3v4", "回合输了"]);
+    // The chips come after the finding, before the severity read aloud.
+    expect(line).toHaveTextContent("CT Anchor 击杀 ✕T Entry5 秒内没有队友补枪，AK-47，4v4→3v4，回合输了，值得留意");
+  });
+
+  it("shows only the chips the analyzer recorded, and the stored weapon string when it has no name", () => {
+    renderCard(deathCoachingEvent({}, {
+      weapon: "mystery_gun", impact: { roundLost: false, aliveBefore: { own: 2, enemy: 3 } }, extraReasons: []
+    }));
+    const line = screen.getByRole("heading", { level: 3 });
+    expect(Array.from(line.querySelectorAll(".coaching-feed-chip"), (chip) => chip.textContent)).toEqual(["MYSTERY_GUN"]);
+    expect(document.querySelector(".coaching-card-reason")).toBeNull();
+  });
+
+  it("keeps older cards without the new context free of chips and extra lines", () => {
+    renderCard(untradedDeath);
+    expect(document.querySelector(".coaching-feed-chip")).toBeNull();
+    expect(document.querySelector(".coaching-card-reason")).toBeNull();
+  });
+
+  it("adds one 另外 line under the finding for each reason folded into the death", () => {
+    renderCard(deathCoachingEvent({}, {
+      extraReasons: [
+        { ruleId: "poor_spacing", spacingType: "too_far", distance: 1240, durationSeconds: 4.5, tick: 300 },
+        { ruleId: "isolated_entry", distance: 980, tick: 400 }
+      ]
+    }));
+    const lines = Array.from(document.querySelectorAll(".coaching-card-reason"), (line) => line.textContent);
+    expect(lines).toEqual([
+      "另外：阵亡前已经离最近的队友 1240 单位，持续 4.5 秒",
+      "另外：这是本回合 T 方第一个阵亡，最近的队友约 980 单位外"
+    ]);
+  });
+
+  it("names the killer on an isolated entry card when the analyzer recorded one", () => {
+    renderCard(deathCoachingEvent({ id: "isolated-1" }, {
+      ruleId: "isolated_entry", attackerName: "donk", distance: 980, isolatedTeammateDistance: 900, extraReasons: []
+    }), { side: "T" });
+    const line = screen.getByRole("heading", { level: 3 });
+    expect(within(line).getByText("donk")).toHaveClass("side-ct");
+    expect(within(line).getByText("T 方首个阵亡，最近的队友约 980 单位外")).toBeInTheDocument();
+  });
+
+  it("says how long a stacked pair stayed together", () => {
+    renderCard(stackedSpacingEvent());
+    expect(screen.getByRole("heading", { level: 3 })).toHaveTextContent("两名队友相距约 88 单位，持续 3.5 秒");
+    expect(document.querySelector(".coaching-feed-chip")).toBeNull();
   });
 
   it("marks the verdicts busy while a save is in flight and keeps the status line empty", () => {

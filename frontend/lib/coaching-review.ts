@@ -1,4 +1,7 @@
-import type { CoachingEvent, CoachingFeedback, CoachingSeverity, CoachingVerdict } from "@/types/coaching";
+import type {
+  CoachingAliveCount, CoachingDeathImpact, CoachingEvent, CoachingExtraReason, CoachingFeedback, CoachingSeverity,
+  CoachingVerdict
+} from "@/types/coaching";
 import type { PlayerSide, ReplayFrame, ReplayPlayer, ReplayRound } from "@/types/replay";
 import { bombPlantEvidenceLabel, normalizeBombSite } from "@/lib/bomb-site";
 
@@ -38,6 +41,15 @@ export interface ReviewEvent {
   playerEvidence?: EvidenceSummaryItem[];
   // The card read as a kill-feed row (see coachingFeed).
   feed?: CoachingFeed;
+  // Death cards: short labels after the finding (weapon, 4v4→3v4, 回合输了).
+  chips?: string[];
+  // Death cards: one "另外：…" line per other rule folded into this death.
+  extraReasonLines?: string[];
+}
+
+export interface ReviewEventOptions {
+  // Display name for the kill's weapon string (the review panel passes replay-events' weaponName).
+  weaponLabel?: (weapon: string) => string | null;
 }
 
 export interface RoundGroup {
@@ -148,7 +160,8 @@ const EVIDENCE_KEYS = [
 export function buildCoachingReviewModel(
   events: CoachingEvent[],
   players: ReplayPlayer[],
-  filters: CoachingReviewFilters
+  filters: CoachingReviewFilters,
+  options: ReviewEventOptions = {}
 ): CoachingReviewModel {
   const playerNameById = new Map(players.map((player) => [player.id, player.name]));
   const availableRules = availableRulesForEvents(events);
@@ -156,7 +169,7 @@ export function buildCoachingReviewModel(
     .filter((event) => matchesSeverity(event.severity, filters.severity))
     .filter((event) => matchesRule(event, filters.rule))
     .filter((event) => matchesSearch(event, playerNameById, filters.search))
-    .map((event) => reviewEventForEvent(event, playerNameById));
+    .map((event) => reviewEventForEvent(event, playerNameById, options));
 
   const groupsByRound = new Map<number, ReviewEvent[]>();
   for (const event of filteredEvents) {
@@ -194,6 +207,80 @@ export function isPriorityFinding(event: CoachingEvent): boolean {
   return severityRank(event.severity) <= SEVERITY_RANK.medium;
 }
 
+/**
+ * The order "本场最值得回看" and "查看最值得回看的一条" use: deaths that cost the
+ * round, then first deaths, then deaths that left the team a player down, then
+ * cards with more reasons folded in; then severity, round and tick. Events
+ * without the death impact (other rules, older events) come after the ones with
+ * it, in severity, round and tick order.
+ */
+export function compareImportance(left: CoachingEvent, right: CoachingEvent): number {
+  const leftImpact = coachingImpact(left);
+  const rightImpact = coachingImpact(right);
+  return Number(rightImpact !== null) - Number(leftImpact !== null) ||
+    Number(rightImpact?.roundLost === true) - Number(leftImpact?.roundLost === true) ||
+    Number(rightImpact?.firstDeath === true) - Number(leftImpact?.firstDeath === true) ||
+    Number(rightImpact?.manDisadvantage === true) - Number(leftImpact?.manDisadvantage === true) ||
+    coachingExtraReasons(right).length - coachingExtraReasons(left).length ||
+    severityRank(left.severity) - severityRank(right.severity) ||
+    left.round_number - right.round_number ||
+    left.tick_start - right.tick_start;
+}
+
+// The most important events first (a sorted copy; ties keep their input order).
+export function byImportance<T extends { event: CoachingEvent }>(items: readonly T[]): T[] {
+  return [...items].sort((left, right) => compareImportance(left.event, right.event));
+}
+
+/** `impact` of a death card, keeping only well-formed fields; null when there is none. */
+export function coachingImpact(event: CoachingEvent): CoachingDeathImpact | null {
+  const value = event.structured_context_json?.impact;
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+  const raw = value as Record<string, unknown>;
+  const impact: CoachingDeathImpact = {};
+  if (typeof raw.roundLost === "boolean" || raw.roundLost === null) impact.roundLost = raw.roundLost;
+  if (typeof raw.firstDeath === "boolean") impact.firstDeath = raw.firstDeath;
+  if (typeof raw.manDisadvantage === "boolean") impact.manDisadvantage = raw.manDisadvantage;
+  const before = aliveCount(raw.aliveBefore);
+  const after = aliveCount(raw.aliveAfter);
+  if (before) impact.aliveBefore = before;
+  if (after) impact.aliveAfter = after;
+  return impact;
+}
+
+/** `extraReasons` of a death card: entries with a rule id, other fields only when well-formed. */
+export function coachingExtraReasons(event: CoachingEvent): CoachingExtraReason[] {
+  const value = event.structured_context_json?.extraReasons;
+  if (!Array.isArray(value)) return [];
+  const reasons: CoachingExtraReason[] = [];
+  for (const item of value) {
+    if (typeof item !== "object" || item === null) continue;
+    const raw = item as Record<string, unknown>;
+    if (typeof raw.ruleId !== "string" || !raw.ruleId.trim()) continue;
+    const reason: CoachingExtraReason = { ruleId: raw.ruleId };
+    if (typeof raw.spacingType === "string") reason.spacingType = raw.spacingType;
+    for (const key of ["distance", "durationSeconds", "tick"] as const) {
+      const number = raw[key];
+      if (typeof number === "number" && Number.isFinite(number)) reason[key] = number;
+    }
+    reasons.push(reason);
+  }
+  return reasons;
+}
+
+/** The kill's weapon string as the replay stores it ("ak47"), or null. */
+export function coachingWeapon(event: CoachingEvent): string | null {
+  const weapon = event.structured_context_json?.weapon;
+  return typeof weapon === "string" && weapon.trim() ? weapon.trim() : null;
+}
+
+function aliveCount(value: unknown): CoachingAliveCount | null {
+  if (typeof value !== "object" || value === null) return null;
+  const { own, enemy } = value as Record<string, unknown>;
+  const count = (number: unknown) => typeof number === "number" && Number.isInteger(number) && number >= 0;
+  return count(own) && count(enemy) ? { own: own as number, enemy: enemy as number } : null;
+}
+
 export function severityFilterOptions(events: CoachingEvent[]): SeverityFilterOption[] {
   return (["high", "medium", "low"] as const)
     .map((value) => ({ value, count: events.filter((event) => matchesSeverity(event.severity, value)).length }))
@@ -202,7 +289,8 @@ export function severityFilterOptions(events: CoachingEvent[]): SeverityFilterOp
 
 export function reviewEventForEvent(
   event: CoachingEvent,
-  playerNameById: Map<string, string>
+  playerNameById: Map<string, string>,
+  options: ReviewEventOptions = {}
 ): ReviewEvent {
   const ruleId = ruleIdForEvent(event);
   const ruleFilterId = ruleFilterForRuleId(ruleId);
@@ -215,8 +303,42 @@ export function reviewEventForEvent(
     evidence: evidenceSummaryForEvent(event),
     facts: coachingFacts(event),
     playerEvidence: playerEvidenceForEvent(event),
-    feed: coachingFeed(event)
+    feed: coachingFeed(event),
+    chips: deathChips(event, options.weaponLabel),
+    extraReasonLines: extraReasonLines(event)
   };
+}
+
+const DEATH_CARD_RULES = new Set(["untraded_death", "isolated_entry"]);
+
+/** Weapon, players alive before → after (own side first) and 回合输了, for a death card. */
+export function deathChips(event: CoachingEvent, weaponLabel?: (weapon: string) => string | null): string[] {
+  if (!DEATH_CARD_RULES.has(ruleIdForEvent(event))) return [];
+  const chips: string[] = [];
+  const weapon = coachingWeapon(event);
+  if (weapon) chips.push(weaponLabel?.(weapon) || weapon);
+  const impact = coachingImpact(event);
+  if (impact?.aliveBefore && impact.aliveAfter) {
+    const { aliveBefore: before, aliveAfter: after } = impact;
+    chips.push(`${before.own}v${before.enemy}→${after.own}v${after.enemy}`);
+  }
+  if (impact?.roundLost === true) chips.push("回合输了");
+  return chips;
+}
+
+/** One Chinese line per other rule folded into this death card; unknown rules are skipped. */
+export function extraReasonLines(event: CoachingEvent): string[] {
+  const lines: string[] = [];
+  for (const reason of coachingExtraReasons(event)) {
+    const distance = factNumber(reason.distance, 0);
+    if (reason.ruleId === "poor_spacing" && reason.spacingType === "too_far") {
+      const seconds = factNumber(reason.durationSeconds, 1);
+      lines.push(`另外：阵亡前已经离最近的队友${distance ? ` ${distance} 单位` : "较远"}${seconds ? `，持续 ${seconds} 秒` : ""}`);
+    } else if (reason.ruleId === "isolated_entry") {
+      lines.push(`另外：这是本回合 T 方第一个阵亡${distance ? `，最近的队友约 ${distance} 单位外` : ""}`);
+    }
+  }
+  return lines;
 }
 
 export function ruleIdForEvent(event: CoachingEvent): string {
@@ -406,7 +528,8 @@ export function coachingFacts(event: CoachingEvent): string {
       }
       if (context.spacingType === "stacked") {
         const distance = factNumber(context.minPairDistance, 0);
-        return distance ? `两名队友相距约 ${distance} 单位` : "队友站位较近";
+        const duration = factNumber(context.durationSeconds, 1);
+        return joinFacts(distance ? `两名队友相距约 ${distance} 单位` : "队友站位较近", duration ? `持续 ${duration} 秒` : "");
       }
       return "";
     }
@@ -492,7 +615,11 @@ export function coachingFeed(event: CoachingEvent): CoachingFeed {
       finding: seconds ? `${seconds} 秒内没有队友补枪` : "没有记录到队友补枪"
     };
   }
-  return { died: rule === "isolated_entry", killer: null, finding: coachingFacts(event) };
+  if (rule === "isolated_entry") {
+    // Newer isolated_entry cards record the killer too (analyzer death impact).
+    return { died: true, killer: factText(context.attackerName) || null, finding: coachingFacts(event) };
+  }
+  return { died: false, killer: null, finding: coachingFacts(event) };
 }
 
 /**
@@ -595,9 +722,10 @@ export interface FeedbackProgress {
   unsure: number;
 }
 
-// A verdict save the card is waiting on, or one that failed and can be re-sent.
+// A verdict save the card is waiting on, one that failed and can be re-sent, or
+// one the server answered 404 for ("stale": the suggestion was recomputed away).
 export interface FeedbackSaveState {
-  status: "saving" | "failed";
+  status: "saving" | "failed" | "stale";
   verdict: CoachingVerdict | null;
 }
 

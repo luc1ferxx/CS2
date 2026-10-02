@@ -265,7 +265,7 @@ function EconomyChart({ rounds, names, selectedRound, onSelectRound }: {
         <span className="economy-legend" aria-hidden="true">
           <span><i className="swatch side-t" />T 方</span>
           <span><i className="swatch side-ct" />CT 方</span>
-          <span>左柱 {names.A}，右柱 {names.B}（浅色）</span>
+          <span>左柱 {names.A}，右柱 {names.B}（深色）</span>
           <span><i className="swatch won" />赢下回合</span>
           <span><i className="swatch threshold" />5 人 ECO、半起、全起分界</span>
         </span>

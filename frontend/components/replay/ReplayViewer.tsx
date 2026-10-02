@@ -3,6 +3,7 @@
 import { Bomb, CircleDot, Cloud, Disc, Flame, Scissors, Shield, ShieldHalf, X, Zap, type LucideIcon } from "lucide-react";
 import { memo, useCallback, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode, type RefObject } from "react";
 
+import { RadarGraticule } from "@/components/replay/RadarGraticule";
 import { getTacticalMapLevel, getTacticalMapPresentation, resolveTacticalMapLevel, sanitizeRadarPoint } from "@/lib/map-config";
 import type { TacticalMapLevel, TacticalMapLevelMode, TacticalMapPresentation } from "@/lib/map-config";
 import { teamKeyOfPlayer } from "@/lib/match-stats";
@@ -217,7 +218,10 @@ export const ReplayViewer = memo(function ReplayViewer({
             </pattern>
           </defs>
           {floor.radarImagePath ? (
-            <RadarImageBackground radarUrl={floor.radarImagePath} />
+            <>
+              <RadarImageBackground radarUrl={floor.radarImagePath} />
+              <RadarGraticule />
+            </>
           ) : (
             <GenericMapBackground label={`${mapPresentation.displayName}（坐标未校准）`} />
           )}
@@ -625,7 +629,7 @@ const RosterRow = memo(function RosterRow({
   ].filter(Boolean).join("，");
   const hpBar = (
     <>
-      <span className="roster-hp-bar"><span className={hp < LOW_HP ? "low" : undefined} style={{ width: `${hp}%` }} /></span>
+      <span className="roster-hp-bar seg-meter"><span className={hp < LOW_HP ? "low" : undefined} style={{ width: `${hp}%` }} /></span>
       <span className="roster-hp">{hp}</span>
     </>
   );

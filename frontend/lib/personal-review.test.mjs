@@ -81,6 +81,17 @@ assert.deepEqual(ids(review.coachingForPlayer(events, null)), []);
   const summary = review.personalReviewSummary(realShaped, selectedId);
   assert.equal(summary.priorityCount, 2);
   assert.equal(summary.topFinding.id, "untraded-early");
+  // 查看最值得回看的一条 follows the importance order: a death that cost the round
+  // beats an earlier one that did not, and any death impact beats a card without it.
+  const withImpact = [
+    ...realShaped,
+    { id: "death-won", player_id: selectedId, severity: "medium", round_number: 1, tick_start: 30,
+      structured_context_json: { ruleId: "untraded_death", impact: { roundLost: false, firstDeath: true } } },
+    { id: "death-lost", player_id: selectedId, severity: "low", round_number: 4, tick_start: 120,
+      structured_context_json: { ruleId: "isolated_entry", impact: { roundLost: true } } }
+  ];
+  assert.equal(review.personalReviewSummary(withImpact, selectedId).topFinding.id, "death-lost");
+  assert.equal(review.personalReviewSummary(withImpact.slice(0, -1), selectedId).topFinding.id, "death-won");
 }
 
 const parserEvents = [

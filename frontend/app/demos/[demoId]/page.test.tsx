@@ -427,6 +427,28 @@ describe("DemoDetailPage", () => {
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
+  it("asks for a reload, not a re-send, when the suggestion was recomputed away (404)", async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.getDemoStatus).mockResolvedValue(demoStatus());
+    vi.mocked(api.getReplay).mockResolvedValue(replayData());
+    vi.mocked(api.saveCoachingFeedback).mockRejectedValue(new api.ApiError(404, "Coaching event not found"));
+
+    render(<DemoDetailPage />);
+    await screen.findByRole("region", { name: "播放控制" });
+    await user.selectOptions(playerSelect(), T_ENTRY_ID);
+    const verdicts = await screen.findByRole("group", { name: /这条建议是否有帮助/ });
+    const card = document.getElementById("coaching-event-event-1") as HTMLElement;
+
+    await user.click(within(verdicts).getByRole("button", { name: "有帮助" }));
+
+    expect(await within(card).findByText("建议已按新规则更新，请刷新页面")).toBeInTheDocument();
+    expect(within(card).queryByRole("button", { name: "重新保存" })).not.toBeInTheDocument();
+    expect(within(card).queryByText("评价没有保存。")).not.toBeInTheDocument();
+    // The verdict was not kept, so the card and the progress roll back.
+    expect(within(verdicts).getByRole("button", { name: "有帮助" })).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getByText(/已评价 0\/1/)).toBeInTheDocument();
+  });
+
   it("keeps the latest verdict when an earlier save resolves late, and clears on a repeat click", async () => {
     const user = userEvent.setup();
     vi.mocked(api.getDemoStatus).mockResolvedValue(demoStatus());

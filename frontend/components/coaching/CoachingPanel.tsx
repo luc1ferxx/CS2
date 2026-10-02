@@ -3,10 +3,12 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
-  activeCoachingEventIds, buildCoachingReviewModel, coachingMomentLabel, coachingRoundClock, coachingSidesByRound,
-  feedbackProgress, severityFilterOptions, type FeedbackSaveState, type ReviewEvent, type RuleFilter, type SeverityFilter
+  activeCoachingEventIds, buildCoachingReviewModel, byImportance, coachingMomentLabel, coachingRoundClock, coachingSidesByRound,
+  feedbackProgress, severityFilterOptions, type FeedbackSaveState, type ReviewEvent, type ReviewEventOptions, type RuleFilter,
+  type SeverityFilter
 } from "@/lib/coaching-review";
 import { coachingMatchesSearch, coachingSeverityLabel } from "@/lib/coaching-copy";
+import { weaponName } from "@/lib/replay-events";
 import type { CoachingEvent, CoachingVerdict } from "@/types/coaching";
 import type { RenderJobStatus } from "@/lib/api";
 import type { PlayerSide, ReplayPlayer, ReplayRound } from "@/types/replay";
@@ -29,8 +31,9 @@ interface CoachingPanelProps {
   // Omitted when render clips are off; the cards then drop their clip button.
   onGenerateClip?: (event: CoachingEvent) => void;
   // Resolve false (or reject) when the verdict was not saved: the card then
-  // says so in place and offers to re-send it.
-  onFeedback: (event: CoachingEvent, verdict: CoachingVerdict | null) => void | Promise<boolean | void>;
+  // says so in place and offers to re-send it. Resolve "stale" (or reject with a
+  // 404) when the suggestion no longer exists: the card asks for a reload instead.
+  onFeedback: (event: CoachingEvent, verdict: CoachingVerdict | null) => void | Promise<FeedbackResult>;
   // Takes the viewer to the player picker while nobody is selected.
   onChoosePlayer?: () => void;
   // The reviewed player's side per round (see playerSidesByRound); sides swap
@@ -38,7 +41,12 @@ interface CoachingPanelProps {
   playerSides?: ReadonlyMap<number, PlayerSide | null>;
 }
 
+export type FeedbackResult = boolean | "stale" | void;
+
 const NO_ACTIVE_EVENTS: ReadonlySet<string> = new Set();
+const REVIEW_OPTIONS: ReviewEventOptions = { weaponLabel: weaponName };
+// 本场最值得回看: this many cards, offered once the player has more than this many.
+const TOP_COUNT = 5;
 
 export const CoachingPanel = memo(function CoachingPanel({
   events, players, currentTick, activeEventIds, selectedRound, rounds, tickRate, selectedPlayerName,
@@ -59,12 +67,27 @@ export const CoachingPanel = memo(function CoachingPanel({
   });
 
   const reviewModel = useMemo(() => {
-    const model = buildCoachingReviewModel(events, players, { severity, rule, search: "" });
+    const model = buildCoachingReviewModel(events, players, { severity, rule, search: "" }, REVIEW_OPTIONS);
     const roundGroups = model.roundGroups.map((group) => ({
       ...group, events: group.events.filter((event) => matchesPanelSearch(event, search))
     })).filter((group) => group.events.length > 0);
     return { ...model, roundGroups, filteredCount: roundGroups.reduce((count, group) => count + group.events.length, 0) };
   }, [events, players, rule, search, severity]);
+  const hasFilters = severity !== "all" || rule !== "all" || search.trim().length > 0;
+  // 本场最值得回看: the whole match unfiltered, for a player with more than TOP_COUNT suggestions.
+  const showTop = scope === "all" && !hasFilters && events.length > TOP_COUNT;
+  const topEvents = useMemo(
+    () => showTop ? byImportance(reviewModel.roundGroups.flatMap((group) => group.events)).slice(0, TOP_COUNT) : [],
+    [reviewModel, showTop]
+  );
+  // Each card is listed once (the page finds cards by id), so the rounds below keep the rest.
+  const listedGroups = useMemo(() => {
+    if (topEvents.length === 0) return reviewModel.roundGroups;
+    const topIds = new Set(topEvents.map((reviewEvent) => reviewEvent.event.id));
+    return reviewModel.roundGroups
+      .map((group) => ({ ...group, events: group.events.filter((reviewEvent) => !topIds.has(reviewEvent.event.id)) }))
+      .filter((group) => group.events.length > 0);
+  }, [reviewModel, topEvents]);
   const progress = useMemo(() => feedbackProgress(events), [events]);
   const recordedSides = useMemo(() => coachingSidesByRound(events), [events]);
   // A level with nothing in it is a filter that can only come back empty.
@@ -74,8 +97,7 @@ export const CoachingPanel = memo(function CoachingPanel({
     [activeEventIds, currentTick, events]
   );
   const selectedGroup = reviewModel.roundGroups.find((group) => group.roundNumber === selectedRound);
-  const visibleGroups = scope === "current" ? (selectedGroup ? [selectedGroup] : []) : reviewModel.roundGroups;
-  const hasFilters = severity !== "all" || rule !== "all" || search.trim().length > 0;
+  const visibleGroups = scope === "current" ? (selectedGroup ? [selectedGroup] : []) : listedGroups;
 
   // Opening another round's card adds that round; groups the player opened stay open.
   useEffect(() => {
@@ -91,24 +113,40 @@ export const CoachingPanel = memo(function CoachingPanel({
     const request = (feedbackRequests.current.get(event.id) ?? 0) + 1;
     feedbackRequests.current.set(event.id, request);
     // Only the latest click on a card decides what that card says.
-    const settle = (saved: boolean) => {
+    const settle = (outcome: "saved" | "failed" | "stale") => {
       if (feedbackRequests.current.get(event.id) !== request) return;
-      setFeedbackStates((current) => withFeedbackState(current, event.id, saved ? null : { status: "failed", verdict }));
+      setFeedbackStates((current) => withFeedbackState(current, event.id, outcome === "saved" ? null : { status: outcome, verdict }));
     };
     let result: ReturnType<CoachingPanelProps["onFeedback"]>;
     try {
       result = latestHandlers.current.onFeedback(event, verdict);
-    } catch {
-      settle(false);
+    } catch (error) {
+      settle(isNotFound(error) ? "stale" : "failed");
       return;
     }
     if (!result || typeof result.then !== "function") {
-      settle(true);
+      settle("saved");
       return;
     }
     setFeedbackStates((current) => withFeedbackState(current, event.id, { status: "saving", verdict }));
-    result.then((saved) => settle(saved !== false), () => settle(false));
+    result.then(
+      (saved) => settle(saved === "stale" ? "stale" : saved === false ? "failed" : "saved"),
+      (error: unknown) => settle(isNotFound(error) ? "stale" : "failed")
+    );
   }, []);
+  const renderCard = (reviewEvent: ReviewEvent, showRound = false) => {
+    const eventId = reviewEvent.event.id;
+    const round = reviewEvent.event.round_number;
+    return (
+      <CoachingEventCard key={eventId} reviewEvent={reviewEvent} active={activeIds.has(eventId)} showRound={showRound}
+        inspected={inspectedEventId === eventId} locationLabel={coachingMomentLabel(reviewEvent.event, rounds, tickRate)}
+        clock={coachingRoundClock(reviewEvent.event, rounds, tickRate)}
+        side={playerSides?.get(round) ?? recordedSides.get(round) ?? null}
+        renderJob={renderJobByEventId.get(eventId)} clipRequesting={requestingEventId === eventId}
+        feedbackState={feedbackStates.get(eventId)} onToggleInspect={toggleInspect} onSeek={seek}
+        onGenerateClip={onGenerateClip ? generateClip : undefined} onFeedback={sendFeedback} />
+    );
+  };
 
   function changeScope(next: "current" | "all") {
     setScope(next);
@@ -180,7 +218,15 @@ export const CoachingPanel = memo(function CoachingPanel({
       </div>
 
       <div className="coaching-body">
-        {visibleGroups.length === 0 ? (
+        {topEvents.length > 0 ? (
+          <section className="coaching-round-group coaching-top-group" aria-label="本场最值得回看">
+            <div className="coaching-top-header">
+              <strong>本场最值得回看</strong><small>按回合输赢、首个阵亡、人数劣势排序</small>
+            </div>
+            <div className="coaching-round-events">{topEvents.map((reviewEvent) => renderCard(reviewEvent, true))}</div>
+          </section>
+        ) : null}
+        {visibleGroups.length === 0 && topEvents.length === 0 ? (
           <div className="coaching-empty-state">
             <p>{reviewModel.totalCount === 0 ? selectedPlayerName === null ? "选择你在这场比赛中的玩家后，这里会列出对应的建议。" : "暂未发现值得回看的时刻，可以直接观看比赛。没有建议不代表每次选择都正确。" : hasFilters && reviewModel.filteredCount === 0 ? "没有符合筛选条件的建议。" : "这一回合暂无建议，可以查看其他回合。"}</p>
             {selectedPlayerName === null && onChoosePlayer ? <button className="text-button coaching-link" type="button" onClick={onChoosePlayer}>选择玩家</button> : null}
@@ -199,21 +245,7 @@ export const CoachingPanel = memo(function CoachingPanel({
                 </button>
               ) : null}
               {expanded ? (
-                <div id={eventsId} className="coaching-round-events">
-                  {roundGroup.events.map((reviewEvent) => {
-                    const eventId = reviewEvent.event.id;
-                    const round = reviewEvent.event.round_number;
-                    return (
-                      <CoachingEventCard key={eventId} reviewEvent={reviewEvent} active={activeIds.has(eventId)}
-                        inspected={inspectedEventId === eventId} locationLabel={coachingMomentLabel(reviewEvent.event, rounds, tickRate)}
-                        clock={coachingRoundClock(reviewEvent.event, rounds, tickRate)}
-                        side={playerSides?.get(round) ?? recordedSides.get(round) ?? null}
-                        renderJob={renderJobByEventId.get(eventId)} clipRequesting={requestingEventId === eventId}
-                        feedbackState={feedbackStates.get(eventId)} onToggleInspect={toggleInspect} onSeek={seek}
-                        onGenerateClip={onGenerateClip ? generateClip : undefined} onFeedback={sendFeedback} />
-                    );
-                  })}
-                </div>
+                <div id={eventsId} className="coaching-round-events">{roundGroup.events.map((reviewEvent) => renderCard(reviewEvent))}</div>
               ) : null}
             </section>
           );
@@ -223,12 +255,18 @@ export const CoachingPanel = memo(function CoachingPanel({
   );
 });
 
-// Also finds the Chinese facts line and evidence values the card shows.
+// Also finds the Chinese facts line, chips, extra reasons and evidence values the card shows.
 function matchesPanelSearch(reviewEvent: ReviewEvent, search: string): boolean {
   if (coachingMatchesSearch(reviewEvent, search)) return true;
   const needle = search.trim().toLocaleLowerCase();
-  return [reviewEvent.facts ?? "", ...(reviewEvent.playerEvidence ?? []).map((item) => item.value)]
+  return [reviewEvent.facts ?? "", reviewEvent.feed?.killer ?? "", ...(reviewEvent.chips ?? []),
+    ...(reviewEvent.extraReasonLines ?? []), ...(reviewEvent.playerEvidence ?? []).map((item) => item.value)]
     .join(" ").toLocaleLowerCase().includes(needle);
+}
+
+// A rejected save that the server answered 404 (duck-typed: the panel does not load the API client).
+function isNotFound(error: unknown): boolean {
+  return typeof error === "object" && error !== null && (error as { status?: unknown }).status === 404;
 }
 
 function withFeedbackState(

@@ -51,6 +51,7 @@ import {
   getRenderJobs,
   getRenderWorkerStatus,
   getReplay,
+  isApiError,
   retryDemoParse,
   retryRenderClipJob,
   saveCoachingFeedback,
@@ -388,7 +389,10 @@ function DemoDetailContent() {
   }, [demoId, loadStatus]);
 
   // Resolves false when the server refused the verdict; the card says so in place and offers to re-send.
-  const submitCoachingFeedback = useCallback(async (event: CoachingEvent, verdict: CoachingVerdict | null) => {
+  // Resolves "stale" on a 404: the suggestion was recomputed by newer rules, so only a reload helps.
+  const submitCoachingFeedback = useCallback(async (
+    event: CoachingEvent, verdict: CoachingVerdict | null
+  ): Promise<boolean | "stale"> => {
     // The verdict is the player's own statement, so show it at once and only
     // roll back if the server refuses it.
     const previous = event.feedback ?? null;
@@ -408,9 +412,9 @@ function DemoDetailContent() {
         await clearCoachingFeedback(demoId, event.id);
       }
       return true;
-    } catch {
+    } catch (err) {
       applyIfStillCurrent(previous);
-      return false;
+      return isApiError(err) && err.status === 404 ? "stale" : false;
     }
   }, [demoId]);
 
@@ -1474,7 +1478,7 @@ function DemoDetailContent() {
             <EconomyPanel economies={economies} teams={teams} selectedRound={selectedRound} onSelectRound={jumpToRound} />
             <Scoreboard teams={teams} stats={scoreboardStats} reviewedPlayerId={selectedPlayerId} />
             {showVideoControls ? (
-              <details className="review-saved-clips" id="saved-clips" ref={savedClipsRef}>
+              <details className="panel review-saved-clips" id="saved-clips" ref={savedClipsRef}>
                 <summary><span>已保存的视频</span>
                   <span className="saved-clips-count">{playableClipCount} 段可观看</span>
                   {hasActiveRenderClipJob ? <span role="status">有视频正在生成</span> : null}
@@ -1483,7 +1487,7 @@ function DemoDetailContent() {
                   canGenerate={renderClips} selectedJobId={replay.video.renderJobId ?? null} onPlay={playSavedClip} />
               </details>
             ) : null}
-            <details className="review-inspector" onToggle={(event) => setInspectorOpen(event.currentTarget.open)}>
+            <details className="panel review-inspector" onToggle={(event) => setInspectorOpen(event.currentTarget.open)}>
               <summary><span>高级工具</span><small>{devTools ? "视频校准、生成记录与技术详情" : renderClips ? "视频生成状态与比赛信息" : "比赛信息"}</small></summary>
               {inspectorOpen ? (
                 <div className="review-inspector-content">
