@@ -1,9 +1,10 @@
-"""Opt-in check of replay contract v2 against real demos.
+"""Opt-in check of replay contract v2/v3 against real demos.
 
 Skipped unless ``REPLAY_V2_SAMPLE_CHECK=1``. It parses every ``*.dem`` in the
 repo root (git-ignored samples) plus ``SAMPLE_DEMO_PATH`` when set, and checks
 the v2 extras against the demo's own events: one track per detonation, landing
-points on the detonate position, money/weapon ranges and the size budget.
+points on the detonate position, money/weapon ranges and the size budget; and
+the v3 key inputs' shape and size.
 """
 
 import json
@@ -11,11 +12,14 @@ import math
 import os
 import unittest
 from collections import Counter
+from itertools import pairwise
 from pathlib import Path
 from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SIZE_BUDGET = 1.25
+# v3 inputs on top of that: ~4 % on a full Mirage match.
+INPUTS_BUDGET = 0.08
 
 
 def _sample_demos() -> list[Path]:
@@ -104,8 +108,17 @@ class SampleDemoContractV2Test(unittest.TestCase):
         self.assertTrue(weapons)
         self.assertTrue(all(0 < len(weapon) <= 32 for weapon in weapons))
 
-        v1 = {key: value for key, value in replay.items() if key not in ("playerStates", "utility")}
-        self.assertLessEqual(_size(replay), _size(v1) * SIZE_BUDGET)
+        v1 = {key: value for key, value in replay.items() if key not in ("playerStates", "utility", "inputs")}
+        self.assertLessEqual(_size({key: value for key, value in replay.items() if key != "inputs"}), _size(v1) * SIZE_BUDGET)
+
+        # v3 key inputs: the sample demos are GOTV recordings, which carry usercmd data.
+        inputs = replay["inputs"]
+        self.assertTrue(inputs)
+        frame_ids = {player["id"] for frame in replay["frames"] for player in frame["players"]}
+        self.assertLessEqual(set(inputs), frame_ids)
+        for track in inputs.values():
+            self.assertTrue(all(earlier[0] < later[0] and earlier[1] != later[1] for earlier, later in pairwise(track)))
+        self.assertLessEqual(_size(inputs), _size(v1) * INPUTS_BUDGET)
 
 
 if __name__ == "__main__":

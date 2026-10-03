@@ -206,6 +206,10 @@ export interface ReplayContractDiagnostics {
   utilityCount?: number;
   /** v2: number of players with a playerStates track. Absent on older API responses. */
   playerStateCount?: number;
+  /** v3: `"usercmd"` when key inputs were extracted, else null. Absent on older API responses. */
+  inputSource?: string | null;
+  /** v3: number of players with an inputs track. Absent on older API responses. */
+  inputPlayerCount?: number;
 }
 
 export interface ReplayData {
@@ -223,6 +227,13 @@ export interface ReplayData {
   playerStates?: Record<string, ReplayPlayerState[]>;
   /** v2 only. The API always sends `[]` for older replays; optional so fixtures stay valid. */
   utility?: ReplayUtility[];
+  /**
+   * v3 only: per-player key change points as compact `[tick, mask]` tuples, sorted by tick.
+   * Mask bits: 1 attack, 2 jump, 4 duck, 8 forward, 16 back, 512 left, 1024 right,
+   * 2048 attack2, 0x10000 walk. The mask holds from its tick until the next entry; a
+   * `[tick, 0]` entry marks death. Optional per demo (needs usercmd data); older replays get `{}`.
+   */
+  inputs?: Record<string, Array<[number, number]>>;
   generatedAt: string;
   diagnostics?: ReplayContractDiagnostics | null;
 }

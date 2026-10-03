@@ -8,13 +8,15 @@ from datetime import UTC, datetime
 from typing import Any, SupportsFloat, SupportsIndex, TypeGuard
 
 from app.parser.map_config import is_current_transform, legacy_radar_reprojection, map_metadata_for
+from app.parser.player_inputs import INPUT_SOURCE, input_track_capped, normalize_player_inputs
 from app.parser.player_states import normalize_player_states
 from app.parser.utility_tracks import normalize_utility
 
 # v2 adds `playerStates` (equipment change points) and `utility` (grenade
-# trajectories). Older replays load with both empty; the worker's re-parse
-# backstop upgrades completed demos whose stored version is not current.
-REPLAY_CONTRACT_VERSION = "replay_contract_v2"
+# trajectories); v3 adds `inputs` (per-player key change points). Older replays
+# load with them empty; the worker's re-parse backstop upgrades completed demos
+# whose stored version is older than this one.
+REPLAY_CONTRACT_VERSION = "replay_contract_v3"
 _CONTRACT_VERSION_PATTERN = re.compile(r"replay_contract_v(\d{1,4})")
 
 PARSER_EVENT_TYPES = {
@@ -62,12 +64,21 @@ MAX_METADATA_LIST_LENGTH = 16
 PositionNormalizer = Callable[[dict[str, Any]], dict[str, float] | None]
 
 
-def replay_contract_is_current(version: object) -> bool:
-    """Whether a stored replay's ``contractVersion`` already carries the v2 fields."""
+def replay_contract_number(version: object) -> int | None:
+    """The number of a ``replay_contract_vN`` version string; None for anything else."""
     if not isinstance(version, str):
-        return False
+        return None
     match = _CONTRACT_VERSION_PATTERN.fullmatch(version.strip())
-    return match is not None and int(match.group(1)) >= 2
+    return int(match.group(1)) if match is not None else None
+
+
+_CURRENT_CONTRACT_NUMBER = replay_contract_number(REPLAY_CONTRACT_VERSION) or 0
+
+
+def replay_contract_is_current(version: object) -> bool:
+    """Whether a stored replay's ``contractVersion`` already carries every field of the current contract."""
+    number = replay_contract_number(version)
+    return number is not None and number >= _CURRENT_CONTRACT_NUMBER
 
 
 def normalize_bomb_site(value: Any) -> str | None:
@@ -122,6 +133,7 @@ def normalize_replay_contract(replay: dict[str, Any]) -> dict[str, Any]:
     )
     normalized["playerStates"] = normalize_player_states(normalized.get("playerStates"))
     normalized["utility"] = normalize_utility(normalized.get("utility"), rounds, tick_rate)
+    normalized["inputs"] = normalize_player_inputs(normalized.get("inputs"))
     normalized["video"] = _normalize_video(normalized.get("video"), tick_rate, tick_start, tick_end)
     normalized["generatedAt"] = str(normalized.get("generatedAt") or datetime.now(UTC).isoformat())
     normalized["contractVersion"] = _contract_version(raw)
@@ -404,6 +416,8 @@ def _replay_diagnostics(raw: dict[str, Any], normalized: dict[str, Any]) -> dict
         degraded_fields.append("playerStates")
     if "utility" in raw and not isinstance(raw.get("utility"), list):
         degraded_fields.append("utility")
+    if "inputs" in raw and not isinstance(raw.get("inputs"), dict):
+        degraded_fields.append("inputs")
     metadata = normalized.get("mapMetadata")
     if isinstance(metadata, dict) and (_optional_int(metadata.get("legacyEdgePositionsHidden")) or 0) > 0:
         degraded_fields.append("legacyRadarEdgePositions")
@@ -413,7 +427,12 @@ def _replay_diagnostics(raw: dict[str, Any], normalized: dict[str, Any]) -> dict
     normalized_legacy = bool(normalized["contractVersion"] == "legacy" or missing_fields or degraded_fields)
     utility_count = len(normalized.get("utility") or [])
     player_state_count = len(normalized.get("playerStates") or {})
-    if replay_contract_is_current(normalized["contractVersion"]):
+    inputs = normalized.get("inputs") or {}
+    if any(input_track_capped(track) for track in inputs.values()):
+        degraded_fields.append("inputsCapped")
+    # No flag for a v3 replay without inputs: many demo sources carry no usercmd
+    # data, and `inputSource: null` already says so.
+    if (replay_contract_number(normalized["contractVersion"]) or 0) >= 2:
         # A v2 parse whose grenade or equipment extraction came back empty is a
         # partial success: flag it here, never as a failed parse.
         if utility_count == 0 and "utility" not in degraded_fields:
@@ -435,6 +454,8 @@ def _replay_diagnostics(raw: dict[str, Any], normalized: dict[str, Any]) -> dict
         ],
         "utilityCount": utility_count,
         "playerStateCount": player_state_count,
+        "inputSource": INPUT_SOURCE if inputs else None,
+        "inputPlayerCount": len(inputs),
     }
 
 

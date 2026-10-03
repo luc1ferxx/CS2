@@ -98,6 +98,7 @@ def _public_replay_contract(
             for item in replay.get("utility", [])
             if isinstance(item, dict)
         ],
+        "inputs": _public_inputs(replay.get("inputs")),
         "generatedAt": replay["generatedAt"],
         "contractVersion": replay["contractVersion"],
         "diagnostics": _public_replay_diagnostics(replay.get("diagnostics")),
@@ -133,6 +134,21 @@ def _public_player_states(value: Any) -> dict[str, list[dict[str, Any]]]:
         ]
         for player_id, entries in value.items()
         if isinstance(entries, list)
+    }
+
+
+def _public_inputs(value: Any) -> dict[str, list[list[int]]]:
+    """Key change points as ``[tick, mask]`` pairs; the stored replay was normalized on load."""
+    if not isinstance(value, dict):
+        return {}
+    return {
+        str(player_id): [
+            [entry[0], entry[1]]
+            for entry in track
+            if isinstance(entry, (list, tuple)) and len(entry) == 2
+        ]
+        for player_id, track in value.items()
+        if isinstance(track, list)
     }
 
 
@@ -294,6 +310,8 @@ def _public_replay_diagnostics(value: Any) -> dict[str, Any] | None:
             "missingEventFamilies",
             "utilityCount",
             "playerStateCount",
+            "inputSource",
+            "inputPlayerCount",
         ),
     )
     family_counts = value.get("eventFamilyCounts")

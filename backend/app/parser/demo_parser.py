@@ -7,6 +7,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from app.parser.player_inputs import parse_player_inputs
 from app.parser.player_states import PLAYER_STATE_PROPS, build_player_states
 from app.parser.replay_contract import normalize_bomb_site
 from app.parser.utility_tracks import parse_utility_tracks
@@ -160,6 +161,11 @@ def parse_demo_file(source_path: Path) -> dict[str, Any]:
             error_code="MISSING_MATCH_METADATA",
             user_message="Demo is missing essential match metadata needed to sample replay ticks.",
         )
+    # Replay contract v3 key inputs, best effort. Read before the sampled ticks so
+    # its every-tick DataFrame is gone before the tick records are built.
+    inputs: dict[str, list[list[int]]] = _best_effort(
+        lambda: parse_player_inputs(parser, rounds, death_records), {},
+    )
     tick_records = _parse_tick_records(parser, sample_ticks)
     if not tick_records:
         raise DemoParserError(
@@ -189,6 +195,7 @@ def parse_demo_file(source_path: Path) -> dict[str, Any]:
         "events": events,
         "playerStates": player_states,
         "utility": utility,
+        "inputs": inputs,
         # Not part of the replay contract: the worker folds it into the demo's
         # match summary, and the normalizer never copies it into the replay blob.
         "teamNames": parse_team_names(parser, team_name_sample_ticks(rounds)),

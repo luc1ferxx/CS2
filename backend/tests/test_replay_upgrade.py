@@ -552,6 +552,43 @@ class ReplayUpgradeTest(unittest.TestCase):
         with self.Session() as db:
             self.assertEqual(DemoService.for_internal(db).demo_ids_due_for_replay_upgrade(limit=5), [demo_id])
 
+    def test_a_v2_replay_is_owed_the_v3_upgrade_and_gets_its_inputs(self) -> None:
+        demo_id = self.upload_and_parse()
+        # A demo parsed under contract v2: the job carries the v2 marker and the replay has no inputs.
+        with self.Session() as db:
+            service = DemoService(db, storage=self.legacy, artifact_store=self.store, internal=True)
+            demo = db.get(Demo, demo_id)
+            replay = copy.deepcopy(service.load_replay_blob(demo))
+            assert replay is not None
+            replay["contractVersion"] = "replay_contract_v2"
+            replay.pop("inputs", None)
+            previous = demo.replay_storage_key
+            demo.replay_storage_key = service.write_replay_blob(demo_id, replay)
+            job = service.latest_parse_job(demo)
+            assert job is not None
+            metadata = json.loads(job.metadata_json)
+            metadata[VERSION_KEY] = "replay_contract_v2"
+            job.metadata_json = json.dumps(metadata, separators=(",", ":"))
+            db.commit()
+            service.delete_artifact_safely(previous)
+        self.assertTrue(self.snapshot(demo_id)["pending"])
+        with self.Session() as db:
+            self.assertEqual(DemoService.for_internal(db).demo_ids_due_for_replay_upgrade(limit=5), [demo_id])
+
+        inputs = {"t-entry": [[0, 0], [50, 1032], [100, 0]]}
+
+        def parse_with_inputs(source_path: Path, on_tick: Any = None) -> dict[str, Any]:
+            return {**parsed_match(), "inputs": inputs}
+
+        self.assertEqual(self.run_pass(parse_with_inputs), "upgraded")
+        after = self.snapshot(demo_id)
+        self.assertEqual(after["version"], REPLAY_CONTRACT_VERSION)
+        self.assertEqual(after["metadata"][VERSION_KEY], REPLAY_CONTRACT_VERSION)
+        self.assertEqual(after["replay"]["inputs"], inputs)
+        self.assertEqual(after["replay"]["diagnostics"]["inputSource"], "usercmd")
+        self.assertFalse(after["pending"])
+        self.assertIsNone(self.run_pass())
+
     def test_waiting_work_stops_the_upgrade_and_gives_the_attempt_back(self) -> None:
         demo_id = self.upload_and_parse()
         self.make_old(demo_id)

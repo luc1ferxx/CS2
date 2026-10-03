@@ -309,10 +309,12 @@ class UtilityTracksTest(unittest.TestCase):
 
 class ContractV2Test(unittest.TestCase):
     def test_version_helpers(self) -> None:
-        self.assertEqual(REPLAY_CONTRACT_VERSION, "replay_contract_v2")
-        self.assertTrue(replay_contract_is_current("replay_contract_v2"))
-        self.assertTrue(replay_contract_is_current(" replay_contract_v3 "))
-        for version in ("replay_contract_v1", "legacy", None, 2, "replay_contract_v", "replay_contract_v2x"):
+        # v3 (key inputs) is current, so v2 replays are owed a re-parse.
+        self.assertEqual(REPLAY_CONTRACT_VERSION, "replay_contract_v3")
+        self.assertTrue(replay_contract_is_current("replay_contract_v3"))
+        self.assertTrue(replay_contract_is_current(" replay_contract_v4 "))
+        for version in ("replay_contract_v2", "replay_contract_v1", "legacy", None, 3, "replay_contract_v",
+                        "replay_contract_v3x"):
             self.assertFalse(replay_contract_is_current(version), version)
 
     def test_v1_replay_loads_with_empty_v2_fields_and_no_degradation(self) -> None:
