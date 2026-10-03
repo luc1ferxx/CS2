@@ -3,6 +3,7 @@
 import { Bomb, CircleDot, Cloud, Disc, Flame, Scissors, Shield, ShieldHalf, X, Zap, type LucideIcon } from "lucide-react";
 import { memo, useCallback, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode, type RefObject } from "react";
 
+import { MapHud, MapKillFeed, MapKillTraces, mapKillsForRound, roundVerdictText, type MapKill, type MapKillTrace } from "@/components/replay/MapHud";
 import { RadarGraticule } from "@/components/replay/RadarGraticule";
 import { getTacticalMapLevel, getTacticalMapPresentation, resolveTacticalMapLevel, sanitizeRadarPoint } from "@/lib/map-config";
 import type { TacticalMapLevel, TacticalMapLevelMode, TacticalMapPresentation } from "@/lib/map-config";
@@ -18,8 +19,16 @@ import {
   type KillsDeaths
 } from "@/lib/player-state";
 import { getFrameForTick } from "@/lib/replay-frames";
-import { describeParserEvent, killSide, parserEventPresentation, recentMapParserEvents, weaponName } from "@/lib/replay-events";
-import { formatRoundTime } from "@/lib/replay-time";
+import {
+  describeParserEvent,
+  killSide,
+  killTraceOpacity,
+  parserEventPresentation,
+  recentKills,
+  recentMapParserEvents,
+  weaponName
+} from "@/lib/replay-events";
+import { formatRoundTime, roundTimeAt } from "@/lib/replay-time";
 import type {
   PlayerSide,
   ReplayData,
@@ -67,7 +76,16 @@ interface ReplayViewerProps {
   // `replay` carries a per-player subset of events. Pass the arrays the page gives
   // lib/match-stats elsewhere, so its per-replay index is shared, not rebuilt every tick.
   matchReplay?: ReplayData;
+  // Each new non-null value is a jump to a suggestion (the page's focused suggestion, renewed on
+  // every 查看这一刻): the lock bracket snaps onto the reviewed player once. Null changes nothing.
+  lockSnapKey?: unknown;
 }
+
+// The kill traces cover the last 2 s (the markers' window, at most four); the feed the last 5 s, five rows.
+const KILL_TRACE_SECONDS = 2;
+const KILL_TRACE_MAX = 4;
+const KILL_FEED_SECONDS = 5;
+const KILL_FEED_MAX = 5;
 
 export const ReplayViewer = memo(function ReplayViewer({
   replay,
@@ -81,7 +99,8 @@ export const ReplayViewer = memo(function ReplayViewer({
   overlayAbove,
   focusPlayerId = null,
   teamNames,
-  matchReplay
+  matchReplay,
+  lockSnapKey = null
 }: ReplayViewerProps) {
   const [localLevelMode, setLocalLevelMode] = useState<TacticalMapLevelMode>("auto");
   const levelMode = controlledLevelMode ?? localLevelMode;
@@ -154,6 +173,78 @@ export const ReplayViewer = memo(function ReplayViewer({
   // v1 replays have no equipment states: one line per player is enough.
   const compactRoster = useMemo(() => !hasPlayerStates(statsReplay), [statsReplay]);
   const unitsPerPixel = useUnitsPerPixel(mapSvgRef);
+  const tTeamName = sideTeamName(statsReplay, tPlayers, teamNames);
+  const ctTeamName = sideTeamName(statsReplay, ctPlayers, teamNames);
+
+  // Kills come from the whole match (the map's own events may be the reviewed player's only),
+  // indexed by round and placed once per round; a playback frame only filters that round's few.
+  const killsByRound = useMemo(() => {
+    const byRound = new Map<number, ReplayEvent[]>();
+    for (const event of statsReplay.events ?? []) {
+      if (event.type !== "kill") continue;
+      const roundKills = byRound.get(event.roundNumber);
+      if (roundKills) roundKills.push(event);
+      else byRound.set(event.roundNumber, [event]);
+    }
+    return byRound;
+  }, [statsReplay.events]);
+  const roundKillEvents = (Number.isFinite(currentRoundNumber) ? killsByRound.get(currentRoundNumber) : undefined) ?? NO_EVENTS;
+  const roundKills = useMemo(
+    () => mapKillsForRound(roundKillEvents, statsReplay.frames, tickRate),
+    [roundKillEvents, statsReplay.frames, tickRate]
+  );
+  // Opacity steps by age, an attribute: nothing tweens. A line with one end on the other floor is
+  // dashed; one with both ends there is not drawn.
+  const killTraces: MapKillTrace[] = [];
+  for (const kill of recentKills(roundKills, currentRoundNumber, currentTick, tickRate, KILL_TRACE_SECONDS, KILL_TRACE_MAX)) {
+    if (!kill.killer || !kill.victim) continue;
+    const endsHere = hasFloors
+      ? [kill.killer.z, kill.victim.z].filter((z) => getTacticalMapLevel(mapPresentation, z) === floor.level).length
+      : 2;
+    if (endsHere === 0) continue;
+    killTraces.push({
+      id: kill.id,
+      side: kill.attackerSide,
+      from: kill.killer,
+      to: kill.victim,
+      opacity: killTraceOpacity(currentTick - kill.tick, tickRate, KILL_TRACE_SECONDS),
+      crossFloor: endsHere === 1
+    });
+  }
+  // The feed is memoised on its kill ids: rows appear and go, nothing else re-renders it.
+  const feedKey = recentKills(roundKills, currentRoundNumber, currentTick, tickRate, KILL_FEED_SECONDS, KILL_FEED_MAX)
+    .map((kill) => kill.id)
+    .join("\n");
+  const killFeed = useMemo(() => {
+    const ids = feedKey ? feedKey.split("\n") : [];
+    return ids.map((id) => roundKills.find((kill) => kill.id === id)).filter((kill): kill is MapKill => kill !== undefined);
+  }, [feedKey, roundKills]);
+
+  const bombState = frame?.bombState;
+  const bombCarrier = bombState?.status === "carried" && bombState.carrierPlayerId
+    ? framePlayers.find((player) => player.id === bombState.carrierPlayerId)?.name ?? null
+    : null;
+  const bombSite = typeof bombState?.site === "string" && bombState.site.trim() ? bombState.site.trim() : null;
+  // From the round's end until the next one starts, the bar gives the verdict instead of the bomb.
+  const endedRound = round && currentTick >= round.endTick ? round : null;
+
+  // Motion #1: the lock bracket snaps onto the reviewed player once per jump to a suggestion or
+  // change of reviewed player (a keyed one-shot keyframe), never on playback frames or re-renders.
+  const [lock, setLock] = useState(() => ({ key: lockSnapKey, player: selectedPlayerId, snaps: 0, played: 0 }));
+  if (lock.key !== lockSnapKey || lock.player !== selectedPlayerId) {
+    const jumped = lockSnapKey !== null && lockSnapKey !== undefined && lockSnapKey !== lock.key;
+    const switched = selectedPlayerId !== null && selectedPlayerId !== lock.player;
+    setLock({ ...lock, key: lockSnapKey, player: selectedPlayerId, snaps: jumped || switched ? lock.snaps + 1 : lock.snaps });
+  }
+  const finishLockSnap = useCallback(() => {
+    setLock((current) => (current.played === current.snaps ? current : { ...current, played: current.snaps }));
+  }, []);
+  // The reviewed player's dot is drawn last, over its neighbours; its bracket and name go on top of everything.
+  const lockedPlayer = selectedPlayerId ? visiblePlayers.find((player) => player.id === selectedPlayerId) : undefined;
+  const drawnPlayers = lockedPlayer
+    ? [...visiblePlayers.filter((player) => player !== lockedPlayer), lockedPlayer]
+    : visiblePlayers;
+  const showMapTools = hasFloors || mapPresentation.confidence !== "calibrated" || unknownHeights > 0;
   const overlayContext: ReplayMapOverlayContext = {
     map: mapPresentation,
     hasFloors,
@@ -194,9 +285,7 @@ export const ReplayViewer = memo(function ReplayViewer({
     register: registerRosterButton,
     replay: statsReplay,
     currentTick,
-    frame,
     killsDeaths,
-    teamNames,
     compact: compactRoster
   };
 
@@ -205,111 +294,140 @@ export const ReplayViewer = memo(function ReplayViewer({
       className={`panel replay-panel ${layoutClass}`}
       aria-label="战术地图"
     >
-      <div className={`map-frame ${hasRadarImage ? "radar-map-frame" : "fallback-map-frame"}`}>
-        <svg
-          ref={mapSvgRef}
-          viewBox="0 0 100 100"
-          role="img"
-          aria-label={`${mapPresentation.displayName} 战术地图${hasFloors ? `（${floor.level === "lower" ? "下层" : "上层"}）` : ""}`}
-        >
-          <defs>
-            <pattern id="grid" width="5" height="5" patternUnits="userSpaceOnUse">
-              <path className="fallback-map-grid" d="M 5 0 L 0 0 0 5" fill="none" strokeWidth="0.25" />
-            </pattern>
-          </defs>
-          {floor.radarImagePath ? (
-            <>
-              <RadarImageBackground radarUrl={floor.radarImagePath} />
-              <RadarGraticule />
-            </>
-          ) : (
-            <GenericMapBackground label={`${mapPresentation.displayName}（坐标未校准）`} />
-          )}
-
-          {overlay !== undefined ? <g className="map-overlay-slot">{renderOverlay(overlay)}</g> : null}
-
-          {visiblePlayers.map((player) => (
-            <PlayerDot
-              key={player.id}
-              player={player}
-              index={(player.side === "T" ? tPlayers : ctPlayers).findIndex((item) => item.id === player.id) + 1}
-              selected={selectedPlayerId === player.id}
-              highlighted={highlightedPlayerId === player.id}
-              focus={focusPlayerId === null ? "none" : focusPlayerId === player.id ? "focused" : "dimmed"}
-              unit={unitsPerPixel}
-              onHighlight={toggleHighlight}
-            />
-          ))}
-
-          {!hasFloors || getTacticalMapLevel(mapPresentation, frame?.bombState.z) === floor.level
-            ? <BombMarker bombState={frame?.bombState} unit={unitsPerPixel} /> : null}
-
-          {nearbyParserEvents.map((event) => (
-            <ParserEventMapMarker key={event.id} event={event} playerId={selectedPlayerId} unit={unitsPerPixel}
-              time={formatRoundTime((event.tick - (round?.startTick ?? event.tick)) / tickRate)} />
-          ))}
-
-          {overlayAbove !== undefined ? <g className="map-overlay-slot above">{renderOverlay(overlayAbove)}</g> : null}
-        </svg>
-
-        <div className="map-overlay-bar">
-          <strong className="viewer-map-name">{mapPresentation.displayName}</strong>
-          {mapPresentation.confidence !== "calibrated" ? (
-            <span className={`map-calibration-pill ${mapPresentation.confidence}`}>参考坐标</span>
-          ) : null}
-          <span data-testid="bomb-status">炸弹：{bombStatusLabel(frame?.bombState.status)}</span>
-          {hasFloors ? (
-            <label className="map-floor-control">
-              楼层
-              <select className="speed-select" aria-label="地图楼层" value={levelMode}
-                onChange={(event) => setLevelMode(event.target.value as TacticalMapLevelMode)}>
-                <option value="auto">跟随玩家</option>
-                <option value="upper">上层</option>
-                <option value="lower">下层</option>
-              </select>
-              <span data-testid="map-floor-label">{floor.level === "lower" ? "下层" : "上层"}
-                {floor.followingPlayer ? `（跟随 ${selectedPlayer?.name}）` : ""}</span>
-            </label>
-          ) : null}
-          {hasFloors ? <small>本层 {visiblePlayers.length} 人，另一层 {framePlayers.length - visiblePlayers.length - unknownHeights} 人</small> : null}
-          {hasFloors && levelMode === "auto" && !floor.followingPlayer ? <small>选择有高度数据的玩家后可自动切换楼层。</small> : null}
-          {unknownHeights > 0 ? <small>{unknownHeights} 人的高度数据缺失，请查看名单。</small> : null}
-        </div>
-
-        {highlightedPlayer ? (
-          <div className="map-highlight-card" role="status">
-            <span className={`map-highlight-side ${highlightedPlayer.side === "T" ? "side-t" : "side-ct"}`}>{highlightedPlayer.side}</span>
-            <strong>{highlightedPlayer.name}</strong>
-            {"hp" in highlightedPlayer ? <small>{highlightedPlayer.alive ? `${highlightedPlayer.hp} 血量` : "已阵亡"}</small> : null}
-            {highlightedPlayer.id === selectedPlayerId ? (
-              <small>正在复盘</small>
+      <div className="map-stage">
+        {frame ? (
+          <MapHud
+            tName={tTeamName}
+            ctName={ctTeamName}
+            tAlive={tPlayers.filter((player) => player.alive).length}
+            tTotal={tPlayers.length}
+            ctAlive={ctPlayers.filter((player) => player.alive).length}
+            ctTotal={ctPlayers.length}
+            tEquipment={teamEquipmentAt(statsReplay, "T", currentTick, frame)}
+            ctEquipment={teamEquipmentAt(statsReplay, "CT", currentTick, frame)}
+            clock={roundTimeAt(currentTick, round, tickRate)}
+            bombStatus={bombState?.status ?? null}
+            bombCarrier={bombCarrier}
+            bombSite={bombSite}
+            verdict={endedRound ? roundVerdictText(endedRound) : null}
+            verdictSide={endedRound?.winnerSide ?? null}
+          />
+        ) : null}
+        <div className={`map-frame ${hasRadarImage ? "radar-map-frame" : "fallback-map-frame"}`}>
+          <svg
+            ref={mapSvgRef}
+            viewBox="0 0 100 100"
+            role="img"
+            aria-label={`${mapPresentation.displayName} 战术地图${hasFloors ? `（${floor.level === "lower" ? "下层" : "上层"}）` : ""}`}
+          >
+            <defs>
+              <pattern id="grid" width="5" height="5" patternUnits="userSpaceOnUse">
+                <path className="fallback-map-grid" d="M 5 0 L 0 0 0 5" fill="none" strokeWidth="0.25" />
+              </pattern>
+            </defs>
+            {floor.radarImagePath ? (
+              <>
+                <RadarImageBackground radarUrl={floor.radarImagePath} />
+                <RadarGraticule />
+              </>
             ) : (
-              <button type="button" className="secondary-button compact-button"
-                onClick={() => {
-                  onSelectPlayer(highlightedPlayer.id);
-                  setHighlightedPlayerId(null);
-                }}>
-                切换为他的视角
-              </button>
+              <GenericMapBackground label={`${mapPresentation.displayName}（坐标未校准）`} />
             )}
-            <button type="button" className="map-highlight-close" aria-label="取消高亮" onClick={() => setHighlightedPlayerId(null)}>
-              <X size={14} aria-hidden="true" />
-            </button>
-          </div>
-        ) : null}
 
-        {!frame ? (
-          <div className="map-empty-state">
-            <strong>暂无位置数据</strong>
-            <span>这场比赛暂时无法显示玩家位置。</span>
+            {overlay !== undefined ? <g className="map-overlay-slot">{renderOverlay(overlay)}</g> : null}
+
+            <MapKillTraces traces={killTraces} />
+
+            {drawnPlayers.map((player) => (
+              <PlayerDot
+                key={player.id}
+                player={player}
+                index={(player.side === "T" ? tPlayers : ctPlayers).findIndex((item) => item.id === player.id) + 1}
+                selected={selectedPlayerId === player.id}
+                highlighted={highlightedPlayerId === player.id}
+                focus={focusPlayerId === null ? "none" : focusPlayerId === player.id ? "focused" : "dimmed"}
+                unit={unitsPerPixel}
+                onHighlight={toggleHighlight}
+              />
+            ))}
+
+            {!hasFloors || getTacticalMapLevel(mapPresentation, frame?.bombState.z) === floor.level
+              ? <BombMarker bombState={frame?.bombState} unit={unitsPerPixel} /> : null}
+
+            {nearbyParserEvents.map((event) => (
+              <ParserEventMapMarker key={event.id} event={event} playerId={selectedPlayerId} unit={unitsPerPixel}
+                time={formatRoundTime((event.tick - (round?.startTick ?? event.tick)) / tickRate)} />
+            ))}
+
+            {overlayAbove !== undefined ? <g className="map-overlay-slot above">{renderOverlay(overlayAbove)}</g> : null}
+
+            {lockedPlayer ? (
+              <LockMarker player={lockedPlayer} unit={unitsPerPixel} dimmed={focusPlayerId !== null && focusPlayerId !== lockedPlayer.id}
+                index={(lockedPlayer.side === "T" ? tPlayers : ctPlayers).findIndex((item) => item.id === lockedPlayer.id) + 1}
+                snap={lock.snaps} animate={lock.snaps > lock.played} onSnapEnd={finishLockSnap} />
+            ) : null}
+          </svg>
+
+          {showMapTools ? (
+            <div className="map-tools">
+              {mapPresentation.confidence !== "calibrated" ? (
+                <span className={`map-calibration-pill ${mapPresentation.confidence}`}>参考坐标</span>
+            ) : null}
+            {hasFloors ? (
+              <label className="map-floor-control">
+                楼层
+                <select className="speed-select" aria-label="地图楼层" value={levelMode}
+                  onChange={(event) => setLevelMode(event.target.value as TacticalMapLevelMode)}>
+                  <option value="auto">跟随玩家</option>
+                  <option value="upper">上层</option>
+                  <option value="lower">下层</option>
+                </select>
+                <span data-testid="map-floor-label">{floor.level === "lower" ? "下层" : "上层"}
+                  {floor.followingPlayer ? `（跟随 ${selectedPlayer?.name}）` : ""}</span>
+              </label>
+            ) : null}
+            {hasFloors ? <small>本层 {visiblePlayers.length} 人，另一层 {framePlayers.length - visiblePlayers.length - unknownHeights} 人</small> : null}
+            {hasFloors && levelMode === "auto" && !floor.followingPlayer ? <small>选择有高度数据的玩家后可自动切换楼层。</small> : null}
+            {unknownHeights > 0 ? <small>{unknownHeights} 人的高度数据缺失，请查看名单。</small> : null}
           </div>
-        ) : null}
+          ) : null}
+
+          {highlightedPlayer ? (
+            <div className="map-highlight-card" role="status">
+              <span className={`map-highlight-side ${highlightedPlayer.side === "T" ? "side-t" : "side-ct"}`}>{highlightedPlayer.side}</span>
+              <strong>{highlightedPlayer.name}</strong>
+              {"hp" in highlightedPlayer ? <small>{highlightedPlayer.alive ? `${highlightedPlayer.hp} 血量` : "已阵亡"}</small> : null}
+              {highlightedPlayer.id === selectedPlayerId ? (
+                <small>正在复盘</small>
+              ) : (
+                <button type="button" className="secondary-button compact-button"
+                  onClick={() => {
+                    onSelectPlayer(highlightedPlayer.id);
+                    setHighlightedPlayerId(null);
+                  }}>
+                  切换为他的视角
+                </button>
+              )}
+              <button type="button" className="map-highlight-close" aria-label="取消高亮" onClick={() => setHighlightedPlayerId(null)}>
+                <X size={14} aria-hidden="true" />
+              </button>
+            </div>
+          ) : null}
+
+          {!frame ? (
+            <div className="map-empty-state">
+              <strong>暂无位置数据</strong>
+              <span>这场比赛暂时无法显示玩家位置。</span>
+            </div>
+          ) : null}
+        </div>
+        {frame ? <MapKillFeed kills={killFeed} /> : null}
       </div>
 
       {framePlayers.length > 0 ? (
         <div className="player-list" role="group" aria-label="玩家名单" onKeyDown={handleRosterKeyDown}>
-          <Roster side="T" title="进攻方" players={tPlayers} {...rosterProps} />
-          <Roster side="CT" title="防守方" players={ctPlayers} {...rosterProps} />
+          <Roster side="T" title="进攻方" teamName={tTeamName} players={tPlayers} {...rosterProps} />
+          <Roster side="CT" title="防守方" teamName={ctTeamName} players={ctPlayers} {...rosterProps} />
         </div>
       ) : null}
     </section>
@@ -468,7 +586,6 @@ function PlayerDot({
     >
       <circle r="12" fill="transparent" />
       {highlighted ? <circle className="map-player-highlight" r="12" /> : null}
-      {selected ? <circle className="map-player-reviewed" r="10" /> : null}
       <circle className="map-player-body" r="7" />
       <text className="map-player-index" y="3.2" textAnchor="middle" pointerEvents="none">
         {index}
@@ -476,11 +593,75 @@ function PlayerDot({
       {!player.alive ? (
         <path className="map-player-dead" d="M-4.5 -4.5 L4.5 4.5 M4.5 -4.5 L-4.5 4.5" />
       ) : null}
-      {selected || highlighted || focus === "focused" ? (
-        <text className="map-player-name" y="21" textAnchor="middle" pointerEvents="none">{player.name}</text>
-      ) : null}
+      {/* The reviewed player's name rides with the lock bracket, above everything. */}
+      {!selected && (highlighted || focus === "focused") ? <NameLabel name={player.name} /> : null}
     </g>
   );
+}
+
+// The reviewed player's target lock: four corner brackets, a copy of their dot and the name on its
+// plate, drawn over the grenade effects (a HUD mark) so a smoke icon never hides the locked player.
+// The copy takes no clicks: the real dot underneath keeps the highlight click.
+// The CSS keyframe scales the inner group; the per-frame position stays on the outer one.
+function LockMarker({
+  player,
+  index,
+  unit,
+  dimmed,
+  snap,
+  animate,
+  onSnapEnd
+}: {
+  player: ReplayFramePlayer;
+  // The player's number in the roster, as on their dot.
+  index: number;
+  unit: number;
+  // The finder's "只看" is on somebody else.
+  dimmed: boolean;
+  // A new count remounts the bracket; `animate` plays the snap once.
+  snap: number;
+  animate: boolean;
+  onSnapEnd: () => void;
+}) {
+  return (
+    <g className={`map-lock-marker${dimmed ? " focus-dimmed" : ""}`} transform={pixelTransform(player.x, player.y, unit)}
+      opacity={dimmed ? 0.25 : 1} pointerEvents="none">
+      <g key={snap} className={`map-lock${animate ? " snap" : ""}`} onAnimationEnd={onSnapEnd}>
+        <path d={LOCK_BRACKET_PATH} />
+      </g>
+      <g className={`map-lock-dot side-${player.side.toLowerCase()}`} opacity={player.alive ? 1 : 0.32}>
+        <circle className="map-player-body" r="7" />
+        <text className="map-player-index" y="3.2" textAnchor="middle">{index}</text>
+        {!player.alive ? <path className="map-player-dead" d="M-4.5 -4.5 L4.5 4.5 M4.5 -4.5 L-4.5 4.5" /> : null}
+      </g>
+      {/* Below the brackets with a 4 px gap, so all four corners stay visible. */}
+      <NameLabel name={player.name} top={LOCK_LABEL_TOP} />
+    </g>
+  );
+}
+
+function NameLabel({ name, top = 11 }: { name: string; top?: number }) {
+  const width = nameLabelWidth(name);
+  return (
+    <g className="map-player-label" pointerEvents="none">
+      <rect className="map-player-label-plate" x={-width / 2} y={top} width={width} height="14" />
+      <text className="map-player-name" y={top + 10.5} textAnchor="middle">{name}</text>
+    </g>
+  );
+}
+
+// Four corner brackets around the dot, in screen pixels like the dot itself.
+const LOCK_BRACKET_PATH = "M-12.5 -7.5 V-12.5 H-7.5 M7.5 -12.5 H12.5 V-7.5 M12.5 7.5 V12.5 H7.5 M-7.5 12.5 H-12.5 V7.5";
+// The bracket's outer edge (12.5 + half the 2 px stroke) plus a 4 px gap.
+const LOCK_LABEL_TOP = 17.5;
+const WIDE_GLYPH = /[⺀-鿿가-힯豈-﫿＀-￯]/;
+
+// The name plate's width without measuring text on a playback frame: CJK glyphs are a full em
+// of the 11 px label, Latin letters and digits about 0.6 em; 4 px of padding each side.
+function nameLabelWidth(name: string): number {
+  let width = 8;
+  for (const character of name) width += WIDE_GLYPH.test(character) ? 11 : 6.6;
+  return Math.round(width);
 }
 
 const GRENADES: Record<UtilityType, { icon: LucideIcon; label: string }> = {
@@ -495,12 +676,13 @@ const NO_EVENTS: ReplayEvent[] = [];
 
 type TeamNames = readonly { key: string; name?: string | null }[] | null | undefined;
 
-// One panel per side: "队名 阵营" with the side's live equipment value, then two lines per player.
-// Parts without data (v1 replays: money, armour, weapon, kit, grenades) are left out, and a v1
-// row is a single line.
+// One panel per side: "队名 阵营" (the side's equipment value is in the map's status bar), then two
+// lines per player. Parts without data (v1 replays: money, armour, weapon, kit, grenades) are left
+// out, and a v1 row is a single line.
 function Roster({
   side,
   title,
+  teamName,
   players,
   map,
   selectedPlayerId,
@@ -510,13 +692,12 @@ function Roster({
   register,
   replay,
   currentTick,
-  frame,
   killsDeaths,
-  teamNames,
   compact
 }: {
   side: PlayerSide;
   title: string;
+  teamName: string | null;
   players: ReplayFramePlayer[];
   map: TacticalMapPresentation;
   selectedPlayerId: string | null;
@@ -526,15 +707,10 @@ function Roster({
   register: (playerId: string, element: HTMLButtonElement | null) => void;
   replay: ReplayData;
   currentTick: number;
-  // The frame the map is drawing (the viewer's own), so the equipment total does not interpolate again.
-  frame: ReplayFrame | null;
   killsDeaths: Map<string, KillsDeaths>;
-  teamNames: TeamNames;
   compact: boolean;
 }) {
   const sideClass = `side-${side.toLowerCase()}`;
-  const teamName = sideTeamName(replay, players, teamNames);
-  const equipment = teamEquipmentAt(replay, side, currentTick, frame);
   const floors = Boolean(map.secondaryRadarImagePath);
   return (
     <div className={`side-roster live-roster ${sideClass}`}>
@@ -542,7 +718,6 @@ function Roster({
         <h3 className="panel-bar-title">
           <span className="roster-team-name">{teamName ?? title}</span> <span className="roster-side">{side}</span>
         </h3>
-        {equipment !== null ? <span className="roster-equipment">装备 {formatMoney(equipment)}</span> : null}
       </div>
       {players.map((player, index) => {
         const counts = killsDeaths.get(player.id);

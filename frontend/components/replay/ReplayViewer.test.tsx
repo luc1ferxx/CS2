@@ -24,13 +24,49 @@ function panel(side: "T" | "CT"): HTMLElement {
   return document.querySelector(`.side-roster.side-${side.toLowerCase()}`) as HTMLElement;
 }
 
+function hud(side: "T" | "CT"): HTMLElement {
+  return document.querySelector(`.map-hud-team.side-${side.toLowerCase()}`) as HTMLElement;
+}
+
+function dotOf(side: "T" | "CT", index: number): SVGGElement {
+  return [...document.querySelectorAll<SVGGElement>(`.map-player-dot.side-${side.toLowerCase()}`)]
+    .find((dot) => dot.querySelector(".map-player-index")?.textContent === String(index))!;
+}
+
+function traces() {
+  return [...document.querySelectorAll(".map-kill-trace")].map((line) => ({
+    side: line.classList.contains("side-t") ? "T" : line.classList.contains("side-ct") ? "CT" : "?",
+    x1: line.getAttribute("x1"), y1: line.getAttribute("y1"), x2: line.getAttribute("x2"), y2: line.getAttribute("y2"),
+    opacity: line.getAttribute("opacity"),
+    dashed: line.classList.contains("cross-floor")
+  }));
+}
+
+function feedRows(): string[] {
+  return [...document.querySelectorAll(".map-kill-feed .map-kill-row")].map((item) => item.textContent ?? "");
+}
+
+// Extra copies of round 1's first kill (Alpha kills Delta) at the given ticks, to count windows and caps.
+function withKills(ticks: number[]): ReplayData {
+  const base = replayV2();
+  const extra = ticks.map((tick, index) => ({
+    ...base.events[0],
+    id: `extra-${index}`,
+    tick,
+    metadata: { ...base.events[0].metadata, headshot: false }
+  }));
+  return { ...base, events: [...base.events, ...extra] };
+}
+
 describe("ReplayViewer live roster", () => {
   it("shows each side's team, live equipment value and every player's kit (v2)", () => {
     renderViewer();
     expect(within(panel("T")).getByRole("heading", { level: 3 })).toHaveTextContent("Spirit T");
     expect(within(panel("CT")).getByRole("heading", { level: 3 })).toHaveTextContent("MOUZ CT");
-    expect(panel("T").querySelector(".roster-equipment")).toHaveTextContent("装备 $2,100");
-    expect(panel("CT").querySelector(".roster-equipment")).toHaveTextContent("装备 $1,650");
+    // The side's equipment value is in the map's status bar, not the roster header.
+    expect(document.querySelector(".roster-equipment")).toBeNull();
+    expect(hud("T").querySelector(".map-hud-equipment")).toHaveTextContent("装备 $2,100");
+    expect(hud("CT").querySelector(".map-hud-equipment")).toHaveTextContent("装备 $1,650");
 
     const alpha = row("Alpha");
     expect(alpha).toHaveClass("reviewed");
@@ -86,7 +122,7 @@ describe("ReplayViewer live roster", () => {
     expect(row("Delta").querySelector(".roster-weapon")).toHaveTextContent("AWP");
     expect(row("Delta").querySelector(".roster-kd")).toHaveTextContent("0/1");
     expect(row("Alpha").querySelector(".roster-armor")).toHaveClass("lucide-shield");
-    expect(panel("CT").querySelector(".roster-equipment")).toHaveTextContent("装备 $10,550");
+    expect(hud("CT").querySelector(".map-hud-equipment")).toHaveTextContent("装备 $10,550");
   });
 
   it("shows a held grenade or knife by its short name", () => {
@@ -105,7 +141,7 @@ describe("ReplayViewer live roster", () => {
     const states = { ...base.playerStates, [V2_DELTA]: base.playerStates![V2_DELTA].map((entry) =>
       entry.tick === 500 ? { ...entry, equipValue: 850 } : entry) };
     renderViewer({ replay: { ...base, playerStates: states }, currentTick: 600 });
-    expect(panel("CT").querySelector(".roster-equipment")).toHaveTextContent("装备 $800");
+    expect(hud("CT").querySelector(".map-hud-equipment")).toHaveTextContent("装备 $800");
   });
 
   it("counts from matchReplay when the map gets a per-player subset of events", () => {
@@ -119,7 +155,7 @@ describe("ReplayViewer live roster", () => {
   it("hides the parts a v1 replay has no data for", () => {
     renderViewer({ replay: replayV1(), teamNames: null, currentTick: 600 });
     expect(within(panel("T")).getByRole("heading", { level: 3 })).toHaveTextContent("进攻方 T");
-    expect(document.querySelector(".roster-equipment")).toBeNull();
+    expect(document.querySelector(".map-hud-equipment")).toBeNull();
     expect(document.querySelector(".roster-money")).toBeNull();
     expect(document.querySelector(".roster-armor")).toBeNull();
     expect(document.querySelector(".roster-grenades")).toBeNull();
@@ -168,7 +204,9 @@ describe("ReplayViewer extension points", () => {
     const above = children.indexOf(screen.getByTestId("above").parentElement!);
     expect(under).toBeGreaterThan(0);
     expect(under).toBeLessThan(firstDot);
-    expect(above).toBe(children.length - 1);
+    // Over every dot and marker; only the reviewed player's lock (a HUD mark) comes after it.
+    expect(above).toBe(children.length - 2);
+    expect(children.at(-1)).toHaveClass("map-lock-marker");
   });
 
   it("renders nothing extra without overlays", () => {
@@ -202,9 +240,178 @@ describe("ReplayViewer extension points", () => {
   it("still switches the review only through the explicit button", () => {
     const onSelectPlayer = vi.fn();
     renderViewer({ onSelectPlayer });
-    fireEvent.click(document.querySelectorAll(".map-player-dot")[3]);
+    fireEvent.click(dotOf("CT", 2));
     expect(onSelectPlayer).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "切换为他的视角" }));
     expect(onSelectPlayer).toHaveBeenCalledWith(V2_DELTA);
+  });
+});
+
+describe("ReplayViewer map HUD", () => {
+  it("shows each side's alive pips, the round clock and who carries the bomb", () => {
+    const { rerender } = renderViewer({ currentTick: 200 });
+    const bar = screen.getByRole("group", { name: "回合状态" });
+    expect(within(bar).getByRole("img", { name: "T 存活 2/2" })).toBeInTheDocument();
+    expect(hud("T").querySelector(".map-hud-name")).toHaveTextContent("Spirit");
+    expect(hud("CT").querySelector(".map-hud-name")).toHaveTextContent("MOUZ");
+    // Clock from the round's start, as the transport counts it.
+    expect(bar.querySelector(".map-hud-clock")).toHaveTextContent("0:01");
+    expect(screen.getByTestId("bomb-status")).toHaveTextContent("炸弹：Alpha 携带");
+
+    rerender(<ReplayViewer replay={replayV2()} currentTick={600} selectedPlayerId={V2_ALPHA} onSelectPlayer={vi.fn()}
+      variant="featured" teamNames={TEAMS} />);
+    const ctPips = within(bar).getByRole("img", { name: "CT 存活 1/2" });
+    expect(ctPips.querySelectorAll("i")).toHaveLength(2);
+    expect(ctPips.querySelectorAll("i.alive")).toHaveLength(1);
+    expect(bar.querySelector(".map-hud-clock")).toHaveTextContent("0:07");
+  });
+
+  it("gives the round's verdict in the winner's colour from the round's end, instead of the bomb", () => {
+    const { rerender } = renderViewer({ currentTick: 899 });
+    expect(document.querySelector(".map-hud-verdict")).toBeNull();
+    rerender(<ReplayViewer replay={replayV2()} currentTick={900} selectedPlayerId={V2_ALPHA} onSelectPlayer={vi.fn()}
+      variant="featured" teamNames={TEAMS} />);
+    const verdict = document.querySelector(".map-hud-verdict")!;
+    expect(verdict).toHaveTextContent("T 胜：全歼");
+    expect(verdict).toHaveClass("side-t");
+    expect(screen.queryByTestId("bomb-status")).toBeNull();
+
+    rerender(<ReplayViewer replay={replayV2()} currentTick={1800} selectedPlayerId={V2_ALPHA} onSelectPlayer={vi.fn()}
+      variant="featured" teamNames={TEAMS} />);
+    expect(document.querySelector(".map-hud-verdict")).toHaveTextContent("CT 胜：时间耗尽");
+    expect(document.querySelector(".map-hud-verdict")).toHaveClass("side-ct");
+  });
+
+  it("names a planted bomb with its site when the demo gives one, and stays quiet when the bomb is unknown", () => {
+    const base = replayV2();
+    const planted = { ...base, frames: base.frames.map((frame) => frame.tick === 300
+      ? { ...frame, bombState: { status: "planted" as const, x: 40, y: 40, site: "A" } } : frame) };
+    const { rerender } = renderViewer({ replay: planted, currentTick: 300 });
+    expect(screen.getByTestId("bomb-status")).toHaveTextContent("炸弹：已安装 A 点");
+    rerender(<ReplayViewer replay={planted} currentTick={1100} selectedPlayerId={V2_ALPHA} onSelectPlayer={vi.fn()}
+      variant="featured" teamNames={TEAMS} />);
+    expect(screen.getByTestId("bomb-status")).toBeEmptyDOMElement();
+  });
+
+  it("draws killer-to-victim traces for this round's kills of the last 2 s, stepping down in opacity", () => {
+    const { rerender } = renderViewer({ currentTick: 499 });
+    expect(traces()).toEqual([]);
+    const at = (tick: number) => rerender(<ReplayViewer replay={replayV2()} currentTick={tick} selectedPlayerId={V2_ALPHA}
+      onSelectPlayer={vi.fn()} variant="featured" teamNames={TEAMS} />);
+    at(520);
+    // Alpha (killer) and Delta (victim) where they stood at the kill tick, in the killer's colour.
+    expect(traces()).toEqual([{ side: "T", x1: "25", y1: "30", x2: "70", y2: "60", opacity: "0.95", dashed: false }]);
+    at(560);
+    expect(traces().map((line) => line.opacity)).toEqual(["0.7"]);
+    at(620);
+    expect(traces().map((line) => line.opacity)).toEqual(["0.45"]);
+    at(640);
+    expect(traces()).toEqual([]);
+    // Only the round on screen: round 2 shows its own kill, never round 1's.
+    at(1310);
+    expect(traces()).toEqual([expect.objectContaining({ side: "CT", opacity: "0.95" })]);
+  });
+
+  it("caps the traces at four", () => {
+    renderViewer({ replay: withKills([505, 510, 515, 520, 525]), currentTick: 530 });
+    expect(traces()).toHaveLength(4);
+  });
+
+  it("dashes a trace with one end on the other floor and drops one with both ends there", () => {
+    const base = replayV2({ mapName: "de_nuke" });
+    const lowerDelta = { ...base, frames: base.frames.map((frame) => frame.tick === 500
+      ? { ...frame, players: frame.players.map((player) => player.id === V2_DELTA ? { ...player, z: -600 } : player) } : frame) };
+    const { rerender } = renderViewer({ replay: lowerDelta, currentTick: 520 });
+    expect(traces()).toEqual([expect.objectContaining({ dashed: true })]);
+    rerender(<ReplayViewer replay={lowerDelta} currentTick={520} selectedPlayerId={V2_ALPHA} onSelectPlayer={vi.fn()}
+      variant="featured" teamNames={TEAMS} levelMode="lower" />);
+    expect(traces()).toEqual([expect.objectContaining({ dashed: true })]);
+    const bothLower = { ...lowerDelta, frames: lowerDelta.frames.map((frame) => frame.tick === 500
+      ? { ...frame, players: frame.players.map((player) => player.id === V2_ALPHA ? { ...player, z: -600 } : player) } : frame) };
+    rerender(<ReplayViewer replay={bothLower} currentTick={520} selectedPlayerId={V2_ALPHA} onSelectPlayer={vi.fn()}
+      variant="featured" teamNames={TEAMS} levelMode="upper" />);
+    expect(traces()).toEqual([]);
+  });
+
+  it("lists up to five kills of the last 5 s in the feed, newest first, with the weapon and 爆头", () => {
+    const { rerender } = renderViewer({ currentTick: 720 });
+    expect(feedRows()).toEqual(["Charlie 击杀 ✕BravoM4A1-S", "Alpha 击杀 ✕DeltaAK-47爆头"]);
+    const names = [...document.querySelectorAll(".map-kill-feed .map-kill-name")];
+    expect(names[0]).toHaveClass("side-ct");
+    expect(names[1]).toHaveClass("side-t");
+    rerender(<ReplayViewer replay={withKills([505, 510, 515, 520, 525, 530])} currentTick={720} selectedPlayerId={V2_ALPHA}
+      onSelectPlayer={vi.fn()} variant="featured" teamNames={TEAMS} />);
+    expect(feedRows()).toHaveLength(5);
+    expect(feedRows()[0]).toContain("Charlie");
+    // Kills of another round never show.
+    rerender(<ReplayViewer replay={replayV2()} currentTick={1100} selectedPlayerId={V2_ALPHA} onSelectPlayer={vi.fn()}
+      variant="featured" teamNames={TEAMS} />);
+    expect(feedRows()).toEqual([]);
+  });
+
+  it("reads the traces and the feed from the whole match when the map gets the reviewed player's events only", () => {
+    const full = replayV2();
+    const scoped = { ...full, events: full.events.filter((event) => event.playerIds.includes(V2_DELTA)) };
+    renderViewer({ replay: scoped, matchReplay: full, selectedPlayerId: V2_DELTA, currentTick: 720 });
+    expect(feedRows()[0]).toContain("Charlie");
+    expect(traces()).toEqual([expect.objectContaining({ side: "CT" })]);
+  });
+
+  it("locks the reviewed player in corner brackets and keeps the dashed ring for a clicked player", () => {
+    renderViewer();
+    const alpha = dotOf("T", 1);
+    expect(document.querySelector(".map-player-reviewed")).toBeNull();
+    // The dot is drawn last among the dots; the bracket and the name on its plate go over everything,
+    // at the dot's position.
+    expect([...document.querySelectorAll(".map-player-dot")].at(-1)).toBe(alpha);
+    const lock = document.querySelector(".map-lock-marker")!;
+    expect(lock.getAttribute("transform")).toBe(alpha.getAttribute("transform"));
+    expect(lock.querySelector(".map-lock path")).not.toBeNull();
+    expect(lock.querySelector(".map-player-label-plate")).not.toBeNull();
+    expect(lock.querySelector(".map-player-name")).toHaveTextContent("Alpha");
+    expect(alpha.querySelector(".map-player-name")).toBeNull();
+    fireEvent.click(dotOf("CT", 1));
+    expect(dotOf("CT", 1).querySelector(".map-player-highlight")).not.toBeNull();
+    expect(dotOf("CT", 1).querySelector(".map-player-name")).toHaveTextContent("Charlie");
+    expect(document.querySelectorAll(".map-lock")).toHaveLength(1);
+  });
+
+  it("dims the lock while the finder's 只看 is on somebody else, and draws none without a reviewed player", () => {
+    const { rerender } = renderViewer({ focusPlayerId: V2_CHARLIE });
+    expect(document.querySelector(".map-lock-marker")).toHaveClass("focus-dimmed");
+    expect(document.querySelector(".map-lock-marker")).toHaveAttribute("opacity", "0.25");
+    rerender(<ReplayViewer replay={replayV2()} currentTick={200} selectedPlayerId={null} onSelectPlayer={vi.fn()} />);
+    expect(document.querySelector(".map-lock-marker")).toBeNull();
+  });
+
+  it("snaps the bracket once per jump to a suggestion or new reviewed player, never on playback", () => {
+    const view = (props: { tick?: number; jump?: unknown; player?: string }) => (
+      <ReplayViewer replay={replayV2()} currentTick={props.tick ?? 200} selectedPlayerId={props.player ?? V2_ALPHA}
+        onSelectPlayer={vi.fn()} variant="featured" teamNames={TEAMS} lockSnapKey={props.jump ?? null} />
+    );
+    const { rerender } = render(view({}));
+    expect(document.querySelector(".map-lock")).not.toHaveClass("snap");
+    rerender(view({ tick: 300 }));
+    expect(document.querySelector(".map-lock")).not.toHaveClass("snap");
+
+    const jump = { id: "finding-1" };
+    rerender(view({ tick: 310, jump }));
+    const snapped = document.querySelector(".map-lock")!;
+    expect(snapped).toHaveClass("snap");
+    fireEvent.animationEnd(snapped);
+    expect(document.querySelector(".map-lock")).not.toHaveClass("snap");
+    // Playback with the same suggestion in focus does not replay it.
+    rerender(view({ tick: 330, jump }));
+    expect(document.querySelector(".map-lock")).not.toHaveClass("snap");
+    // A manual seek (null) is not a jump; a second jump, even to the same suggestion, is a new value.
+    rerender(view({ tick: 340, jump: null }));
+    expect(document.querySelector(".map-lock")).not.toHaveClass("snap");
+    rerender(view({ tick: 350, jump: { id: "finding-1" } }));
+    expect(document.querySelector(".map-lock")).toHaveClass("snap");
+    fireEvent.animationEnd(document.querySelector(".map-lock")!);
+    // A new reviewed player snaps too.
+    rerender(view({ tick: 350, jump: null, player: V2_CHARLIE }));
+    expect(document.querySelector(".map-lock-marker .map-player-name")).toHaveTextContent("Charlie");
+    expect(document.querySelector(".map-lock")).toHaveClass("snap");
   });
 });

@@ -9,6 +9,7 @@ import {
 } from "@/lib/coaching-review";
 import { coachingMatchesSearch, coachingSeverityLabel } from "@/lib/coaching-copy";
 import { weaponName } from "@/lib/replay-events";
+import { useSlidingIndicator } from "@/lib/use-sliding-indicator";
 import type { CoachingEvent, CoachingVerdict } from "@/types/coaching";
 import type { RenderJobStatus } from "@/lib/api";
 import type { PlayerSide, ReplayPlayer, ReplayRound } from "@/types/replay";
@@ -57,7 +58,8 @@ export const CoachingPanel = memo(function CoachingPanel({
   const [search, setSearch] = useState("");
   const [scope, setScope] = useState<"current" | "all">("current");
   const [inspectedEventId, setInspectedEventId] = useState<string | null>(null);
-  const [expandedRoundNumbers, setExpandedRoundNumbers] = useState<Set<number>>(() => new Set([selectedRound]));
+  // 全部回合 opens one round's cards at a time, under the round grid.
+  const [openRound, setOpenRound] = useState<number | null>(selectedRound);
   const [feedbackStates, setFeedbackStates] = useState<ReadonlyMap<string, FeedbackSaveState>>(() => new Map());
   const feedbackRequests = useRef(new Map<string, number>());
   // Cards get stable handlers, so a page re-render with fresh closures does not re-render every card.
@@ -97,11 +99,20 @@ export const CoachingPanel = memo(function CoachingPanel({
     [activeEventIds, currentTick, events]
   );
   const selectedGroup = reviewModel.roundGroups.find((group) => group.roundNumber === selectedRound);
-  const visibleGroups = scope === "current" ? (selectedGroup ? [selectedGroup] : []) : listedGroups;
+  // Every round of the match in one grid, with what is left to list in it (本场最值得回看 takes its
+  // cards out); a round with none is shown but cannot open.
+  const roundCells = useMemo(() => {
+    const counts = new Map(listedGroups.map((group) => [group.roundNumber, group.events.length]));
+    const numbers = new Set([...(rounds ?? []).map((round) => round.roundNumber), ...reviewModel.roundGroups.map((group) => group.roundNumber)]);
+    return [...numbers].sort((left, right) => left - right).map((roundNumber) => ({ roundNumber, count: counts.get(roundNumber) ?? 0 }));
+  }, [listedGroups, reviewModel.roundGroups, rounds]);
+  const openGroup = scope === "all" ? listedGroups.find((group) => group.roundNumber === openRound) ?? null : null;
+  const isEmpty = scope === "current" ? !selectedGroup : reviewModel.filteredCount === 0;
+  const scopeIndicator = useSlidingIndicator(scope, `${selectedGroup?.events.length ?? "none"}|${reviewModel.filteredCount}`);
 
-  // Opening another round's card adds that round; groups the player opened stay open.
+  // Watching a card from another round (or seeking there on the timeline or the round strip) opens that round.
   useEffect(() => {
-    setExpandedRoundNumbers((current) => current.has(selectedRound) ? current : new Set(current).add(selectedRound));
+    setOpenRound(selectedRound);
   }, [selectedRound]);
 
   const seek = useCallback((tick: number, eventId: string) => latestHandlers.current.onSeek(tick, eventId, "card"), []);
@@ -134,11 +145,15 @@ export const CoachingPanel = memo(function CoachingPanel({
       (error: unknown) => settle(isNotFound(error) ? "stale" : "failed")
     );
   }, []);
+  // One solid amber 查看这一刻 per view: the first card listed; the rest stay secondary.
+  const primaryEventId = (scope === "all" ? topEvents[0] ?? openGroup?.events[0] : selectedGroup?.events[0])?.event.id ?? null;
+
   const renderCard = (reviewEvent: ReviewEvent, showRound = false) => {
     const eventId = reviewEvent.event.id;
     const round = reviewEvent.event.round_number;
     return (
       <CoachingEventCard key={eventId} reviewEvent={reviewEvent} active={activeIds.has(eventId)} showRound={showRound}
+        primaryAction={eventId === primaryEventId}
         inspected={inspectedEventId === eventId} locationLabel={coachingMomentLabel(reviewEvent.event, rounds, tickRate)}
         clock={coachingRoundClock(reviewEvent.event, rounds, tickRate)}
         side={playerSides?.get(round) ?? recordedSides.get(round) ?? null}
@@ -151,17 +166,13 @@ export const CoachingPanel = memo(function CoachingPanel({
   function changeScope(next: "current" | "all") {
     setScope(next);
     if (next === "all") {
-      setExpandedRoundNumbers(new Set([selectedGroup?.roundNumber ?? reviewModel.roundGroups[0]?.roundNumber ?? selectedRound]));
+      setOpenRound(selectedGroup?.roundNumber ?? reviewModel.roundGroups[0]?.roundNumber ?? selectedRound);
     }
   }
 
+  // Panel-local: opening a round never moves the shared round or tick.
   function toggleRound(roundNumber: number) {
-    setExpandedRoundNumbers((current) => {
-      const next = new Set(current);
-      if (next.has(roundNumber)) next.delete(roundNumber);
-      else next.add(roundNumber);
-      return next;
-    });
+    setOpenRound((current) => current === roundNumber ? null : roundNumber);
   }
 
   function clearFilters() {
@@ -174,7 +185,8 @@ export const CoachingPanel = memo(function CoachingPanel({
     <aside className="panel coaching-panel" aria-label="重点建议">
       <div className="panel-bar coaching-header">
         <h2 className="panel-bar-title">重点建议</h2>
-        <div className="coaching-round-scope" role="group" aria-label="建议回合范围">
+        <div className="coaching-round-scope" role="group" aria-label="建议回合范围" ref={scopeIndicator.groupRef}>
+          <span className="segment-indicator" aria-hidden="true" ref={scopeIndicator.indicatorRef} />
           <button className={scope === "current" ? "active" : ""} type="button" aria-pressed={scope === "current"} onClick={() => changeScope("current")}>
             当前回合{selectedGroup ? <span className="coaching-count"> {selectedGroup.events.length} 条</span> : null}
           </button>
@@ -187,11 +199,12 @@ export const CoachingPanel = memo(function CoachingPanel({
       <div className="coaching-toolbar">
         {selectedPlayerName ? (
           <p className="coaching-header-meta">
-            <strong className="coaching-header-player" title={selectedPlayerName}>{selectedPlayerName}</strong>
-            <span className="coaching-header-round">第 {selectedRound} 回合</span>
-            {progress.total > 0 ? <span>已评价 {progress.rated}/{progress.total}</span> : null}
+            {/* Who and which round are already in the banner and 本回合; the rated count stays for screen readers. */}
+            <strong className="coaching-header-player visually-hidden">{selectedPlayerName}</strong>
+            <span className="coaching-header-round visually-hidden">第 {selectedRound} 回合</span>
+            {progress.total > 0 ? <span className="visually-hidden">已评价 {progress.rated}/{progress.total}</span> : null}
           </p>
-        ) : <p className="coaching-header-meta"><span className="coaching-header-round">第 {selectedRound} 回合</span></p>}
+        ) : <p className="coaching-header-meta"><span className="coaching-header-round visually-hidden">第 {selectedRound} 回合</span></p>}
         <details className="coaching-filter-toggle">
           <summary>筛选建议{hasFilters ? <span className="coaching-filter-active">（已筛选）</span> : null}</summary>
           <div className="coaching-controls">
@@ -221,39 +234,62 @@ export const CoachingPanel = memo(function CoachingPanel({
         {topEvents.length > 0 ? (
           <section className="coaching-round-group coaching-top-group" aria-label="本场最值得回看">
             <div className="coaching-top-header">
-              <strong>本场最值得回看</strong><small>按回合输赢、首个阵亡、人数劣势排序</small>
+              <strong>本场最值得回看</strong>
             </div>
             <div className="coaching-round-events">{topEvents.map((reviewEvent) => renderCard(reviewEvent, true))}</div>
           </section>
         ) : null}
-        {visibleGroups.length === 0 && topEvents.length === 0 ? (
+        {isEmpty ? (
           <div className="coaching-empty-state">
             <p>{reviewModel.totalCount === 0 ? selectedPlayerName === null ? "选择你在这场比赛中的玩家后，这里会列出对应的建议。" : "暂未发现值得回看的时刻，可以直接观看比赛。没有建议不代表每次选择都正确。" : hasFilters && reviewModel.filteredCount === 0 ? "没有符合筛选条件的建议。" : "这一回合暂无建议，可以查看其他回合。"}</p>
             {selectedPlayerName === null && onChoosePlayer ? <button className="text-button coaching-link" type="button" onClick={onChoosePlayer}>选择玩家</button> : null}
             {scope === "current" && reviewModel.filteredCount > 0 ? <button className="text-button coaching-link" type="button" onClick={() => changeScope("all")}>查看其他回合的 {reviewModel.filteredCount} 条建议</button> : null}
             {hasFilters ? <button className="text-button coaching-link" type="button" onClick={clearFilters}>清除筛选</button> : null}
           </div>
-        ) : visibleGroups.map((roundGroup) => {
-          const expanded = scope === "current" || expandedRoundNumbers.has(roundGroup.roundNumber);
-          const eventsId = `coaching-round-${roundGroup.roundNumber}-events`;
-          return (
-            <section key={roundGroup.roundNumber} className={`coaching-round-group ${roundGroup.roundNumber === selectedRound ? "selected" : ""}`} aria-label={`第 ${roundGroup.roundNumber} 回合建议`}>
-              {scope === "all" ? (
-                <button className="coaching-round-header" type="button" onClick={() => toggleRound(roundGroup.roundNumber)} aria-expanded={expanded} aria-controls={eventsId}>
-                  <span className="coaching-round-toggle" aria-hidden="true">{expanded ? "−" : "+"}</span>
-                  <strong>第 {roundGroup.roundNumber} 回合</strong><small>{roundGroup.events.length} 条建议</small>
-                </button>
-              ) : null}
-              {expanded ? (
-                <div id={eventsId} className="coaching-round-events">{roundGroup.events.map((reviewEvent) => renderCard(reviewEvent))}</div>
-              ) : null}
+        ) : scope === "current" ? (
+          selectedGroup ? (
+            <section className="coaching-round-group selected" aria-label={`第 ${selectedGroup.roundNumber} 回合建议`}>
+              <div id={roundEventsId(selectedGroup.roundNumber)} className="coaching-round-events">
+                {selectedGroup.events.map((reviewEvent) => renderCard(reviewEvent))}
+              </div>
             </section>
-          );
-        })}
+          ) : null
+        ) : (
+          <div className="coaching-round-browser">
+            <div className="coaching-round-browser-head">
+              <strong>按回合查看</strong>
+            </div>
+            <div className="coaching-round-grid" role="group" aria-label="按回合查看建议">
+              {roundCells.map(({ roundNumber, count }) => {
+                const open = openGroup?.roundNumber === roundNumber;
+                return (
+                  <button key={roundNumber} className={`coaching-round-cell${open ? " expanded" : ""}`} type="button"
+                    disabled={count === 0} aria-expanded={open} aria-controls={open ? roundEventsId(roundNumber) : undefined}
+                    aria-label={`第 ${roundNumber} 回合，${count} 条建议`} onClick={() => toggleRound(roundNumber)}>
+                    <span className="coaching-round-cell-number">{roundNumber}</span>
+                    <span className="coaching-round-cell-count">{count > 0 ? count : null}</span>
+                  </button>
+                );
+              })}
+            </div>
+            {openGroup ? (
+              <section className="coaching-round-group" aria-label={`第 ${openGroup.roundNumber} 回合建议`}>
+                <div className="coaching-round-open-head"><strong>第 {openGroup.roundNumber} 回合</strong></div>
+                <div id={roundEventsId(openGroup.roundNumber)} className="coaching-round-events">
+                  {openGroup.events.map((reviewEvent) => renderCard(reviewEvent))}
+                </div>
+              </section>
+            ) : null}
+          </div>
+        )}
       </div>
     </aside>
   );
 });
+
+function roundEventsId(roundNumber: number): string {
+  return `coaching-round-${roundNumber}-events`;
+}
 
 // Also finds the Chinese facts line, chips, extra reasons and evidence values the card shows.
 function matchesPanelSearch(reviewEvent: ReviewEvent, search: string): boolean {

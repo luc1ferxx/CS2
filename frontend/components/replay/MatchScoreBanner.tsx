@@ -47,10 +47,12 @@ export const MatchScoreBanner = memo(function MatchScoreBanner({
         </>
       ) : null}
       <div className="match-banner-meta">
-        <h1 className="match-banner-title">{title}</h1>
-        <span className="fact"><span className="fact-label">地图</span>{mapName}</span>
+        {/* The breadcrumb already shows the name and the round strip counts the rounds: both stay
+            for screen readers. A map name needs no "地图" label. */}
+        <h1 className="match-banner-title visually-hidden">{title}</h1>
+        <span className="fact">{mapName}</span>
         {dateText ? <span className="fact"><span className="fact-label">上传</span>{dateText}</span> : null}
-        <span className="fact">{roundCount} 回合</span>
+        <span className="fact visually-hidden">{roundCount} 回合</span>
         {children}
       </div>
     </div>

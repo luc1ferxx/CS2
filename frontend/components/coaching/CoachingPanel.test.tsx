@@ -129,23 +129,79 @@ describe("CoachingPanel", () => {
     expect(screen.queryByRole("button", { name: "选择玩家" })).not.toBeInTheDocument();
   });
 
-  it("keeps rounds the player opened in 全部回合 when a card from another round is watched", async () => {
-    const user = userEvent.setup();
-    const inRound = (round: number) => coachingEvent({ id: `round-${round}`, round_number: round, tick_start: round * 1000 + 200,
+  describe("全部回合 round grid", () => {
+    const inRound = (round: number, id = `round-${round}`) => coachingEvent({ id, round_number: round, tick_start: round * 1000 + 200,
       tick_end: round * 1000 + 200, structured_context_json: { ruleId: "poor_spacing" } });
-    const panel = renderPanel([inRound(1), inRound(2), inRound(3)]);
+    // Four rounds in the match, suggestions in rounds 1 to 3 (two in round 3), none in round 4.
+    const fourRounds = [...replayRounds(),
+      { roundNumber: 3, startTick: 2000, freezeEndTick: 2064, endTick: 2800, winnerSide: "CT" as const },
+      { roundNumber: 4, startTick: 3000, freezeEndTick: 3064, endTick: 3800, winnerSide: "T" as const }];
+    const events = [inRound(1), inRound(2), inRound(3), inRound(3, "round-3-late")];
+    const cell = (round: number, count: number) => screen.getByRole("button", { name: `第 ${round} 回合，${count} 条建议` });
+    const listedIds = () => Array.from(document.querySelectorAll("article"), (card) => card.id.replace("coaching-event-", ""));
 
-    await user.click(screen.getByRole("button", { name: /^全部回合/ }));
-    await user.click(screen.getByRole("button", { name: /第 3 回合/ }));
-    const header = (round: number) => screen.getByRole("button", { name: new RegExp(`第 ${round} 回合`) });
-    expect(header(1)).toHaveAttribute("aria-expanded", "true");
-    expect(header(3)).toHaveAttribute("aria-expanded", "true");
+    it("shows every round of the match as a cell with its count, a round without suggestions dimmed and disabled", async () => {
+      const user = userEvent.setup();
+      renderPanel(events, { rounds: fourRounds });
+      expect(screen.queryByRole("group", { name: "按回合查看建议" })).not.toBeInTheDocument();
 
-    // 查看这一刻 on the round 2 card moves the shared round to 2.
-    panel.rerender({ selectedRound: 2 });
-    expect(header(1)).toHaveAttribute("aria-expanded", "true");
-    expect(header(2)).toHaveAttribute("aria-expanded", "true");
-    expect(header(3)).toHaveAttribute("aria-expanded", "true");
+      await user.click(screen.getByRole("button", { name: /^全部回合/ }));
+      const grid = screen.getByRole("group", { name: "按回合查看建议" });
+      expect(within(grid).getAllByRole("button").map((button) => button.getAttribute("aria-label"))).toEqual([
+        "第 1 回合，1 条建议", "第 2 回合，1 条建议", "第 3 回合，2 条建议", "第 4 回合，0 条建议"
+      ]);
+      expect(cell(3, 2).querySelector(".coaching-round-cell-number")).toHaveTextContent("3");
+      expect(cell(3, 2).querySelector(".coaching-round-cell-count")).toHaveTextContent("2");
+      expect(cell(4, 0).querySelector(".coaching-round-cell-count")).toBeEmptyDOMElement();
+      expect(cell(4, 0)).toBeDisabled();
+      expect(cell(4, 0)).toHaveAttribute("aria-expanded", "false");
+      expect(cell(1, 1)).toBeEnabled();
+    });
+
+    it("opens one round at a time under the grid, and closes it on a second click, without seeking", async () => {
+      const user = userEvent.setup();
+      const panel = renderPanel(events, { rounds: fourRounds });
+
+      await user.click(screen.getByRole("button", { name: /^全部回合/ }));
+      // The round being watched opens first.
+      expect(cell(1, 1)).toHaveAttribute("aria-expanded", "true");
+      expect(cell(1, 1)).toHaveClass("expanded");
+      expect(cell(1, 1)).toHaveAttribute("aria-controls", "coaching-round-1-events");
+      expect(listedIds()).toEqual(["round-1"]);
+
+      await user.click(cell(3, 2));
+      expect(cell(1, 1)).toHaveAttribute("aria-expanded", "false");
+      expect(cell(1, 1)).not.toHaveAttribute("aria-controls");
+      expect(cell(3, 2)).toHaveAttribute("aria-expanded", "true");
+      const opened = screen.getByRole("region", { name: "第 3 回合建议" });
+      expect(within(opened).getByText("第 3 回合")).toBeInTheDocument();
+      expect(listedIds()).toEqual(["round-3", "round-3-late"]);
+
+      await user.click(cell(3, 2));
+      expect(cell(3, 2)).toHaveAttribute("aria-expanded", "false");
+      expect(listedIds()).toEqual([]);
+      expect(screen.queryByRole("region", { name: /回合建议$/ })).not.toBeInTheDocument();
+
+      // Opening a round is the panel's own business: the shared round and tick stay put.
+      expect(panel.onSeek).not.toHaveBeenCalled();
+    });
+
+    it("opens the round the page moves to (查看这一刻 on another round's card, the timeline, the round strip)", async () => {
+      const user = userEvent.setup();
+      const panel = renderPanel(events, { rounds: fourRounds });
+
+      await user.click(screen.getByRole("button", { name: /^全部回合/ }));
+      await user.click(cell(3, 2));
+      panel.rerender({ selectedRound: 2 });
+      expect(cell(2, 1)).toHaveAttribute("aria-expanded", "true");
+      expect(cell(3, 2)).toHaveAttribute("aria-expanded", "false");
+      expect(listedIds()).toEqual(["round-2"]);
+
+      // A round with nothing to list opens nothing.
+      panel.rerender({ selectedRound: 4 });
+      expect(screen.getByRole("group", { name: "按回合查看建议" }).querySelector(".expanded")).toBeNull();
+      expect(listedIds()).toEqual([]);
+    });
   });
 
   it("marks the cards at the playhead from activeEventIds without needing the tick", () => {
@@ -270,21 +326,24 @@ describe("CoachingPanel 本场最值得回看", () => {
     await showAllRounds(user);
     const top = block() as HTMLElement;
     expect(within(top).getByText("本场最值得回看")).toBeInTheDocument();
-    expect(within(top).getByText("按回合输赢、首个阵亡、人数劣势排序")).toBeInTheDocument();
+    // No caption under the heading: the order explains itself (S14 subtraction).
+    expect(within(top).queryByText("按回合输赢、首个阵亡、人数劣势排序")).not.toBeInTheDocument();
     expect(ids(top)).toEqual(["e", "b", "c", "d", "a"]);
     // Cards out of their round group name the round above the clock.
     expect(top.querySelector(".coaching-feed-round")).toHaveTextContent("第 4 回合");
 
-    // Rounds 3 and 4 had only top suggestions; rounds 1 and 2 keep the rest, one card each.
-    expect(screen.queryByRole("button", { name: /第 3 回合/ })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /第 4 回合/ })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /第 1 回合/ })).toHaveTextContent("1 条建议");
-    await user.click(screen.getByRole("button", { name: /第 2 回合/ }));
+    // Rounds 3 and 4 had only top suggestions: their cells cannot open. Rounds 1 and 2 keep the rest,
+    // one card each; the top five are not counted in the grid (no caption says so any more).
+    expect(screen.getByRole("button", { name: "第 3 回合，0 条建议" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "第 4 回合，0 条建议" })).toBeDisabled();
+    expect(screen.queryByText("不含上面的 5 条")).not.toBeInTheDocument();
     expect(ids(screen.getByRole("region", { name: "第 1 回合建议" }))).toEqual(["f"]);
-    expect(ids(screen.getByRole("region", { name: "第 2 回合建议" }))).toEqual(["g"]);
-
     // Every suggestion once: the page finds cards by id for P/N and 返回建议.
-    expect(ids().sort()).toEqual(["a", "b", "c", "d", "e", "f", "g"]);
+    expect(ids().sort()).toEqual(["a", "b", "c", "d", "e", "f"]);
+    await user.click(screen.getByRole("button", { name: "第 2 回合，1 条建议" }));
+    expect(screen.queryByRole("region", { name: "第 1 回合建议" })).not.toBeInTheDocument();
+    expect(ids(screen.getByRole("region", { name: "第 2 回合建议" }))).toEqual(["g"]);
+    expect(ids().sort()).toEqual(["a", "b", "c", "d", "e", "g"]);
     // The totals elsewhere still count every suggestion.
     expect(screen.getByRole("button", { name: /^全部回合/ })).toHaveTextContent("全部回合 7 条");
     expect(screen.getByText("已评价 0/7")).toBeInTheDocument();
@@ -296,6 +355,8 @@ describe("CoachingPanel 本场最值得回看", () => {
     await showAllRounds(user);
     const top = block() as HTMLElement;
 
+    // The first card listed carries the view's one solid amber 查看这一刻.
+    expect(within(top).getAllByRole("button", { name: /^查看这一刻/ }).map((button) => button.classList.contains("primary-button"))).toEqual([true, false, false, false, false]);
     await user.click(within(top).getAllByRole("button", { name: /^查看这一刻/ })[0]);
     expect(panel.onSeek).toHaveBeenCalledWith(4200, "e", "card");
     expect(cardFor(b)).toHaveClass("active");

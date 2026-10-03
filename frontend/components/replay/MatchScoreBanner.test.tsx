@@ -54,7 +54,8 @@ describe("MatchScoreBanner", () => {
     const { container } = renderBanner();
     const meta = container.querySelector<HTMLElement>(".match-banner-meta")!;
     expect(within(meta).getByRole("heading", { level: 1, name: "spirit-vs-mouz-m2-mirage.dem" })).toBeInTheDocument();
-    expect(meta).toHaveTextContent("地图Mirage");
+    expect(meta).toHaveTextContent("Mirage");
+    expect(meta).not.toHaveTextContent("地图");
     expect(meta).toHaveTextContent(/上传2026年9月1[67]日/);
     expect(meta).toHaveTextContent("28 回合");
     expect(meta).toHaveTextContent("3 条建议");

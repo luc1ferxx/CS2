@@ -154,7 +154,9 @@ describe("MatchAnalysis", () => {
     ]);
     expect(chart.querySelectorAll(".kills-chart-fill.side-t")).toHaveLength(1);
     expect(chart.querySelectorAll(".kills-chart-death")).toHaveLength(2);
-    expect(chart).toHaveTextContent("共 2 杀，1 个回合有击杀，阵亡 2 次");
+    expect(chart).toHaveTextContent("共 2 杀，1 个回合有击杀");
+    // The death count is the death map's, not repeated here.
+    expect(chart.querySelector(".match-analysis-caption")).not.toHaveTextContent("阵亡");
     await user.click(bars[2]);
     expect(props.onSelectRound).toHaveBeenLastCalledWith(3);
 

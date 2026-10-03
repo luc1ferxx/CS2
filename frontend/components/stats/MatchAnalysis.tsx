@@ -66,7 +66,6 @@ export const MatchAnalysis = memo(function MatchAnalysis({
     <section className="panel match-analysis" aria-labelledby="match-analysis-title">
       <div className="panel-bar">
         <h2 className="panel-bar-title" id="match-analysis-title">{player ? `数据：${player.name}` : "数据"}</h2>
-        {player && hasEvents ? <span className="panel-bar-meta">点图上的点、柱子或回合，回放会跳到那一刻</span> : null}
       </div>
       {!player ? (
         <p className="match-analysis-empty">

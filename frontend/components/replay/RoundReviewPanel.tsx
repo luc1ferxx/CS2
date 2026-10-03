@@ -294,7 +294,6 @@ function EconomyFilter({ kind, team, names, matchingCount, onKindChange, onTeamC
   const idle = kind === "all";
   return (
     <div className="round-strip-filter">
-      <span className="round-strip-filter-label">筛选</span>
       <div className="round-strip-filter-controls">
         <div className="econ-segments" role="group" aria-label="按经济类型筛选回合">
           {kinds.map((option) => (
@@ -357,8 +356,8 @@ function RoundStripLegend({ economy }: { economy: boolean }) {
 const ECONOMY_LEGEND_NAMES: Record<EconomyKind, string> = {
   pistol: "手枪局",
   full: "全起",
-  force: "强起（钱花光）",
-  half: "半起（留了钱）",
+  force: "强起",
+  half: "半起",
   eco: "ECO 经济局"
 };
 
@@ -382,16 +381,13 @@ export const RoundReviewPanel = memo(function RoundReviewPanel(props: RoundRevie
         <span className={`round-detail-winner side-${selectedSummary.winnerSide.toLowerCase()}`}>
           {selectedSummary.winnerSide} 获胜
         </span>
-        {selectedSummary.playerOutcome ? (
-          <span className={`round-detail-outcome ${selectedSummary.playerOutcome}`}>
-            {selectedPlayerName ? `${selectedPlayerName} ` : ""}{selectedSummary.playerOutcome === "won" ? "赢下本回合" : "输掉本回合"}
-          </span>
-        ) : null}
         <span className="round-detail-count">{selectedSummary.coachingEventCount} 条建议</span>
       </div>
 
       <div className="round-quick-jumps" role="group" aria-label="快速跳转">
-        {jumpTargets.map((target) => (
+        {/* A round without a plant is common: its empty 安装炸弹 row says nothing. The player's own
+            missing first kill or death stays, dimmed: that absence is about them. */}
+        {jumpTargets.filter((target) => target.id !== "bomb_plant" || target.tick !== null).map((target) => (
           <button key={target.id} className="round-ribbon-jump" type="button"
             disabled={!target.available || target.tick === null}
             onClick={() => { if (target.tick !== null) onSeek(target.tick); }}

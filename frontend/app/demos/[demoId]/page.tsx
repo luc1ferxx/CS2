@@ -100,9 +100,11 @@ import {
   renderWorkerOffline
 } from "@/lib/render-worker";
 import { usePoll } from "@/lib/use-poll";
+import { useFirstEntry } from "@/lib/use-first-entry";
+import { useSlidingIndicator } from "@/lib/use-sliding-indicator";
 import { requestFailureKind, userFacingError } from "@/lib/user-errors";
 import { utilityAvailability, utilityJumpTick } from "@/lib/utility";
-import { withFeedback } from "@/lib/coaching-review";
+import { coachingFeed, withFeedback } from "@/lib/coaching-review";
 import {
   coachingForPlayer,
   parserEventsForPlayer,
@@ -234,6 +236,8 @@ function DemoDetailContent() {
   const renderJobsSignatureRef = useRef<string | null>(null);
   const defaultVideoRef = useRef<ReplayVideo | null>(null);
   const stageRef = useRef<HTMLElement | null>(null);
+  // First entry (S14 motion #3): the workspace's one-shot .is-entering, at its first mount only.
+  const workspaceEntryRef = useFirstEntry<HTMLDivElement>();
   const savedClipsRef = useRef<HTMLDetailsElement | null>(null);
   // The control the viewer pressed "查看这一刻" on, so "返回建议" can hand focus back to it.
   const findingOriginRef = useRef<HTMLElement | null>(null);
@@ -589,6 +593,9 @@ function DemoDetailContent() {
   const showVideoControls = renderClips || hasAnyVideo;
   const showFirstPersonExplainer = showVideoControls && viewMode === "video" && !videoDrivesClock;
   const firstPersonSelected = videoDrivesClock || showFirstPersonExplainer;
+  // The stage tabs' one marker slides to the chosen view; it measures only when the view or the set of tabs changes.
+  const viewTabs = useSlidingIndicator(finderSelected ? "utility" : firstPersonSelected ? "video" : "map",
+    `${utilityTab !== "hidden"}|${showVideoControls}`);
   const playableClipCount = useMemo(() => personalClips.filter((job) => playableClipVideo(job)).length, [personalClips]);
   const currentRoundNumber = useMemo(
     () => (replay ? findRoundNumberForTick(replay.rounds, currentTick) : null),
@@ -1189,7 +1196,8 @@ function DemoDetailContent() {
   const personalEventCount = personalEvents.length;
   const headerFacts = useMemo(() => (
     <>
-      {hasReplay && selectedPlayer ? <span className="fact">{personalEventCount} 条建议</span>
+      {/* 全部回合 already counts the reviewed player's suggestions. */}
+      {hasReplay && selectedPlayer ? <span className="fact visually-hidden">{personalEventCount} 条建议</span>
         : status?.status === "completed" ? (
           <span className="fact" title="所有玩家合计；选择你的玩家后只显示你的建议">
             <span className="fact-label">全场建议</span>{status.coaching_event_count}
@@ -1309,12 +1317,13 @@ function DemoDetailContent() {
               teams={teams}
               onSelectRound={changeRound}
             />
-            <div className="review-layout">
+            <div className="review-layout" ref={workspaceEntryRef}>
             <div className="review-main-column">
             <section id="player" className="panel review-stage" aria-label="回放" tabIndex={-1} ref={stageRef}>
               <div className="panel-bar review-stage-toolbar">
                 {showVideoControls || utilityTab !== "hidden" ? (
-                  <div className="panel-bar-tabs review-view-switch" role="group" aria-label="回放视图">
+                  <div className="panel-bar-tabs review-view-switch" role="group" aria-label="回放视图" ref={viewTabs.groupRef}>
+                    <span className="segment-indicator" aria-hidden="true" ref={viewTabs.indicatorRef} />
                     <button type="button" className={`panel-tab${firstPersonSelected || finderSelected ? "" : " selected"}`}
                       aria-pressed={!firstPersonSelected && !finderSelected} onClick={() => setViewMode("map")}>
                       战术回放
@@ -1341,10 +1350,12 @@ function DemoDetailContent() {
                   {tickClipLabel}
                 </button> : null}
               </div>
+              {/* The slot keeps its height with or without a suggestion, so 查看这一刻 never pushes the
+                  HUD and the map down while the lock bracket snaps. */}
+              <div className="review-finding-slot">
               {findingStripOpen && focusedEvent ? (
                 <div className="review-finding-strip" role="status">
-                  <span className="review-finding-strip-label">当前建议</span>
-                  <strong>{coachingCopy(focusedEvent).title}</strong>
+                  <strong title={coachingCopy(focusedEvent).title}>{findingHeadline(focusedEvent)}</strong>
                   <small>第 {focusedEvent.round_number} 回合 <span className="review-finding-strip-time">{roundTimeAt(focusedEvent.tick_start, focusedRound, replay.tickRate)}</span></small>
                   <button type="button" className="text-button" onClick={returnToFinding}>
                     {focusedFinding?.fromCard ? "返回建议" : "查看建议"}
@@ -1354,6 +1365,7 @@ function DemoDetailContent() {
                   </button>
                 </div>
               ) : null}
+              </div>
               {focusPlayer && !finderSelected && !videoDrivesClock && !showFirstPersonExplainer ? (
                 <div className="review-focus-strip" role="status">
                   <span>只看 <strong>{focusPlayer.name || "这名玩家"}</strong></span>
@@ -1410,7 +1422,7 @@ function DemoDetailContent() {
                   selectedPlayerId={selectedPlayerId} onSelectPlayer={selectPlayer} variant="featured"
                   levelMode={mapLevelMode} onLevelModeChange={setMapLevelMode} teamNames={matchSummaryTeams}
                   overlayAbove={utilityTab === "available" ? utilityOverlay : undefined}
-                  focusPlayerId={focusPlayer?.id ?? null} />
+                  focusPlayerId={focusPlayer?.id ?? null} lockSnapKey={focusedFinding} />
               )}
               </div>
               <Timeline currentTick={currentTick} selectedRound={selectedRound} rounds={replay.rounds}
@@ -1444,16 +1456,10 @@ function DemoDetailContent() {
                 {replay.video.url && !videoUnavailable ? <button type="button" className="text-button" onClick={viewVideoClip}>打开已保存的视频</button> : null}
               </div>
             ) : null}
-            <RoundReviewPanel
-              replay={replay}
-              coachingEvents={personalEvents}
-              selectedPlayerId={selectedPlayerId}
-              selectedPlayerName={selectedPlayer?.name ?? null}
-              currentRoundNumber={currentRoundNumber}
-              selectedRound={selectedRound}
-              onSeek={manualSeek}
-            />
             </div>
+            {/* The right column: suggestions, then the selected round. One sticky column from 1280 px;
+                narrower, the round review goes back under the stage (CSS only, the DOM stays). */}
+            <div className="review-side-column">
               <CoachingPanel
                 key={selectedPlayer?.id ?? "no-player"}
                 events={personalEvents}
@@ -1470,6 +1476,16 @@ function DemoDetailContent() {
                 onFeedback={submitCoachingFeedback}
                 onChoosePlayer={revealPlayerPicker}
               />
+              <RoundReviewPanel
+                replay={replay}
+                coachingEvents={personalEvents}
+                selectedPlayerId={selectedPlayerId}
+                selectedPlayerName={selectedPlayer?.name ?? null}
+                currentRoundNumber={currentRoundNumber}
+                selectedRound={selectedRound}
+                onSeek={manualSeek}
+              />
+            </div>
             </div>
             {/* S9 数据 section (UI-B) */}
             <MatchAnalysis replay={replay} player={selectedPlayer} onSeekTick={jumpToTick} onSelectRound={jumpToRound}
@@ -1548,6 +1564,14 @@ function DemoDetailContent() {
       </ConfirmDialog>
     </main>
   );
+}
+
+// The strip names the suggestion the way its card does: killer ✕ player, then what the rule found.
+function findingHeadline(event: CoachingEvent): string {
+  const feed = coachingFeed(event);
+  const finding = feed.finding || coachingCopy(event).title;
+  if (!feed.died) return finding;
+  return `${feed.killer ? `${feed.killer} ` : ""}✕ ${event.player_name} ${finding}`;
 }
 
 function scrollBehavior(): ScrollBehavior {

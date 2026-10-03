@@ -59,8 +59,9 @@ function TeamScoreboard({ team, players, maxAdr, reviewedPlayerId }: {
               <th scope="col" className="num scoreboard-adr-head" title="对敌人造成的伤害 ÷ 参与的回合">伤害/回合</th>
               <th scope="col" className="num" title="爆头击杀 ÷ 击杀">爆头率</th>
               <th scope="col" className="num" title="有击杀、助攻、存活或阵亡后 5 秒内被补枪的回合占比">KAST</th>
-              <th scope="col" className="num" title="回合第一个击杀">首杀</th>
-              <th scope="col" className="num" title="回合第一个阵亡">首死</th>
+              {/* Phones (<= 480 px) hide the opening duel columns and the ADR bars so the table fits. */}
+              <th scope="col" className="num scoreboard-opening" title="回合第一个击杀">首杀</th>
+              <th scope="col" className="num scoreboard-opening" title="回合第一个阵亡">首死</th>
             </tr>
           </thead>
           <tbody>
@@ -86,8 +87,8 @@ function TeamScoreboard({ team, players, maxAdr, reviewedPlayerId }: {
                   </td>
                   <td className="num">{percent(player.hsPercent)}</td>
                   <td className="num">{percent(player.kastPercent)}</td>
-                  <td className="num">{player.openingKills}</td>
-                  <td className="num">{player.openingDeaths}</td>
+                  <td className="num scoreboard-opening">{player.openingKills}</td>
+                  <td className="num scoreboard-opening">{player.openingDeaths}</td>
                 </tr>
               );
             })}

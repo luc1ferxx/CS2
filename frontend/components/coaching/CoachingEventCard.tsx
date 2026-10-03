@@ -27,6 +27,8 @@ interface CoachingEventCardProps {
   locationLabel?: string;
   // Put the round above the clock (cards listed outside their round group).
   showRound?: boolean;
+  // The view's one solid amber 查看这一刻 (the first card listed); others are secondary.
+  primaryAction?: boolean;
   // The reviewed player's side in this card's round, when known; colors the names.
   side?: PlayerSide | null;
   renderJob?: RenderJobStatus;
@@ -39,7 +41,7 @@ interface CoachingEventCardProps {
 }
 
 export const CoachingEventCard = memo(function CoachingEventCard({
-  reviewEvent, active, inspected, clock, locationLabel, showRound = false, side, renderJob, clipRequesting, feedbackState,
+  reviewEvent, active, inspected, clock, locationLabel, showRound = false, primaryAction = false, side, renderJob, clipRequesting, feedbackState,
   onToggleInspect, onSeek, onGenerateClip, onFeedback
 }: CoachingEventCardProps) {
   const { event } = reviewEvent;
@@ -86,12 +88,17 @@ export const CoachingEventCard = memo(function CoachingEventCard({
             </span>
           ) : null}
           <span className="coaching-feed-finding">{finding}</span>
-          {chips.map((chip) => (
-            <Fragment key={chip}>
-              <span className="visually-hidden">，</span>
-              <span className="coaching-feed-chip">{chip}</span>
-            </Fragment>
-          ))}
+          {/* After the finding on wide screens; their own line on phones. */}
+          {chips.length > 0 ? (
+            <span className="coaching-feed-chips">
+              {chips.map((chip) => (
+                <Fragment key={chip}>
+                  <span className="visually-hidden">，</span>
+                  <span className={`coaching-feed-chip${chip === "回合输了" ? " is-loss" : ""}`}>{chip}</span>
+                </Fragment>
+              ))}
+            </span>
+          ) : null}
           <span className="visually-hidden">，{coachingSeverityLabel(event.severity)}</span>
         </h3>
         {reasonLines.map((line) => <p key={line} className="coaching-card-reason">{line}</p>)}
@@ -101,7 +108,7 @@ export const CoachingEventCard = memo(function CoachingEventCard({
 
       <div className="event-card-actions">
         <button
-          className="text-button coaching-link locate-tick-button"
+          className={`${primaryAction ? "primary-button" : "secondary-button"} compact-button locate-tick-button`}
           type="button"
           onClick={() => onSeek(event.tick_start, event.id)}
           aria-label={`查看这一刻：${copy.title}`}
@@ -113,7 +120,7 @@ export const CoachingEventCard = memo(function CoachingEventCard({
       <div className="coaching-feed-body">
         <div className="coaching-feed-meta">
           <button
-            className="coaching-evidence-toggle"
+            className="quiet-button coaching-evidence-toggle"
             type="button"
             onClick={() => onToggleInspect(event.id)}
             aria-expanded={inspected}
@@ -124,7 +131,7 @@ export const CoachingEventCard = memo(function CoachingEventCard({
           </button>
           {onGenerateClip ? (
             <button
-              className="text-button coaching-link generate-clip-button"
+              className="quiet-button coaching-link generate-clip-button"
               type="button"
               onClick={() => onGenerateClip(event)}
               disabled={clipBusy}
@@ -135,7 +142,6 @@ export const CoachingEventCard = memo(function CoachingEventCard({
           ) : null}
           <div className="coaching-feedback" role="group" aria-label={`这条建议是否有帮助：${copy.title}`}
             aria-busy={feedbackState?.status === "saving" ? true : undefined}>
-            <span>对你有帮助吗</span>
             {VERDICTS.map((verdict, index) => (
               <Fragment key={verdict}>
                 {index > 0 ? <span className="coaching-verdict-divider" aria-hidden="true">/</span> : null}

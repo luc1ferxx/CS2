@@ -751,7 +751,7 @@ function DashboardContent() {
             <span className="lib-toolbar-end">
               {firstRun ? null : <DemFileHelp popover quotaNote={quotaSummary.helpNote} />}
               <button
-                className="text-button"
+                className="secondary-button compact-button"
                 type="button"
                 onClick={() => void loadDemos()}
                 aria-label="刷新比赛列表"
@@ -773,7 +773,8 @@ function DashboardContent() {
                 <span className="c-map">地图</span>
                 <span className="c-score">比分</span>
                 <span className="c-num c-rounds">回合</span>
-                <span className="c-num c-signals">全场建议</span>
+                {/* The rows are one link each, so the column's explanation lives on its head. */}
+                <span className="c-num c-signals" title="所有玩家合计；进入比赛后只显示你的玩家的建议">全场建议</span>
                 <span className="c-date">上传时间</span>
                 <span className="c-state">状态</span>
                 <span className="c-actions" />
@@ -840,7 +841,6 @@ function DashboardContent() {
         >
           <summary className="panel-bar lib-head">
             <span className="panel-bar-title">Steam 比赛记录</span>
-            <span className="lib-steam-note">当前版本暂不支持自动导入，请手动上传 .dem</span>
             <span className="lib-steam-toggle" aria-hidden="true" />
           </summary>
           {importOptionsLoaded ? <RecentSteamMatches /> : null}
@@ -973,7 +973,9 @@ function LibraryRow({
           </>
         ) : (
           <div className="lib-name">
+            {/* Stretched over the row: the whole row opens the match. */}
             <Link
+              className="stretched-link"
               href={`/demos/${demo.id}`}
               title={display.filename ? `${display.title}（${display.filename}）` : display.title}
             >
@@ -1251,13 +1253,13 @@ function MapThumb({ mapName }: { mapName: string | null | undefined }) {
 function PlayEntry({ demo, title }: { demo: DemoSummary; title: string }) {
   if (playbackReadiness(demo) !== "unavailable") {
     return (
-      <Link className="text-button lib-enter" href={`/demos/${demo.id}#player`} aria-label={`进入复盘：${title}`}>
+      <Link className="secondary-button compact-button lib-enter" href={`/demos/${demo.id}#player`} aria-label={`进入复盘：${title}`}>
         进入复盘
       </Link>
     );
   }
   return (
-    <Link className="text-button lib-enter" href={`/demos/${demo.id}`} aria-label={`查看处理状态：${title}`}>
+    <Link className="secondary-button compact-button lib-enter" href={`/demos/${demo.id}`} aria-label={`查看处理状态：${title}`}>
       查看状态
     </Link>
   );

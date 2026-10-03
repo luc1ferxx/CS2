@@ -1005,7 +1005,8 @@ describe("DemoDetailPage", () => {
       // Three seconds of lead-in: 400 - 3 × 64.
       expect(slider()).toHaveValue("208");
       const strip = document.querySelector(".review-finding-strip")!;
-      expect(strip).toHaveTextContent("当前建议");
+      // Named like its card (killer ✕ player, the finding), no "当前建议" prefix.
+      expect(strip).not.toHaveTextContent("当前建议");
       expect(strip).toHaveTextContent("第 1 回合 0:04");
 
       // 下一条 counts from the suggestion being watched, not from the earlier playhead.
@@ -1038,7 +1039,8 @@ describe("DemoDetailPage", () => {
       fireEvent.click(watchButton);
 
       const strip = document.querySelector(".review-finding-strip")!;
-      expect(strip).toHaveTextContent(secondTitle);
+      expect(strip.querySelector("strong")).toHaveAttribute("title", secondTitle);
+      expect(strip).toHaveTextContent(card("second").querySelector(".coaching-feed-finding")!.textContent!);
       // The stage takes focus on the next frame; 返回建议 then goes back to the clicked card.
       await waitFor(() => expect(document.getElementById("player")).toHaveFocus());
       await user.click(within(strip as HTMLElement).getByRole("button", { name: "返回建议" }));
@@ -1114,7 +1116,8 @@ describe("DemoDetailPage", () => {
       // One Tab stop for the whole roster.
       expect(within(roster).getAllByRole("button").filter((button) => button.tabIndex === 0)).toHaveLength(1);
 
-      fireEvent.click(document.querySelectorAll(".map-player-dot")[1]);
+      // The reviewed player's dot is drawn last; CT Anchor is the one CT dot.
+      fireEvent.click(document.querySelector(".map-player-dot.side-ct")!);
       expect(document.querySelector(".map-highlight-card")).toHaveTextContent("CT Anchor");
       expect(screen.getByRole("heading", { name: "正在复盘 T Entry" })).toBeInTheDocument();
       expect(screen.getByRole("group", { name: /这条建议是否有帮助/ })).toBeInTheDocument();
@@ -1203,7 +1206,9 @@ describe("DemoDetailPage match header and first-person view (S9)", () => {
     expect(banner).not.toHaveTextContent("你的队伍");
     expect(banner.querySelector(".match-banner-board")).toHaveAttribute("aria-hidden", "true");
     expect(within(banner).getByRole("heading", { level: 1 })).toHaveTextContent("Mock Match demo-1");
-    expect(banner.querySelector(".match-banner-meta")).toHaveTextContent(/地图\s*Inferno/);
+    // The map name stands without a "地图" label (S14 subtraction).
+    expect(banner.querySelector(".match-banner-meta")).toHaveTextContent("Inferno");
+    expect(banner.querySelector(".match-banner-meta")).not.toHaveTextContent("地图");
     const scoreboard = screen.getByRole("region", { name: "计分板" });
     const reviewedRow = within(scoreboard).getByRole("row", { name: /T Entry 复盘中/ });
     expect(reviewedRow).toHaveClass("selected");

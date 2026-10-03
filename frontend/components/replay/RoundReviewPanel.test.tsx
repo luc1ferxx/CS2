@@ -51,9 +51,11 @@ describe("RoundReviewPanel", () => {
     const props = renderPanel();
     const jumps = screen.getByRole("group", { name: "快速跳转" });
     expect(within(jumps).getAllByRole("button").map((button) => button.textContent)).toEqual([
-      "回合开始0:00", "冻结时间结束0:01", "全场首杀0:08", "安装炸弹", "个人首杀", "阵亡0:08"
+      "回合开始0:00", "冻结时间结束0:01", "全场首杀0:08", "个人首杀", "阵亡0:08"
     ]);
-    expect(within(jumps).getByRole("button", { name: /^安装炸弹/ })).toBeDisabled();
+    // No plant this round: the empty 安装炸弹 row is left out; the player's missing first kill stays, dimmed.
+    expect(within(jumps).queryByRole("button", { name: /^安装炸弹/ })).not.toBeInTheDocument();
+    expect(within(jumps).getByRole("button", { name: /^个人首杀/ })).toBeDisabled();
     await user.click(within(jumps).getByRole("button", { name: /^阵亡/ }));
     expect(props.onSeek).toHaveBeenCalledWith(612);
     // Player-facing values are round times; the raw tick only survives as a hover hint.
@@ -198,12 +200,12 @@ describe("RoundStrip economy", () => {
     expect(cells()[2]).toHaveAccessibleName("第 3 回合 T 胜，MOUZ 全起 $22,500，Spirit 强起 $12,500，0 条建议");
     expect(cells()[2]).toHaveAttribute("title", "第 3 回合 T 胜，MOUZ 全起 $22,500，Spirit 强起 $12,500，0 次击杀，0 条建议");
     const legend = document.querySelector(".round-strip > .round-strip-legend");
-    expect(legend).toHaveTextContent("枪 = 手枪局全 = 全起强 = 强起（钱花光）半 = 半起（留了钱）经 = ECO 经济局");
+    expect(legend).toHaveTextContent("枪 = 手枪局全 = 全起强 = 强起半 = 半起经 = ECO 经济局");
     // Two groups, so a wrap falls between the round key and the economy key, never inside an item.
     const groups = [...(legend?.querySelectorAll(":scope > .round-strip-legend-group") ?? [])];
     expect(groups.map((group) => group.textContent)).toEqual([
       "T 胜CT 胜炸弹爆炸拆除炸弹全歼时间耗尽阵亡建议",
-      "枪 = 手枪局全 = 全起强 = 强起（钱花光）半 = 半起（留了钱）经 = ECO 经济局"
+      "枪 = 手枪局全 = 全起强 = 强起半 = 半起经 = ECO 经济局"
     ]);
     expect(groups[1].children).toHaveLength(5);
   });

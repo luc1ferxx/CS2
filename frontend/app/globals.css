@@ -18,8 +18,9 @@
   /* Zebra: ~1.13:1 on the panel, so the alternation reads; ink-3 stays >= 4.5:1 on it. */
   --row-alt: #19304a;
   --row-hover: #1c3550;
-  /* Amber ~11 % over the panel; the reviewed player / current item adds a 2 px amber inset mark. */
-  --row-selected: #2c363a;
+  /* A brighter navy (S14), not an amber wash: selection is this fill plus amber text where the row
+     names the reviewed player. No side mark. ink-3 is 4.2:1 on it, so quiet text there uses ink-2. */
+  --row-selected: #1f3a57;
   --line-subtle: #1f3851;
   --line-bold: #2a4a66;
   /* The edge of every input, select and secondary button: >= 3:1 on the panel,
@@ -2141,6 +2142,75 @@ select:disabled {
   color: var(--danger-text);
 }
 
+/* Underlines are for prose, breadcrumbs, account and privacy (S14). A repeated inline action
+   (查看依据, 生成视频 on every card) is a quiet control instead: ink-2 text at rest, amber with
+   the amber underline under the pointer or on keyboard focus. */
+.quiet-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  color: var(--ink-2);
+  font-family: var(--font-body);
+  font-size: inherit;
+  font-weight: 400;
+  line-height: inherit;
+  text-decoration: none;
+  text-transform: none;
+}
+
+.quiet-button:is(:hover, :focus-visible):not(:disabled) {
+  background: none;
+  color: var(--accent);
+  text-decoration: underline 1px var(--accent);
+  text-underline-offset: 3px;
+}
+
+/* A row that jumps somewhere (a key moment with its clock, 开始 / 结束): plain text, no
+   underline; the row-hover fill under the pointer, the focus ring on keyboard focus. */
+.row-link {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  text-decoration: none;
+}
+
+.row-link:hover:not(:disabled) {
+  background: var(--row-hover);
+  color: var(--ink);
+  text-decoration: none;
+}
+
+/* A whole row as one link: the link's ::after covers its nearest positioned ancestor (the row),
+   which is position: relative. Controls in the row sit above it (position: relative; z-index: 1).
+   Keyboard focus outlines the row, not just the name. */
+.stretched-link::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+}
+
+.stretched-link:focus-visible {
+  outline: none;
+}
+
+.stretched-link:focus-visible::after {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
 .compact-button {
   min-height: 24px;
   padding: 0 8px;
@@ -2157,7 +2227,7 @@ select:disabled {
   padding: 0;
 }
 
-:is(.primary-button, .secondary-button, .icon-button, .danger-button, .text-button, .topbar-link):disabled {
+:is(.primary-button, .secondary-button, .icon-button, .danger-button, .text-button, .quiet-button, .row-link, .topbar-link):disabled {
   cursor: not-allowed;
   opacity: 0.5;
 }
@@ -2293,16 +2363,11 @@ select:disabled {
   background: var(--row-hover);
 }
 
+/* Selected and current rows: the selected fill only. The panel's amber left edge is the one
+   single-side bar; rows do not add a second one (S14). */
 .data-table tbody tr:is(.selected, [aria-selected="true"], [aria-current="true"]),
 .data-rows > :is(.selected, [aria-selected="true"], [aria-current="true"]) {
   background: var(--row-selected);
-}
-
-/* The current item (the reviewed player, the row at the playhead) also
-   carries a 2 px amber mark inside its left edge. */
-.data-table tbody tr[aria-current="true"] > :first-child,
-.data-rows > [aria-current="true"] {
-  box-shadow: inset 2px 0 0 var(--accent);
 }
 
 .num,

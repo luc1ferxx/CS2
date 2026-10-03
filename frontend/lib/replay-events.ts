@@ -168,6 +168,71 @@ export function recentMapParserEvents(
     .slice(0, 4);
 }
 
+/** Who killed whom with what, as the map's kill feed and kill traces read it. */
+export interface MapKillFacts {
+  id: string;
+  tick: number;
+  attackerId: string | null;
+  attackerName: string | null;
+  attackerSide: PlayerSide | null;
+  victimId: string | null;
+  victimName: string | null;
+  victimSide: PlayerSide | null;
+  // Display name through the weapon mapping; null when the demo did not say.
+  weapon: string | null;
+  headshot: boolean;
+}
+
+/**
+ * Kills of the round that already happened at the playhead (0 <= age <= window), newest first,
+ * at most `max`. Unlike recentMapParserEvents (±2 s around the playhead, any type), a kill only
+ * shows from its own tick on, so the trace and the feed row appear at the kill moment.
+ */
+export function recentKills<T extends Pick<ReplayEvent, "id" | "type" | "tick" | "roundNumber">>(
+  events: T[],
+  roundNumber: number,
+  currentTick: number,
+  tickRate: number,
+  windowSeconds: number,
+  max: number
+): T[] {
+  const windowTicks = Math.max(1, (tickRate > 0 ? tickRate : 64) * windowSeconds);
+  return events
+    .filter((event) => event.type === "kill" && event.roundNumber === roundNumber &&
+      Number.isFinite(event.tick) && event.tick <= currentTick && currentTick - event.tick <= windowTicks)
+    .sort((left, right) => right.tick - left.tick || (left.id < right.id ? -1 : left.id > right.id ? 1 : 0))
+    .slice(0, Math.max(0, max));
+}
+
+/** Kill-trace opacity by age in hard steps (an instrument, not a fade): 0.95, 0.7, then 0.45. */
+export function killTraceOpacity(ageTicks: number, tickRate: number, windowSeconds = 2): number {
+  const windowTicks = Math.max(1, (tickRate > 0 ? tickRate : 64) * windowSeconds);
+  const share = Math.max(0, ageTicks) / windowTicks;
+  return share < 1 / 3 ? 0.95 : share < 2 / 3 ? 0.7 : 0.45;
+}
+
+/** Killer, victim, weapon and headshot of a kill; mock kills name the killer only as the event's player. */
+export function mapKillFacts(event: ReplayEvent): MapKillFacts {
+  const metadata = event.metadata ?? {};
+  const { attackerId, attackerName, victimId, victimName } = killParticipants(event);
+  return {
+    id: event.id,
+    tick: event.tick,
+    attackerId: attackerId ?? stringValue(event.playerId),
+    attackerName: attackerName ?? stringValue(event.playerName),
+    attackerSide: sideValue(metadata.attackerSide) ?? sideValue(event.side),
+    victimId,
+    victimName,
+    victimSide: sideValue(metadata.victimSide),
+    weapon: weaponName(metadata.weapon),
+    headshot: metadata.headshot === true
+  };
+}
+
+function sideValue(value: unknown): PlayerSide | null {
+  return value === "T" || value === "CT" ? value : null;
+}
+
 function killParticipants(event: ReplayEvent) {
   const metadata = event.metadata ?? {};
   return {

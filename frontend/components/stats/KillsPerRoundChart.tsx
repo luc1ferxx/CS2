@@ -53,7 +53,6 @@ export function KillsPerRoundChart({ rows, onSelectRound }: KillsPerRoundChartPr
   const yFor = (kills: number) => baseline - (kills / maxKills) * plotHeight;
   const totalKills = rows.reduce((sum, row) => sum + row.kills, 0);
   const roundsWithKill = rows.filter((row) => row.kills > 0).length;
-  const deaths = rows.filter((row) => row.died).length;
   const activeIndex = Math.min(focusIndex, Math.max(0, rows.length - 1));
 
   function handleKeyDown(event: KeyboardEvent<SVGGElement>, index: number) {
@@ -84,7 +83,8 @@ export function KillsPerRoundChart({ rows, onSelectRound }: KillsPerRoundChartPr
         </span>
       </div>
       <p className="match-analysis-caption">
-        共 {totalKills} 杀，{roundsWithKill} 个回合有击杀，阵亡 {deaths} 次
+        {/* The death count is 阵亡位置's first fact; the red marks under the bars show which rounds. */}
+        共 {totalKills} 杀，{roundsWithKill} 个回合有击杀
       </p>
       <div className="kills-chart-frame" ref={frameRef}>
         {rows.length === 0 ? <p className="match-analysis-caption">没有回合数据。</p> : (

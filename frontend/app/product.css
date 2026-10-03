@@ -65,10 +65,11 @@
 .lib-check { display: flex; align-items: center; gap: 6px; }
 .lib-filter-pop > .text-button { justify-self: start; }
 .lib-toolbar-end { display: flex; align-items: center; gap: 16px; margin-left: auto; }
-/* Summaries that act as text links get the link look: bright ink on a thin amber underline. */
-:is(.lib-help > summary, .lib-steam-toggle) { color: var(--link); text-decoration: underline 1px var(--accent); text-underline-offset: 3px; }
-.lib-help > summary:hover,
-.lib-steam > .lib-head:hover .lib-steam-toggle { color: var(--link-hover); }
+/* 在哪里找到 .dem? and the Steam 展开 / 收起 are quiet controls (S14: underlines are for prose):
+   ink-2 at rest, amber with the amber underline under the pointer or on keyboard focus. */
+:is(.lib-help > summary, .lib-steam-toggle) { color: var(--ink-2); text-decoration: none; text-underline-offset: 3px; }
+.lib-help > summary:is(:hover, :focus-visible),
+.lib-steam > .lib-head:is(:hover, :focus-visible) .lib-steam-toggle { color: var(--accent); text-decoration: underline 1px var(--accent); }
 .lib-help ul { display: grid; gap: 4px; max-width: 64ch; margin: 4px 0 0; padding-left: 18px; color: var(--ink-2); }
 .lib-help-pop ul { position: absolute; top: calc(100% + 4px); right: 0; z-index: 40; width: min(440px, calc(100vw - 24px)); margin: 0; padding: 8px 12px 8px 28px; color: var(--ink); }
 
@@ -95,17 +96,31 @@
 .lib-name > a,
 .lib-name-text { overflow: hidden; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
 .lib-name-text { color: var(--ink); }
-/* Every row has two links; the 进入复盘 column carries the underline, the name shows its own on hover.
-   A column of nine amber lines would dilute the amber, so 进入复盘 rests on a neutral control-line
-   underline and turns amber on the row under the pointer or on focus. */
-.lib-name > a { text-decoration: none; }
-.lib-name > a:hover { text-decoration: underline 1px var(--accent); text-underline-offset: 3px; }
-.lib-enter { text-decoration-color: var(--control-line); }
-:is(.lib-row:hover, .lib-row:focus-within) .lib-enter { text-decoration-color: var(--accent); }
+/* The whole row opens the match: the name link is stretched over it (.stretched-link) and the row
+   takes the hover fill; no underlines down the column. 进入复盘 (straight to the player) is a small
+   secondary button; it and the row's other controls sit above the stretched link. */
+.lib-name > a { color: var(--ink); text-decoration: none; }
+.lib-name > a:hover { color: var(--ink); }
+.lib-row :is(.c-state, .c-actions) :is(button, a, summary),
+.lib-row .lib-menu { position: relative; z-index: 1; }
+/* Nine framed buttons down the column would be the loudest thing in the ledger: at rest the row's
+   two controls are frameless (进入复盘 in ink-2), the row under the pointer or holding focus shows
+   their frames, and the control itself turns its frame amber (the secondary-button hover). */
+.lib-row .c-actions :is(.lib-enter, .lib-menu > summary) { border-color: transparent; }
+.lib-row .c-actions .lib-enter { color: var(--ink-2); }
+:is(.lib-row:hover, .lib-row:focus-within) .c-actions :is(.lib-enter, .lib-menu > summary) { border-color: var(--control-line); color: var(--ink); }
+.lib-row .c-actions :is(.lib-enter, .lib-menu > summary):hover,
+.lib-row .c-actions .lib-menu[open] > summary { border-color: var(--accent); }
 .lib-file { display: flex; gap: 10px; min-width: 0; color: var(--ink-3); font-size: var(--step-sm); white-space: nowrap; }
 .lib-file > span { overflow: hidden; text-overflow: ellipsis; }
 .lib-archived { flex: none; color: var(--ink-2); }
 .lib-row .c-state { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 8px; min-width: 0; }
+/* S14 fix: "可以复盘" is the default, so a ready row shows no status at any width (screen readers keep
+   it); the column only speaks for rows that are not ready. Single-line cells sit on the name's first
+   line, not between the name and the file name. */
+.lib-row .c-state > .status-text.ok { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.lib-row:not(.lib-row-head) { align-items: first baseline; }
+.lib-row:not(.lib-row-head) > :is(.lib-thumb, .c-actions) { align-self: center; }
 .lib-meta { display: inline-flex; flex-wrap: wrap; gap: 0 8px; color: var(--ink-2); font-size: var(--step-sm); font-variant-numeric: tabular-nums; }
 .lib-video { color: var(--ink-2); font-size: var(--step-sm); }
 .lib-reason { flex-basis: 100%; margin: 0; color: var(--ink-2); font-size: var(--step-sm); line-height: 1.4; }
@@ -118,10 +133,10 @@
 .lib-rename input { flex: 1; min-width: 0; }
 .lib-rename-error { margin: 2px 0 0; color: var(--danger-text); font-size: var(--step-sm); }
 
-/* Upload in progress: the live row is the current item (selected tint, 2 px amber mark)
-   with a segmented meter (10 blocks, 1 px gaps; the mask cuts the fill and the empty
-   track alike); verifying holds it full in steel. */
-.lib-rows > .lib-row.is-uploading { background: var(--row-selected); box-shadow: inset 2px 0 0 var(--accent); }
+/* Upload in progress: the live row is the current item (the selected fill) with a segmented
+   meter (10 blocks, 1 px gaps; the mask cuts the fill and the empty track alike); verifying
+   holds it full in steel. */
+.lib-rows > .lib-row.is-uploading { background: var(--row-selected); }
 .lib-progress-facts { display: flex; flex-wrap: wrap; gap: 0 10px; color: var(--ink-2); font-size: var(--step-sm); font-variant-numeric: tabular-nums; }
 .lib-progress-pct { color: var(--ink); }
 .lib-progress {
@@ -301,18 +316,52 @@
 /* Coaching column: a .panel whose .panel-bar holds the round scope. */
 /* Sticky under the 40 px top bar with a 12 px gap; the panel ends where its rows end. */
 .review-app .coaching-panel { position: sticky; top: 52px; display: flex; flex-direction: column; width: auto; min-height: 0; max-height: calc(100dvh - 64px); overflow: hidden; }
+/* The right column (S14): 重点建议, then 本回合 under it. From 1280 px the two are one column that
+   sticks under the top bar and fits the screen: the suggestion list scrolls inside it, 本回合 keeps its
+   height. Narrower, the column dissolves and its panels take their earlier places (media queries at the
+   end of this section). */
+.review-app .review-side-column { position: sticky; top: 52px; display: flex; flex-direction: column; gap: 12px; min-width: 0; max-height: calc(100dvh - 64px); }
+.review-app .review-side-column > .coaching-panel { position: relative; top: auto; flex: 0 1 auto; max-height: none; }
+.review-app .review-side-column > .round-detail-panel { flex: none; margin: 0; }
+/* First entry (S14 MOTION #3): 本回合 sits in the right column, so it arrives with 重点建议. */
+.review-layout.is-entering .review-side-column > .round-detail-panel { animation: s14-entry 300ms cubic-bezier(0.2, 0.8, 0.2, 1) 120ms backwards; }
+@media (prefers-reduced-motion: reduce) {
+  .review-layout.is-entering .review-side-column > .round-detail-panel { animation: none; }
+}
+/* 380 px wide: the round's header wraps between its facts, and a long player name wraps inside its own. */
+.review-app .review-side-column .round-detail-head { padding-block: 4px; row-gap: 2px; }
+.review-app .review-side-column .round-detail-outcome { min-width: 0; white-space: normal; overflow-wrap: anywhere; }
 /* The right padding keeps 全部回合 and its focus ring clear of the panel's 12 px corner cut. */
 .review-app .coaching-panel .coaching-header { flex: none; flex-wrap: nowrap; padding-right: 18px; }
 .review-app .coaching-count { font-variant-numeric: tabular-nums; }
-/* 当前回合 / 全部回合: two joined secondary buttons. */
-.review-app .coaching-panel .coaching-round-scope { display: inline-flex; margin: 0; padding: 0; border: 0; }
-.review-app .coaching-panel .coaching-round-scope button { min-height: 24px; margin: 0; padding: 0 8px; border: 1px solid var(--control-line); border-radius: 0; background: transparent; color: var(--ink); font-family: var(--font-body); font-size: var(--step-sm); font-weight: 400; white-space: nowrap; cursor: pointer; }
+/* Motion #2 (S14): the stage tabs and 当前回合 / 全部回合 each have ONE selection marker that slides
+   to the chosen button (transform + width, a 200 ms snap) instead of the old one switching off.
+   lib/use-sliding-indicator.ts writes its place; first paint, resizes and the font swap place it with
+   no animation. It only moves on a click, never per playback frame. */
+.review-app .segment-indicator { position: absolute; left: 0; width: 0; pointer-events: none; transition: transform 200ms var(--ease-snap, cubic-bezier(0.2, 0.9, 0.3, 1.2)), width 200ms var(--ease-snap, cubic-bezier(0.2, 0.9, 0.3, 1.2)); }
+/* Stage tabs: the marker is the tab face (panel fill, 2 px amber top) and joins the stage body over the
+   bar's bottom line; the tabs themselves are transparent, the chosen one in ink at weight 600. */
+.review-app .review-view-switch { position: relative; }
+.review-app .review-view-switch .panel-tab,
+.review-app .review-view-switch .panel-tab.selected { position: relative; z-index: 1; height: 29px; border-top-color: transparent; background: none; font-weight: 400; }
+.review-app .review-view-switch > .segment-indicator { bottom: 0; height: 29px; border-top: 2px solid var(--accent); background: var(--panel); }
+/* 当前回合 / 全部回合: two joined secondary buttons over the marker: the selected tint and a 2 px amber
+   top marker (the tab's language), no amber border, so the amber focus ring around a neighbour never
+   reads as a second selection. */
+.review-app .coaching-panel .coaching-round-scope { position: relative; display: inline-flex; margin: 0; padding: 0; border: 0; }
+.review-app .coaching-panel .coaching-round-scope button { position: relative; z-index: 1; min-height: 24px; margin: 0; padding: 0 8px; border: 1px solid var(--control-line); border-radius: 0; background: transparent; color: var(--ink); font-family: var(--font-body); font-size: var(--step-sm); font-weight: 400; white-space: nowrap; cursor: pointer; }
 .review-app .coaching-panel .coaching-round-scope button + button { margin-left: -1px; }
-.review-app .coaching-panel .coaching-round-scope button:hover { position: relative; z-index: 1; border-color: var(--accent); background: var(--row-hover); }
-/* Selected segments everywhere: the selected tint and a 2 px amber top marker (the tab's language),
-   no amber border, so the amber focus ring around a neighbour never reads as a second selection. */
-.review-app .coaching-panel .coaching-round-scope button[aria-pressed="true"] { position: relative; background: var(--row-selected); box-shadow: inset 0 2px 0 var(--accent); font-weight: 600; }
-.review-app .coaching-panel .coaching-round-scope button:focus-visible { position: relative; z-index: 1; outline-offset: 1px; }
+.review-app .coaching-panel .coaching-round-scope button:hover { z-index: 2; border-color: var(--accent); }
+.review-app .coaching-panel .coaching-round-scope button:not([aria-pressed="true"]):hover { background: var(--row-hover); }
+/* S14 fix: the weight never changes (a bold label would arrive before the sliding marker and change
+   the label's width under it); the chosen one is the marker plus ink. Hovering the chosen one keeps its
+   quiet line, so a click never leaves a full amber ring that reads as a second kind of selection. */
+.review-app .coaching-panel .coaching-round-scope button[aria-pressed="true"]:hover { border-color: var(--control-line); }
+.review-app .coaching-panel .coaching-round-scope button:focus-visible { z-index: 2; outline-offset: 1px; }
+.review-app .coaching-round-scope > .segment-indicator { top: 0; bottom: 0; background: var(--row-selected); box-shadow: inset 0 2px 0 var(--accent); }
+@media (prefers-reduced-motion: reduce) {
+  .review-app .segment-indicator { transition: none; }
+}
 /* Toolbar: whose suggestions, which round, how many rated; 筛选建议 is a text link
    pinned right whose filters open in the flow below it. */
 .review-app .coaching-panel .coaching-toolbar { position: relative; display: flex; flex: none; flex-wrap: wrap; align-items: center; gap: 6px 12px; min-height: 30px; padding: 5px 10px; border-bottom: 1px solid var(--line-subtle); }
@@ -337,22 +386,31 @@
 /* The column's .text-button links at 12px on a 20px line; grey, not faded, when not available. */
 .review-app .coaching-link { display: inline; font-size: var(--step-sm); line-height: 20px; text-align: left; white-space: nowrap; }
 .review-app .coaching-link:disabled { color: var(--ink-3); text-decoration: none; opacity: 1; cursor: default; }
-/* On a card's quiet second line (生成视频) the link steps down: ink-2 text on the neutral control-line
-   underline the page's repeated links use, so 查看这一刻 stays the one amber action in the row. */
-.review-app .coaching-feed-meta .coaching-link:not(:disabled) { color: var(--ink-2); text-decoration-color: var(--control-line); }
-.review-app .coaching-feed-meta .coaching-link:hover:not(:disabled) { color: var(--link-hover); text-decoration-color: var(--accent); }
 
 /* The list scrolls inside the panel on desktop. */
 .review-app .coaching-panel .coaching-body { display: block; flex: 1; min-height: 0; max-height: none; margin: 0; padding: 0; overflow: auto; }
 .review-app .coaching-panel .coaching-round-group { display: block; margin: 0; padding: 0; border: 0; background: none; }
 .review-app .coaching-panel .coaching-round-group.selected { background: none; }
-/* 全部回合: each round is a collapsible group row. */
-.review-app .coaching-panel .coaching-round-header { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; justify-content: flex-start; gap: 8px; width: 100%; min-height: 28px; margin: 0; padding: 0 10px; border: 0; border-bottom: 1px solid var(--line-bold); border-radius: 0; background: var(--panel); color: var(--ink); font-family: var(--font-body); font-size: var(--step-sm); text-align: left; cursor: pointer; }
-.review-app .coaching-panel .coaching-round-header:hover { background: var(--row-hover); }
-.review-app .coaching-panel .coaching-round-header strong { color: inherit; font-size: var(--step-sm); font-weight: 600; font-variant-numeric: tabular-nums; }
-.review-app .coaching-panel .coaching-round-header small { color: var(--ink-2); font-size: var(--step-sm); }
-.review-app .coaching-round-toggle { flex: none; width: 10px; color: var(--ink-2); font-weight: 600; text-align: center; }
-.review-app .coaching-panel .coaching-round-header:focus-visible { outline-offset: -2px; }
+/* 全部回合 (S14): the rounds as a grid of cells in 回合记录's language, twelve to a row so a 24-round
+   match shows its halves on two rows: the round number on top, what is left to list in it below.
+   A round with nothing left is dim and disabled; the open round has the 2 px amber outline. Its cards
+   open under the grid, one round at a time. */
+.review-app .coaching-panel .coaching-round-browser-head,
+.review-app .coaching-panel .coaching-round-open-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 8px; min-height: 28px; margin: 0; padding: 4px 10px; color: var(--ink); font-size: var(--step-sm); line-height: 20px; }
+.review-app .coaching-panel :is(.coaching-round-browser-head, .coaching-round-open-head) strong { color: inherit; font-size: var(--step-sm); font-weight: 600; font-variant-numeric: tabular-nums; }
+.review-app .coaching-panel .coaching-round-browser-head small { color: var(--ink-3); font-size: var(--step-sm); font-variant-numeric: tabular-nums; }
+.review-app .coaching-panel .coaching-round-browser-head { padding-bottom: 0; }
+.review-app .coaching-panel .coaching-round-open-head { border-top: 1px solid var(--line-bold); border-bottom: 1px solid var(--line-bold); }
+.review-app .coaching-round-grid { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 2px; padding: 6px 10px 10px; }
+.review-app .coaching-round-cell { display: grid; grid-template-rows: 14px 16px; align-content: center; justify-items: center; min-width: 0; height: 36px; margin: 0; padding: 0; border: 1px solid var(--line-bold); border-radius: 0; background: var(--row-alt); color: var(--ink); font-family: var(--font-body); font-variant-numeric: tabular-nums; cursor: pointer; }
+.review-app .coaching-round-cell-number { color: var(--ink-2); font-size: 11px; line-height: 14px; }
+.review-app .coaching-round-cell-count { font-size: var(--step-body); font-weight: 600; line-height: 16px; }
+.review-app .coaching-round-cell:hover:not(:disabled) { border-color: var(--accent); background: var(--row-hover); }
+.review-app .coaching-round-cell.expanded { outline: 2px solid var(--accent); outline-offset: -2px; }
+.review-app .coaching-round-cell.expanded .coaching-round-cell-number { color: var(--accent); font-weight: 600; }
+.review-app .coaching-round-cell:disabled { border-color: var(--line-subtle); background: transparent; opacity: 1; cursor: default; }
+.review-app .coaching-round-cell:disabled .coaching-round-cell-number { color: var(--ink-3); }
+.review-app .coaching-round-cell:focus-visible { position: relative; z-index: 1; outline: 2px solid var(--focus-ring); outline-offset: 1px; }
 .review-app .coaching-panel .coaching-round-events { display: block; margin: 0; padding: 0; }
 
 /* A suggestion is a table row: m:ss | the finding (names in side colours) | 查看这一刻.
@@ -367,15 +425,15 @@
 .review-app .coaching-panel :is(.coaching-feed-row.high, .coaching-feed-row.critical, .filter-button.severity-high, .filter-button.severity-critical) { --sev-mark: var(--danger); }
 .review-app .coaching-panel .coaching-round-events > .coaching-feed-row:nth-child(even) { background: var(--row-alt); }
 .review-app .coaching-panel .coaching-round-events > .coaching-feed-row:hover { background: var(--row-hover); }
-/* At the playhead: the selected row. */
-.review-app .coaching-panel .coaching-round-events > .coaching-feed-row.active { background: var(--row-selected); box-shadow: inset 2px 0 0 var(--accent); }
+/* At the playhead: the selected row (the fill only; the panel's amber edge is the one side bar). */
+.review-app .coaching-panel .coaching-round-events > .coaching-feed-row.active { background: var(--row-selected); }
 .review-app .coaching-panel .event-card:focus { outline: none; }
 .review-app .coaching-panel .event-card:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
 .review-app .coaching-feed-clock { grid-column: 1; grid-row: 1; color: var(--ink-2); font-size: var(--step-sm); line-height: 20px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .review-app .coaching-panel .coaching-top-group .event-card.coaching-feed-row { grid-template-columns: 56px minmax(0, 1fr) auto; }
 .review-app .coaching-feed-round { display: block; line-height: 16px; }
 .review-app .coaching-feed-main { grid-column: 2; grid-row: 1; min-width: 0; }
-.review-app .coaching-panel .coaching-feed-line { min-width: 0; margin: 0; overflow: visible; color: var(--ink); font-family: var(--font-body); font-size: var(--step-body); font-weight: 400; line-height: 20px; letter-spacing: 0; text-overflow: clip; text-transform: none; white-space: normal; }
+.review-app .coaching-panel .coaching-feed-line { min-width: 0; margin: 0; overflow: visible; color: var(--ink); font-family: var(--font-body); font-size: var(--step-body); font-weight: 400; line-height: 20px; letter-spacing: 0; text-overflow: clip; text-transform: none; text-wrap: pretty; white-space: normal; }
 /* killer ✕ victim, names in their side colour, then the finding. */
 .review-app .coaching-feed-kill { display: inline-flex; align-items: baseline; gap: 4px; max-width: 100%; margin: 0 6px 0 0; padding: 0; overflow: hidden; border-radius: 0; background: none; white-space: nowrap; vertical-align: baseline; }
 .review-app .coaching-feed-player { min-width: 0; max-width: 14ch; overflow: hidden; font-weight: 600; text-overflow: ellipsis; }
@@ -388,12 +446,14 @@
 .review-app .coaching-panel .coaching-card-guidance { max-width: 62ch; margin: 1px 0 0; color: var(--ink-2); font-size: var(--step-sm); line-height: 18px; }
 .review-app .coaching-panel .coaching-feed-row:not(.active, .inspected) .coaching-card-guidance { display: none; }
 .review-app .coaching-panel .event-card-actions { grid-column: 3; grid-row: 1; display: flex; align-items: baseline; margin: 0; padding: 0; border: 0; }
-.review-app .coaching-panel .event-card-actions .locate-tick-button { font-size: var(--step-body); }
+/* 查看这一刻: a small square secondary button, the row's one action with a frame. */
+.review-app .coaching-panel .event-card-actions .locate-tick-button { font-size: var(--step-sm); white-space: nowrap; }
 .review-app .coaching-feed-body { grid-column: 2 / -1; min-width: 0; }
 .review-app .coaching-feed-meta { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 10px; margin: 2px 0 0; color: var(--ink-3); font-size: var(--step-sm); }
-.review-app .coaching-panel .coaching-evidence-toggle,
+/* 查看依据 and 生成视频 are quiet controls (.quiet-button: ink-2 text, amber and underlined under the
+   pointer or on focus); only their size is set here. The verdicts stay the quietest text in the row. */
+.review-app .coaching-panel .coaching-evidence-toggle { display: inline-flex; font-size: var(--step-sm); line-height: 20px; cursor: pointer; }
 .review-app .coaching-verdict { display: inline; min-height: 0; margin: 0; padding: 0; border: 0; border-radius: 0; background: none; color: var(--ink-3); font-family: var(--font-body); font-size: var(--step-sm); font-weight: 400; line-height: 20px; cursor: pointer; }
-.review-app .coaching-panel .coaching-evidence-toggle:hover,
 .review-app .coaching-verdict:hover { color: var(--link-hover); text-decoration: underline; }
 .review-app .coaching-panel .coaching-feedback { display: inline-flex; flex-wrap: wrap; align-items: baseline; gap: 0 3px; margin: 0; }
 .review-app .coaching-panel .coaching-feedback > span:first-child { margin-right: 2px; color: var(--ink-3); }
@@ -403,8 +463,8 @@
 .review-app .coaching-feedback-status { margin: 2px 0 0; color: var(--danger-text); font-size: var(--step-sm); line-height: var(--leading-body); }
 .review-app .coaching-feedback-status:empty { margin: 0; }
 .review-app .coaching-feedback-status .coaching-link { margin-left: 6px; }
-/* ink-3 is only 4.5:1 on white, zebra and hover rows; on the selected row the quiet line moves to ink-2. */
-.review-app .coaching-panel .coaching-feed-row.active :is(.coaching-feed-meta, .coaching-evidence-toggle, .coaching-verdict, .coaching-feedback > span:first-child, .coaching-technical-details, .coaching-link:disabled) { color: var(--ink-2); }
+/* ink-3 is under 4.5:1 on the selected fill, so on the selected row the quiet line moves to ink-2. */
+.review-app .coaching-panel .coaching-feed-row.active :is(.coaching-feed-meta, .coaching-verdict, .coaching-feedback > span:first-child, .coaching-technical-details, .coaching-link:disabled) { color: var(--ink-2); }
 .review-app .coaching-panel .coaching-feed-row.active .coaching-verdict[aria-pressed="true"] { color: var(--ink); }
 /* 查看依据: a definition list sunk into the row, on the page's deeper navy. */
 .review-app .coaching-panel .event-ledger-inspector { display: grid; gap: 8px; margin: 6px 0 3px; padding: 8px 10px; border: 0; border-radius: 0; background: var(--page); font-size: var(--step-sm); }
@@ -451,8 +511,6 @@
 .review-app .clip-library-empty { margin: 0; padding: 10px; color: var(--ink-2); font-size: var(--step-body); }
 /* Rows are .data-rows (zebra, hover, .selected): place | length | status | 观看视频. */
 .review-app .clip-library-item { display: grid; grid-template-columns: minmax(0, 1fr) auto auto 72px; align-items: baseline; column-gap: 16px; min-height: 32px; padding: 6px 10px; }
-/* The clip in the player is the current item: the selected tint plus the 2 px amber inset mark. */
-.review-app .clip-library-item.selected { box-shadow: inset 2px 0 0 var(--accent); }
 .review-app .clip-library-place { min-width: 0; font-weight: 400; font-variant-numeric: tabular-nums; }
 .review-app .clip-library-duration { color: var(--ink-2); font-size: var(--step-sm); font-variant-numeric: tabular-nums; }
 .review-app .clip-job-status { font-size: var(--step-sm); }
@@ -519,10 +577,23 @@
 .review-app .video-setup-panel .calibration-actions { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; padding: 8px 10px 10px; }
 .review-app .video-setup-panel .calibration-actions button { min-height: 28px; }
 
+/* 1001–1279 px: no room for both panels in one screen-high column. 重点建议 stays the sticky right
+   column beside the stage, 本回合 goes back under the stage. The second row is 1fr so a suggestion list
+   taller than the stage lengthens that row, never the gap between the stage and 本回合. */
+@media (min-width: 1001px) and (max-width: 1279px) {
+  .review-app .review-layout:has(> .review-side-column) { grid-template-rows: auto 1fr; }
+  .review-app .review-side-column { display: contents; }
+  .review-app .review-layout > .review-main-column { grid-column: 1; grid-row: 1; }
+  .review-app .review-side-column > .coaching-panel { position: sticky; top: 52px; grid-column: 2; grid-row: 1 / span 2; max-height: calc(100dvh - 64px); }
+  .review-app .review-side-column > .round-detail-panel { grid-column: 1; grid-row: 2; }
+}
 @media (max-width: 1000px) {
   .review-app .coaching-panel { position: static; min-height: 0; max-height: none; }
   .review-app .coaching-panel .coaching-body { max-height: none; overflow: visible; }
-  .review-app .coaching-panel .coaching-round-header { position: static; }
+  /* One column: the stage, the suggestions, then 本回合 (the stage's own notes come before it). */
+  .review-app .review-side-column { display: contents; }
+  .review-app .review-side-column > .coaching-panel { order: 2; }
+  .review-app .review-side-column > .round-detail-panel { order: 3; }
 }
 @media (max-width: 700px) {
   .review-app .personal-review-heading { justify-content: flex-start; gap: 4px 12px; }
@@ -531,6 +602,9 @@
   .review-app .personal-player-picker-side { grid-template-columns: 76px minmax(0, 1fr); }
   .review-app .personal-review-popover { right: auto; left: 0; width: min(560px, calc(100vw - 32px)); }
   .review-app .coaching-panel .coaching-feed-line { font-size: var(--step-md); line-height: 21px; }
+  /* The chips take their own line, so the finding never ends on one orphaned character before them. */
+  .review-app .coaching-feed-chips { display: flex; flex-wrap: wrap; gap: 4px; margin: 3px 0 1px; }
+  .review-app .coaching-feed-chips .coaching-feed-chip { margin: 0; }
   .review-app .coaching-panel .event-card.coaching-feed-row { padding: 8px 8px 7px 12px; column-gap: 8px; }
   .review-app .coaching-panel .event-card.coaching-feed-row::before { top: 12px; }
   .review-app .clip-library-item { grid-template-columns: minmax(0, 1fr) auto; row-gap: 2px; }
@@ -544,6 +618,7 @@
 @media (pointer: coarse) {
   .review-app :is(.coaching-link, .coaching-verdict, .coaching-panel .coaching-evidence-toggle, .clip-library-play) { display: inline-flex; align-items: center; min-height: 32px; }
   .review-app .coaching-panel .coaching-round-scope button { min-height: 32px; }
+  .review-app .coaching-round-cell { height: 40px; }
 }
 
 /* === V-B1 / S8 V-STAGE: review stage (spec S8 数据站风, retoned S13 战术终端) === */
@@ -603,13 +678,12 @@
 .review-app .round-detail-winner.side-ct { color: var(--ct-text); }
 .review-app .round-detail-outcome { color: var(--ink-2); font-size: var(--step-sm); white-space: nowrap; }
 .review-app .round-detail-count { color: var(--ink-2); font-size: var(--step-sm); white-space: nowrap; }
-/* Key moments: a tidy grid of label link + m:ss, not a run of inline links. Six of them in a row,
-   so they rest on a neutral control-line underline and take the amber one on hover or focus;
-   本回合详情 below keeps the card's one amber underline. */
+/* Key moments: a tidy grid of label + m:ss, each a plain clickable row (S14: no underline; the
+   row-hover fill under the pointer, the focus ring on keyboard focus). 本回合详情 below keeps the
+   card's one amber underline. */
 .review-app .round-quick-jumps { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 0 16px; margin: 0; padding: 6px 12px 2px; }
-.review-app .round-ribbon-jump { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; min-width: 0; min-height: 26px; padding: 0; border: 0; border-bottom: 1px solid var(--line-subtle); background: none; color: var(--link); font: inherit; font-size: var(--step-body); text-align: left; cursor: pointer; }
-.review-app .round-ribbon-jump:not(:disabled) span { text-decoration: underline; text-decoration-color: var(--control-line); text-underline-offset: 3px; }
-.review-app .round-ribbon-jump:not(:disabled):is(:hover, :focus-visible) span { color: var(--link-hover); text-decoration-color: var(--accent); }
+.review-app .round-ribbon-jump { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; min-width: 0; min-height: 26px; padding: 0 4px; border: 0; border-bottom: 1px solid var(--line-subtle); background: none; color: var(--ink); font: inherit; font-size: var(--step-body); text-align: left; cursor: pointer; }
+.review-app .round-ribbon-jump:not(:disabled):hover { background: var(--row-hover); color: var(--ink); }
 .review-app .round-ribbon-jump small { color: var(--ink-2); font-size: var(--step-xs); font-variant-numeric: tabular-nums; }
 .review-app .round-ribbon-jump:disabled { color: var(--ink-3); cursor: default; }
 .review-app .round-review-details { padding: 0 12px 8px; }
@@ -633,7 +707,7 @@
 .review-app .review-clip-button { font-size: var(--step-sm); white-space: nowrap; }
 /* Sized by the column's width so the square radar fills it on laptops; on a short screen the
    transport scrolls into view instead of the radar shrinking. */
-.review-app .review-main-canvas { position: relative; min-width: 0; height: clamp(440px, calc((100vw - 460px) * 0.62), 620px); overflow: hidden; background: var(--radar-bg); }
+.review-app .review-main-canvas { position: relative; min-width: 0; height: clamp(480px, calc((100vw - 460px) * 0.62 + 40px), 660px); overflow: hidden; background: var(--radar-bg); }
 .review-app .review-main-canvas .first-person-panel { height: 100%; margin: 0; padding: 0; border: 0; border-radius: 0; background: var(--radar-bg); }
 .review-app .review-main-canvas .first-person-viewport { height: 100%; min-height: 0; aspect-ratio: auto; border: 0; border-radius: 0; background: var(--radar-bg); }
 .review-app .review-main-canvas .first-person-video { width: 100%; height: 100%; object-fit: contain; }
@@ -650,20 +724,90 @@
 /* The radar sits on the dark canvas like a scope in its bezel. The one graticule in the app is drawn
    on the radar itself, over the image and under every mark (RadarGraticule), in the stage and the
    utility finder; a CSS grid behind the image would only show in the margins around it. */
-.review-app .review-main-canvas .map-frame { position: relative; display: block; min-height: 0; height: 100%; aspect-ratio: auto; padding: 0; border: 0; border-radius: 0; background: var(--radar-bg); }
+/* The map column: the HUD status bar above the radar, never over it (Dust2's and Anubis' radars reach
+   the top edge, so a bar laid over them would hide players), then the radar; on phones the kill feed
+   follows as one line under it. The canvas is 40 px taller for the bar, so the radar keeps its size. */
+.review-app .review-main-canvas .map-stage { position: relative; container: map-stage / inline-size; display: flex; flex-direction: column; min-width: 0; min-height: 0; height: 100%; background: var(--radar-bg); }
+.review-app .review-main-canvas .map-frame { position: relative; display: block; flex: 1 1 0; min-height: 0; height: auto; aspect-ratio: auto; padding: 0; border: 0; border-radius: 0; background: var(--radar-bg); }
 .map-graticule { fill: none; stroke: var(--grid-line); stroke-width: 1px; vector-effect: non-scaling-stroke; pointer-events: none; }
 .review-app .review-main-canvas .map-frame > svg { position: absolute; inset: 8px; width: calc(100% - 16px); height: calc(100% - 16px); min-height: 0; aspect-ratio: auto; }
 .review-app :is(.radar-map-frame, .fallback-map-frame) { background: var(--radar-bg); }
 
-/* Map overlays: small radar-panel chips over the canvas. */
-.review-app .map-overlay-bar { position: absolute; top: 8px; right: 8px; z-index: 3; display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 4px 12px; max-width: calc(100% - 16px); padding: 3px 8px; border: 1px solid var(--radar-line); border-radius: var(--radius-control); background: var(--radar-panel); color: var(--radar-text-2); font-size: var(--step-xs); box-shadow: none; }
-.review-app .map-overlay-bar [data-testid="bomb-status"] { color: var(--radar-text); }
-/* The match bar already names the map. */
-.review-app .review-main-canvas .viewer-map-name { display: none; }
-.review-app .map-overlay-bar small { color: var(--radar-text-2); font-size: var(--step-xs); }
+/* HUD status bar (the stage's ops-screen readout): T name, alive pips, equipment | round clock and
+   the bomb, or the round's verdict once it is over | the CT mirror. An instrument: every readout
+   changes by a hard cut, no transition; the digits use the tabular number face. */
+.review-app .map-hud { flex: none; margin: 8px 8px 0; background: var(--radar-panel); color: var(--radar-text); font-size: var(--step-sm); line-height: 1.2; }
+.review-app .map-hud-inner { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 12px; height: 32px; padding: 0 10px; }
+.review-app .map-hud-team { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.review-app .map-hud-team.side-ct { flex-direction: row-reverse; }
+.review-app .map-hud-name { min-width: 0; overflow: hidden; color: var(--radar-text); font-weight: 600; white-space: nowrap; text-overflow: ellipsis; }
+.review-app .map-hud-side { flex: none; font-weight: 600; }
+.review-app .map-hud-team.side-t .map-hud-side { color: var(--t-text); }
+.review-app .map-hud-team.side-ct .map-hud-side { color: var(--ct-text); }
+/* One pip per player: filled while alive, an outline once dead; the CT row mirrors, dead pips inward. */
+.review-app .map-hud-pips { display: inline-flex; flex: none; gap: 2px; }
+.review-app .map-hud-team.side-ct .map-hud-pips { flex-direction: row-reverse; }
+.review-app .map-hud-pips i { width: 6px; height: 12px; border: 1px solid var(--t); }
+.review-app .map-hud-pips i.alive { background: var(--t); }
+.review-app .map-hud-team.side-ct .map-hud-pips i { border-color: var(--ct); }
+.review-app .map-hud-team.side-ct .map-hud-pips i.alive { background: var(--ct); }
+.review-app .map-hud-equipment { flex: none; color: var(--radar-text); font-family: var(--font-num, var(--font-body)); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.review-app .map-hud-equipment-label { color: var(--radar-text-2); font-family: var(--font-body); }
+.review-app .map-hud-centre { display: flex; align-items: baseline; justify-content: center; gap: 10px; min-width: 0; white-space: nowrap; }
+.review-app .map-hud-clock { color: var(--radar-text); font-family: var(--font-num, var(--font-body)); font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.review-app .map-hud-status { min-width: 0; max-width: 220px; overflow: hidden; color: var(--radar-text-2); text-overflow: ellipsis; }
+.review-app .map-hud-status b { color: var(--radar-text); font-weight: 600; }
+.review-app .map-hud-status b.map-hud-carrier { color: var(--t-text); }
+.review-app .map-hud-status.bomb-planted b { color: var(--danger-text); }
+.review-app .map-hud-verdict { font-weight: 600; }
+.review-app .map-hud-verdict.side-t { color: var(--t-text); }
+.review-app .map-hud-verdict.side-ct { color: var(--ct-text); }
+/* Narrower map columns (the bar is 16 px narrower than its column): the 装备 word goes first, then
+   the team names (the rosters beside the map name the teams too); below ~440 px of bar (1024 px
+   laptops, phones) the bomb drops to a second line. */
+@container map-stage (max-width: 576px) {
+  /* Hidden from sight only: a screen reader still hears what the value is. */
+  .review-app .map-hud-equipment-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+}
+@container map-stage (max-width: 516px) {
+  .review-app .map-hud-name { display: none; }
+}
+@container map-stage (max-width: 456px) {
+  .review-app .map-hud-inner { grid-template-areas: "t clock ct" "status status status"; grid-template-rows: 22px 17px; row-gap: 0; height: auto; padding: 3px 8px; }
+  .review-app .map-hud-centre { display: contents; }
+  .review-app .map-hud-team.side-t { grid-area: t; }
+  .review-app .map-hud-team.side-ct { grid-area: ct; }
+  .review-app .map-hud-clock { grid-area: clock; }
+  .review-app .map-hud-status { grid-area: status; justify-self: center; max-width: 100%; font-size: var(--step-xs); }
+}
+
+/* Kill feed: up to five rows from the last five seconds, newest first, right-aligned in a small
+   chamfered plate at the radar's top right, under the status bar. Rows appear and go: no animation,
+   and it never takes a click meant for the map. */
+.review-app .map-kill-feed { position: absolute; top: 54px; right: 14px; z-index: 3; display: grid; justify-items: end; max-width: min(300px, calc(100% - 28px)); margin: 0; padding: 2px 14px 2px 8px; list-style: none; background: var(--radar-panel); clip-path: polygon(0 0, calc(100% - 8px) 0, 100% 8px, 100% 100%, 0 100%); color: var(--radar-text-2); font-size: var(--step-sm); line-height: 20px; pointer-events: none; }
+.review-app .map-kill-feed:empty { display: none; }
+.review-app .map-kill-row { display: flex; align-items: baseline; gap: 5px; max-width: 100%; white-space: nowrap; }
+.review-app .map-kill-name { min-width: 0; max-width: 12ch; overflow: hidden; color: var(--radar-text); font-weight: 600; text-overflow: ellipsis; }
+.review-app .map-kill-name.side-t { color: var(--t-text); }
+.review-app .map-kill-name.side-ct { color: var(--ct-text); }
+.review-app .map-kill-cross { flex: none; color: var(--radar-text-2); }
+.review-app .map-kill-weapon { flex: none; }
+.review-app .map-kill-headshot { flex: none; color: var(--radar-text); }
+
+/* Floor choice, the reference-coordinates note and missing heights: a radar-panel chip at the radar's
+   top left, clear of the kill feed. */
+.review-app .map-tools { position: absolute; top: 6px; left: 6px; z-index: 3; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; max-width: max(240px, calc(100% - 330px)); padding: 3px 8px; background: var(--radar-panel); color: var(--radar-text-2); font-size: var(--step-xs); }
+.review-app .map-tools small { color: var(--radar-text-2); font-size: var(--step-xs); }
 .review-app .map-calibration-pill { padding: 0; border: 0; background: none; color: var(--radar-text-2); font-size: var(--step-xs); }
 .review-app .map-floor-control { display: flex; align-items: center; gap: 6px; color: var(--radar-text-2); }
 .review-app .map-floor-control select { height: 24px; min-height: 24px; padding: 0 4px; border: 1px solid var(--radar-line); background: var(--radar-bg); color: var(--radar-text); font-size: var(--step-xs); }
+/* With the two-line bar the feed starts lower; the floor chip moves to the radar's bottom left, its
+   notes dropped, so the two never meet in a narrow column. */
+@container map-stage (max-width: 456px) {
+  .review-app .map-kill-feed { top: 67px; }
+  .review-app .map-tools { top: auto; bottom: 6px; max-width: calc(100% - 12px); }
+  .review-app .map-tools :is(small, .map-calibration-pill) { display: none; }
+}
 .review-app .map-floor-control [data-testid="map-floor-label"] { color: var(--radar-text); }
 .review-app .map-highlight-card { position: absolute; right: 8px; bottom: 8px; z-index: 3; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; max-width: calc(100% - 16px); padding: 4px 4px 4px 10px; border: 1px solid var(--radar-line); border-radius: var(--radius-panel); background: var(--radar-panel); color: var(--radar-text); box-shadow: none; font-size: var(--step-body); }
 .review-app .map-highlight-card small { color: var(--radar-text-2); font-size: var(--step-xs); }
@@ -675,7 +819,7 @@
 .review-app .map-empty-state { border: 1px solid var(--radar-line); border-radius: var(--radius-panel); background: var(--radar-panel); color: var(--radar-text); box-shadow: none; }
 .review-app .map-empty-state span { color: var(--radar-text-2); }
 /* The map's own svg sizing must not reach the icons in its overlays. */
-.review-app .map-frame :is(.map-overlay-bar, .map-highlight-card) svg { position: static; width: 14px; height: 14px; min-height: 0; aspect-ratio: auto; flex: none; }
+.review-app .map-frame :is(.map-tools, .map-highlight-card) svg { position: static; width: 14px; height: 14px; min-height: 0; aspect-ratio: auto; flex: none; }
 
 /* Rosters: two small tables beside the map, a header bar per side (title in the side's text colour),
    zebra rows; the reviewed player's row is the amber one. Nested in the stage: no frame, no edge. */
@@ -683,12 +827,11 @@
 .review-app .side-roster { overflow: hidden; border: 0; border-radius: 0; background: var(--panel); box-shadow: none; }
 .review-app .side-roster .roster-head { height: 26px; min-height: 26px; padding: 0 8px; }
 .review-app .side-roster .roster-head .panel-bar-title { font-size: var(--step-sm); }
-.review-app .side-roster .roster-head > span { color: var(--ink-2); font-size: var(--step-xs); }
 .review-app .roster-side { font-weight: 600; }
 .review-app .review-main-canvas .roster-row { display: grid; grid-template-columns: 18px minmax(0, 1fr) 30px; align-items: center; gap: 6px; min-height: 26px; padding: 0 8px; border-top: 1px solid var(--line-subtle); background: var(--panel); color: var(--ink); font-size: var(--step-sm); }
 .review-app .review-main-canvas .roster-row:nth-child(odd) { background: var(--row-alt); }
 .review-app .review-main-canvas .roster-row:hover { background: var(--row-hover); }
-.review-app .review-main-canvas .roster-row.reviewed { background: var(--row-selected); box-shadow: inset 2px 0 0 var(--accent); }
+.review-app .review-main-canvas .roster-row.reviewed { background: var(--row-selected); }
 .review-app .roster-row.dead { color: var(--ink-3); text-decoration: none; }
 .review-app .roster-row.dead .roster-name { text-decoration: line-through; }
 /* Numbered side dots, the same numbers as on the map: dark numbers on the side fill. */
@@ -704,19 +847,42 @@
 .review-app .roster-reviewed-tag { color: var(--accent); font-size: var(--step-xs); font-weight: 400; }
 .review-app .roster-hp { color: var(--ink); text-align: right; font-variant-numeric: tabular-nums; }
 
-/* Map marks (SVG) on the radar canvas: side colours for players and kills; the reviewed player ringed in
-   amber, the same amber as their roster row. */
+/* Map marks (SVG) on the radar canvas: side colours for players and kills. The reviewed player is
+   locked in four corner brackets, drawn with its name over everything, grenade effects included (a
+   HUD mark); a clicked (highlighted) player keeps the dashed ring, so the two states stay distinct.
+   Marks are drawn in screen pixels (the dot group's scale). */
 .map-player-body { stroke: var(--radar-bg); stroke-width: 1.5px; }
 .map-player-dot.side-t .map-player-body { fill: var(--t); }
 .map-player-dot.side-ct .map-player-body { fill: var(--ct); }
+.map-lock-dot.side-t .map-player-body { fill: var(--t); }
+.map-lock-dot.side-ct .map-player-body { fill: var(--ct); }
 .map-player-index { fill: var(--radar-bg); font-family: var(--font-body); font-size: 9.5px; font-weight: 600; }
-/* The ring sits on a dark disc: a band of canvas between the gold T dot and the amber ring, so the
-   two near colours read as a dot in a ring, not one bigger T dot. */
-.map-player-reviewed { fill: var(--radar-bg); stroke: var(--accent); stroke-width: 2px; }
-.map-player-dot.reviewed .map-player-body { stroke: var(--radar-bg); stroke-width: 1.5px; }
+.map-lock path { fill: none; stroke: var(--radar-text); stroke-width: 2px; stroke-linecap: square; }
+/* Motion #1: on a jump to a suggestion (or a new reviewed player) the bracket starts 1.35x and snaps
+   onto the dot in 200 ms. A keyed one-shot keyframe on this inner group: the dot's per-frame position
+   stays an attribute on the outer group, and nothing here is a transition. */
+.map-lock { transform-box: fill-box; transform-origin: center; }
+.map-lock.snap { animation: map-lock-snap 200ms cubic-bezier(0.2, 0.9, 0.3, 1.2); }
+@keyframes map-lock-snap {
+  from { opacity: 0.4; transform: scale(1.35); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .map-lock.snap { animation: none; }
+}
 .map-player-highlight { fill: none; stroke: var(--radar-text-2); stroke-width: 1.5px; stroke-dasharray: 3 2; }
 .map-player-dead { stroke: var(--radar-text); stroke-width: 1.8px; }
-.review-app .map-player-name { fill: var(--radar-text); stroke: var(--radar-bg); stroke-width: 3px; paint-order: stroke; font-family: var(--font-body); font-size: 11px; font-weight: 600; }.map-bomb-marker rect { fill: var(--radar-text); stroke: var(--radar-bg); stroke-width: 1.5px; }
+/* Names sit on a small canvas-coloured plate, so a label never reads on top of a neighbour's dot. */
+.map-player-label-plate { fill: var(--radar-bg); }
+.review-app .map-player-name { fill: var(--radar-text); font-family: var(--font-body); font-size: 11px; font-weight: 600; }
+/* Kill traces: killer to victim in the killer's side colour at the kill moment, a pixel-constant
+   stroke; the opacity steps by age (an attribute from the tick difference, never a transition).
+   Dashed when one end is on the other floor. */
+.map-kill-traces { pointer-events: none; }
+.map-kill-trace { stroke: var(--radar-text-2); stroke-width: 2px; stroke-linecap: round; vector-effect: non-scaling-stroke; }
+.map-kill-trace.side-t { stroke: var(--t); }
+.map-kill-trace.side-ct { stroke: var(--ct); }
+.map-kill-trace.cross-floor { stroke-dasharray: 5 4; }
+.map-bomb-marker rect { fill: var(--radar-text); stroke: var(--radar-bg); stroke-width: 1.5px; }
 .map-bomb-marker circle { fill: none; stroke: var(--danger); stroke-width: 1.5px; }
 .review-app .parser-map-event circle { fill: var(--radar-panel); stroke: var(--radar-line); stroke-width: 1.2px; }
 .review-app .parser-map-event text { fill: var(--radar-text); font-size: 7.5px; font-weight: 600; }
@@ -734,8 +900,19 @@
 .fallback-map-text { fill: var(--radar-text-2); }
 
 /* "当前建议" strip: what is being watched, and the way back to its card (an info notice). */
+.review-app .review-finding-slot { min-height: 31px; }
+.review-app .review-finding-slot:empty { border-bottom: 1px solid var(--line-subtle); }
+/* Narrow screens: the strip wraps to two lines there anyway, so no empty band is reserved. */
+@media (max-width: 1000px) {
+  .review-app .review-finding-slot { min-height: 0; }
+  .review-app .review-finding-slot:empty { display: none; }
+}
 .review-app .review-finding-strip { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 10px; padding: 3px 4px 3px 9px; border-bottom: 1px solid var(--line-bold); border-left: 3px solid var(--accent); background: var(--panel); font-size: var(--step-body); }
-.review-app .review-finding-strip-label { color: var(--ink-2); font-size: var(--step-xs); }
+@media (min-width: 1001px) {
+  .review-app .review-finding-strip { flex-wrap: nowrap; }
+  .review-app .review-finding-strip strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .review-app .review-finding-strip small { flex: none; }
+}
 .review-app .review-finding-strip strong { min-width: 0; font-weight: 600; overflow-wrap: anywhere; }
 .review-app .review-finding-strip small { color: var(--ink-2); font-size: var(--step-xs); }
 .review-app .review-finding-strip-time { font-variant-numeric: tabular-nums; }
@@ -756,8 +933,9 @@
 .review-app .timeline-lane-track { height: 24px; border: 0; background: none; }
 .review-app .round-lane::before { content: ""; position: absolute; top: 6px; bottom: 6px; left: 0; width: var(--timeline-freeze-end, 0%); background: var(--line-subtle); pointer-events: none; }
 .review-app .round-duration-track { left: 36px; right: 36px; height: 1px; background: var(--line-bold); }
-.review-app .round-boundary-marker { min-width: 32px; min-height: 24px; padding: 0 4px; border: 0; border-radius: 0; background: var(--panel); color: var(--link); font-size: var(--step-xs); text-decoration: underline; text-decoration-color: var(--control-line); text-underline-offset: 3px; box-shadow: none; }
-.review-app .round-boundary-marker:is(:hover, :focus-visible) { color: var(--link-hover); text-decoration-color: var(--accent); }
+/* 开始 / 结束: plain clickable labels (S14: no underline), the row-hover fill under the pointer. */
+.review-app .round-boundary-marker { min-width: 32px; min-height: 24px; padding: 0 4px; border: 0; border-radius: 0; background: var(--panel); color: var(--ink); font-size: var(--step-xs); text-decoration: none; box-shadow: none; }
+.review-app .round-boundary-marker:hover { background: var(--row-hover); color: var(--ink); }
 .review-app .timeline-current-spine { width: 2px; margin-left: -1px; background: var(--accent); box-shadow: none; }
 /* Mirror check: the playhead keeps its line only; the transport right under it already shows the clock. */
 .review-app .timeline-current-spine span { display: none; }
@@ -773,9 +951,11 @@
 .review-app .timeline-lane-track .parser-event-marker:is(.own-kill, .has-own-kill) { z-index: 1; }
 .review-app .timeline-lane-track .parser-event-marker:is(.own-death, .has-own-death) { z-index: 2; }
 .review-app .timeline-lane-track :is(.event-marker, .parser-event-marker):is(:hover, :focus-visible) { z-index: 4; }
-.review-app .timeline-lane-track .event-marker { width: 6px; height: 16px; padding: 0; border: 0; border-radius: 0; background: var(--danger); box-shadow: 0 0 0 2px var(--panel); }
-.review-app .timeline-lane-track .event-marker.medium { background: var(--ink); }
-.review-app .timeline-lane-track .event-marker:is(.low, .info) { background: var(--ink-3); }
+/* S14 fix: the suggestions are what the timeline is for, so their marks are the amber ones (solid,
+   wider than the event boxes are tall-thin); lower-severity ones keep the amber at its line strength. */
+.review-app .timeline-lane-track .event-marker { width: 8px; height: 18px; padding: 0; border: 0; border-radius: 0; background: var(--accent); box-shadow: 0 0 0 2px var(--panel); }
+.review-app .timeline-lane-track .event-marker.medium { background: var(--accent); }
+.review-app .timeline-lane-track .event-marker:is(.low, .info) { background: var(--accent-line); }
 .review-app .timeline-lane-track :is(.event-marker, .parser-event-marker):focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 /* Hit areas of at least 24 × 24 that stay inside their 24px lane. */
 .review-app :is(.event-marker, .parser-event-marker)::before { content: ""; position: absolute; inset: -4px -5px; }
@@ -846,7 +1026,7 @@
 .demo-progress-steps li { display: flex; flex: 1; align-items: center; gap: 8px; min-width: 0; padding: 6px 10px; color: var(--ink-3); font-size: var(--step-body); }
 .demo-progress-steps li + li { border-left: 1px solid var(--line-subtle); }
 .demo-progress-steps li[data-state="done"] { color: var(--ok-text); }
-.demo-progress-steps li[data-state="current"] { background: var(--row-selected); box-shadow: inset 2px 0 0 var(--accent); color: var(--ink); font-weight: 600; }
+.demo-progress-steps li[data-state="current"] { background: var(--row-selected); color: var(--ink); font-weight: 600; }
 .demo-progress-marker { display: grid; flex: none; place-items: center; width: 18px; height: 18px; border: 1px solid currentColor; border-radius: 50%; font-size: var(--step-xs); font-weight: 400; }
 .demo-state-meta { color: var(--ink-2); font-size: var(--step-xs); font-variant-numeric: tabular-nums; }
 .demo-state-warning { padding: 6px 10px; border: 0; border-left: 3px solid var(--t); background: none; color: var(--ink); font-size: var(--step-body); }
@@ -885,8 +1065,18 @@
   .review-app .review-main-canvas.showing-video { aspect-ratio: 16 / 9; min-height: 240px; max-height: 520px; }
   .review-app .review-main-canvas.showing-video > .first-person-panel { position: absolute; inset: 0; }
   .review-app .review-main-canvas .replay-panel { grid-template-columns: minmax(0, 1fr); height: auto; }
-  .review-app .review-main-canvas .map-frame { height: auto; aspect-ratio: 1 / 1; max-height: min(560px, 72svh); }
+  .review-app .review-main-canvas .map-stage { height: auto; }
+  .review-app .review-main-canvas .map-frame { flex: none; height: auto; aspect-ratio: 1 / 1; max-height: min(560px, 72svh); }
   .review-app .review-main-canvas .player-list { grid-template-columns: repeat(2, minmax(0, 1fr)); border-top: 1px solid var(--line-bold); border-left: 0; }
+}
+/* Phones: the kill feed leaves the radar for one line under it. The line keeps its height when no
+   kill is recent, so the rosters below do not jump during playback. */
+@media (max-width: 767px) {
+  .review-app .map-kill-feed,
+  .review-app .map-kill-feed:empty { position: static; display: flex; flex-wrap: nowrap; justify-content: flex-start; gap: 14px; max-width: none; min-height: 26px; margin: 0 8px 8px; padding: 3px 8px; overflow: hidden; clip-path: none; }
+  .review-app .map-kill-feed:empty { background: transparent; }
+  .review-app .map-kill-row { flex: none; }
+  .review-app .map-tools { max-width: calc(100% - 12px); }
 }
 /* Phone: the round history scrolls inside its panel, a square map with the rosters under it, and the
    round and player kept in the transport because the header has scrolled away by then. */
@@ -897,9 +1087,8 @@
   .review-app .review-main-canvas .player-list { gap: 6px; padding: 6px; }
   .review-app .review-main-canvas .roster-row { grid-template-columns: 18px minmax(0, 1fr) 26px; gap: 4px; padding: 0 6px; }
   .review-app .side-roster .roster-head { padding: 0 6px; }
-  .review-app .side-roster .roster-head > span { display: none; }
-  .review-app .map-overlay-bar { top: 6px; right: 6px; max-width: calc(100% - 12px); padding: 3px 6px; }
-  .review-app .map-overlay-bar small, .review-app .map-overlay-bar .map-calibration-pill { display: none; }
+  .review-app .map-tools { padding: 3px 6px; }
+  .review-app .map-tools :is(small, .map-calibration-pill) { display: none; }
   .review-app .timeline-panel { padding: 6px 8px 0; }
   /* Too narrow for glyphs: each event (or group) is a 3 px tick in its colour, not tappable here. */
   .review-app .timeline-lane-track .parser-event-marker { width: 3px; height: 12px; border-radius: 0; background: var(--ink-3); box-shadow: none; font-size: 0; pointer-events: none; }
@@ -960,10 +1149,21 @@
    The banner is the header panel's body: the final score as the page's one set of hero numerals
    (amber, the subject's own vernacular), half scores in the colour of the side each team played.
    Everything else is panels, header bars and zebra tables. */
-/* Score banner: replaces the match bar once the replay is loaded; the reviewed player sits under it. */
+/* Score banner: replaces the match bar once the replay is loaded. The centred hero score, then one
+   footer in the header-bar fill (S14): the match facts left; the reviewed player, 查看最值得回看的一条
+   and 切换 / 身份设置 right. When the line is too short the two halves wrap into two bars; phones stack
+   as before. The priority count beside the player is gone: the button and the column say it. */
 .review-app .review-header.has-banner { display: block; }
 .review-app .review-header.has-banner > .personal-review-panel { border-top: 1px solid var(--line-subtle); }
+.review-app .review-header.has-banner .personal-review-metrics { display: none; }
 .match-banner { padding: 14px 16px 10px; background: var(--panel); color: var(--ink); }
+@media (min-width: 701px) {
+  .review-app .review-header.has-banner { display: flex; flex-wrap: wrap; }
+  /* The banner's board and meta join the header's own flex row next to the reviewed player. */
+  .review-app .review-header.has-banner > .match-banner { display: contents; }
+  .review-app .review-header.has-banner .match-banner-board { flex: 0 0 100%; padding: 14px 16px; }
+  .review-app .review-header.has-banner .match-banner-meta { flex: 1 1 auto; align-items: center; min-height: 33px; margin: 0; padding: 4px 10px; border-top: 1px solid var(--line-subtle); background: var(--panel-head); }
+}
 /* A scoreline: each team's name and halves lean in towards the score. */
 .match-banner-board { display: grid; grid-template-columns: minmax(0, 1fr) auto auto auto minmax(0, 1fr); align-items: center; column-gap: 20px; }
 .match-banner-team { display: grid; gap: 5px; min-width: 0; }
@@ -981,6 +1181,8 @@
 /* The scores are the shared hero numerals (.hero-num: amber, 40 px, 30 px on phones); both amber, the
    numbers already say who leads. The colon stays quiet. */
 .match-banner-colon { color: var(--ink-3); font-size: 28px; line-height: 1; }
+/* S14 fix: one step under the hero size on desktop, so the score heads the page without outshouting the map. */
+@media (min-width: 701px) { .match-banner .match-banner-score { font-size: 32px; } }
 /* Mirror check (S13): no rule between the scoreline and the facts; the gap separates them. */
 .match-banner-meta { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 16px; margin-top: 16px; font-size: var(--step-sm); font-variant-numeric: tabular-nums; }
 .match-banner-meta:first-child { margin-top: 0; }
@@ -1013,8 +1215,8 @@
 .scoreboard-table thead th.scoreboard-adr-head { width: 13%; }
 .scoreboard-table tbody tr:nth-child(even) > th { background: var(--row-alt); }
 .scoreboard-table tbody tr:hover > th { background: var(--row-hover); }
-/* The reviewed player's row: the amber tint and the 2 px amber mark at its left. */
-.scoreboard-table tbody tr.selected > th { background: var(--row-selected); box-shadow: inset 2px 0 0 var(--accent); }
+/* The reviewed player's row: the selected fill and "复盘中" in amber; no side mark (S14). */
+.scoreboard-table tbody tr.selected > th { background: var(--row-selected); }
 .scoreboard-table tbody tr:last-child > th { border-bottom: 0; }
 .scoreboard-player-name { font-weight: 600; }
 .scoreboard-reviewing { margin-left: 8px; color: var(--accent); font-size: var(--step-sm); font-weight: 400; }
@@ -1052,6 +1254,22 @@
   /* The table runs on past the screen: a hard edge where it is cut says there is more to swipe to. */
   .scoreboard-scroll { border-right: 2px solid var(--line-bold); }
   .first-person-explainer { padding: 16px; }
+}
+/* 390 px: the 计分板 fits the screen instead of scrolling. No min-width; the opening-duel columns and
+   the ADR bars go (the ADR figure stays); heads may wrap; "复盘中" drops under the name. */
+@media (max-width: 480px) {
+  .scoreboard-table { min-width: 0; }
+  .scoreboard-table .scoreboard-opening,
+  .scoreboard-adr-bar { display: none; }
+  .scoreboard-table thead th { white-space: normal; line-height: 1.2; vertical-align: bottom; }
+  .scoreboard-table thead th:first-child,
+  .scoreboard-table thead th:not(:first-child),
+  .scoreboard-table thead th.scoreboard-adr-head { width: auto; }
+  .scoreboard-table :is(th, td) { padding-inline: 5px; }
+  .scoreboard-table tbody th[scope="row"] { padding-left: 8px; white-space: normal; overflow-wrap: anywhere; }
+  .scoreboard-adr > .num { min-width: 0; }
+  .scoreboard-reviewing { display: block; margin-left: 0; line-height: 1.2; }
+  .scoreboard-scroll { border-right: 0; }
 }
 
 /* === S9 UI-B: 数据 section (spec S9 B, retoned S13) ===
@@ -1126,7 +1344,8 @@
 /* 开局对枪: the two counts, then one compact zebra row per duel. */
 .opening-duels-score { display: flex; flex-wrap: wrap; gap: 4px 24px; margin: 0; padding: 8px 12px; }
 .opening-duel-list { border-top: 1px solid var(--line-subtle); }
-.opening-duel-list > li { display: grid; grid-template-columns: 84px 20px minmax(0, 1fr) auto; align-items: center; gap: 8px; min-height: 30px; padding: 0 12px; }
+/* Each row jumps to its duel: the round label is a .row-link stretched over the row (no underline). */
+.opening-duel-list > li { position: relative; display: grid; grid-template-columns: 84px 20px minmax(0, 1fr) auto; align-items: center; gap: 8px; min-height: 30px; padding: 0 12px; }
 .opening-duel-opponent { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .opening-duel-time { color: var(--ink-2); }
 
@@ -1149,7 +1368,7 @@
 }
 
 /* === S10 UI-ROSTER === */
-/* Live roster: a panel per side ("队名 阵营" + live equipment value), two lines per player.
+/* Live roster: a panel per side ("队名 阵营"; the side's equipment value is in the map's status bar), two lines per player.
    Line 1: number, name, C4, money, K/D. Line 2 (indented under the name): HP bar + HP, armour,
    weapon, kit, grenades; or how a dead player died. Icons are data only, in ink-2. */
 @media (min-width: 1181px) {
@@ -1163,7 +1382,6 @@
 .review-app .live-roster .roster-head { gap: 8px; }
 .review-app .live-roster .roster-head .panel-bar-title { display: flex; align-items: baseline; gap: 5px; min-width: 0; }
 .review-app .live-roster .roster-team-name { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.review-app .live-roster .roster-head > .roster-equipment { flex: none; color: var(--ink); font-size: var(--step-xs); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .review-app .review-main-canvas .roster-row.live-roster-row { display: block; min-height: 0; padding: 2px 8px 3px; }
 .review-app .roster-row.live-roster-row.dead .roster-name { text-decoration: none; }
 /* Dead: the words stay readable (ink-2, AA on every row background); only the number dot fades. */
@@ -1176,8 +1394,9 @@
 .review-app .live-roster-row .roster-kd { min-width: 30px; color: var(--ink-2); text-align: right; }
 .review-app .live-roster-row .roster-line-detail { display: flex; align-items: center; gap: 6px; min-width: 0; min-height: 17px; padding-left: 24px; color: var(--ink-2); font-size: var(--step-xs); }
 /* HP is the shared segmented meter (.seg-meter: ten blocks, the fill's inline width already on the
-   memoised row is the only thing that changes); here only its size. */
-.review-app .live-roster-row .roster-hp-bar { flex: none; width: 60px; }
+   memoised row is the only thing that changes); here only its size: 80 x 7 (60 px in the laptop column
+   and 40 px on phones, where the weapon name would not fit beside a longer one). */
+.review-app .live-roster-row .roster-hp-bar { flex: none; width: 80px; height: 7px; }
 .review-app .live-roster-row .roster-hp { flex: none; min-width: 20px; color: var(--ink); text-align: left; font-variant-numeric: tabular-nums; }
 .review-app .live-roster-row .roster-weapon { flex: 1 1 auto; min-width: 0; overflow: hidden; color: var(--ink); white-space: nowrap; text-overflow: ellipsis; }
 .review-app .live-roster-row .roster-grenades { display: inline-flex; flex: none; gap: 1px; }
@@ -1194,19 +1413,20 @@
   .review-app .live-roster-row .roster-line-main { min-height: 18px; line-height: 18px; }
   .review-app .live-roster-row .roster-name { min-height: 18px; }
   .review-app .live-roster-row .roster-line-detail { min-height: 14px; line-height: 14px; }
+  /* The 244 px column: a 60 px meter, so the weapon name still fits. */
+  .review-app .live-roster-row .roster-hp-bar { width: 60px; }
 }
 /* The finder's "只看": everyone else on the map fades (the opacity itself is set on the dot). */
-.review-app .map-player-dot.focus-dimmed .map-player-name { display: none; }
+.review-app :is(.map-player-dot, .map-lock-marker).focus-dimmed .map-player-label { display: none; }
 @media (max-width: 700px) {
   .review-app .review-main-canvas .roster-row.live-roster-row { padding: 2px 6px 3px; }
-  .review-app .live-roster .roster-head > .roster-equipment { display: inline; }
   .review-app .live-roster-row .roster-line-main { gap: 4px; }
   .review-app .live-roster-row .roster-stats { gap: 5px; }
   .review-app .live-roster-row .roster-kd { min-width: 0; }
   .review-app .live-roster-row .roster-line-detail { gap: 4px; padding-left: 0; }
   .review-app .live-roster-row .roster-hp-bar { width: 40px; }
   /* The death line wraps instead of losing the weapon. */
-  .review-app .live-roster-row .roster-death { overflow: visible; white-space: normal; }
+  .review-app .live-roster-row .roster-death { overflow: visible; white-space: normal; text-wrap: pretty; }
 }
 
 /* === S10 UI-UTIL === */
@@ -1432,5 +1652,46 @@
 .review-app .coaching-panel .coaching-top-header small { color: var(--ink-3); font-size: var(--step-sm); }
 .review-app .coaching-panel .coaching-top-group { border-bottom: 1px solid var(--line-bold); }
 /* Chips: square amber tags, a thin amber frame, no fill. */
-.review-app .coaching-feed-chip { display: inline-block; margin: 0 0 0 6px; padding: 0 4px; border: 1px solid var(--accent-line); border-radius: 0; color: var(--accent); font-size: 11px; font-weight: 400; line-height: 15px; font-variant-numeric: tabular-nums; white-space: nowrap; vertical-align: 1px; }
+/* S14 fix: weapon and players-alive chips are neutral facts; only 回合输了 keeps the amber. */
+.review-app .coaching-feed-chip { display: inline-block; margin: 0 0 0 6px; padding: 0 4px; border: 1px solid var(--line-bold); border-radius: 0; color: var(--ink-2); font-size: 11px; font-weight: 400; line-height: 15px; font-variant-numeric: tabular-nums; white-space: nowrap; vertical-align: 1px; }
+.review-app .coaching-feed-chip.is-loss { border-color: var(--accent-line); color: var(--accent); }
 .review-app .coaching-panel .coaching-card-reason { max-width: 62ch; margin: 1px 0 0; color: var(--ink-2); font-size: var(--step-sm); line-height: 18px; font-variant-numeric: tabular-nums; }
+
+/* === S14 MOTION === button press (motion #1) and the demo page's first entry (motion #3), spec S14.
+   Hand-feel: a hardware terminal, a short snap. Nothing here sits on anything that changes per
+   animation frame, and reduced motion turns both off (transition: none / animation: none). */
+
+/* #1 Press: a button sinks to 0.97 at once (80 ms) and snaps back (180 ms, a slight overshoot).
+   `:not(:disabled)` lifts this over the generic `button:not(:disabled)` transition in globals.css,
+   so its colour fades are listed again here. Tabs, segments and round cells keep their own rules. */
+:is(.primary-button, .secondary-button, .icon-button, .danger-button):not(:disabled) {
+  transition: border-color var(--motion), background-color var(--motion), color var(--motion), transform 180ms cubic-bezier(0.2, 0.9, 0.3, 1.2);
+}
+:is(.primary-button, .secondary-button, .icon-button, .danger-button):not(:disabled):active {
+  transform: scale(0.97);
+  transition-duration: 100ms, 100ms, 100ms, 80ms;
+  transition-timing-function: ease-out;
+}
+
+/* #3 First entry: the demo page's workspace carries .is-entering for its first 700 ms only
+   (lib/use-first-entry.ts adds it once, at first mount, and takes it off), so nothing replays on
+   re-render, round change, playback, a tab switch or a reload. The map stage first, the HUD
+   status bar 60 ms later, the right column 60 ms after that: 300 ms each, 420 ms in all.
+   `backwards` only: once done nothing is left behind (a .panel must not keep a transform). */
+@keyframes s14-entry {
+  from { opacity: 0; transform: translateY(8px); }
+}
+@keyframes s14-entry-hud {
+  from { opacity: 0; transform: translateY(-6px); }
+}
+.review-layout.is-entering .review-stage { animation: s14-entry 300ms cubic-bezier(0.2, 0.8, 0.2, 1) backwards; }
+/* The HUD drops in from above, onto the map it sits on. */
+.review-layout.is-entering .map-hud { animation: s14-entry-hud 300ms cubic-bezier(0.2, 0.8, 0.2, 1) 60ms backwards; }
+/* The right column (本回合 in it: see the V-B2 section). */
+.review-layout.is-entering .coaching-panel { animation: s14-entry 300ms cubic-bezier(0.2, 0.8, 0.2, 1) 120ms backwards; }
+
+@media (prefers-reduced-motion: reduce) {
+  :is(.primary-button, .secondary-button, .icon-button, .danger-button):not(:disabled) { transition: none; }
+  :is(.primary-button, .secondary-button, .icon-button, .danger-button):not(:disabled):active { transform: none; }
+  .review-layout.is-entering :is(.review-stage, .map-hud, .coaching-panel) { animation: none; }
+}

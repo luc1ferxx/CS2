@@ -39,6 +39,9 @@ const {
   parserEventPresentation,
   parserEventPresentationForType,
   recentMapParserEvents,
+  recentKills,
+  killTraceOpacity,
+  mapKillFacts,
   timelineParserEventMarkersForRound,
   clusterTimelineMarkers,
   weaponName
@@ -167,6 +170,53 @@ const parserEvents = [
     64
   );
   assert.deepEqual(normalize(nearby.map((event) => event.id)), ["smoke-1"]);
+}
+
+{
+  // The map's kill traces and feed: kills of this round from their own tick on, newest first, capped.
+  const kills = [
+    replayEvent({ id: "k-old", type: "kill", tick: 100, label: "old" }),
+    replayEvent({ id: "k-a", type: "kill", tick: 300, label: "a" }),
+    replayEvent({ id: "k-b", type: "kill", tick: 340, label: "b" }),
+    replayEvent({ id: "k-c", type: "kill", tick: 380, label: "c" }),
+    replayEvent({ id: "k-d", type: "kill", tick: 400, label: "d" }),
+    replayEvent({ id: "k-e", type: "kill", tick: 410, label: "e" }),
+    replayEvent({ id: "k-future", type: "kill", tick: 421, label: "future" }),
+    replayEvent({ id: "k-other-round", type: "kill", tick: 405, roundNumber: 2, label: "other round" }),
+    replayEvent({ id: "plant", type: "bomb_planted", tick: 415, label: "plant" })
+  ];
+  assert.deepEqual(normalize(recentKills(kills, 1, 420, 64, 2, 4).map((event) => event.id)), ["k-e", "k-d", "k-c", "k-b"]);
+  // The window counts back from the playhead only: 128 ticks at 64 tick/s.
+  assert.deepEqual(normalize(recentKills(kills, 1, 420, 64, 2, 10).map((event) => event.id)), ["k-e", "k-d", "k-c", "k-b", "k-a"]);
+  assert.deepEqual(normalize(recentKills(kills, 1, 420, 64, 5, 5).map((event) => event.id)), ["k-e", "k-d", "k-c", "k-b", "k-a"]);
+  assert.deepEqual(normalize(recentKills(kills, 1, 299, 64, 2, 4).map((event) => event.id)), []);
+  assert.deepEqual(normalize(recentKills(kills, 2, 420, 64, 2, 4).map((event) => event.id)), ["k-other-round"]);
+
+  // Hard steps by age over the 2 s window, never a tween.
+  assert.equal(killTraceOpacity(0, 64), 0.95);
+  assert.equal(killTraceOpacity(42, 64), 0.95);
+  assert.equal(killTraceOpacity(43, 64), 0.7);
+  assert.equal(killTraceOpacity(85, 64), 0.7);
+  assert.equal(killTraceOpacity(86, 64), 0.45);
+  assert.equal(killTraceOpacity(128, 64), 0.45);
+
+  // Parser kills name both sides; mock kills only name the killer as the event's player.
+  const parser = replayEvent({
+    id: "k-parser", type: "kill", tick: 500, label: "PR killed magixx",
+    metadata: { attackerId: "t-1", attackerName: "PR", attackerSide: "T", victimId: "ct-1", victimName: "magixx",
+      victimSide: "CT", weapon: "weapon_glock", headshot: true }
+  });
+  assert.deepEqual(normalize(mapKillFacts(parser)), {
+    id: "k-parser", tick: 500, attackerId: "t-1", attackerName: "PR", attackerSide: "T",
+    victimId: "ct-1", victimName: "magixx", victimSide: "CT", weapon: "格洛克", headshot: true
+  });
+  const mock = { ...replayEvent({ id: "k-mock", type: "kill", tick: 416, label: "mock",
+    metadata: { victimId: "t-entry", victimName: "aimclub.entry", weapon: "m4a1" } }),
+  playerId: "ct-anchor", playerName: "ct.anchor", side: "CT" };
+  assert.deepEqual(normalize(mapKillFacts(mock)), {
+    id: "k-mock", tick: 416, attackerId: "ct-anchor", attackerName: "ct.anchor", attackerSide: "CT",
+    victimId: "t-entry", victimName: "aimclub.entry", victimSide: null, weapon: "M4A4", headshot: false
+  });
 }
 
 function replayEvent(overrides) {

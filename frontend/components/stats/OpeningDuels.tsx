@@ -33,7 +33,8 @@ export function OpeningDuels({ replay, duels, onSelectDuel }: OpeningDuelsProps)
             const outcome = duel.won ? "胜" : "负";
             return (
               <li key={`${duel.roundNumber}-${duel.tick}`}>
-                <button type="button" className="text-button"
+                {/* The whole row is the button (stretched over it): a plain row, no underline. */}
+                <button type="button" className="row-link stretched-link opening-duel-round"
                   aria-label={`第 ${duel.roundNumber} 回合 ${time} 开局对枪${outcome}${duel.opponentName ? `，对手 ${duel.opponentName}` : ""}`}
                   onClick={() => onSelectDuel(duel)}>
                   第 {duel.roundNumber} 回合
