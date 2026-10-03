@@ -1725,6 +1725,37 @@ select:disabled {
   color: var(--accent);
 }
 
+/* The demo page's breadcrumb lives in the bar (S15): 我的比赛 › the match, which is the current page
+   in plain bright text and the one part that gives way (an ellipsis) when the bar runs short. */
+.topbar-trail {
+  gap: 8px;
+  min-width: 0;
+}
+
+/* The match name gives way, never the account at the right. */
+.topbar:has(.topbar-trail) .topbar-actions {
+  flex: none;
+}
+
+.topbar-trail a {
+  flex: none;
+}
+
+.topbar-trail-separator {
+  flex: none;
+  color: var(--topbar-muted);
+  font-size: var(--step-body);
+}
+
+.topbar-trail-current {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--topbar-text);
+  font-size: var(--step-body);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .topbar-actions,
 .session-controls {
   display: flex;

@@ -36,6 +36,9 @@ interface RoundStripProps extends RoundModelProps {
   economies: readonly RoundEconomy[];
   // Team names for the economy rows (matchSummary); 队伍 A / 队伍 B without them.
   teams?: MatchTeam[];
+  // The workbench dock (S15): one row of numbered cells and a two-select economy filter at its end,
+  // no header bar, economy rows, icons or legend (each buy stays in the cell's name and title).
+  compact?: boolean;
   onSelectRound: (roundNumber: number) => void;
 }
 
@@ -99,7 +102,7 @@ const ROUND_END_ICONS: Record<Exclude<RoundEndReason, "other">, LucideIcon> = {
  * changes the shared round or tick.
  */
 export const RoundStrip = memo(function RoundStrip(props: RoundStripProps) {
-  const { replay, selectedRound, economies, teams, onSelectRound } = props;
+  const { replay, selectedRound, economies, teams, compact = false, onSelectRound } = props;
   const model = useRoundModel(props);
   const endReasons = useMemo(
     () => new Map(replay.rounds.map((round) => [round.roundNumber, roundEndReason(round)])),
@@ -194,6 +197,14 @@ export const RoundStrip = memo(function RoundStrip(props: RoundStripProps) {
   }
 
   if (model.rounds.length === 0) {
+    if (compact) {
+      return (
+        <section className="round-strip compact empty" aria-labelledby="round-strip-title">
+          <h2 className="visually-hidden" id="round-strip-title">回合记录</h2>
+          <p className="round-review-empty"><strong>暂无回合数据</strong><span>这场比赛暂时无法按回合跳转。</span></p>
+        </section>
+      );
+    }
     return (
       <section className="panel round-strip empty" aria-labelledby="round-strip-title">
         <div className="panel-bar round-strip-head"><h2 className="panel-bar-title" id="round-strip-title">回合记录</h2></div>
@@ -203,6 +214,84 @@ export const RoundStrip = memo(function RoundStrip(props: RoundStripProps) {
   }
 
   const matchingCount = filtering ? model.rounds.filter((round) => matchesFilter(round.roundNumber)).length : 0;
+  // Compact keeps the cells' buy in their names only, so the strip never grows the economy rows.
+  const economyRows = showEconomy && !compact;
+
+  const track = (
+    <div ref={trackRef} role="group" aria-label="回合列表"
+      className={`round-strip-track${economyRows ? " has-economy" : ""}${filtering ? ` filter-team-${filterTeam.toLowerCase()}` : ""}`}>
+      {economyRows ? (
+        // Sticky while the rounds scroll sideways: whose buy each of the two rows under the cells is.
+        <div ref={teamsColumnRef} className="round-strip-teams" aria-hidden="true">
+          <span className="round-strip-team team-a" title={teamNames.A}>{teamNames.A}</span>
+          <span className="round-strip-team team-b" title={teamNames.B}>{teamNames.B}</span>
+        </div>
+      ) : null}
+      {model.rounds.map((round, roundIndex) => {
+        const reason = endReasons.get(round.roundNumber) ?? "other";
+        // Compact cells carry their number on the fill instead; the reason stays in the name and title.
+        const ReasonIcon = reason === "other" || compact ? null : ROUND_END_ICONS[reason];
+        const economy = economyByRound.get(round.roundNumber) ?? null;
+        const faded = !matchesFilter(round.roundNumber);
+        return (
+        <Fragment key={round.roundNumber}>
+          {round.startsNewHalf && roundIndex > 0 ? (
+            <span className="round-strip-half" aria-hidden="true" title="交换攻守" />
+          ) : null}
+          <button
+            ref={(element) => {
+              if (element) {
+                roundButtonRefs.current.set(round.roundNumber, element);
+              } else {
+                roundButtonRefs.current.delete(round.roundNumber);
+              }
+            }}
+            className={`${roundCellClass(round)}${faded ? " econ-faded" : ""}`}
+            type="button"
+            onClick={() => onSelectRound(round.roundNumber)}
+            onKeyDown={(event) => handleRoundKeyDown(event, roundIndex)}
+            aria-current={round.isCurrent ? "step" : undefined}
+            aria-pressed={round.isSelected}
+            tabIndex={round.isSelected ? 0 : -1}
+            aria-label={roundAriaLabel(round, reason, economy, teamNames, faded)}
+            title={roundTitle(round, reason, economy, teamNames)}
+          >
+            <span className="round-strip-fill" aria-hidden="true">
+              {ReasonIcon ? <ReasonIcon className="round-strip-reason" size={14} strokeWidth={2.25} /> : null}
+            </span>
+            <span className="round-strip-number">{round.roundNumber}</span>
+            <span className="round-strip-marks" aria-hidden="true">
+              {round.playerDeath.tick !== null ? <X className="round-strip-death" size={compact ? 9 : 13} strokeWidth={3} /> : null}
+              <SuggestionMarks count={round.coachingEventCount} />
+            </span>
+            {economyRows ? TEAM_ROWS.map((key, teamIndex) => {
+              const kind = economy?.teams[teamIndex]?.kind ?? null;
+              return (
+                <span key={key} className={`round-strip-econ team-${key.toLowerCase()}`} aria-hidden="true">
+                  {kind ? ECONOMY_LABELS[kind].short : ""}
+                </span>
+              );
+            }) : null}
+          </button>
+        </Fragment>
+        );
+      })}
+    </div>
+  );
+
+  if (compact) {
+    // No panel chrome: the dock it sits in is the panel. The heading stays for screen readers.
+    return (
+      <section className="round-strip compact" aria-labelledby="round-strip-title">
+        <h2 className="visually-hidden" id="round-strip-title">回合记录</h2>
+        {track}
+        {showEconomy ? (
+          <CompactEconomyFilter kind={filterKind} team={filterTeam} names={teamNames} matchingCount={matchingCount}
+            onKindChange={setFilterKind} onTeamChange={setFilterTeam} />
+        ) : null}
+      </section>
+    );
+  }
 
   return (
     <section className="panel round-strip" aria-labelledby="round-strip-title">
@@ -213,64 +302,7 @@ export const RoundStrip = memo(function RoundStrip(props: RoundStripProps) {
             onKindChange={setFilterKind} onTeamChange={setFilterTeam} />
         ) : null}
       </div>
-      <div ref={trackRef} role="group" aria-label="回合列表"
-        className={`round-strip-track${showEconomy ? " has-economy" : ""}${filtering ? ` filter-team-${filterTeam.toLowerCase()}` : ""}`}>
-        {showEconomy ? (
-          // Sticky while the rounds scroll sideways: whose buy each of the two rows under the cells is.
-          <div ref={teamsColumnRef} className="round-strip-teams" aria-hidden="true">
-            <span className="round-strip-team team-a" title={teamNames.A}>{teamNames.A}</span>
-            <span className="round-strip-team team-b" title={teamNames.B}>{teamNames.B}</span>
-          </div>
-        ) : null}
-        {model.rounds.map((round, roundIndex) => {
-          const reason = endReasons.get(round.roundNumber) ?? "other";
-          const ReasonIcon = reason === "other" ? null : ROUND_END_ICONS[reason];
-          const economy = economyByRound.get(round.roundNumber) ?? null;
-          const faded = !matchesFilter(round.roundNumber);
-          return (
-          <Fragment key={round.roundNumber}>
-            {round.startsNewHalf && roundIndex > 0 ? (
-              <span className="round-strip-half" aria-hidden="true" title="交换攻守" />
-            ) : null}
-            <button
-              ref={(element) => {
-                if (element) {
-                  roundButtonRefs.current.set(round.roundNumber, element);
-                } else {
-                  roundButtonRefs.current.delete(round.roundNumber);
-                }
-              }}
-              className={`${roundCellClass(round)}${faded ? " econ-faded" : ""}`}
-              type="button"
-              onClick={() => onSelectRound(round.roundNumber)}
-              onKeyDown={(event) => handleRoundKeyDown(event, roundIndex)}
-              aria-current={round.isCurrent ? "step" : undefined}
-              aria-pressed={round.isSelected}
-              tabIndex={round.isSelected ? 0 : -1}
-              aria-label={roundAriaLabel(round, reason, economy, teamNames, faded)}
-              title={roundTitle(round, reason, economy, teamNames)}
-            >
-              <span className="round-strip-fill" aria-hidden="true">
-                {ReasonIcon ? <ReasonIcon className="round-strip-reason" size={14} strokeWidth={2.25} /> : null}
-              </span>
-              <span className="round-strip-number">{round.roundNumber}</span>
-              <span className="round-strip-marks" aria-hidden="true">
-                {round.playerDeath.tick !== null ? <X className="round-strip-death" size={13} strokeWidth={3} /> : null}
-                <SuggestionMarks count={round.coachingEventCount} />
-              </span>
-              {showEconomy ? TEAM_ROWS.map((key, teamIndex) => {
-                const kind = economy?.teams[teamIndex]?.kind ?? null;
-                return (
-                  <span key={key} className={`round-strip-econ team-${key.toLowerCase()}`} aria-hidden="true">
-                    {kind ? ECONOMY_LABELS[kind].short : ""}
-                  </span>
-                );
-              }) : null}
-            </button>
-          </Fragment>
-          );
-        })}
-      </div>
+      {track}
       {/* Under the track so the bar keeps room for the filter; on phones it wraps. */}
       <RoundStripLegend economy={showEconomy} />
     </section>
@@ -312,16 +344,58 @@ function EconomyFilter({ kind, team, names, matchingCount, onKindChange, onTeamC
             </button>
           ))}
         </div>
-        {/* Mounted with the filter so the first change is announced too; empty under 全部. */}
-        <span className="round-strip-filter-count" aria-live="polite" aria-atomic="true">
-          {idle ? null : (
-            <>
-              <span className="visually-hidden">{names[team]} {ECONOMY_LABELS[kind].name}：</span>
-              {matchingCount} 个回合
-            </>
-          )}
-        </span>
+        <FilterCount kind={kind} team={team} names={names} matchingCount={matchingCount} />
       </div>
+    </div>
+  );
+}
+
+// Mounted with the filter so the first change is announced too; empty under 全部.
+function FilterCount({ kind, team, names, matchingCount }: {
+  kind: EconomyFilterKind;
+  team: TeamKey;
+  names: EconomyTeamNames;
+  matchingCount: number;
+}) {
+  return (
+    <span className="round-strip-filter-count" aria-live="polite" aria-atomic="true">
+      {kind === "all" ? null : (
+        <>
+          <span className="visually-hidden">{names[team]} {ECONOMY_LABELS[kind].name}：</span>
+          {matchingCount} 个回合
+        </>
+      )}
+    </span>
+  );
+}
+
+// The dock's filter: the same two choices as two selects (经济 [全部 ▾] [MOUZ ▾] N 个回合), so it
+// fits at the end of the one-row strip. Same state, same fading; the team is unavailable under 全部.
+function CompactEconomyFilter({ kind, team, names, matchingCount, onKindChange, onTeamChange }: {
+  kind: EconomyFilterKind;
+  team: TeamKey;
+  names: EconomyTeamNames;
+  matchingCount: number;
+  onKindChange: (kind: EconomyFilterKind) => void;
+  onTeamChange: (team: TeamKey) => void;
+}) {
+  const idle = kind === "all";
+  return (
+    <div className="round-strip-filter compact">
+      <label className="round-strip-filter-field">
+        <span>经济</span>
+        <select className="round-strip-filter-select" aria-label="按经济类型筛选回合" value={kind}
+          onChange={(event) => onKindChange(event.target.value as EconomyFilterKind)}>
+          <option value="all">全部</option>
+          {ECONOMY_KIND_ORDER.map((value) => <option key={value} value={value}>{ECONOMY_LABELS[value].name}</option>)}
+        </select>
+      </label>
+      <select className="round-strip-filter-select team" aria-label="筛选哪支队伍" value={team} disabled={idle}
+        title={idle ? `${names[team]}（先选经济类型）` : names[team]}
+        onChange={(event) => onTeamChange(event.target.value as TeamKey)}>
+        {TEAM_ROWS.map((key) => <option key={key} value={key}>{names[key]}</option>)}
+      </select>
+      <FilterCount kind={kind} team={team} names={names} matchingCount={matchingCount} />
     </div>
   );
 }

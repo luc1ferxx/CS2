@@ -1,7 +1,6 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import Link from "next/link";
 import { X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
@@ -102,6 +101,7 @@ import {
 import { usePoll } from "@/lib/use-poll";
 import { useFirstEntry } from "@/lib/use-first-entry";
 import { useSlidingIndicator } from "@/lib/use-sliding-indicator";
+import { useWorkbenchLayout } from "@/lib/use-workbench-layout";
 import { requestFailureKind, userFacingError } from "@/lib/user-errors";
 import { utilityAvailability, utilityJumpTick } from "@/lib/utility";
 import { coachingFeed, withFeedback } from "@/lib/coaching-review";
@@ -239,6 +239,10 @@ function DemoDetailContent() {
   // First entry (S14 motion #3): the workspace's one-shot .is-entering, at its first mount only.
   const workspaceEntryRef = useFirstEntry<HTMLDivElement>();
   const savedClipsRef = useRef<HTMLDetailsElement | null>(null);
+  // Wide and tall screens review in the one-screen workbench (S15); the rest keep the stacked page.
+  const workbenchFits = useWorkbenchLayout();
+  // The workbench (S15) only once there is a review to lay out; loading and state cards stay stacked.
+  const workbench = workbenchFits && replay !== null;
   // The control the viewer pressed "查看这一刻" on, so "返回建议" can hand focus back to it.
   const findingOriginRef = useRef<HTMLElement | null>(null);
 
@@ -740,11 +744,11 @@ function DemoDetailContent() {
   // and the memoized panels that receive them skip those frames.
   const latest = useRef({
     replay, renderJobs, selectedPlayerId, personalEvents, currentTick, playing, atRoundEnd, nextRoundData,
-    selectedRoundData, videoDrivesClock, previousFinding, nextFinding, focusedFinding, viewMode
+    selectedRoundData, videoDrivesClock, previousFinding, nextFinding, focusedFinding, viewMode, workbench
   });
   latest.current = {
     replay, renderJobs, selectedPlayerId, personalEvents, currentTick, playing, atRoundEnd, nextRoundData,
-    selectedRoundData, videoDrivesClock, previousFinding, nextFinding, focusedFinding, viewMode
+    selectedRoundData, videoDrivesClock, previousFinding, nextFinding, focusedFinding, viewMode, workbench
   };
 
   const seekToFinding = useCallback((tick: number, eventId?: string, origin?: FindingOrigin) => {
@@ -800,7 +804,8 @@ function DemoDetailContent() {
     const target = origin && origin.isConnected && card.contains(origin)
       ? origin
       : card.querySelector<HTMLElement>(".locate-tick-button") ?? card.querySelector<HTMLElement>("button") ?? card;
-    card.scrollIntoView({ behavior: scrollBehavior(), block: "center" });
+    // The workbench's list scrolls inside its column: "nearest" scrolls only the list, never the page.
+    card.scrollIntoView({ behavior: scrollBehavior(), block: latest.current.workbench ? "nearest" : "center" });
     target.focus({ preventScroll: true });
   }, []);
 
@@ -1214,31 +1219,64 @@ function DemoDetailContent() {
   ), [hasReplay, knownStatus, loadState, personalEventCount, selectedPlayer, status]);
   // The page renders once per playback frame; the chrome around the review does not change with
   // the tick, so the same elements are handed back and React skips them (the session controls
-  // still follow the auth context on their own).
+  // still follow the auth context on their own). The breadcrumb lives in the bar (S15).
   const topbar = useMemo(() => (
     <header className="topbar">
-      <AppBrand />
+      <AppBrand trail={pageTitle} />
       <div className="topbar-actions">
         <SessionControls />
       </div>
     </header>
-  ), []);
-  const breadcrumb = useMemo(() => (
-    <nav className="review-breadcrumb" aria-label="当前位置">
-      <Link href="/dashboard">我的比赛</Link>
-      <span aria-hidden="true">›</span>
-      <span aria-current="page">{pageTitle}</span>
-    </nav>
   ), [pageTitle]);
   const footer = useMemo(() => <SiteFooter />, []);
+  // The suggestion being watched, and "只看 X": a status row under the stage tabs on the stacked page;
+  // in the workbench both sit inside the tab bar, so the map keeps that row's height.
+  const findingSlot = replay ? (
+    <div className="review-finding-slot">
+      {findingStripOpen && focusedEvent ? (
+        <div className="review-finding-strip" role="status">
+          <strong title={coachingCopy(focusedEvent).title}>{findingHeadline(focusedEvent)}</strong>
+          <small>第 {focusedEvent.round_number} 回合 <span className="review-finding-strip-time">{roundTimeAt(focusedEvent.tick_start, focusedRound, replay.tickRate)}</span></small>
+          <button type="button" className="text-button" onClick={returnToFinding}>
+            {focusedFinding?.fromCard ? "返回建议" : "查看建议"}
+          </button>
+          <button type="button" className="review-finding-strip-close" aria-label="收起当前建议" onClick={() => setFindingStripOpen(false)}>
+            <X size={14} aria-hidden="true" />
+          </button>
+        </div>
+      ) : null}
+    </div>
+  ) : null;
+  const focusStrip = focusPlayer && !finderSelected && !videoDrivesClock && !showFirstPersonExplainer ? (
+    <div className="review-focus-strip" role="status">
+      <span>只看 <strong>{focusPlayer.name || "这名玩家"}</strong></span>
+      <button type="button" className="text-button" onClick={clearFocusPlayer}>显示全部</button>
+    </div>
+  ) : null;
+  // 回合记录: above the workspace on the stacked page, the top row of the dock in the workbench.
+  const roundStrip = replay ? (
+    <RoundStrip
+      replay={replay}
+      coachingEvents={personalEvents}
+      selectedPlayerId={selectedPlayerId}
+      currentRoundNumber={currentRoundNumber}
+      selectedRound={selectedRound}
+      economies={economies}
+      teams={teams}
+      compact={workbench}
+      onSelectRound={changeRound}
+    />
+  ) : null;
 
   return (
-    <main className="app-shell review-detail-shell review-app">
+    <main className={`app-shell review-detail-shell review-app${workbench ? " is-workbench" : ""}`}>
       {topbar}
 
       <section className="page">
         <p className="visually-hidden" aria-live="polite">{progressAnnouncement(sawProcessing, Boolean(replay), loadState)}</p>
-        {breadcrumb}
+        {/* The band, its notices and the workspace: in the workbench one screen high (S15), with the
+            数据 section below it; on the stacked page a plain block. */}
+        <div className="review-workbench">
         {/* A missing or unreachable match has nothing to head: its state card carries the title. */}
         {loadState?.kind === "not_found" || loadState?.kind === "unreachable" ? null : (
         <header className={`panel review-header${replay ? " has-banner" : ""}`}>
@@ -1251,6 +1289,7 @@ function DemoDetailContent() {
               roundCount={replay.rounds.length}
               yourTeamKey={yourTeamKey}
               reviewedTeamKey={reviewedTeamKey}
+              compact={workbench}
             >
               {headerFacts}
             </MatchScoreBanner>
@@ -1307,16 +1346,7 @@ function DemoDetailContent() {
           )
         ) : (
           <>
-            <RoundStrip
-              replay={replay}
-              coachingEvents={personalEvents}
-              selectedPlayerId={selectedPlayerId}
-              currentRoundNumber={currentRoundNumber}
-              selectedRound={selectedRound}
-              economies={economies}
-              teams={teams}
-              onSelectRound={changeRound}
-            />
+            {workbench ? null : roundStrip}
             <div className="review-layout" ref={workspaceEntryRef}>
             <div className="review-main-column">
             <section id="player" className="panel review-stage" aria-label="回放" tabIndex={-1} ref={stageRef}>
@@ -1343,6 +1373,8 @@ function DemoDetailContent() {
                     ) : null}
                   </div>
                 ) : <h2 className="panel-bar-title">战术回放</h2>}
+                {workbench ? findingSlot : null}
+                {workbench ? focusStrip : null}
                 {renderClips ? <button className="text-button review-clip-button" type="button"
                   disabled={tickClipRequesting || clipIsActive(currentTickClipJob) || !selectedPlayerId}
                   title={tickClipWorkerOffline ? RENDER_OFFLINE_DETAIL : undefined}
@@ -1352,26 +1384,8 @@ function DemoDetailContent() {
               </div>
               {/* The slot keeps its height with or without a suggestion, so 查看这一刻 never pushes the
                   HUD and the map down while the lock bracket snaps. */}
-              <div className="review-finding-slot">
-              {findingStripOpen && focusedEvent ? (
-                <div className="review-finding-strip" role="status">
-                  <strong title={coachingCopy(focusedEvent).title}>{findingHeadline(focusedEvent)}</strong>
-                  <small>第 {focusedEvent.round_number} 回合 <span className="review-finding-strip-time">{roundTimeAt(focusedEvent.tick_start, focusedRound, replay.tickRate)}</span></small>
-                  <button type="button" className="text-button" onClick={returnToFinding}>
-                    {focusedFinding?.fromCard ? "返回建议" : "查看建议"}
-                  </button>
-                  <button type="button" className="review-finding-strip-close" aria-label="收起当前建议" onClick={() => setFindingStripOpen(false)}>
-                    <X size={14} aria-hidden="true" />
-                  </button>
-                </div>
-              ) : null}
-              </div>
-              {focusPlayer && !finderSelected && !videoDrivesClock && !showFirstPersonExplainer ? (
-                <div className="review-focus-strip" role="status">
-                  <span>只看 <strong>{focusPlayer.name || "这名玩家"}</strong></span>
-                  <button type="button" className="text-button" onClick={clearFocusPlayer}>显示全部</button>
-                </div>
-              ) : null}
+              {workbench ? null : findingSlot}
+              {workbench ? null : focusStrip}
               <div className={`review-main-canvas ${finderSelected ? "showing-finder" : videoDrivesClock ? "showing-video" : showFirstPersonExplainer ? "showing-explainer" : "showing-map"}`}>
               {finderSelected ? (
                 utilityTab === "available" ? (
@@ -1422,13 +1436,15 @@ function DemoDetailContent() {
                   selectedPlayerId={selectedPlayerId} onSelectPlayer={selectPlayer} variant="featured"
                   levelMode={mapLevelMode} onLevelModeChange={setMapLevelMode} teamNames={matchSummaryTeams}
                   overlayAbove={utilityTab === "available" ? utilityOverlay : undefined}
-                  focusPlayerId={focusPlayer?.id ?? null} lockSnapKey={focusedFinding} />
+                  focusPlayerId={focusPlayer?.id ?? null} lockSnapKey={focusedFinding}
+                  layout={workbench ? "workbench" : "stacked"} />
               )}
               </div>
+              {workbench ? roundStrip : null}
               <Timeline currentTick={currentTick} selectedRound={selectedRound} rounds={replay.rounds}
                 tickRate={replay.tickRate} events={personalEvents} parserEvents={scopedReplay?.events ?? []}
                 selectedPlayerName={selectedPlayer?.name ?? null} selectedPlayerId={selectedPlayerId}
-                onSeek={manualSeek} onSeekFinding={seekToFindingFromTimeline} />
+                onSeek={manualSeek} onSeekFinding={seekToFindingFromTimeline} compact={workbench} />
               <ReviewCommandBar
                 selectedRound={selectedRound}
                 roundTime={roundTimeAt(currentTick, selectedRoundData, replay.tickRate)}
@@ -1440,6 +1456,7 @@ function DemoDetailContent() {
                 nextFinding={nextFinding}
                 nextRoundNumber={atRoundEnd && !playing && nextRoundData ? nextRoundData.roundNumber : null}
                 shortcutsOpen={shortcutsOpen}
+                compact={workbench}
                 onTogglePlay={togglePlay}
                 onSpeedChange={setSpeed}
                 onPreviousFinding={goToPreviousFinding}
@@ -1487,6 +1504,11 @@ function DemoDetailContent() {
               />
             </div>
             </div>
+          </>
+        )}
+        </div>
+        {replay ? (
+          <>
             {/* S9 数据 section (UI-B) */}
             <MatchAnalysis replay={replay} player={selectedPlayer} onSeekTick={jumpToTick} onSelectRound={jumpToRound}
               onChoosePlayer={revealPlayerPicker} />
@@ -1537,7 +1559,7 @@ function DemoDetailContent() {
               ) : null}
             </details>
           </>
-        )}
+        ) : null}
       </section>
       {footer}
 

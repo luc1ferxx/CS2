@@ -25,6 +25,7 @@ export const ReviewCommandBar = memo(function ReviewCommandBar({
   nextFinding,
   nextRoundNumber = null,
   shortcutsOpen = false,
+  compact = false,
   onTogglePlay,
   onSpeedChange,
   onPreviousFinding,
@@ -45,6 +46,9 @@ export const ReviewCommandBar = memo(function ReviewCommandBar({
   // Set only when the playhead sits at the end of a round that has a successor.
   nextRoundNumber?: number | null;
   shortcutsOpen?: boolean;
+  // The workbench dock (S15): one row that never wraps; the shortcut list opens above the bar
+  // instead of adding a row under it. Same markup.
+  compact?: boolean;
   onTogglePlay: () => void;
   onSpeedChange: (speed: number) => void;
   onPreviousFinding: () => void;
@@ -54,7 +58,7 @@ export const ReviewCommandBar = memo(function ReviewCommandBar({
   onToggleShortcuts?: () => void;
 }) {
   return (
-    <section className="review-command-bar" aria-label="播放控制">
+    <section className={`review-command-bar${compact ? " compact" : ""}`} aria-label="播放控制">
       <div className="review-command-actions">
         {onSeekBy ? (
           <button className="icon-button review-seek-button" type="button"

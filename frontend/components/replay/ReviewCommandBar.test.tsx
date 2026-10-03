@@ -100,4 +100,24 @@ describe("ReviewCommandBar", () => {
     expect(screen.getByText("空格 / K")).toBeInTheDocument();
     expect(screen.getByText("上一回合 / 下一回合")).toBeInTheDocument();
   });
+
+  it("keeps every control in the compact dock and only adds a class", async () => {
+    const user = userEvent.setup();
+    const onSeekBy = vi.fn();
+    const { props, rerender } = renderBar({ compact: true, onSeekBy, onToggleShortcuts: vi.fn() });
+    const bar = screen.getByRole("region", { name: "播放控制" });
+    expect(bar).toHaveClass("review-command-bar", "compact");
+    expect(bar).toHaveTextContent("1:15");
+    await user.click(screen.getByRole("button", { name: "前进 5 秒" }));
+    expect(onSeekBy).toHaveBeenCalledWith(5);
+    expect(screen.getByRole("combobox", { name: "播放倍速" })).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "建议导航" })).toBeInTheDocument();
+    // The shortcut list still opens (over the dock, by CSS) from the same toggle.
+    rerender(<ReviewCommandBar {...props} shortcutsOpen />);
+    expect(screen.getByRole("button", { name: "快捷键" })).toHaveAttribute("aria-expanded", "true");
+    expect(document.getElementById("review-shortcuts")).toHaveTextContent("空格 / K");
+
+    rerender(<ReviewCommandBar {...props} compact={false} />);
+    expect(screen.getByRole("region", { name: "播放控制" })).not.toHaveClass("compact");
+  });
 });

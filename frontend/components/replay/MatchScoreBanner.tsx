@@ -16,6 +16,9 @@ interface MatchScoreBannerProps {
   reviewedTeamKey: TeamKey | null;
   // Further facts for the meta line (suggestion count, archived, status).
   children?: ReactNode;
+  // The review workbench's band (S15): one row, a smaller score, the facts inline and the round
+  // count shown; the half scores move into each team's tooltip (the spoken sentence keeps them).
+  compact?: boolean;
 }
 
 const DATE_FORMAT = new Intl.DateTimeFormat("zh-CN", { year: "numeric", month: "long", day: "numeric" });
@@ -26,33 +29,33 @@ const DATE_FORMAT = new Intl.DateTimeFormat("zh-CN", { year: "numeric", month: "
  * Memoized: the page re-renders on every playback frame, the banner only when its facts change.
  */
 export const MatchScoreBanner = memo(function MatchScoreBanner({
-  title, teams, mapName, date, roundCount, yourTeamKey, reviewedTeamKey, children
+  title, teams, mapName, date, roundCount, yourTeamKey, reviewedTeamKey, children, compact = false
 }: MatchScoreBannerProps) {
   const [teamA, teamB] = teams;
   const mark = (key: TeamKey) => teamMark(key, yourTeamKey, reviewedTeamKey);
   const hasScore = teams.length === 2 && teamA && teamB;
   const dateText = formatMatchDate(date);
   return (
-    <div className="match-banner">
+    <div className={`match-banner${compact ? " compact" : ""}`}>
       {hasScore ? (
         <>
           <p className="visually-hidden">{scoreSentence(teamA, teamB, mark)}</p>
           <div className="match-banner-board" aria-hidden="true">
-            <BannerTeam team={teamA} mark={mark("A")} />
+            <BannerTeam team={teamA} mark={mark("A")} compact={compact} />
             <span className={`hero-num match-banner-score score-a${teamA.score >= teamB.score ? " leading" : ""}`}>{teamA.score}</span>
             <span className="match-banner-colon">:</span>
             <span className={`hero-num match-banner-score score-b${teamB.score >= teamA.score ? " leading" : ""}`}>{teamB.score}</span>
-            <BannerTeam team={teamB} mark={mark("B")} />
+            <BannerTeam team={teamB} mark={mark("B")} compact={compact} />
           </div>
         </>
       ) : null}
       <div className="match-banner-meta">
-        {/* The breadcrumb already shows the name and the round strip counts the rounds: both stay
-            for screen readers. A map name needs no "地图" label. */}
+        {/* The top bar's breadcrumb already shows the name and the round strip counts the rounds: both
+            stay for screen readers (the compact band shows the count). A map name needs no "地图" label. */}
         <h1 className="match-banner-title visually-hidden">{title}</h1>
         <span className="fact">{mapName}</span>
         {dateText ? <span className="fact"><span className="fact-label">上传</span>{dateText}</span> : null}
-        <span className="fact visually-hidden">{roundCount} 回合</span>
+        <span className={`fact${compact ? "" : " visually-hidden"}`}>{roundCount} 回合</span>
         {children}
       </div>
     </div>
@@ -67,14 +70,15 @@ function teamMark(key: TeamKey, yourTeamKey: TeamKey | null, reviewedTeamKey: Te
   return null;
 }
 
-function BannerTeam({ team, mark }: { team: MatchTeam; mark: string | null }) {
+function BannerTeam({ team, mark, compact }: { team: MatchTeam; mark: string | null; compact: boolean }) {
   return (
-    <div className={`match-banner-team team-${team.key.toLowerCase()}`}>
+    <div className={`match-banner-team team-${team.key.toLowerCase()}`}
+      title={compact ? team.halves.map((half) => halfText(half.label, half)).join("，") : undefined}>
       <span className="match-banner-name-line">
         <span className="match-banner-name">{teamDisplayName(team)}</span>
         {mark ? <span className="match-banner-mine">{mark}</span> : null}
       </span>
-      <span className="match-banner-halves">
+      {compact ? null : <span className="match-banner-halves">
         {team.halves.map((half) => (
           <span key={half.label} className="match-banner-half">
             <span className="match-banner-half-label">{half.label}</span>
@@ -83,7 +87,7 @@ function BannerTeam({ team, mark }: { team: MatchTeam; mark: string | null }) {
             </span>
           </span>
         ))}
-      </span>
+      </span>}
     </div>
   );
 }

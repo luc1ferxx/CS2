@@ -415,3 +415,57 @@ describe("ReplayViewer map HUD", () => {
     expect(document.querySelector(".map-lock")).toHaveClass("snap");
   });
 });
+
+// Round 2 with the sides swapped (half time): Alpha and Bravo, team A, play CT there.
+function swappedSecondRound(): ReplayData {
+  const base = replayV2();
+  return {
+    ...base,
+    frames: base.frames.map((item) => item.roundNumber !== 2 ? item : {
+      ...item,
+      players: item.players.map((player) => ({ ...player, side: player.side === "T" ? "CT" as const : "T" as const }))
+    })
+  };
+}
+
+describe("ReplayViewer workbench layout", () => {
+  it("keeps today's stacked layout by default and marks the workbench only when asked", () => {
+    const { rerender } = renderViewer();
+    expect(document.querySelector(".replay-panel")).not.toHaveClass("replay-workbench");
+    rerender(<ReplayViewer replay={replayV2()} currentTick={200} selectedPlayerId={V2_ALPHA} onSelectPlayer={vi.fn()}
+      variant="featured" teamNames={TEAMS} layout="workbench" />);
+    expect(document.querySelector(".replay-panel")).toHaveClass("replay-workbench");
+    // Same DOM either way: the map, then one roster group with T first.
+    expect([...document.querySelectorAll(".side-roster")].map((item) => item.classList.contains("side-t") ? "T" : "CT"))
+      .toEqual(["T", "CT"]);
+  });
+
+  it("marks team A's roster (it started on T) and its side for the HUD, across the half-time swap", () => {
+    const replay = swappedSecondRound();
+    const { rerender } = renderViewer({ replay, layout: "workbench" });
+    expect(panel("T")).toHaveAttribute("data-team", "a");
+    expect(panel("CT")).toHaveAttribute("data-team", "b");
+    expect(document.querySelector(".map-hud")).toHaveAttribute("data-left-side", "T");
+
+    rerender(<ReplayViewer replay={replay} currentTick={1300} selectedPlayerId={V2_ALPHA} onSelectPlayer={vi.fn()}
+      variant="featured" teamNames={TEAMS} layout="workbench" />);
+    expect(panel("CT")).toHaveAttribute("data-team", "a");
+    expect(panel("T")).toHaveAttribute("data-team", "b");
+    expect(document.querySelector(".map-hud")).toHaveAttribute("data-left-side", "CT");
+    // Each header keeps the team's name and the side it plays now.
+    expect(within(panel("CT")).getByRole("heading", { level: 3 })).toHaveTextContent("Spirit CT");
+    expect(within(panel("T")).getByRole("heading", { level: 3 })).toHaveTextContent("MOUZ T");
+  });
+
+  it("marks team A by the match-stats teams even without team names", () => {
+    renderViewer({ teamNames: null, layout: "workbench" });
+    expect(panel("T")).toHaveAttribute("data-team", "a");
+    expect(panel("CT")).toHaveAttribute("data-team", "b");
+  });
+
+  it("keeps K/D in the row's title for the narrow rosters", () => {
+    renderViewer({ currentTick: 600, layout: "workbench" });
+    expect(row("Alpha")).toHaveAttribute("title", "击杀 1，死亡 0");
+    expect(row("Delta")).toHaveAttribute("title", "击杀 0，死亡 1");
+  });
+});

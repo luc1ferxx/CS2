@@ -79,6 +79,9 @@ interface ReplayViewerProps {
   // Each new non-null value is a jump to a suggestion (the page's focused suggestion, renewed on
   // every 查看这一刻): the lock bracket snaps onto the reviewed player once. Null changes nothing.
   lockSnapKey?: unknown;
+  // "workbench" (desktop review workbench): [team A roster | square map | team B roster], filling
+  // the container's height. "stacked" (default): map above the two side rosters, as before.
+  layout?: "stacked" | "workbench";
 }
 
 // The kill traces cover the last 2 s (the markers' window, at most four); the feed the last 5 s, five rows.
@@ -100,7 +103,8 @@ export const ReplayViewer = memo(function ReplayViewer({
   focusPlayerId = null,
   teamNames,
   matchReplay,
-  lockSnapKey = null
+  lockSnapKey = null,
+  layout = "stacked"
 }: ReplayViewerProps) {
   const [localLevelMode, setLocalLevelMode] = useState<TacticalMapLevelMode>("auto");
   const levelMode = controlledLevelMode ?? localLevelMode;
@@ -173,8 +177,13 @@ export const ReplayViewer = memo(function ReplayViewer({
   // v1 replays have no equipment states: one line per player is enough.
   const compactRoster = useMemo(() => !hasPlayerStates(statsReplay), [statsReplay]);
   const unitsPerPixel = useUnitsPerPixel(mapSvgRef);
-  const tTeamName = sideTeamName(statsReplay, tPlayers, teamNames);
-  const ctTeamName = sideTeamName(statsReplay, ctPlayers, teamNames);
+  // Which match-stats team plays each side now (team A started on T). The workbench keeps team A's
+  // roster on the left and team B's on the right, so players never swap sides of the map at half time.
+  const tTeamKey = sideTeamKey(statsReplay, tPlayers);
+  const ctTeamKey = sideTeamKey(statsReplay, ctPlayers);
+  const tIsTeamA = tTeamKey === "A" || (tTeamKey === null && ctTeamKey !== "A");
+  const tTeamName = teamNameOf(tTeamKey, teamNames);
+  const ctTeamName = teamNameOf(ctTeamKey, teamNames);
 
   // Kills come from the whole match (the map's own events may be the reviewed player's only),
   // indexed by round and placed once per round; a playback frame only filters that round's few.
@@ -291,7 +300,7 @@ export const ReplayViewer = memo(function ReplayViewer({
 
   return (
     <section
-      className={`panel replay-panel ${layoutClass}`}
+      className={`panel replay-panel ${layoutClass}${layout === "workbench" ? " replay-workbench" : ""}`}
       aria-label="战术地图"
     >
       <div className="map-stage">
@@ -311,6 +320,7 @@ export const ReplayViewer = memo(function ReplayViewer({
             bombSite={bombSite}
             verdict={endedRound ? roundVerdictText(endedRound) : null}
             verdictSide={endedRound?.winnerSide ?? null}
+            leftSide={tIsTeamA ? "T" : "CT"}
           />
         ) : null}
         <div className={`map-frame ${hasRadarImage ? "radar-map-frame" : "fallback-map-frame"}`}>
@@ -426,8 +436,8 @@ export const ReplayViewer = memo(function ReplayViewer({
 
       {framePlayers.length > 0 ? (
         <div className="player-list" role="group" aria-label="玩家名单" onKeyDown={handleRosterKeyDown}>
-          <Roster side="T" title="进攻方" teamName={tTeamName} players={tPlayers} {...rosterProps} />
-          <Roster side="CT" title="防守方" teamName={ctTeamName} players={ctPlayers} {...rosterProps} />
+          <Roster side="T" title="进攻方" teamName={tTeamName} team={tIsTeamA ? "a" : "b"} players={tPlayers} {...rosterProps} />
+          <Roster side="CT" title="防守方" teamName={ctTeamName} team={tIsTeamA ? "b" : "a"} players={ctPlayers} {...rosterProps} />
         </div>
       ) : null}
     </section>
@@ -683,6 +693,7 @@ function Roster({
   side,
   title,
   teamName,
+  team,
   players,
   map,
   selectedPlayerId,
@@ -698,6 +709,8 @@ function Roster({
   side: PlayerSide;
   title: string;
   teamName: string | null;
+  // Match-stats team ("a" started on T): the workbench places team A's roster left of the map.
+  team: "a" | "b";
   players: ReplayFramePlayer[];
   map: TacticalMapPresentation;
   selectedPlayerId: string | null;
@@ -713,7 +726,7 @@ function Roster({
   const sideClass = `side-${side.toLowerCase()}`;
   const floors = Boolean(map.secondaryRadarImagePath);
   return (
-    <div className={`side-roster live-roster ${sideClass}`}>
+    <div className={`side-roster live-roster ${sideClass}`} data-team={team}>
       <div className={`panel-bar roster-head panel-bar-${side.toLowerCase()}`}>
         <h3 className="panel-bar-title">
           <span className="roster-team-name">{teamName ?? title}</span> <span className="roster-side">{side}</span>
@@ -811,7 +824,9 @@ const RosterRow = memo(function RosterRow({
   const singleLine = compact && alive;
 
   return (
-    <div className={`roster-row live-roster-row${alive ? "" : " dead"}${reviewed ? " reviewed" : ""}${compact ? " compact" : ""}`}>
+    // The title keeps K/D at hand where the workbench's narrow rosters hide the column.
+    <div className={`roster-row live-roster-row${alive ? "" : " dead"}${reviewed ? " reviewed" : ""}${compact ? " compact" : ""}`}
+      title={`击杀 ${kills}，死亡 ${deaths}`}>
       <div className="roster-line roster-line-main">
         <span className={`roster-index ${sideClass}`} aria-hidden="true">{index}</span>
         <button type="button" className="roster-name" ref={(element) => register(playerId, element)}
@@ -859,16 +874,20 @@ const RosterRow = memo(function RosterRow({
   );
 });
 
-// The team playing this side: its players' majority match-stats team, named by the match summary.
-function sideTeamName(replay: ReplayData, players: ReplayFramePlayer[], teamNames: TeamNames): string | null {
-  if (!teamNames?.length || players.length === 0) return null;
+// The team playing this side: its players' majority match-stats team.
+function sideTeamKey(replay: ReplayData, players: ReplayFramePlayer[]): "A" | "B" | null {
   let votes = 0;
   for (const player of players) {
     const key = teamKeyOfPlayer(replay, player.id);
     votes += key === "A" ? 1 : key === "B" ? -1 : 0;
   }
-  if (votes === 0) return null;
-  const name = teamNames.find((team) => team?.key === (votes > 0 ? "A" : "B"))?.name;
+  return votes > 0 ? "A" : votes < 0 ? "B" : null;
+}
+
+// That team's name from the match summary.
+function teamNameOf(key: "A" | "B" | null, teamNames: TeamNames): string | null {
+  if (!key || !teamNames?.length) return null;
+  const name = teamNames.find((team) => team?.key === key)?.name;
   return typeof name === "string" && name.trim() ? name.trim() : null;
 }
 

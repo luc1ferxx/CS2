@@ -79,6 +79,9 @@ interface MapHudProps {
   bombSite: string | null;
   verdict: string | null;
   verdictSide: PlayerSide | null;
+  // The side whose roster the workbench shows left of the map (team A's side now). The DOM keeps T
+  // first; only the workbench CSS reads this, to put that side's readout on the left too.
+  leftSide?: PlayerSide;
 }
 
 // Primitive props only: during playback it re-renders when a whole second ticks over, someone
@@ -86,7 +89,7 @@ interface MapHudProps {
 export const MapHud = memo(function MapHud(props: MapHudProps) {
   const { clock, verdict, verdictSide } = props;
   return (
-    <div className="map-hud" role="group" aria-label="回合状态">
+    <div className="map-hud" role="group" aria-label="回合状态" data-left-side={props.leftSide ?? "T"}>
       <div className="map-hud-inner">
         <HudSide side="T" name={props.tName} alive={props.tAlive} total={props.tTotal} equipment={props.tEquipment} />
         <div className="map-hud-centre">

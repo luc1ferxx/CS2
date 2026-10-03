@@ -119,4 +119,18 @@ describe("Timeline", () => {
     rerender(<Timeline currentTick={700} {...props} />);
     expect(spine.style.getPropertyValue("--timeline-current-tick")).toBe("75%");
   });
+
+  it("only adds a class in the compact dock: the same lanes, markers and slider", () => {
+    renderTimeline({ compact: true });
+    const panel = screen.getByRole("region", { name: "回合时间轴" });
+    expect(panel).toHaveClass("timeline-panel", "evidence-timeline", "compact");
+    expect(within(screen.getByRole("group", { name: "比赛事件" })).getAllByRole("button")).toHaveLength(2);
+    expect(within(screen.getByRole("group", { name: "建议" })).getAllByRole("button")).toHaveLength(1);
+    expect(screen.getByRole("slider", { name: "拖动定位回放" })).toBeInTheDocument();
+  });
+
+  it("keeps the full timeline without the compact class by default", () => {
+    renderTimeline();
+    expect(screen.getByRole("region", { name: "回合时间轴" })).not.toHaveClass("compact");
+  });
 });

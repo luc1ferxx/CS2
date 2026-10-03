@@ -81,6 +81,23 @@ describe("MatchScoreBanner", () => {
     expect(noIdentity.textContent).not.toContain("你的队伍");
   });
 
+  it("compacts to the workbench band: halves in each team's tooltip, the round count shown", () => {
+    const { container } = renderBanner({ compact: true });
+    expect(container.querySelector(".match-banner")).toHaveClass("compact");
+    expect(container.querySelector(".match-banner-halves")).toBeNull();
+    expect(container.querySelector(".team-a")).toHaveAttribute("title", "上半场 T 3，下半场 CT 9，加时 3");
+    expect(container.querySelector(".team-b")).toHaveTextContent(/^Bravo$/);
+    const roundCount = [...container.querySelectorAll(".match-banner-meta .fact")].find((fact) => fact.textContent === "28 回合");
+    expect(roundCount).not.toHaveClass("visually-hidden");
+    // The spoken sentence and the heading do not change.
+    expect(screen.getByText(/^比分 /)).toHaveTextContent(/上半场 队伍 A T 3，Bravo CT 9/);
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("spirit-vs-mouz-m2-mirage.dem");
+
+    const { container: full } = renderBanner();
+    expect(full.querySelector(".match-banner")).not.toHaveClass("compact");
+    expect(full.querySelector(".team-a")).not.toHaveAttribute("title");
+  });
+
   it("falls back to the title and facts when the teams cannot be told apart", () => {
     const { container } = renderBanner({ teams: [] });
     expect(container.querySelector(".match-banner-board")).toBeNull();

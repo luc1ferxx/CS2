@@ -46,6 +46,8 @@ interface TimelineProps {
   onSeek: (tick: number) => void;
   // A suggestion marker lands like "查看这一刻" (lead-in, focused card) when this is given.
   onSeekFinding?: (event: CoachingEvent) => void;
+  // The workbench dock (S15): shorter lanes and markers, the scrubber under the lanes only. Same markup.
+  compact?: boolean;
 }
 
 export const Timeline = memo(function Timeline({
@@ -58,7 +60,8 @@ export const Timeline = memo(function Timeline({
   selectedPlayerId = null,
   tickRate = 64,
   onSeek,
-  onSeekFinding
+  onSeekFinding,
+  compact = false
 }: TimelineProps) {
   const round = rounds.find((item) => item.roundNumber === selectedRound) ?? rounds[0];
   const minTick = round?.startTick ?? 0;
@@ -122,7 +125,7 @@ export const Timeline = memo(function Timeline({
   }
 
   return (
-    <section className="timeline-panel evidence-timeline" aria-label="回合时间轴">
+    <section className={`timeline-panel evidence-timeline${compact ? " compact" : ""}`} aria-label="回合时间轴">
       <div className="timeline-heading">
         <div>
           <strong>第 {selectedRound} 回合 · {elapsed} <span>/ {duration}</span></strong>

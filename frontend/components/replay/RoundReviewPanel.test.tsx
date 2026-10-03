@@ -16,7 +16,7 @@ const death: ReplayEvent = {
   metadata: { attackerId: "enemy", victimId: T_ENTRY_ID, attackerName: "CT Anchor", victimName: "T Entry" }
 };
 
-function renderPanel(overrides: Partial<Parameters<typeof RoundReviewPanel>[0]> = {}) {
+function renderPanel(overrides: Partial<Parameters<typeof RoundReviewPanel>[0]> & { compact?: boolean } = {}) {
   const props = {
     replay: replayData({ events: [death] }),
     coachingEvents: [coachingEvent()],
@@ -317,5 +317,111 @@ describe("RoundStrip economy", () => {
     await user.keyboard("{End}");
     expect(all[7]).toHaveFocus();
     expect(props.onSelectRound).toHaveBeenLastCalledWith(8);
+  });
+});
+
+describe("RoundStrip compact (workbench dock)", () => {
+  it("draws one row of numbered cells with no header bar, icons or legend, and keeps every name", () => {
+    const [first, second] = replayData().rounds;
+    renderPanel({
+      compact: true,
+      replay: replayData({ events: [death], rounds: [{ ...first, winnerReason: "bomb_defused" }, second] })
+    });
+    const strip = document.querySelector(".round-strip");
+    expect(strip).toHaveClass("compact");
+    expect(strip).not.toHaveClass("panel");
+    expect(strip?.querySelector(".panel-bar")).toBeNull();
+    // The heading stays for screen readers and still names the region.
+    expect(screen.getByRole("heading", { name: "回合记录" })).toHaveClass("visually-hidden");
+    expect(screen.getByRole("region", { name: "回合记录" })).toBe(strip);
+    expect(document.querySelector(".round-strip-legend")).toBeNull();
+    const [defused, won] = within(screen.getByRole("group", { name: "回合列表" })).getAllByRole("button");
+    // How the round ended is said, not drawn: the number sits on the fill instead of the icon.
+    expect(defused).toHaveAccessibleName("第 1 回合 CT 胜，拆除炸弹，输掉本回合，1 条建议，阵亡，正在播放");
+    expect(defused.querySelector(".round-strip-reason")).toBeNull();
+    expect(defused.querySelector(".round-strip-number")).toHaveTextContent("1");
+    expect(defused).toHaveClass("winner-ct", "selected");
+    // My death and the suggestion dot stay as marks under the cell.
+    expect(defused.querySelector(".round-strip-marks .round-strip-death")).not.toBeNull();
+    expect(defused.querySelector(".round-strip-dots")?.children).toHaveLength(1);
+    expect(won).toHaveAccessibleName("第 2 回合 T 胜，赢下本回合，0 条建议");
+    expect(screen.queryByRole("combobox", { name: "按经济类型筛选回合" })).not.toBeInTheDocument();
+  });
+
+  it("keeps the arrow keys and one Tab stop", async () => {
+    const user = userEvent.setup();
+    const props = renderPanel({ compact: true });
+    const [first, second] = within(screen.getByRole("group", { name: "回合列表" })).getAllByRole("button");
+    expect([first.tabIndex, second.tabIndex]).toEqual([0, -1]);
+    first.focus();
+    await user.keyboard("{ArrowRight}");
+    expect(second).toHaveFocus();
+    expect(props.onSelectRound).toHaveBeenLastCalledWith(2);
+  });
+
+  function renderCompactStrip() {
+    const replay = economyReplay(ECONOMY_SPECS);
+    const props = {
+      replay,
+      coachingEvents: [],
+      currentRoundNumber: null,
+      selectedRound: 1,
+      selectedPlayerId: null,
+      economies: roundEconomies(replay),
+      teams: matchTeams(replay, [{ key: "A", name: "MOUZ" }, { key: "B", name: "Spirit" }]),
+      compact: true,
+      onSelectRound: vi.fn()
+    };
+    render(<RoundStrip {...props} />);
+    return props;
+  }
+  const cells = () => within(screen.getByRole("group", { name: "回合列表" })).getAllByRole("button");
+  const faded = () => cells().map((cell) => cell.classList.contains("econ-faded"));
+
+  it("drops the buy rows and moves each buy into the cell's name and title", () => {
+    renderCompactStrip();
+    expect(document.querySelector(".round-strip-teams")).toBeNull();
+    expect(document.querySelector(".round-strip-econ")).toBeNull();
+    expect(screen.getByRole("group", { name: "回合列表" })).not.toHaveClass("has-economy");
+    expect(document.querySelector(".round-strip-legend")).toBeNull();
+    expect(cells()[2]).toHaveAccessibleName("第 3 回合 T 胜，MOUZ 全起 $22,500，Spirit 强起 $12,500，0 条建议");
+    expect(cells()[2]).toHaveAttribute("title", "第 3 回合 T 胜，MOUZ 全起 $22,500，Spirit 强起 $12,500，0 次击杀，0 条建议");
+  });
+
+  it("filters with two selects at the end of the row, fading rounds exactly as the full filter does", async () => {
+    const user = userEvent.setup();
+    const props = renderCompactStrip();
+    const kind = screen.getByRole("combobox", { name: "按经济类型筛选回合" });
+    const team = screen.getByRole("combobox", { name: "筛选哪支队伍" });
+    expect(within(kind).getAllByRole("option").map((option) => option.textContent)).toEqual(["全部", "手枪局", "全起", "强起", "半起", "ECO"]);
+    expect(kind).toHaveValue("all");
+    expect(within(team).getAllByRole("option").map((option) => option.textContent)).toEqual(["MOUZ", "Spirit"]);
+    // Under 全部 the team choice filters nothing.
+    expect(team).toBeDisabled();
+    const count = document.querySelector(".round-strip-filter-count");
+    expect(count).toHaveAttribute("aria-live", "polite");
+    expect(count).toBeEmptyDOMElement();
+    expect(faded()).toEqual(Array(8).fill(false));
+
+    await user.selectOptions(kind, "强起");
+    expect(team).toBeEnabled();
+    expect(team).toHaveValue("A");
+    expect(faded()).toEqual(Array(8).fill(true));
+    expect(count).toHaveTextContent(/^MOUZ 强起：0 个回合$/);
+    await user.selectOptions(team, "Spirit");
+    expect(faded()).toEqual([true, true, false, true, true, true, true, true]);
+    expect(cells()[4]).toHaveAccessibleName(/，不符合筛选$/);
+    expect(count).toHaveTextContent(/^Spirit 强起：1 个回合$/);
+    expect(screen.getByRole("group", { name: "回合列表" })).toHaveClass("filter-team-b");
+
+    // Filtering never touches the shared round; a faded round is still a click away.
+    expect(props.onSelectRound).not.toHaveBeenCalled();
+    await user.click(cells()[0]);
+    expect(props.onSelectRound).toHaveBeenLastCalledWith(1);
+
+    await user.selectOptions(kind, "全部");
+    expect(faded()).toEqual(Array(8).fill(false));
+    expect(count).toBeEmptyDOMElement();
+    expect(team).toBeDisabled();
   });
 });

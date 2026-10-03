@@ -622,12 +622,9 @@
 }
 
 /* === V-B1 / S8 V-STAGE: review stage (spec S8 数据站风, retoned S13 战术终端) === */
-/* Breadcrumb, then the match bar: name and plain facts on the left, the reviewed player on the right. */
-.review-app .page { padding-top: 10px; }
-.review-app .review-breadcrumb { display: flex; align-items: baseline; gap: 6px; min-width: 0; margin: 0 0 8px; color: var(--ink-2); font-size: var(--step-sm); }
-.review-app .review-breadcrumb a { flex: none; color: var(--link); text-decoration: underline; text-decoration-color: var(--accent); text-underline-offset: 3px; }
-.review-app .review-breadcrumb a:hover { color: var(--link-hover); }
-.review-app .review-breadcrumb [aria-current] { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The match bar: name and plain facts on the left, the reviewed player on the right. The breadcrumb
+   lives in the top bar (S15), so the bar opens the page 12 px under it. */
+.review-app .page { padding-top: 12px; }
 /* The bar and the reviewed player share one header row (the player wraps under it on narrow screens);
    before anyone is picked, the question and the picker are the panel body. */
 .review-app .review-header { display: flex; flex-wrap: wrap; margin: 0 0 12px; }
@@ -997,6 +994,59 @@
 .review-app .review-shortcuts div { display: flex; gap: 8px; }
 .review-app .review-shortcuts dt { min-width: 96px; color: var(--ink); font-variant-numeric: tabular-nums; }
 .review-app .review-shortcuts dd { margin: 0; }
+
+/* S15 compact dock: RoundStrip, Timeline and ReviewCommandBar with `compact` (the workbench's dock
+   under the stage; the page passes it only while the workbench media query matches). None of the
+   three draws an edge or a cut of its own: the dock they sit in is the panel. Heights: strip 34 (the
+   track keeps 3 px above and below the cells for their focus ring), timeline 65, transport 33. */
+/* 回合记录, one row: the round number on its winner-coloured square (dark on the fill, like the icons
+   in the full strip), my death and the suggestion dots in a 7 px row under it, the selected round
+   outlined in amber, the economy filter as two selects at the right end. */
+.review-app .round-strip.compact { display: flex; align-items: center; gap: 12px; min-width: 0; margin: 0; padding: 0 8px 0 0; }
+.review-app .round-strip.compact .round-strip-track { flex: 1 1 auto; min-width: 0; padding: 3px 4px 3px 8px; scroll-padding-inline: 8px; }
+.review-app .round-strip.compact .round-strip-cell { flex: 0 0 22px; grid-template-rows: 20px 7px; row-gap: 1px; align-items: center; width: 22px; padding: 0; }
+.review-app .round-strip.compact :is(.round-strip-fill, .round-strip-number) { grid-area: 1 / 1; }
+.review-app .round-strip.compact .round-strip-fill { width: 20px; height: 20px; }
+.review-app .round-strip.compact .round-strip-number,
+.review-app .round-strip.compact .round-strip-cell.selected .round-strip-number { z-index: 1; color: var(--page); font-size: 11px; font-weight: 600; }
+.review-app .round-strip.compact .round-strip-cell.econ-faded .round-strip-number { color: var(--ink-2); }
+.review-app .round-strip.compact .round-strip-marks { grid-row: 2; gap: 2px; height: 7px; }
+.review-app .round-strip.compact .round-strip-dots i { width: 3px; height: 3px; }
+.review-app .round-strip.compact .round-strip-dots b { font-size: 9px; line-height: 7px; }
+.review-app .round-strip.compact .round-strip-half { margin: 0 5px; }
+.review-app .round-strip.compact.empty .round-review-empty { padding: 6px 8px; }
+.review-app .round-strip-filter.compact { display: flex; flex: none; align-items: center; gap: 6px; padding: 0; }
+.review-app .round-strip-filter-field { display: inline-flex; align-items: center; gap: 6px; color: var(--ink-2); font-size: var(--step-sm); white-space: nowrap; }
+.review-app .round-strip-filter-select { width: auto; height: 24px; min-height: 24px; padding: 0 4px; font-size: var(--step-sm); }
+.review-app .round-strip-filter-select.team { max-width: 8em; }
+.review-app .round-strip-filter-select:disabled { border-color: var(--line-bold); color: var(--ink-3); }
+/* Timeline, compact: 16 px lanes (24 in the full one), 14 px marks whose hit areas stay 24 x 24, and
+   the scrubber under the lanes only, so its handle lines up with the marks above it. */
+.review-app .timeline-panel.compact { padding: 2px 8px 0; }
+.review-app .timeline-panel.compact .timeline-lane-stack { grid-template-columns: 28px minmax(0, 1fr); gap: 6px; }
+.review-app .timeline-panel.compact :is(.timeline-lane-labels, .timeline-lane-tracks) { grid-template-rows: repeat(3, 16px); }
+.review-app .timeline-panel.compact .timeline-lane-labels { width: 28px; }
+.review-app .timeline-panel.compact :is(.timeline-lane-label, .timeline-lane-track) { height: 16px; }
+.review-app .timeline-panel.compact .round-lane::before { top: 4px; bottom: 4px; }
+.review-app .timeline-panel.compact .round-duration-track { left: 32px; right: 32px; }
+.review-app .timeline-panel.compact .round-boundary-marker { min-width: 28px; min-height: 16px; padding: 0 3px; line-height: 16px; }
+.review-app .timeline-panel.compact .timeline-lane-track .parser-event-marker { width: 16px; height: 14px; font-size: 10px; }
+.review-app .timeline-panel.compact .timeline-lane-track .event-marker { width: 6px; height: 14px; }
+.review-app .timeline-panel.compact :is(.event-marker, .parser-event-marker)::before { inset: -5px -4px; }
+.review-app .timeline-panel.compact .event-marker::before { inset: -5px -9px; }
+.review-app .timeline-panel.compact .timeline-scrubber { margin-left: 34px; }
+.review-app .timeline-panel.compact input[type="range"] { height: 12px; margin: 1px 0; }
+/* Transport, compact: one row that never wraps (−5s ▶ +5s, the clock, 倍速 | 上一条 / 下一条建议, 快捷键);
+   the shortcut list opens over the dock, above the bar, instead of adding a row under it. It is the
+   dock's last row, not sticky: `top: auto` drops the full bar's sticky offset (its position only
+   anchors the shortcut list). */
+.review-app .review-command-bar.compact { position: relative; top: auto; flex-wrap: nowrap; gap: 8px; min-height: 32px; padding: 3px 8px; }
+.review-app .review-command-bar.compact :is(.icon-button, .secondary-button) { min-height: 26px; }
+.review-app .review-command-bar.compact .icon-button:not(.review-seek-button) { width: 26px; }
+.review-app .review-command-bar.compact .review-clock { order: 4; margin-left: 8px; }
+.review-app .review-command-bar.compact .review-speed-control { order: 5; }
+.review-app .review-command-bar.compact .review-speed-control select { height: 26px; min-height: 26px; }
+.review-app .review-command-bar.compact .review-shortcuts { position: absolute; right: 8px; bottom: calc(100% + 4px); z-index: 20; grid-template-columns: repeat(2, minmax(0, 1fr)); width: min(520px, calc(100% - 16px)); padding: 8px 10px; border: 1px solid var(--line-bold); background: var(--panel); box-shadow: var(--shadow-pop); }
 
 /* Under the stage: media note, saved videos, advanced tools. */
 .review-app .review-media-note { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 14px; margin: 12px 0 0; padding: 6px 10px; border: 0; border-left: 3px solid var(--accent); border-radius: 0; background: var(--panel); color: var(--ink); }
@@ -1526,6 +1576,75 @@
   .review-app .utility-finder-list { max-height: 320px; }
 }
 
+/* S15 workbench stage (W2). From 1280 x 700 the review page is one screen and the stage fills its slot
+   (.review-main-canvas, given a definite height by the S15 WORKBENCH section): ReplayViewer
+   layout="workbench" is [team A roster | square map | team B roster]. Team A (it started on T) stays on
+   the left all match (data-team on each roster) and each header keeps the side it plays now. The map
+   column is as wide as the square: the slot's height less the HUD, or what the rosters leave, at most
+   900 px; the HUD, kill feed and map chips ride on that column. Container units only: nothing is
+   measured during playback. Below the query the class changes nothing. */
+@media (min-width: 1280px) and (min-height: 700px) {
+  .review-app .review-main-canvas .replay-panel.replay-workbench { container: replay-workbench / size; grid-template-columns: minmax(200px, 240px) auto minmax(200px, 240px); grid-template-rows: minmax(0, 1fr); grid-template-areas: "a map b"; justify-content: center; }
+  .review-app .review-main-canvas .replay-workbench > .map-stage { grid-area: map; width: min(100cqh - 40px, 100cqw - 400px, 900px); }
+  /* A slot up to 440 px tall gives a map of at most 400 px, where the HUD takes two lines (45 px and
+     its 8 px inset, not 32 + 8): the column narrows to match, so the radar frame stays square. */
+  @container replay-workbench (max-height: 440px) {
+    .review-app .review-main-canvas .replay-workbench > .map-stage { width: min(100cqh - 53px, 100cqw - 400px, 900px); }
+  }
+  /* The rosters become the grid's side cells; the group (玩家名单, its arrow keys) stays in the DOM. */
+  .review-app .review-main-canvas .replay-workbench > .player-list { display: contents; }
+  .review-app .replay-workbench .side-roster { align-self: start; min-width: 0; max-height: calc(100% - 16px); margin-top: 8px; overflow: auto; scrollbar-width: thin; }
+  .review-app .replay-workbench .side-roster[data-team="a"] { grid-area: a; margin-left: 8px; }
+  .review-app .replay-workbench .side-roster[data-team="b"] { grid-area: b; margin-right: 8px; }
+  /* 192–232 px rosters: three lines a player. Line 1 the name and money (K/D in the row's title and
+     its hidden facts), line 2 HP, armour and kit, line 3 the weapon with the grenades at the right; a
+     dead player's two-line death text takes lines 2 and 3, so a death never changes the row's height. */
+  .review-app .replay-workbench .live-roster-row .roster-stats { gap: 6px; }
+  @media (pointer: fine) {
+    .review-app .replay-workbench .live-roster-row :is(.roster-line-main, .roster-name) { min-height: 20px; }
+  }
+  .review-app .replay-workbench .live-roster-row .roster-kd { display: none; }
+  .review-app .replay-workbench .live-roster-row .roster-line-detail { display: grid; grid-template-columns: 60px auto auto auto minmax(0, 1fr); grid-template-rows: 17px 17px; grid-template-areas: "bar hp armor kit ." "weapon weapon weapon weapon nades"; align-items: center; column-gap: 6px; }
+  .review-app .replay-workbench .live-roster-row .roster-hp-bar { grid-area: bar; width: 60px; }
+  .review-app .replay-workbench .live-roster-row .roster-hp { grid-area: hp; }
+  .review-app .replay-workbench .live-roster-row .roster-armor { grid-area: armor; }
+  .review-app .replay-workbench .live-roster-row .roster-defuser { grid-area: kit; }
+  .review-app .replay-workbench .live-roster-row .roster-weapon { grid-area: weapon; }
+  .review-app .replay-workbench .live-roster-row .roster-grenades { grid-area: nades; justify-self: end; }
+  .review-app .replay-workbench .live-roster-row .roster-death { display: -webkit-box; grid-column: 1 / -1; grid-row: 1 / span 2; align-self: start; line-height: 17px; white-space: normal; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+  /* v1 replays: an alive row is one line, so a dead one keeps its single death line. */
+  .review-app .replay-workbench .live-roster-row.compact .roster-line-detail { grid-template-rows: 17px; }
+  .review-app .replay-workbench .live-roster-row.compact .roster-death { grid-row: 1; -webkit-line-clamp: 1; }
+  /* The HUD follows the rosters: once team A plays CT, the CT readout is the left one (mirrored
+     outward like the T one was) and T moves right. Visual order only; the DOM keeps T first. */
+  .review-app .replay-workbench .map-hud[data-left-side="CT"] .map-hud-team.side-ct { order: -1; flex-direction: row; }
+  .review-app .replay-workbench .map-hud[data-left-side="CT"] .map-hud-team.side-ct .map-hud-pips { flex-direction: row; }
+  .review-app .replay-workbench .map-hud[data-left-side="CT"] .map-hud-team.side-t { order: 1; flex-direction: row-reverse; }
+  .review-app .replay-workbench .map-hud[data-left-side="CT"] .map-hud-team.side-t .map-hud-pips { flex-direction: row-reverse; }
+  @container map-stage (max-width: 400px) {
+    .review-app .replay-workbench .map-hud[data-left-side="CT"] .map-hud-team.side-ct { grid-area: t; }
+    .review-app .replay-workbench .map-hud[data-left-side="CT"] .map-hud-team.side-t { grid-area: ct; }
+  }
+  /* The map's width here is the slot's height, so a second HUD line would only shrink the square: the
+     names are already gone (the rosters say them), and the bar keeps one line down to a 400 px map. */
+  @container map-stage (min-width: 401px) and (max-width: 456px) {
+    .review-app .replay-workbench .map-hud-inner { grid-template-areas: none; grid-template-rows: none; height: 32px; padding: 0 10px; }
+    .review-app .replay-workbench .map-hud-centre { display: flex; }
+    .review-app .replay-workbench .map-hud .map-hud-team.side-t,
+    .review-app .replay-workbench .map-hud .map-hud-team.side-ct,
+    .review-app .replay-workbench .map-hud .map-hud-clock { grid-area: auto; }
+    /* What the two team readouts (~115 px each), the clock and the bar's padding leave: a long carrier
+       name ends in an ellipsis instead of pushing into the team readouts. */
+    .review-app .replay-workbench .map-hud-status { grid-area: auto; justify-self: auto; max-width: max(48px, 100cqw - 330px); font-size: inherit; }
+    .review-app .replay-workbench .map-kill-feed { top: 54px; }
+  }
+}
+/* 道具反查, 第一人称 and its explanation share the same fixed slot: the finder's list and a long
+   explanation scroll inside it, the video letterboxes. */
+@media (min-width: 1280px) and (min-height: 700px) {
+  .review-app .review-main-canvas .first-person-explainer { min-height: 0; overflow: auto; }
+}
+
 /* === S11 === round economy (spec S11)
    回合记录: two rows of one-character buy types under the round cells (team A in ink, team B in
    ink-2) with the team names in a sticky column; the filter in the bar only fades rounds; the legend
@@ -1694,4 +1813,73 @@
   :is(.primary-button, .secondary-button, .icon-button, .danger-button):not(:disabled) { transition: none; }
   :is(.primary-button, .secondary-button, .icon-button, .danger-button):not(:disabled):active { transform: none; }
   .review-layout.is-entering :is(.review-stage, .map-hud, .coaching-panel) { animation: none; }
+}
+
+/* === S15 WORKBENCH === the one-screen review workbench (spec S15).
+   From 1280 x 700 the demo page (main.is-workbench, set by lib/use-workbench-layout.ts with the same
+   query once the replay is loaded) is one screen under the 40 px top bar: the band (score, facts, the
+   reviewed player) 56 px, then the stage [team A roster | square map | team B roster] with the dock
+   under it (回合记录 in one row, the timeline, the transport) and the right column (重点建议 scrolling
+   inside, 本回合 at the bottom). The 数据 section follows below the screen. Every size here is CSS
+   (viewport and container units, flex and grid): nothing is measured, nothing changes per frame.
+   Notices (error banners, the media note, the first-run player picker) shrink the stage instead of
+   pushing the dock off the screen. Narrower or shorter screens keep the stacked page. */
+@media (min-width: 1280px) and (min-height: 700px) {
+  .review-app.is-workbench {
+    /* The left column at its ideal width: a square map as tall as the stage leaves (the screen less
+       the bar 40, the page's top 8, band 56, gap 8, bottom 8, stage tabs 33, dock 131 and the HUD 40),
+       at most 900 px, plus two 240 px rosters, their 8 px insets and the stage's 2 px edge. */
+    --s15-left: min(calc(100dvh + 174px), 1398px);
+    /* The page at most that column, the right column at 520 px, the 12 px gap and the 16 px gutters. */
+    --s15-page: calc(var(--s15-left) + 564px);
+  }
+  .review-app.is-workbench .topbar { padding-inline: max(16px, calc((100% - var(--s15-page)) / 2 + 16px)); }
+  .review-app.is-workbench .page { max-width: var(--s15-page); padding-top: 8px; }
+  .review-app.is-workbench .site-footer { max-width: var(--s15-page); }
+
+  /* The screen: band, notices, then the workspace taking what is left. */
+  .review-app.is-workbench .review-workbench { display: flex; flex-direction: column; gap: 8px; height: calc(100dvh - 48px); padding-bottom: 8px; }
+  .review-app.is-workbench .review-workbench > * { flex: none; margin: 0; }
+  .review-app.is-workbench .review-workbench > .review-layout { flex: 1 1 0; min-height: 400px; }
+
+  /* The band: one row, the score block, the facts, the reviewed player at the right end. The first-run
+     player picker still opens as the band's body (it wraps under the row and the workspace gives way). */
+  .review-app.is-workbench .review-header.has-banner { flex-wrap: wrap; align-items: center; min-height: 56px; }
+  .review-app.is-workbench .review-header.has-banner .match-banner-board { flex: none; grid-template-columns: repeat(5, auto); column-gap: 10px; min-height: 56px; padding: 0 4px 0 16px; }
+  .review-app.is-workbench .match-banner.compact .match-banner-team { gap: 0; }
+  .review-app.is-workbench .match-banner.compact .match-banner-name-line { flex-wrap: nowrap; gap: 8px; }
+  .review-app.is-workbench .match-banner.compact .match-banner-name { font-size: 16px; white-space: nowrap; overflow-wrap: normal; }
+  .review-app.is-workbench .match-banner.compact .match-banner-mine { white-space: nowrap; }
+  .review-app.is-workbench .match-banner.compact .match-banner-score { font-size: 20px; line-height: 1; }
+  .review-app.is-workbench .match-banner.compact .match-banner-colon { font-size: 16px; }
+  /* The facts after a hairline, so the score block reads as one thing. */
+  .review-app.is-workbench .review-header.has-banner .match-banner-meta { flex: 1 1 auto; flex-wrap: nowrap; align-items: baseline; min-width: 0; min-height: 0; margin: 0 0 0 12px; padding: 2px 12px; overflow: hidden; border-top: 0; border-left: 1px solid var(--line-bold); background: none; white-space: nowrap; }
+  .review-app.is-workbench .review-header.has-banner > .personal-review-panel:not(:has(.personal-player-picker)) { flex: 0 1 auto; padding: 0 18px 0 8px; border-top: 0; background: none; }
+  .review-app.is-workbench .review-header.has-banner .personal-review-heading { flex-wrap: nowrap; }
+
+  /* The workspace: the left column sized from the square map, the right column the rest (380–520 px;
+     where both cannot have their ideal width, the rosters give way, down to their 200 px). */
+  .review-app.is-workbench .review-layout { grid-template-columns: min(calc(100% - 392px), var(--s15-left)) minmax(380px, 1fr); grid-template-rows: minmax(0, 1fr); align-items: stretch; }
+  .review-app.is-workbench .review-main-column { display: flex; flex-direction: column; gap: 8px; min-height: 0; }
+  .review-app.is-workbench .review-main-column > .review-media-note { flex: none; margin: 0; }
+
+  /* The stage: tabs (with the suggestion being watched and "只看 X" inside the bar), the canvas taking
+     the height that is left, then the dock. Jumps from 数据 scroll the stage to the band's place, i.e.
+     back to the top of the page, so the whole screen shows again. */
+  .review-app.is-workbench .review-stage { flex: 1 1 0; min-height: 0; scroll-margin-top: 112px; }
+  .review-app.is-workbench .review-stage > * { flex: none; }
+  .review-app.is-workbench .review-stage-toolbar { flex-wrap: nowrap; }
+  .review-app.is-workbench .review-stage > .review-main-canvas { flex: 1 1 0; height: auto; min-height: 0; }
+  .review-app.is-workbench .review-stage-toolbar .review-finding-slot { display: flex; flex: 1 1 auto; align-self: stretch; align-items: center; min-width: 0; min-height: 0; padding: 3px 0; border: 0; }
+  .review-app.is-workbench .review-stage-toolbar .review-finding-strip { flex: 1 1 auto; min-width: 0; height: 100%; padding-block: 0; border-bottom: 0; }
+  .review-app.is-workbench .review-stage-toolbar .review-focus-strip { flex: none; flex-wrap: nowrap; align-self: center; height: 26px; padding-block: 0; border-bottom: 0; white-space: nowrap; }
+  .review-app.is-workbench .review-stage-toolbar .review-clip-button { flex: none; }
+  /* The dock's top edge: 回合记录 sits on the panel fill under the radar canvas. */
+  .review-app.is-workbench .review-stage > .round-strip { border-top: 1px solid var(--line-bold); background: var(--panel); }
+
+  /* The right column fills the workspace's height: 重点建议 takes what 本回合 leaves and scrolls inside
+     (its header with the scope toggle stays), 本回合 keeps its height up to 40 % and scrolls past that. */
+  .review-app.is-workbench .review-side-column { position: static; gap: 8px; min-height: 0; max-height: none; }
+  .review-app.is-workbench .review-side-column > .coaching-panel { flex: 1 1 0; min-height: 120px; scroll-margin-top: 112px; }
+  .review-app.is-workbench .review-side-column > .round-detail-panel { flex: none; max-height: 40%; margin: 0; overflow: auto; scrollbar-width: thin; }
 }
