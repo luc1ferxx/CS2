@@ -704,7 +704,7 @@
 .review-app .review-clip-button { font-size: var(--step-sm); white-space: nowrap; }
 /* Sized by the column's width so the square radar fills it on laptops; on a short screen the
    transport scrolls into view instead of the radar shrinking. */
-.review-app .review-main-canvas { position: relative; min-width: 0; height: clamp(480px, calc((100vw - 460px) * 0.62 + 40px), 660px); overflow: hidden; background: var(--radar-bg); }
+.review-app .review-main-canvas { position: relative; min-width: 0; height: calc(clamp(480px, calc((100vw - 460px) * 0.62 + 40px), 660px) + var(--key-band, 0px)); overflow: hidden; background: var(--radar-bg); }
 .review-app .review-main-canvas .first-person-panel { height: 100%; margin: 0; padding: 0; border: 0; border-radius: 0; background: var(--radar-bg); }
 .review-app .review-main-canvas .first-person-viewport { height: 100%; min-height: 0; aspect-ratio: auto; border: 0; border-radius: 0; background: var(--radar-bg); }
 .review-app .review-main-canvas .first-person-video { width: 100%; height: 100%; object-fit: contain; }
@@ -826,7 +826,7 @@
 .review-app .side-roster .roster-head .panel-bar-title { font-size: var(--step-sm); }
 .review-app .roster-side { font-weight: 600; }
 .review-app .review-main-canvas .roster-row { display: grid; grid-template-columns: 18px minmax(0, 1fr) 30px; align-items: center; gap: 6px; min-height: 26px; padding: 0 8px; border-top: 1px solid var(--line-subtle); background: var(--panel); color: var(--ink); font-size: var(--step-sm); }
-.review-app .review-main-canvas .roster-row:nth-child(odd) { background: var(--row-alt); }
+.review-app .review-main-canvas .roster-rows > :nth-child(even) { background: var(--row-alt); }
 .review-app .review-main-canvas .roster-row:hover { background: var(--row-hover); }
 .review-app .review-main-canvas .roster-row.reviewed { background: var(--row-selected); }
 .review-app .roster-row.dead { color: var(--ink-3); text-decoration: none; }
@@ -1882,4 +1882,86 @@
   .review-app.is-workbench .review-side-column { position: static; gap: 8px; min-height: 0; max-height: none; }
   .review-app.is-workbench .review-side-column > .coaching-panel { flex: 1 1 0; min-height: 120px; scroll-margin-top: 112px; }
   .review-app.is-workbench .review-side-column > .round-detail-panel { flex: none; max-height: 40%; margin: 0; overflow: auto; scrollbar-width: thin; }
+}
+
+/* === S16 KEYS === live key panel (spec S16).
+   Visual design adapted from bugkingZHT/cs2-sandbox KeyboardOverlay.vue (MIT, Copyright (c) 2026
+   huN7er). The user chose that panel over our own restyle, so its values are kept as they are: the
+   literal colours, the blur, rounded keys and the blue pressed state sit outside the S13 palette for
+   this one component, and the flex cells keep the reference's sizes (a 48 px SHIFT in a 36 px cell,
+   the 116 px SPACE in a 180 px grid) so the browser lays it out the same way. Unscoped, so the panel
+   looks the same wherever it is mounted. */
+.keyboard-overlay { display: flex; gap: 20px; padding: 16px; background: rgba(0, 0, 0, 0.7); border-radius: 12px; border: 1px solid rgba(255, 255, 255, 0.2); backdrop-filter: blur(8px); }
+.keyboard-overlay .keyboard-grid { width: 180px; display: flex; flex-direction: column; gap: 4px; }
+.keyboard-overlay .grid-row { display: flex; gap: 4px; }
+.keyboard-overlay .grid-cell { width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; }
+.keyboard-overlay .grid-cell.space-cell { width: 116px; }
+.keyboard-overlay .key { width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; background: rgba(255, 255, 255, 0.1); border: 1px solid rgba(255, 255, 255, 0.3); border-radius: 6px; color: rgba(255, 255, 255, 0.6); font-size: 14px; font-weight: 600; font-family: var(--font-mono, monospace); transition: all 0.1s ease; user-select: none; }
+.keyboard-overlay .key.wide { width: 116px; height: 36px; font-size: 10px; }
+.keyboard-overlay .key.medium { width: 48px; height: 36px; font-size: 10px; }
+.keyboard-overlay .key.active { background: rgba(74, 171, 247, 0.8); border-color: rgba(74, 171, 247, 1); color: #ffffff; box-shadow: 0 0 12px rgba(74, 171, 247, 0.5); transform: scale(0.95); animation: keyPulse 0.3s ease-out; }
+@keyframes keyPulse {
+  0% { box-shadow: 0 0 0 0 rgba(74, 171, 247, 0.8); }
+  70% { box-shadow: 0 0 0 8px rgba(74, 171, 247, 0); }
+  100% { box-shadow: 0 0 12px rgba(74, 171, 247, 0.5); }
+}
+.keyboard-overlay .mouse-section { display: flex; align-items: center; }
+.keyboard-overlay .mouse-container { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.keyboard-overlay .mouse-svg { flex: none; width: 48px; height: 72px; filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.3)); }
+.keyboard-overlay .mouse-button { transition: fill 0.1s ease; }
+.keyboard-overlay .mouse-labels { display: flex; gap: 12px; font-size: 10px; color: rgba(255, 255, 255, 0.5); }
+.keyboard-overlay .mouse-labels span { transition: color 0.1s ease; }
+.keyboard-overlay .mouse-labels span.active { color: #4aabf7; font-weight: 600; }
+
+/* Placement: never over the map. The panel shows nothing clickable, so it keeps its pointer (the keys'
+   titles). The slot keeps its height while the panel is hidden (dead, no data at this tick), so nothing
+   around it moves when the followed player dies.
+   Stacked layout (narrow or short screens, phones): in the map column under the radar (after the kill
+   feed line on phones), at 0.8 from the left. Where the canvas has a fixed height (from 1001 px) it
+   grows by that band (120 + 8 px, --key-band in the canvas rule) whenever the match has key data (the
+   page's has-key-band, on every tab, so a tab switch never changes its height), so the radar keeps its
+   size and the page scrolls instead; below that the canvas is as tall as its content anyway. */
+/* align-items: the slot is shorter than the unscaled panel; stretched, the card would be cut short. */
+.review-app .keyboard-overlay-slot { display: flex; align-items: flex-start; }
+.review-app .map-stage > .keyboard-overlay-slot { flex: none; height: 120px; margin: 0 8px 8px; }
+.review-app .map-stage > .keyboard-overlay-slot > .keyboard-overlay { flex: none; transform: scale(0.8); transform-origin: left top; }
+.review-app .review-main-canvas.has-key-band { --key-band: 128px; }
+/* Workbench (1280 x 700 and up): at the bottom of the followed player's team roster (team A's column
+   left of the map, team B's right of it), level with the radar's bottom edge. That column takes its
+   slot's height and no more: the header, the rows, 8 px, the panel. The panel is scaled to the
+   column's width in 8 px steps (a container query on the column, 286 x 150 px unscaled; nothing is
+   measured) and centred, and the slot keeps the scaled height. The rows box scrolls if the column is
+   still too short (a 700 px tall screen); on a short workbench the rows of both rosters first drop
+   their inner gaps (both, so the two lists stay level across the map). */
+@media (min-width: 1280px) and (min-height: 700px) {
+  .review-app .replay-workbench .side-roster.has-key-panel { container: key-column / inline-size; display: flex; flex-direction: column; height: calc(100% - 16px); max-height: none; overflow: hidden; background: transparent; }
+  .review-app .replay-workbench .side-roster.has-key-panel > .roster-head { flex: none; }
+  .review-app .replay-workbench .side-roster.has-key-panel > .roster-rows { flex: 0 1 auto; min-height: 0; margin-bottom: 8px; overflow-y: auto; background: var(--panel); scrollbar-width: thin; }
+  .review-app .replay-workbench .side-roster.has-key-panel > .keyboard-overlay-slot { flex: none; justify-content: center; height: calc(150px * var(--key-scale)); margin-top: auto; }
+  .review-app .replay-workbench .keyboard-overlay-slot > .keyboard-overlay { flex: none; transform: scale(var(--key-scale)); transform-origin: center top; }
+  .review-app .has-key-panel > .keyboard-overlay-slot { --key-scale: 0.643; }
+  @container key-column (min-width: 192px) { .review-app .has-key-panel > .keyboard-overlay-slot { --key-scale: 0.671; } }
+  @container key-column (min-width: 200px) { .review-app .has-key-panel > .keyboard-overlay-slot { --key-scale: 0.699; } }
+  @container key-column (min-width: 208px) { .review-app .has-key-panel > .keyboard-overlay-slot { --key-scale: 0.727; } }
+  @container key-column (min-width: 216px) { .review-app .has-key-panel > .keyboard-overlay-slot { --key-scale: 0.755; } }
+  @container key-column (min-width: 224px) { .review-app .has-key-panel > .keyboard-overlay-slot { --key-scale: 0.783; } }
+  @container key-column (min-width: 232px) { .review-app .has-key-panel > .keyboard-overlay-slot { --key-scale: 0.811; } }
+  /* Five 66 px rows, the header and a ~122 px panel need a 502 px stage: below that a row loses the
+     6 px between its detail lines and a pixel of padding (58 px, 1366 x 768), below 466 px its lines
+     shrink to 18 / 16 / 16 px (53 px, 1280 x 720). Only with key data, so a row never changes height
+     during playback. */
+  @container replay-workbench (max-height: 501px) {
+    .review-app .replay-workbench.has-keys .roster-row.live-roster-row { padding: 1px 8px 2px; }
+    .review-app .replay-workbench.has-keys .live-roster-row .roster-line-detail { row-gap: 0; }
+  }
+  @container replay-workbench (max-height: 465px) {
+    .review-app .replay-workbench.has-keys .roster-row.live-roster-row { padding: 1px 8px; }
+    .review-app .replay-workbench.has-keys .live-roster-row :is(.roster-line-main, .roster-name) { min-height: 18px; }
+    .review-app .replay-workbench.has-keys .live-roster-row:not(.compact) .roster-line-detail { grid-template-rows: 16px 16px; }
+    .review-app .replay-workbench.has-keys .live-roster-row .roster-death { line-height: 16px; }
+    .review-app .replay-workbench.has-keys .side-roster.has-key-panel > .roster-rows { margin-bottom: 4px; }
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .keyboard-overlay :is(.key, .key.active, .mouse-button, .mouse-labels span) { transition: none; animation: none; }
 }

@@ -98,6 +98,7 @@ import {
   RENDER_WORKER_OFFLINE_LABEL as RENDER_OFFLINE_LABEL,
   renderWorkerOffline
 } from "@/lib/render-worker";
+import { hasInputs } from "@/lib/player-inputs";
 import { usePoll } from "@/lib/use-poll";
 import { useFirstEntry } from "@/lib/use-first-entry";
 import { useSlidingIndicator } from "@/lib/use-sliding-indicator";
@@ -527,6 +528,9 @@ function DemoDetailContent() {
     ? utilityAvailability(replay, Boolean(status?.ingestion?.replayUpgradePending))
     : "hidden";
   const finderSelected = viewMode === "utility" && utilityTab !== "hidden";
+  // With key data the stacked canvas keeps a band under the map for the key panel (S16) on every
+  // tab, so switching tabs never changes its height.
+  const keyBand = useMemo(() => hasInputs(loadedReplay), [loadedReplay]);
   const focusPlayer = focusedThrower?.demoId === demoId ? focusedThrower : null;
   const personalEvents = useMemo(
     () => coachingForPlayer(events, selectedPlayer?.id ?? null),
@@ -1386,7 +1390,7 @@ function DemoDetailContent() {
                   HUD and the map down while the lock bracket snaps. */}
               {workbench ? null : findingSlot}
               {workbench ? null : focusStrip}
-              <div className={`review-main-canvas ${finderSelected ? "showing-finder" : videoDrivesClock ? "showing-video" : showFirstPersonExplainer ? "showing-explainer" : "showing-map"}`}>
+              <div className={`review-main-canvas ${finderSelected ? "showing-finder" : videoDrivesClock ? "showing-video" : showFirstPersonExplainer ? "showing-explainer" : "showing-map"}${keyBand ? " has-key-band" : ""}`}>
               {finderSelected ? (
                 utilityTab === "available" ? (
                   <UtilityFinder replay={replay} teams={teams} currentRound={selectedRound} state={finderState}

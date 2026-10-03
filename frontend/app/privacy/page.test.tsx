@@ -35,6 +35,9 @@ describe("PrivacyPage", () => {
     expect(screen.getByRole("region", { name: "你上传的比赛" })).toHaveTextContent(
       ".dem 文件里包含同场所有玩家的 SteamID64、游戏内昵称、位置和击杀记录。"
     );
+    expect(screen.getByRole("region", { name: "你上传的比赛" })).toHaveTextContent(
+      "携带的道具和按键记录（移动、静步、蹲、跳和鼠标左右键）"
+    );
     expect(screen.getByRole("region", { name: "登录时我们拿到什么" })).toHaveTextContent(
       "删除账户不会把你移出名单；如需移出，请联系站长。"
     );
@@ -47,7 +50,7 @@ describe("PrivacyPage", () => {
     const deletion = screen.getByRole("region", { name: "删除" });
     expect(within(deletion).getByRole("link", { name: "账户与数据" })).toHaveAttribute("href", "/account");
     expect(deletion).toHaveTextContent("删除比赛不会恢复当天的上传次数。");
-    expect(screen.getByText("最近更新：2026-10-02")).toBeInTheDocument();
+    expect(screen.getByText("最近更新：2026-10-03")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "隐私说明" })).toHaveAttribute("aria-current", "page");
   });
 

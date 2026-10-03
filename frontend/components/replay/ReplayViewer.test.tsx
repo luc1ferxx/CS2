@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import { ReplayViewer, type ReplayMapOverlayContext } from "@/components/replay/ReplayViewer";
-import { V2_ALPHA, V2_CHARLIE, V2_DELTA, replayV1, replayV2 } from "@/lib/test-fixtures/replay-v2";
+import { V2_ALPHA, V2_BRAVO, V2_CHARLIE, V2_DELTA, replayV1, replayV2 } from "@/lib/test-fixtures/replay-v2";
 import type { ReplayData } from "@/types/replay";
 
 const TEAMS = [{ key: "A", name: "Spirit" }, { key: "B", name: "MOUZ" }];
@@ -467,5 +467,115 @@ describe("ReplayViewer workbench layout", () => {
     renderViewer({ currentTick: 600, layout: "workbench" });
     expect(row("Alpha")).toHaveAttribute("title", "击杀 1，死亡 0");
     expect(row("Delta")).toHaveAttribute("title", "击杀 0，死亡 1");
+  });
+});
+
+describe("ReplayViewer key panel (S16)", () => {
+  const W = 8, A = 512, D = 1024, FIRE = 1, DUCK = 4;
+  // Alpha: W+D from 100, D+duck+fire from 180. Bravo: W until his death at 700. Charlie: A. Delta: none.
+  const withInputs = (overrides: Partial<ReplayData> = {}) => replayV2({
+    inputs: {
+      [V2_ALPHA]: [[100, W | D], [180, D | DUCK | FIRE], [1300, 0]],
+      [V2_BRAVO]: [[100, W], [700, 0]],
+      [V2_CHARLIE]: [[100, A]]
+    },
+    ...overrides
+  });
+  const keyPanel = () => document.querySelector<HTMLElement>(".keyboard-overlay");
+  const slot = () => document.querySelector<HTMLElement>(".keyboard-overlay-slot");
+
+  it("shows the reviewed player's keys at this tick, under the map after the kill feed (stacked)", () => {
+    renderViewer({ replay: withInputs() });
+    expect(screen.getByRole("img", { name: "Alpha 正在按：D、蹲、左键" })).toBe(keyPanel());
+    expect(slot()!.parentElement).toHaveClass("map-stage");
+    expect(slot()!.previousElementSibling).toHaveClass("map-kill-feed");
+    expect(slot()!.nextElementSibling).toBeNull();
+    // Never inside the radar frame (over the map), nor in a roster.
+    expect(slot()!.closest(".map-frame")).toBeNull();
+    expect(slot()!.closest(".player-list")).toBeNull();
+    expect(document.querySelector(".replay-panel")).toHaveClass("has-keys");
+  });
+
+  it("follows playback: the mask in force at the current tick", () => {
+    const { rerender } = renderViewer({ replay: withInputs(), currentTick: 150 });
+    expect(keyPanel()).toHaveAccessibleName("Alpha 正在按：W、D");
+    rerender(<ReplayViewer replay={withInputs()} currentTick={190} selectedPlayerId={V2_ALPHA} onSelectPlayer={vi.fn()}
+      variant="featured" teamNames={TEAMS} />);
+    expect(keyPanel()).toHaveAccessibleName("Alpha 正在按：D、蹲、左键");
+  });
+
+  it("renders no slot at all without key data (v1, v2, or a demo without usercmd)", () => {
+    renderViewer();
+    expect(slot()).toBeNull();
+    renderViewer({ replay: replayV1(), teamNames: null });
+    expect(slot()).toBeNull();
+    renderViewer({ replay: replayV2({ inputs: {} }) });
+    expect(slot()).toBeNull();
+    // No compact roster rows for the panel either.
+    expect(document.querySelector(".replay-panel.has-keys")).toBeNull();
+  });
+
+  it("follows the clicked player over the reviewed one, and returns on close", () => {
+    renderViewer({ replay: withInputs() });
+    fireEvent.click(dotOf("CT", 1));
+    expect(keyPanel()).toHaveAccessibleName("Charlie 正在按：A");
+    expect(slot()!.parentElement).toHaveClass("map-stage");
+    fireEvent.click(screen.getByRole("button", { name: "取消高亮" }));
+    expect(keyPanel()).toHaveAccessibleName("Alpha 正在按：D、蹲、左键");
+  });
+
+  it("hides the panel for a dead player and for one without inputs, keeping the slot", () => {
+    renderViewer({ replay: withInputs(), selectedPlayerId: V2_BRAVO, currentTick: 600 });
+    expect(keyPanel()).toHaveAccessibleName("Bravo 正在按：W");
+
+    renderViewer({ replay: withInputs(), selectedPlayerId: V2_BRAVO, currentTick: 700 });
+    expect(document.querySelectorAll(".keyboard-overlay-slot")[1]).toBeEmptyDOMElement();
+    renderViewer({ replay: withInputs(), selectedPlayerId: V2_ALPHA, currentTick: 1300 });
+    expect(document.querySelectorAll(".keyboard-overlay-slot")[2]).toBeEmptyDOMElement();
+    // Delta has no track; nobody selected and nobody clicked shows nothing either.
+    renderViewer({ replay: withInputs(), selectedPlayerId: V2_DELTA });
+    expect(document.querySelectorAll(".keyboard-overlay-slot")[3]).toBeEmptyDOMElement();
+    renderViewer({ replay: withInputs(), selectedPlayerId: null });
+    expect(document.querySelectorAll(".keyboard-overlay-slot")[4]).toBeEmptyDOMElement();
+    expect(document.querySelectorAll(".keyboard-overlay")).toHaveLength(1);
+  });
+
+  it("hides a clicked dead player's keys even while the reviewed player is alive", () => {
+    renderViewer({ replay: withInputs(), currentTick: 800 });
+    fireEvent.click(dotOf("T", 2));
+    expect(slot()).toBeEmptyDOMElement();
+  });
+
+  it("reads the keys from matchReplay when the map gets a per-player replay", () => {
+    renderViewer({ replay: replayV2(), matchReplay: withInputs() });
+    expect(keyPanel()).toHaveAccessibleName("Alpha 正在按：D、蹲、左键");
+  });
+
+  it("sits at the bottom of the followed player's team roster in the workbench, never in the map column", () => {
+    renderViewer({ replay: withInputs({ mapName: "de_nuke" }), layout: "workbench" });
+    expect(document.querySelector(".map-stage .keyboard-overlay-slot")).toBeNull();
+    // Alpha plays T for team A: the last thing in team A's roster, after its rows.
+    expect(panel("T")).toHaveAttribute("data-team", "a");
+    expect(slot()!.parentElement).toBe(panel("T"));
+    expect(slot()!.previousElementSibling).toHaveClass("roster-rows");
+    expect(slot()!.nextElementSibling).toBeNull();
+    expect(panel("T")).toHaveClass("has-key-panel");
+    expect(panel("CT")).not.toHaveClass("has-key-panel");
+    expect(keyPanel()).toHaveAccessibleName("Alpha 正在按：D、蹲、左键");
+
+    // A clicked CT player (team B): the panel moves to team B's roster.
+    fireEvent.click(dotOf("CT", 1));
+    expect(document.querySelectorAll(".keyboard-overlay-slot")).toHaveLength(1);
+    expect(panel("CT")).toHaveAttribute("data-team", "b");
+    expect(slot()!.parentElement).toBe(panel("CT"));
+    expect(panel("CT")).toHaveClass("has-key-panel");
+    expect(panel("T")).not.toHaveClass("has-key-panel");
+    expect(keyPanel()).toHaveAccessibleName("Charlie 正在按：A");
+  });
+
+  it("keeps the workbench slot in the column while the followed player is dead", () => {
+    renderViewer({ replay: withInputs(), selectedPlayerId: V2_BRAVO, currentTick: 700, layout: "workbench" });
+    expect(slot()!.parentElement).toBe(panel("T"));
+    expect(slot()).toBeEmptyDOMElement();
   });
 });

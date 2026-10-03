@@ -3,11 +3,13 @@
 import { Bomb, CircleDot, Cloud, Disc, Flame, Scissors, Shield, ShieldHalf, X, Zap, type LucideIcon } from "lucide-react";
 import { memo, useCallback, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode, type RefObject } from "react";
 
+import { KeyboardOverlaySlot } from "@/components/replay/KeyboardOverlay";
 import { MapHud, MapKillFeed, MapKillTraces, mapKillsForRound, roundVerdictText, type MapKill, type MapKillTrace } from "@/components/replay/MapHud";
 import { RadarGraticule } from "@/components/replay/RadarGraticule";
 import { getTacticalMapLevel, getTacticalMapPresentation, resolveTacticalMapLevel, sanitizeRadarPoint } from "@/lib/map-config";
 import type { TacticalMapLevel, TacticalMapLevelMode, TacticalMapPresentation } from "@/lib/map-config";
 import { teamKeyOfPlayer } from "@/lib/match-stats";
+import { hasInputs, inputMaskAt } from "@/lib/player-inputs";
 import {
   activeWeaponLabel,
   deathInfoAt,
@@ -265,6 +267,20 @@ export const ReplayViewer = memo(function ReplayViewer({
   };
   const renderOverlay = (slot: ReplayMapOverlay | undefined) =>
     typeof slot === "function" ? slot(overlayContext) : slot ?? null;
+  // Key panel (S16): the clicked player's buttons, else the reviewed player's, read from the whole
+  // match's inputs (the map may get a per-player replay); none while dead or without key data now.
+  // It never goes over the map: in the workbench it sits at the bottom of the followed player's team
+  // roster, in the stacked layout under the map.
+  const replayHasInputs = useMemo(() => hasInputs(statsReplay), [statsReplay]);
+  const keyPlayer = replayHasInputs
+    ? framePlayers.find((player) => player.id === (highlightedPlayerId ?? selectedPlayerId))
+    : undefined;
+  const keyMask = keyPlayer?.alive ? inputMaskAt(statsReplay, keyPlayer.id, currentTick) : null;
+  const keySlot = frame && replayHasInputs ? (
+    <KeyboardOverlaySlot key={keyPlayer?.id ?? ""} mask={keyMask} playerName={keyPlayer?.name ?? null} />
+  ) : null;
+  const workbench = layout === "workbench";
+  const rosterKeySlot = (side: PlayerSide) => (workbench && keyPlayer?.side === side ? keySlot : null);
 
   // Stable, so the memoised roster rows only re-render when their own facts change.
   const toggleHighlight = useCallback((playerId: string) => {
@@ -300,7 +316,7 @@ export const ReplayViewer = memo(function ReplayViewer({
 
   return (
     <section
-      className={`panel replay-panel ${layoutClass}${layout === "workbench" ? " replay-workbench" : ""}`}
+      className={`panel replay-panel ${layoutClass}${workbench ? " replay-workbench" : ""}${replayHasInputs ? " has-keys" : ""}`}
       aria-label="战术地图"
     >
       <div className="map-stage">
@@ -432,12 +448,15 @@ export const ReplayViewer = memo(function ReplayViewer({
           ) : null}
         </div>
         {frame ? <MapKillFeed kills={killFeed} /> : null}
+        {workbench ? null : keySlot}
       </div>
 
       {framePlayers.length > 0 ? (
         <div className="player-list" role="group" aria-label="玩家名单" onKeyDown={handleRosterKeyDown}>
-          <Roster side="T" title="进攻方" teamName={tTeamName} team={tIsTeamA ? "a" : "b"} players={tPlayers} {...rosterProps} />
-          <Roster side="CT" title="防守方" teamName={ctTeamName} team={tIsTeamA ? "b" : "a"} players={ctPlayers} {...rosterProps} />
+          <Roster side="T" title="进攻方" teamName={tTeamName} team={tIsTeamA ? "a" : "b"} players={tPlayers}
+            keySlot={rosterKeySlot("T")} {...rosterProps} />
+          <Roster side="CT" title="防守方" teamName={ctTeamName} team={tIsTeamA ? "b" : "a"} players={ctPlayers}
+            keySlot={rosterKeySlot("CT")} {...rosterProps} />
         </div>
       ) : null}
     </section>
@@ -704,13 +723,16 @@ function Roster({
   replay,
   currentTick,
   killsDeaths,
-  compact
+  compact,
+  keySlot
 }: {
   side: PlayerSide;
   title: string;
   teamName: string | null;
   // Match-stats team ("a" started on T): the workbench places team A's roster left of the map.
   team: "a" | "b";
+  // Workbench: the key panel of the followed player (on this team), pinned under the rows.
+  keySlot?: ReactNode;
   players: ReplayFramePlayer[];
   map: TacticalMapPresentation;
   selectedPlayerId: string | null;
@@ -726,26 +748,30 @@ function Roster({
   const sideClass = `side-${side.toLowerCase()}`;
   const floors = Boolean(map.secondaryRadarImagePath);
   return (
-    <div className={`side-roster live-roster ${sideClass}`} data-team={team}>
+    <div className={`side-roster live-roster ${sideClass}${keySlot ? " has-key-panel" : ""}`} data-team={team}>
       <div className={`panel-bar roster-head panel-bar-${side.toLowerCase()}`}>
         <h3 className="panel-bar-title">
           <span className="roster-team-name">{teamName ?? title}</span> <span className="roster-side">{side}</span>
         </h3>
       </div>
-      {players.map((player, index) => {
-        const counts = killsDeaths.get(player.id);
-        return (
-          <RosterRow key={player.id} playerId={player.id} name={player.name} side={player.side}
-            alive={player.alive} hp={player.alive ? Math.max(0, Math.min(100, Math.round(finite(player.hp) ?? 0))) : 0}
-            hasBomb={Boolean(player.hasBomb)} floor={floors ? floorLabel(getTacticalMapLevel(map, player.z)) : null}
-            index={index + 1} sideClass={sideClass}
-            reviewed={player.id === selectedPlayerId} highlighted={highlightedPlayerId === player.id}
-            tabbable={player.id === rovingId} onHighlight={onHighlight} register={register}
-            state={stateAt(replay, player.id, currentTick)}
-            deathText={player.alive ? null : describeDeath(player.id, deathInfoAt(replay, player.id, currentTick))}
-            kills={counts?.kills ?? 0} deaths={counts?.deaths ?? 0} compact={compact} />
-        );
-      })}
+      {/* Its own box, so the rows can scroll above the key panel when the column is short. */}
+      <div className="roster-rows">
+        {players.map((player, index) => {
+          const counts = killsDeaths.get(player.id);
+          return (
+            <RosterRow key={player.id} playerId={player.id} name={player.name} side={player.side}
+              alive={player.alive} hp={player.alive ? Math.max(0, Math.min(100, Math.round(finite(player.hp) ?? 0))) : 0}
+              hasBomb={Boolean(player.hasBomb)} floor={floors ? floorLabel(getTacticalMapLevel(map, player.z)) : null}
+              index={index + 1} sideClass={sideClass}
+              reviewed={player.id === selectedPlayerId} highlighted={highlightedPlayerId === player.id}
+              tabbable={player.id === rovingId} onHighlight={onHighlight} register={register}
+              state={stateAt(replay, player.id, currentTick)}
+              deathText={player.alive ? null : describeDeath(player.id, deathInfoAt(replay, player.id, currentTick))}
+              kills={counts?.kills ?? 0} deaths={counts?.deaths ?? 0} compact={compact} />
+          );
+        })}
+      </div>
+      {keySlot}
     </div>
   );
 }

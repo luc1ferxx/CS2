@@ -10,7 +10,7 @@ export const metadata: Metadata = {
   title: "隐私说明"
 };
 
-const PRIVACY_UPDATED = "2026-10-02";
+const PRIVACY_UPDATED = "2026-10-03";
 
 // Public: visitors read it before signing in, so it never sits behind the auth boundary.
 export default function PrivacyPage() {
@@ -49,7 +49,7 @@ export default function PrivacyPage() {
             <ul>
               <li>原始 .dem 文件按原样保存，用于以后重新解析。</li>
               <li>
-                解析出的回放数据和复盘建议。回放数据包括每名玩家的位置、血量、金钱、武器和携带的道具，以及每颗道具的轨迹和落点；这些都来自 .dem 本身，较早上传的比赛会在后台用已保存的 .dem 重新解析一次来补上。复盘规则更新后，网站会在后台用已保存的回放数据重新计算建议，不会收集新的数据；有的建议可能因此不再显示，你对它的评价仍随比赛保存，直到你删除这场比赛或账户。
+                解析出的回放数据和复盘建议。回放数据包括每名玩家的位置、血量、金钱、武器、携带的道具和按键记录（移动、静步、蹲、跳和鼠标左右键），以及每颗道具的轨迹和落点；这些都来自 .dem 本身，较早上传的比赛会在后台用已保存的 .dem 重新解析一次来补上。复盘规则更新后，网站会在后台用已保存的回放数据重新计算建议，不会收集新的数据；有的建议可能因此不再显示，你对它的评价仍随比赛保存，直到你删除这场比赛或账户。
               </li>
               <li>你对建议的评价（有帮助、无关、判断不足），以及你改过的比赛名。</li>
             </ul>
