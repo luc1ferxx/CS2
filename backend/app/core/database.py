@@ -29,7 +29,7 @@ def get_db() -> Generator[Session, None, None]:
 
 def init_db() -> None:
     from app.migrations import run_schema_migrations
-    from app.models import account, coaching, demo, job, steam  # noqa: F401
+    from app.models import account, coaching, demo, job, steam, upload_session  # noqa: F401
 
     for attempt in range(1, 31):
         try:

@@ -27,8 +27,9 @@
 | `DELETE /demos/{demo_id}` | 成功返回 `204`，没有 body。<br>按 owner 隔离：别人的或不存在的 id 返回 `404`，和读取时一样。<br>对用户来说是幂等的：第二次删除得到 `404`，前端当作成功处理。同一场比赛的两个并发删除，一个得到 `204`，另一个得到 `404`，不会出现 `500`。 |
 | `DELETE /auth/account` | body 为 `{"confirm": "delete-my-account"}`，成功返回 `204`。响应让 `__Host-cs2_session` 过期，cookie 属性与退出登录时完全相同。<br>confirm 缺失或不对：`400 confirmation_required`。<br>没有会话：`401`。<br>development/test：`409 account_deletion_unavailable`。 |
 | `GET /uploads/quota` | 返回形状不变；每日已用次数改为来自上传账本。 |
+| `DELETE /uploads/sessions/{session_id}` | 放弃一次未完成的分片上传：删除会话行和服务器上暂存的分片，成功返回 `204`。按 owner 隔离，别人的或已过期的会话返回 `404`；正在 `completing` 时返回 `409`。没有比赛，也不写上传账本。 |
 
-production 下两个 `DELETE` 都经过会话和 CSRF 中间件：必须有会话，`Origin` 必须是站点源。响应都带 `Cache-Control: private, no-store`。
+production 下这些 `DELETE` 都经过会话和 CSRF 中间件：必须有会话，`Origin` 必须是站点源。响应都带 `Cache-Control: private, no-store`。
 
 Caddy 路由：
 - `DELETE /demos/{id}` 已经由 `@api_demo_write` 转给 API。
@@ -45,9 +46,10 @@ Caddy 路由：
    2. `coaching_feedback`；
    3. `coaching_events`；
    4. `demo_jobs`；
-   5. `demos`。
+   5. `upload_sessions WHERE owner_id AND demo_id`：分片上传完成后，`completed` 状态的会话行还会保留 1 小时宽限期，指向这场比赛；
+   6. `demos`。
 
-   不依赖外键级联：`demo_jobs` 和 `coaching_events` 的外键没有 `ON DELETE`，SQLite 测试默认也不检查外键。
+   不依赖外键级联：`demo_jobs` 和 `coaching_events` 的外键没有 `ON DELETE`，`upload_sessions` 根本没有外键，SQLite 测试默认也不检查外键。
 4. 在同一个事务里插入一条删除任务，然后提交。
 5. Postgres 报死锁（SQLSTATE `40P01`）或序列化失败时，整个事务最多重试 3 次。解析和渲染路径里，有的先锁任务再锁比赛，有的顺序相反，所以任何一种删除顺序都可能和其中一条路径互相等待。
 
@@ -67,11 +69,12 @@ Caddy 路由：
 2. 在数据库事务提交**之前**写入 Redis 的 owner 撤销标记（见[会话撤销](#会话撤销)），让其他设备上的会话立刻失效。
 3. 删除数据：
    1. 这个 owner 的每一场比赛都走[删除一场比赛](#删除一场比赛)的同一套步骤；
-   2. 删除 `coaching_feedback WHERE owner_id`、`steam_matches`、`steam_connections`、`external_identities` 和 `accounts`；
+   2. 删除 `coaching_feedback WHERE owner_id`、`upload_sessions WHERE owner_id`（各状态的分片上传会话）、`steam_matches`、`steam_connections`、`external_identities` 和 `accounts`；
    3. 插入一条覆盖整个 owner 的删除任务（`demo_id` 为空，`cutoff_at` 取当前时间）。
 
    比赛多时分批处理，每个事务都保持短小。
-4. 响应让会话 cookie 过期。前端随后清除本浏览器里"你在比赛里选的玩家"偏好，把登录状态切换为已退出，然后显示"账户已删除"。前端不会把 `401` 当作删除成功。
+4. 提交之后，尽力删掉这个 owner 在服务器本地磁盘上暂存的分片（`UploadStagingStore.purge_owner`，见[未完成的分片上传](#未完成的分片上传)）。这一步失败不影响 `204`，也不进删除任务：outbox 只记 artifact 引用，持久的兜底是每小时的孤儿目录清扫。
+5. 响应让会话 cookie 过期。前端随后清除本浏览器里"你在比赛里选的玩家"偏好和未完成上传的续传记录，把登录状态切换为已退出，然后显示"账户已删除"。前端不会把 `401` 当作删除成功。
 
 如果撤销标记已经写入、数据库事务却失败了，数据还在，所有会话已经失效；用户重新登录后可以再删一次。
 
@@ -97,6 +100,39 @@ Caddy 路由：
 - 每日上传数 = 这个 owner 最近 24 小时的账本行数。超过 24 小时的行会被清理。
 - 迁移时，用最近 24 小时的 `demos.created_at` 回填账本，所以升级当天的计数不会清零。
 - 同时处理数（`DEMO_ACTIVE_PARSE_LIMIT`）和全站处理数（`PARSE_QUEUE_GLOBAL_LIMIT`）仍然按 `demos` 行计算：删除一场正在处理的比赛会让出名额，这是预期行为。
+- 分片上传只在 `complete` 的提交事务里写账本，与比赛、解析任务和"会话已完成"标记在同一个事务。放弃、过期、失败的上传会话什么都不写，所以不存在退还的问题。`complete` 时额度不足，会话回到 `open`，不写账本。
+
+## 未完成的分片上传
+
+浏览器把 `.dem` 分片上传（默认每片 8 MiB），最后调用 `complete`。实现见 [API Reference](api_reference_v1.md) 的分片上传一节。
+
+**存在哪里**
+- 分片暂存在 API 所在 VPS 的本地磁盘上：命名卷 `upload-staging`，根目录 `UPLOAD_STAGING_ROOT`（默认 `/data/upload-staging`），读写都经过 storage 包的 `UploadStagingStore`（`backend/app/services/storage/staging.py`）。它不进对象存储，也不是 artifact，所以不在 artifact 的前缀清扫和删除任务里。
+- 目录结构 `{root}/v1/{b64url(owner)}/{session_id}/{index:05d}.part`，每片一个文件，写临时文件后原子改名。
+- 数据库表 `upload_sessions` 只存会话元数据：owner、规范化后的文件名、大小、MIME、分片布局、上传令牌的 sha256（令牌本身不存）、状态、准备中的比赛 id、错误码和时间。收到了哪些分片以磁盘为准，每片不写数据库。
+- 浏览器 localStorage 里有一条续传记录 `cs2-upload-resume:v1`（会话 id、文件名、大小、文件修改时间），上传完成或放弃时清除，删除账户时也清除。
+
+**什么时候删除**
+
+| 情况 | 会话行 | 暂存分片 |
+| --- | --- | --- |
+| 上传完成（`complete` 提交） | 标为 `completed`，保留 1 小时宽限期后由清扫删除；期间删除这场比赛会一起删掉 | 提交后立即删除（尽力而为，失败时由清扫兜底） |
+| 放弃（`DELETE /uploads/sessions/{id}`） | 立即删除 | 立即删除 |
+| intake 拒绝（类型、空文件、截断、签名不对、过大、校验失败） | 标为 `failed`，保留 1 小时后删除 | 立即删除 |
+| 过期（从创建算起 `UPLOAD_SESSION_TTL_SECONDS`，默认 24 小时，不续期） | 清扫删除 | 清扫删除；过期后分片 `PUT` 和 `complete` 都返回 `404` |
+| 删除账户 | 账户事务里显式删除（各种状态） | 提交后尽力删除整个 owner 的目录；失败时由孤儿目录清扫兜底 |
+| 删除比赛 | 删除指向这场比赛的宽限期内 `completed` 行 | 已在完成时删掉 |
+
+**清扫**（`sweep_upload_sessions`，API 启动时一次，之后由 worker 的每小时存储维护运行）：
+1. 已过期的 `open` 和 `failed` 会话：先删行，再删目录。
+2. 已过期、租约也已过期的 `completing` 会话：确认没有对应的比赛行后，先清掉上一次 `complete` 尝试可能留下的对象（`pending_demo_id` 的前缀），再删行和目录。
+3. 宽限期已过的 `completed` 和 `failed` 行：删除。
+4. 磁盘上有、数据库里没有对应行、而且已存在超过 10 分钟的会话目录：删除。这是删除账户后"提交后清理"失败时的持久兜底；10 分钟的余量避免误删正在创建的会话（建会话时先建目录再提交行）。
+5. 超过 1 小时的 `.tmp` 文件：删除。
+
+**晚到的分片**：会话目录只在建会话时创建，写分片时绝不创建。删除流程清掉目录之后，还在路上的分片写入会失败并返回 `404`，不会把目录建回来，也不会让内容复活。
+
+**上传令牌**：分片 `PUT` 只认这个会话的上传令牌（`X-Upload-Token`），不认 cookie。令牌只能往这一个会话的暂存目录里写字节；退出登录不会让它失效，到会话过期为止；会话行被删除（放弃、过期、删除账户）后，令牌随即失效（`404`）。Caddy 访问日志删掉这个请求头。
 
 ## 存储清理
 
@@ -151,7 +187,7 @@ Caddy 路由：
 - 账户任务如果还发现这样的比赛（例如删除时刚好提交的一次上传），会走同样的单场删除流程把它删掉。
 - 出错时 `attempts` 加一，`last_error` 记一行说明，异常不会抛出到周期之外。
 
-**顺带的隔离区清理**：同一个空闲周期每小时最多一次，清理隔离区里超过 1 小时的对象。中断的上传不用再等 API 重启才被清理。
+**顺带的每小时维护**：同一个空闲周期每小时最多一次，清理隔离区里超过 1 小时的对象，修剪上传账本，并运行分片上传会话的清扫（见[未完成的分片上传](#未完成的分片上传)）。三件事互不影响，一件失败不跳过另外两件。中断的上传不用再等 API 重启才被清理。worker 要挂载和 API 相同的 `upload-staging` 卷，清扫才删得到磁盘上的目录。
 
 **运维查看卡住的任务**（不显示 owner）：
 
@@ -167,6 +203,7 @@ dc exec -T postgres psql -U cs2coach -d cs2coach -c \
 | 进行中的操作 | 比赛或账户被删除后的行为 |
 | --- | --- |
 | 上传进行中 | 客户端还没有比赛 id，无从删除。账户被删除时，上传在提交时被围栏拦下：返回 `401 account_deleted`，不留行，也不留对象。 |
+| 分片上传进行中、完成中 | 账户删除在同一个事务里删掉这个 owner 的全部 `upload_sessions` 行，提交后尽力删掉暂存目录。还在路上的分片 `PUT`：查令牌时行已不在，返回 `404`；查过之后才被删的，写入时发现会话目录已不在，同样返回 `404`，不会把目录建回来。正在 `complete`（`completing`）的会话：intake 照常把对象写进隔离区并转正，提交时被账户围栏拦下（或发现会话行已消失），丢弃已准备好的对象，返回 `401 account_deleted`（或 `404`），不建比赛，不写账本；即使丢弃失败，账户任务最后一次清扫（截止点扩大到当前时间）也会删掉这些对象。删除宽限期内的比赛时，指向它的 `completed` 行一起删掉。 |
 | Steam 导入 | 账户被删除时，导入在提交时干净地失败。删除一场导入的比赛时，只解除关联，这场比赛可以重新导入。 |
 | 排队中的解析 | worker 发现行已经不在，直接跳过。 |
 | 解析中 | 解析子进程运行期间，worker 每 15 秒（`PARSE_DELETION_CHECK_SECONDS`）用一个单独的短会话检查任务行是否还在；不在了就停掉子进程、删掉临时复制的 `.dem`，记一行 `demo deleted during parse` 后处理下一个任务，不再占着唯一的 worker 等到解析超时。子进程刚好结束时，后续的写入（进入分析、完成、失败）捕获"行已消失"的错误，然后依次：回滚、删除已经写好的回放、记一行 `demo deleted during parse`、返回。worker 不会退出。 |
@@ -177,7 +214,7 @@ dc exec -T postgres psql -U cs2coach -d cs2coach -c \
 | 其他用户路由 | 以下路由在行消失时返回 `404`，不再是 `500`：`PATCH /demos/{id}`、`/archive`、解析重试（在额度锁内锁住比赛）、建议评价保存、创建 `render_clip`（原来是 `400`）、开发用的视频路由。 |
 | 比赛库页面 | 删除前后都作废进行中的列表请求，轮询不会把删掉的行加回来。指向这场比赛的重命名状态和提示也一并清掉。 |
 | 复盘页 | 删除前停止状态、渲染和片段轮询，并忽略随后的 `404` 提示。 |
-| 回放响应缓存 | `GET /demos/{id}/replay` 先按 owner 查比赛，比赛不在就返回 `404`，不查缓存，所以删除之后既不会从缓存返回 `200`，也不会返回 `304`。`DELETE /demos/{id}` 和 `DELETE /auth/account` 在 API 进程里运行，提交后立即清掉相应比赛的缓存项（`backend/app/services/demo_service/replay_response_cache.py`，由 `DeletionService.delete_demo` / `delete_account` 调用），刚删除的比赛 id 也不再接受写入缓存，删除前已经开始读回放的请求不会在删除后把它存进去。运维命令 `app.cli.delete_data` 和 worker 在别的进程里删除，清不到 API 进程的内存：那些字节读不到，之后被 LRU 挤出（总量上限 `REPLAY_RESPONSE_CACHE_MB`，默认 64 MB）或在 API 重启时丢弃。 |
+| 回放响应缓存 | `GET /demos/{id}/replay` 先按 owner 查比赛，比赛不在就返回 `404`，不查缓存，所以删除之后既不会从缓存返回 `200`，也不会返回 `304`。`DELETE /demos/{id}` 和 `DELETE /auth/account` 在 API 进程里运行，提交后立即清掉相应比赛的缓存项（`backend/app/services/demo_service/replay_response_cache.py`，由 `DeletionService.delete_demo` / `delete_account` 调用），刚删除的比赛 id 也不再接受写入缓存，删除前已经开始读回放的请求不会在删除后把它存进去。运维命令 `app.cli.delete_data` 和 worker 在别的进程里删除，清不到 API 进程的内存：那些字节读不到，之后被 LRU 挤出（总量上限 `REPLAY_RESPONSE_CACHE_MB`，默认 64 MB）或在 API 重启时丢弃。后台预热（`backend/app/services/demo_service/replay_warmer.py`）只往同一份内存缓存里填，不另存任何对象、行或文件，删除协议没有新的东西要清；它在开始前、投影前各查一次刚删除的比赛 id，写入缓存时再被拒绝一次，所以和删除赛跑的预热不会把这场比赛存进去；从 worker 收到的通知只是比赛 id，查不到行就跳过。账户删除按 owner 清缓存，但不拒绝这个 owner 之后的写入（同一 owner 可能重新建号），所以正好和账户删除赛跑的那次预热可能留下一项，路由先返回 `404`、永远读不到，同样被 LRU 挤出或在重启时丢弃。 |
 
 ## 界面
 
@@ -219,6 +256,7 @@ dc exec -T postgres psql -U cs2coach -d cs2coach -c \
 | 容器日志 | 访问日志：IP、浏览器标识、网址（含比赛 id 和搜索词） | 按大小轮转，每个服务 10 MB × 5 份，不按时间删除 |
 | Redis AOF | 会话记录 | 到下一次 AOF 重写为止；这些会话已经被撤销 |
 | 上传账本 | 不透明的账户 ID 和上传时间 | 最多 24 小时 |
+| 分片上传的暂存目录（VPS 本地磁盘 `upload-staging` 卷） | 删除账户时还没完成的上传已收到的分片 | 通常随删除立即清掉；只有提交后的清理失败时，才等每小时的孤儿目录清扫，最多约 1 小时（worker 正在长时间解析时相应推迟） |
 | API 进程内存里的回放响应缓存 | 只在运维命令或 worker 代为删除的比赛上可能残留：gzip 后的回放 JSON | 读不到（路由先返回 `404`）；被更新的回放挤出或 API 重启时丢弃。经网站删除的比赛提交后立即清掉 |
 | 恢复遗留：`pre-restore-*.dump`、`cs2coach_pre_restore_*` 库、`cs2coach_restore_check` | 整库 | 直到站长手动删除；运维手册要求 30 天内删除 |
 | 渲染机工作目录 | 源 `.dem` 和片段 | production 模板不部署渲染机。如果启用了渲染机，删除时已经完成的任务，其工作目录不会被清理 |
@@ -269,9 +307,14 @@ dc exec api python -m app.cli.delete_data account <owner_id>... --yes
 | 后台重算建议时删除 | 分析之后、写入之前删除：重算回滚，不写回任何行，比赛、任务、建议都不在，没有 `500` |
 | 重算后的评价 | id 没变的建议，评价照常列出和计数；消失的建议，评价行保留，但不出现在列表和汇总里 |
 | 重复删除和并发删除 | 一个 `204`，一个 `404`，没有 `500` |
-| 删除后的回放缓存（`backend/tests/test_replay_response_cache.py`） | 删除比赛后 `GET /demos/{id}/replay` 返回 `404`（不是缓存里的 `200` 或 `304`），缓存里不再有这场比赛的项，另一个 owner 的项还在；删除账户清掉这个 owner 的全部项；被拒绝的删除不清任何项；和删除赛跑的写入缓存被拒绝 |
+| 删除后的回放缓存（`backend/tests/test_replay_response_cache.py`） | 删除比赛后 `GET /demos/{id}/replay` 返回 `404`（不是缓存里的 `200` 或 `304`），缓存里不再有这场比赛的项，另一个 owner 的项还在；删除账户清掉这个 owner 的全部项；被拒绝的删除不清任何项；和删除赛跑的写入缓存被拒绝。预热（`backend/tests/test_replay_warmer.py`）：排队后、预热前删除的比赛被跳过；预热中途删除的比赛不会存进缓存，也不留视频信息 |
 | 删除账户 | 为同一 owner 预先写入的第二个会话随后得到 `401`；账户、身份、Steam 连接和比赛、所有比赛和对象都不在 |
 | 账户删除后的上传 | 返回 `401 account_deleted`，不留行，也不留对象 |
+| 有打开的分片上传会话时删除账户 | 会话行和暂存目录都不在；之后带原令牌的分片 `PUT` 返回 `404`，而且没有把目录建回来；运维命令删除账户同样删掉行和目录 |
+| `completing` 期间删除账户 | `complete` 返回 `401 account_deleted`，没有比赛，没有账本行，准备好的对象被丢弃或由账户任务清扫 |
+| 删除比赛与分片上传会话 | 宽限期内指向这场比赛的 `completed` 会话行一起删除；别的比赛和别的 owner 的会话行不受影响 |
+| 分片上传与账本 | 放弃、过期、失败的会话不写账本；完成的会话只写一行，删除比赛后不退还 |
+| 分片上传清扫 | 过期会话的行和目录被删；数据库里没有行、超过 10 分钟的孤儿目录被删，刚建的保留；超过 1 小时的 `.tmp` 被删；每小时维护里清扫失败不跳过隔离区清理和账本修剪 |
 | 截止点之后留下的孤儿对象 | 账户已不在时，最后一次清扫删掉截止点之后才写入的对象，任务随后结束；同一 owner ID 重新建号时，新数据保留 |
 | 登录与删除账户竞争 | 删除在身份解析和签发会话之间提交时，登录返回 `401`，刚签发的会话已撤销；随后再登录得到新的空账户 |
 | 解析中删除（长解析） | 下一次检查就停掉解析，不写回放，不标记失败；检查失败不算删除 |
@@ -281,8 +324,8 @@ dc exec api python -m app.cli.delete_data account <owner_id>... --yes
 | 运维命令 `app.cli.delete_data` | 不带 `--yes` 什么都不删；按比赛 id 或 SteamID64 删除，会话随账户失效；非 production 拒绝删除账户 |
 | Steam 导入的比赛 | `steam_matches` 行保留，`demo_id` 为空，状态回到可导入，派生字段清空 |
 | 开发模式 | `DELETE /auth/account` 返回 `409 account_deletion_unavailable`，什么都不删 |
-| 前端 | 确认框（焦点、Esc、输入确认、忙碌、错误）；比赛库和复盘页的删除流程（成功、`404` 当作成功、失败提示）；`/account` 在开发和生产模式下的显示；`/privacy` 未登录可渲染，包含免责声明，联系方式有回退文字和已配置两种情况 |
-| 生产冒烟 `prod_smoke.sh` | `GET /privacy` 返回 200 HTML；匿名 `DELETE /auth/account` 和 `DELETE /demos/{id}` 由 FastAPI 返回 401 JSON |
+| 前端 | 确认框（焦点、Esc、输入确认、忙碌、错误）；比赛库和复盘页的删除流程（成功、`404` 当作成功、失败提示）；`/account` 在开发和生产模式下的显示，删除账户时清掉续传记录；`/privacy` 未登录可渲染，包含免责声明和未完成上传的暂存与保存期限，联系方式有回退文字和已配置两种情况 |
+| 生产冒烟 `prod_smoke.sh` | `GET /privacy` 返回 200 HTML；匿名 `DELETE /auth/account` 和 `DELETE /demos/{id}` 由 FastAPI 返回 401 JSON；匿名建上传会话返回 401 JSON；不带令牌的分片 `PUT` 由 FastAPI 返回 404 JSON |
 
 ## 本地手动检查
 

@@ -23,7 +23,7 @@ alias dc='docker compose --env-file deploy/.env.production -f docker-compose.yml
 
 第一次上线只给自己的朋友用：按下面准备资源（代替第 1 步，只引用其中的具体做法），然后照第 2–10 步操作。
 
-1. **VPS**：Ubuntu 24.04，2–4 vCPU / 4 GB 内存就够，靠 `bootstrap.sh` 建的 4 GB swapfile 兜底（大 demo 解析时可能用到 swap，会慢一些）。机房选东京、新加坡或香港，约 US$10–20/月。
+1. **VPS**：Ubuntu 24.04，2–4 vCPU / 4 GB 内存就够，靠 `bootstrap.sh` 建的 4 GB swapfile 兜底（大 demo 解析时可能用到 swap，会慢一些）。磁盘至少 40 GB，分片上传的暂存要留出约 11 GiB（见第 1 步第 1 条）。机房选东京、新加坡或香港，约 US$10–20/月。
 2. **域名（免费 DuckDNS）**：
    - 在 https://www.duckdns.org 登录，建一个子域名 `<name>.duckdns.org`，`current ip` 填 VPS 的公网 IPv4，保存后就是一条指向 VPS 的 A 记录。
    - `duckdns.org` 在 Public Suffix List 上（2026-09-25 核实），每个子域名单独计算 Let's Encrypt 的签发限额；Caddy 默认的 HTTP-01 验证直接可用，不需要插件，也不需要把 DuckDNS token 放到 VPS 上。
@@ -49,6 +49,8 @@ alias dc='docker compose --env-file deploy/.env.production -f docker-compose.yml
 ## 1. 准备资源（完整配置）
 
 1. **VPS**：Ubuntu 24.04，推荐 4 vCPU / 8 GB 内存 / 80 GB 磁盘（单个解析子进程内存上限 4 GB）。面向国内玩家选东京、新加坡或香港，优先到国内线路好的机房。海外机房不需要 ICP 备案。
+   - **磁盘规划**：浏览器分片上传时，未完成上传的分片暂存在这台 VPS 上（Docker 命名卷 `cs2coach_upload-staging`，挂进 api 和 worker 的 `/data/upload-staging`），完成后才转存到 R2。全站同时最多 `UPLOAD_SESSION_GLOBAL_LIMIT`（默认 6）个未完成的上传，每个最大 1 GiB，所以暂存最多约 6 GiB；建新上传时还要求盘上剩余至少 `UPLOAD_STAGING_MIN_FREE_BYTES`（默认 5 GiB），这部分留给同一块盘上的 Postgres、Redis、Docker 镜像和日志。80 GB 的盘按"系统和镜像约 15 GB + 数据库和本地备份 + 暂存 6 GiB + 余量 5 GiB"规划绰绰有余；盘小时调小 `UPLOAD_SESSION_GLOBAL_LIMIT`，不要把余量调到 0。余量不足时新上传返回 `503 upload_storage_full`，已有的上传不受影响。
+   - 暂存在命名卷上，部署和重启 api 容器后上传仍能续传；放弃、24 小时过期、删除账户的上传由 API 和 worker 的清扫删除。查看占用：`docker system df -v | grep upload-staging`。
 2. **域名与 DNS**：给一个子域名（如 `coach.example.com`）加 A 记录（有 IPv6 再加 AAAA）指向 VPS。用 Cloudflare DNS 时必须是**仅 DNS（灰色云朵）**：Cloudflare 代理在免费版把请求体限制在 100 MB，而 `.dem` 最大 1 GiB；证书也由 VPS 上的 Caddy 直接签发。
 3. **对象存储（Cloudflare R2）**：
    - 建两个私有桶：`cs2coach-artifacts`（应用文件）和 `cs2coach-backups`（备份）。不要开启公开访问或 r2.dev 域名。
@@ -113,7 +115,9 @@ bash scripts/deploy/deploy.sh
 
 脚本会：检查 env 文件存在且没有占位符 → `git pull --ff-only` → 用 Caddy 镜像校验 `deploy/Caddyfile` → `dc build --pull` → `dc up -d`（api 启动失败时打印日志并停下）→ Caddyfile 有变化时重启 caddy → 最多等 300 秒（`DEPLOY_HEALTH_TIMEOUT_SECONDS`）直到 `https://<域名>/health` 返回 200 → 运行 `prod_smoke.sh` → 打印当前提交并追加到 `deploy/.deploy-history`。首次构建前端约需 5–10 分钟；证书签发要求 80 和 443 端口能从公网访问。
 
-路由（`deploy/Caddyfile`）：`/auth/steam/login`、`/auth/steam/callback`、`/auth/me`、`/auth/logout`、`/auth/account` 等后端认证路由、`/steam/*`、`/demos`、`/demos/<id>/…`、`/uploads/*`、`/coaching/*`、`/health`、`/render-worker/*`、`/render/*` 进 FastAPI；`PATCH` 和 `DELETE /demos/<id>` 进 FastAPI，`GET /demos/<id>` 是 Next.js 复盘页；其余（`/`、`/dashboard`、`/account`、`/privacy`、`/auth/callback`、`/_next/*`、`/maps/*`）进 Next.js。只有 `/uploads/*` 放宽到 1100 MB 请求体，读写超时 2 小时。
+路由（`deploy/Caddyfile`）：`/auth/steam/login`、`/auth/steam/callback`、`/auth/me`、`/auth/logout`、`/auth/account` 等后端认证路由、`/steam/*`、`/demos`、`/demos/<id>/…`、`/uploads/*`、`/coaching/*`、`/health`、`/render-worker/*`、`/render/*` 进 FastAPI；`PATCH` 和 `DELETE /demos/<id>` 进 FastAPI，`GET /demos/<id>` 是 Next.js 复盘页；其余（`/`、`/dashboard`、`/account`、`/privacy`、`/auth/callback`、`/_next/*`、`/maps/*`）进 Next.js。`/uploads/*` 放宽到 1100 MB 请求体（旧的单请求 `POST /uploads/demo`），读写超时 2 小时；浏览器的分片上传 `PUT /uploads/sessions/<id>/parts/<i>` 另限 34 MB 一片。分片请求只认请求头 `X-Upload-Token` 里的上传令牌，Caddy 的访问日志把这个头删掉。
+
+站点走 HTTP/2 和 HTTP/3（`docker-compose.prod.yml` 发布 443/tcp 和 443/udp），浏览器会把 4 个并行分片复用在同一条连接上，提速可能不如预期。这一版不改协议；部署后用 API 日志里每个完成的上传一行的 `Upload session completed: bytes=… parts=… part_puts=… seconds=…` 测速（不含文件名和账户），再决定是否调整分片大小（`UPLOAD_PART_BYTES`）和并行数（`UPLOAD_MAX_PARALLEL_PARTS`）。
 
 ## 5. 冒烟与手动 Steam 登录检查
 
@@ -121,13 +125,13 @@ bash scripts/deploy/deploy.sh
 bash scripts/deploy/prod_smoke.sh https://<域名>
 ```
 
-它检查：证书有效、HTTP 跳转 HTTPS、`/health` 返回 `{"status":"ok"}`、`/dashboard` 是 HTML 且带 HSTS 等安全头、`GET /demos/<id>` 由 Next.js 返回、`GET /privacy` 是 200 的 HTML、匿名访问 API（`/demos`、`/demos/<id>/status`、`PATCH /demos/<id>`、`/uploads/demo`、`/auth/me`）都是 401、匿名 `DELETE /auth/account` 和 `DELETE /demos/<id>` 都由 FastAPI 返回 401 JSON（证明它们没有落到 Next.js）、`/docs` 和 `/openapi.json` 是 404、`/auth/steam/login` 跳转到 `https://steamcommunity.com/openid/login` 并下发带 `Secure; HttpOnly` 的 `__Host-` 状态 cookie。
+它检查：证书有效、HTTP 跳转 HTTPS、`/health` 返回 `{"status":"ok"}`、`/dashboard` 是 HTML 且带 HSTS 等安全头、`GET /demos/<id>` 由 Next.js 返回、`GET /privacy` 是 200 的 HTML、匿名访问 API（`/demos`、`/demos/<id>/status`、`PATCH /demos/<id>`、`/uploads/demo`、建上传会话 `POST /uploads/sessions`、`GET /uploads/sessions/current`、`/auth/me`）都是 401、不带令牌的分片 `PUT` 由 FastAPI 返回 404 JSON（证明这一条免于 cookie 检查，但没有令牌照样被拒）、匿名 `DELETE /auth/account` 和 `DELETE /demos/<id>` 都由 FastAPI 返回 401 JSON（证明它们没有落到 Next.js）、`/docs` 和 `/openapi.json` 是 404、`/auth/steam/login` 跳转到 `https://steamcommunity.com/openid/login` 并下发带 `Secure; HttpOnly` 的 `__Host-` 状态 cookie。
 
 然后在浏览器里手动走一遍（脚本最后也会打印一份手动清单）：
 
 1. 受邀账号点"通过 Steam 登录"，回到 `/dashboard`。
 2. 不在名单里的账号登录后停在 `/auth/callback?error=not_invited`。
-3. 上传一份真实 `.dem`，状态走到完成。这一步同时验证 R2 写入（应用用条件写入 `If-None-Match`）。
+3. 上传一份真实 `.dem`，状态走到完成。这一步同时验证 R2 写入（应用用条件写入 `If-None-Match`）。再上传一份，传到一半时断网几秒：上传暂停后自动继续；传到一半时刷新页面：比赛库提示「有一个未完成的上传」，重新选择同一个文件后接着传。完成后 `dc logs api | grep 'Upload session completed'` 能看到一行测速记录。
 4. 打开复盘页：回放播放、切换回合、战术地图和建议卡片正常。
 5. 退出登录后，`/dashboard` 要求重新登录。
 6. 退出登录的状态下打开 `/privacy`：不需要登录，地区和联系方式是你配置的值，页脚有"与 Valve 无关联"声明。
@@ -242,7 +246,7 @@ bash scripts/deploy/deploy.sh --rollback <sha>
 ```bash
 dc ps
 dc logs -f --tail 100 api worker           # 应用日志
-dc logs -f caddy                           # JSON 访问日志（已去掉 Cookie/Authorization、登录回调的查询参数、渲染 worker token 和跳转地址的查询参数）
+dc logs -f caddy                           # JSON 访问日志（已去掉 Cookie/Authorization、登录回调的查询参数、渲染 worker token、上传令牌和跳转地址的查询参数）
 curl -i https://<域名>/health              # 依赖异常时返回 503 {"status":"degraded"}
 ```
 
@@ -255,6 +259,7 @@ curl -i https://<域名>/health              # 依赖异常时返回 503 {"statu
 - **还没有指标和告警**：只有容器日志和 `/health`。建议先用外部拨测（如 UptimeRobot）每分钟探测 `/health`。
 - **每天备份一次**：最坏丢失 24 小时的数据；Redis 不备份。
 - **没有 GPU 渲染机**：`RENDER_CLIPS_ENABLED=0`，第一人称片段入口隐藏。
+- **分片上传依赖单个 API 进程**：分片池、每个上传的进行中计数和整文件 intake 槽都在 API 进程内存里，`docker-compose.prod.yml` 只跑一个 uvicorn 进程。暂存在 VPS 本地磁盘上，不在 R2，也不进备份；从数据库备份恢复后，没有暂存目录的会话 `complete` 时返回缺片，到期后被清扫。
 - **回滚不回退数据库结构**，见第 9 步。
 - **R2 兼容性要在真实部署上确认**：应用写对象时用条件写入，首次部署务必完成第 5 步的真实上传。删除时的清理不带条件（列出后批量删除），第 5 步第 7 条的删除也顺带验证了这一点。
 - **删除追不回备份**：已删除的数据在备份里最多再保留 30 天；从备份恢复后要按第 7 步用 `python -m app.cli.delete_data` 重做删除。

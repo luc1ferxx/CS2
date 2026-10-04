@@ -8,16 +8,22 @@ The protocol (docs/data_deletion_v1.md):
    uploads may be queued behind.
    * Demo: lock `demo_jobs WHERE demo_id ORDER BY id`, then the owner's demo
      row, read the storage keys under that lock, then unlink the Steam match
-     and delete coaching_feedback, coaching_events, demo_jobs and demos in
-     that order (Postgres has no ON DELETE for the jobs and events, and the
-     SQLite tests may run without foreign keys, so nothing relies on cascades).
+     and delete coaching_feedback, coaching_events, demo_jobs, the upload
+     sessions completed into this demo (kept for a grace hour) and demos in
+     that order (Postgres has no ON DELETE for the jobs and events, upload
+     sessions have no foreign key at all, and the SQLite tests may run
+     without foreign keys, so nothing relies on cascades).
    * Account (production only): lock the account row, write the owner session
      revocation marker (so every device is signed out even if the commit is
      slow), delete the first batch of demos through the same per-demo step,
-     then the owner's feedback, Steam matches and connection, identities and
-     account, plus one owner-wide task with `cutoff_at = now`.
+     then the owner's feedback, upload sessions, Steam matches and
+     connection, identities and account, plus one owner-wide task with
+     `cutoff_at = now`.
    Deadlocks and serialization failures retry the whole transaction.
 2. After the commit the request makes one immediate, best-effort purge pass.
+   An account delete also purges the owner's upload staging directory (local
+   disk, not an artifact, so not in the outbox; the hourly upload session
+   sweep removes whatever a failed purge leaves, since no row owns it).
 3. The parse worker's idle tick (and the API once at startup) drains due
    tasks: exact references first, then a sweep of every state and kind under
    the demo's (or the owner's) prefix. A task is removed only once
@@ -51,6 +57,7 @@ from app.models.deletion import DeletionTask
 from app.models.demo import Demo
 from app.models.job import DemoJob
 from app.models.steam import SteamConnection, SteamMatch
+from app.models.upload_session import UploadSession
 from app.services.demo_service.constants import RENDER_CLIP_STALE_AFTER_SECONDS
 from app.services.demo_service.replay_response_cache import replay_response_cache
 from app.services.storage import (
@@ -58,7 +65,9 @@ from app.services.storage import (
     ArtifactStore,
     ArtifactStoreError,
     LocalStorageService,
+    UploadStagingStore,
     artifact_store_from_settings,
+    upload_staging_store_from_settings,
 )
 
 logger = logging.getLogger(__name__)
@@ -211,12 +220,14 @@ class DeletionService:
         *,
         artifact_store: ArtifactStore | None = None,
         legacy_storage: LocalStorageService | None = None,
+        upload_staging: UploadStagingStore | None = None,
         runtime_settings: Settings = settings,
         clock: Callable[[], datetime] = utc_now,
     ) -> None:
         self.db = db
         self._artifact_store = artifact_store
         self._legacy_storage = legacy_storage
+        self._upload_staging = upload_staging
         self.settings = runtime_settings
         self.clock = clock
 
@@ -231,6 +242,12 @@ class DeletionService:
         if self._legacy_storage is None:
             self._legacy_storage = LocalStorageService.from_settings()
         return self._legacy_storage
+
+    @property
+    def upload_staging(self) -> UploadStagingStore:
+        if self._upload_staging is None:
+            self._upload_staging = upload_staging_store_from_settings()
+        return self._upload_staging
 
     def _now(self) -> datetime:
         return _as_utc(self.clock())
@@ -331,6 +348,13 @@ class DeletionService:
                 .where(model.demo_id == demo_id)
                 .execution_options(synchronize_session=False)
             )
+        # A chunked upload's session row stays `completed` for a grace hour,
+        # naming the demo it created; its staged parts were purged then.
+        db.execute(
+            delete(UploadSession)
+            .where(UploadSession.owner_id == owner_id, UploadSession.demo_id == demo_id)
+            .execution_options(synchronize_session=False)
+        )
         deleted = db.execute(
             delete(Demo)
             .where(Demo.id == demo_id, Demo.owner_id == owner_id)
@@ -400,8 +424,17 @@ class DeletionService:
                     next_attempt_at=final_sweep_after,
                 )
             # Explicit deletes: the Steam rows cascade from accounts only on
-            # Postgres, and feedback has no foreign key to accounts at all.
-            for model in (CoachingFeedback, SteamMatch, SteamConnection, ExternalIdentity, Account):
+            # Postgres, and feedback and upload sessions (any state, including
+            # one completing right now: its commit then finds no row and no
+            # account) have no foreign key to accounts at all.
+            for model in (
+                CoachingFeedback,
+                UploadSession,
+                SteamMatch,
+                SteamConnection,
+                ExternalIdentity,
+                Account,
+            ):
                 db.execute(
                     delete(model)
                     .where(model.owner_id == owner_id)
@@ -430,8 +463,24 @@ class DeletionService:
         # Committed: drop this process's cached replay responses of every demo
         # of the owner, including those the owner task deletes later.
         replay_response_cache.evict_owner(owner_id)
+        self._purge_upload_staging(owner_id)
         self.run_task(task_id)
         return True
+
+    def _purge_upload_staging(self, owner_id: str) -> None:
+        """Best effort, after the commit: the owner's staged upload parts on local disk.
+
+        A late part write cannot recreate them (only session creation makes a
+        directory). Whatever a failed purge leaves has no row any more, so the
+        hourly upload session sweep deletes it as an orphan.
+        """
+        try:
+            purged = self.upload_staging.purge_owner(owner_id)
+        except Exception as exc:
+            logger.warning("Upload staging purge after an account deletion failed: %s", type(exc).__name__)
+            return
+        if not purged:
+            logger.warning("Upload staging purge after an account deletion left files for the hourly sweep")
 
     # -- transactions -----------------------------------------------------------
 
@@ -708,11 +757,15 @@ def run_hourly_storage_maintenance(
     force: bool = False,
     session_factory: Callable[[], Session] | None = None,
     artifact_store: ArtifactStore | None = None,
+    upload_staging: UploadStagingStore | None = None,
 ) -> int:
-    """Hourly: aborted-upload quarantine cleanup (older than its 1 h TTL) and the upload ledger prune.
+    """Hourly: aborted-upload quarantine cleanup (older than its 1 h TTL), the
+    upload ledger prune, and the chunked upload session sweep (expired
+    sessions, orphaned staging directories, stale temp parts).
 
     Before this ran on the worker, quarantine objects of a crashed upload
-    waited for the next API restart.
+    waited for the next API restart. The worker mounts the API's
+    upload-staging volume so the sweep reaches the staged parts.
     """
     global _last_quarantine_cleanup
 
@@ -724,11 +777,12 @@ def run_hourly_storage_maintenance(
     from app.services.upload_quota import prune_upload_ledger
 
     # Independent chores: one failing (storage down, database down) must not
-    # skip the other. The first failure is re-raised for the caller to log.
+    # skip the others. The first failure is re-raised for the caller to log.
     failure: Exception | None = None
     cleaned = 0
+    store: ArtifactStore | None = artifact_store
     try:
-        store = artifact_store or artifact_store_from_settings()
+        store = store or artifact_store_from_settings()
         cleaned = ArtifactIntakeService(
             store,
             policy=ArtifactIntakePolicy(
@@ -743,6 +797,15 @@ def run_hourly_storage_maintenance(
         factory = session_factory or _default_session_factory()
         with factory() as db:
             prune_upload_ledger(db)
+    except Exception as exc:
+        failure = failure or exc
+    try:
+        from app.services.upload_session_service import sweep_upload_sessions
+
+        factory = session_factory or _default_session_factory()
+        staging = upload_staging or upload_staging_store_from_settings()
+        with factory() as db:
+            sweep_upload_sessions(db, staging, store or artifact_store_from_settings(), now=utc_now())
     except Exception as exc:
         failure = failure or exc
     if failure is not None:

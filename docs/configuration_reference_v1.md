@@ -109,6 +109,7 @@ Production credentials 绝不能进入 `NEXT_PUBLIC_*`、源码、日志、签�
 | `DATABASE_URL` | `postgresql+psycopg2://cs2coach:cs2coach@localhost:5432/cs2coach` | API, worker |
 | `REDIS_URL` | `redis://localhost:6379/0` | API, worker |
 | `REDIS_QUEUE_NAME` | `cs2-demo-jobs` | API, worker |
+| `REPLAY_READY_CHANNEL` | `cs2:replay-ready` | API, worker; Redis pub/sub 频道：worker 在解析完成、回放升级、视频写入提交后发布比赛 id，API 的回放缓存预热线程订阅它（见 `REPLAY_WARM_ENABLED`）。两边必须一致；只传比赛 id |
 
 Docker Compose 在容器内使用 service 名（`postgres`、`redis`），面向浏览器则使用 host URL（`NEXT_PUBLIC_API_BASE_URL=http://localhost:8000`）。本地 Compose 必须显式使用 `AUTH_MODE=development`，可以使用 local adapter 以及明确标注为非生产的 Steam 加密 key。
 
@@ -154,8 +155,17 @@ worker 空闲时（队列里有任务就让出）依次跑这两项，每项每�
 | `MAX_DEMO_UPLOAD_BYTES` | `1073741824` | actual streamed source-byte limit |
 | `MAX_VIDEO_UPLOAD_BYTES` | `2147483648` | actual streamed dev/QA/worker video limit |
 | `MAX_REPLAY_ARTIFACT_BYTES` | `134217728` | replay JSON artifact limit |
-| `UPLOAD_CHUNK_BYTES` | `1048576` | bounded upload/read chunk size |
+| `UPLOAD_CHUNK_BYTES` | `1048576` | bounded upload/read chunk size（intake 固定的 1 MiB 读缓冲，与下面分片上传的 part 无关） |
+| `UPLOAD_STAGING_ROOT` | `/data/upload-staging` | API, worker; 分片上传会话暂存分片的本地目录（`backend/app/services/storage/staging.py`），与 `ARTIFACT_STORAGE_BACKEND` 无关，production 下也在 API 主机的本地磁盘上。Compose 把命名卷 `upload-staging` 同时挂进 api 和 worker（worker 的每小时维护要清扫它）。production 必须是绝对路径 |
+| `UPLOAD_PART_BYTES` | `8388608` | API; 分片大小（每次 `PUT` 一片）。`4 MiB`..`32 MiB`，必须是 1 MiB 的整数倍；分片 `PUT` 的请求体上限是它加 64 KiB。Caddy 对分片路径另设 `34MB` 的边缘上限 |
+| `UPLOAD_MAX_PARALLEL_PARTS` | `4` | API; 每个会话同时进行的分片 `PUT` 上限（`1`..`6`），超出返回 `503` `INTAKE_BUSY`；同时作为 `maxParallelParts` 告诉浏览器 |
+| `UPLOAD_PART_POOL` | `8` | API; 全站同时读取的分片数（`UPLOAD_MAX_PARALLEL_PARTS`..`32`，且 `UPLOAD_PART_POOL × UPLOAD_PART_BYTES` ≤ 256 MiB，这是分片占用的内存上限），满了在读 body 之前返回 `503` `INTAKE_BUSY`（`Retry-After: 2`）。和整文件 intake 的单个上传槽相互独立 |
+| `UPLOAD_SESSION_TTL_SECONDS` | `86400` | API; 会话从创建算起的硬过期时间（`3600`..`604800`，不续期）。过期后分片 `PUT` 和 `complete` 返回 `404`，清扫删除行和暂存分片。`/privacy` 写明未完成的上传最多保留 24 小时：调大之前先改隐私页 |
+| `UPLOAD_SESSION_GLOBAL_LIMIT` | `6` | API; 全站同时打开（`open` / `completing`）的会话上限（`1`..`64`），满了建会话返回 `503` `upload_capacity_busy`。暂存盘最多约占这个数 × `MAX_DEMO_UPLOAD_BYTES` |
+| `UPLOAD_STAGING_MIN_FREE_BYTES` | `5368709120` | API; 建会话时暂存盘至少要剩 `size` + 这么多字节（`0`..`1 TiB`），否则返回 `503` `upload_storage_full`。Postgres 和 Redis 通常在同一块盘上，这个余量就是留给它们的。开发模式同样生效：Docker Desktop 的虚拟磁盘剩余不到 5 GiB 时，本地上传也会得到 `upload_storage_full`，可以在本地 `.env` 里调小 |
 | `REPLAY_RESPONSE_CACHE_MB` | `64` | API; 进程内存里缓存 `GET /demos/{demo_id}/replay` 算好的 gzip 响应（按总字节数 LRU），并给响应加 `ETag`，`If-None-Match` 命中时返回 `304`；`0` 关闭缓存、`ETag` 和 `304`。目前的 Compose 文件没有把它转发进 `api` 容器，容器里用默认值 |
+| `REPLAY_WARM_ENABLED` | `true` | API, worker; API 进程里一个后台线程提前把回放响应算好放进上面的缓存（`backend/app/services/demo_service/replay_warmer.py`）：解析完成、回放升级、视频写入之后，以及 API 启动时最近完成的几场，第一次打开就直接命中缓存。`0` 时 API 不启动预热线程，worker 也不再发布通知；`REPLAY_RESPONSE_CACHE_MB=0` 时同样不预热。Compose 没有转发，容器里用默认值 |
+| `REPLAY_WARM_RECENT` | `10` | API; API 启动时预热的「最近完成」比赛场数（按 `completed_at` 倒序，只算真实、未归档、`artifact://` 回放的比赛），`0` 表示启动时不预热。队列最多同时排 32 场，超出丢最早的。Compose 没有转发，容器里用默认值 |
 | `DEMO_UPLOAD_DAILY_LIMIT` | `10` | API; 仅 production：每个 owner 在滚动 24 小时内（按上传账本 `upload_ledger` 计数：每次上传或 Steam 导入写一行，24 小时后清理；归档和永久删除的比赛都照样算）最多新建的 demo 数，超出时 `POST /uploads/demo` 返回 `429` `upload_daily_limit`，`Retry-After` 为窗口内对应那次上传移出窗口的秒数。范围 `0`..`1000`，`0` 表示不限 |
 | `DEMO_ACTIVE_PARSE_LIMIT` | `2` | API; 仅 production：每个 owner 同时处于 `queued`/`parsing`/`analyzing` 的 demo 上限，上传和解析重试超出时返回 `429` `active_parse_limit`（`Retry-After: 60`）。范围 `0`..`100`，`0` 表示不限 |
 | `PARSE_QUEUE_GLOBAL_LIMIT` | `50` | API; 仅 production：所有 owner 合计处于上述状态的 demo 上限（按数据库计数，不看 Redis 队列长度），上传和解析重试超出时返回 `503` `parse_queue_full`（`Retry-After: 60`）。范围 `0`..`100000`，`0` 表示不限 |
@@ -167,7 +177,9 @@ worker 空闲时（队列里有任务就让出）依次跑这两项，每项每�
 
 本地 artifact 默认落在 `ARTIFACT_STORAGE_ROOT=/data` 之下。
 
-上传额度只在 production 生效，development/test 从不检查（范围校验在所有模式下都跑）。`POST /uploads/demo` 在读取 body 之前先由 multipart middleware 按 session owner 预检一次，route 在建 demo 之前再权威检查一次；预检本身出错时 fail closed，返回 `503` `upload_quota_unavailable`（`Retry-After: 30`）。拒绝响应的 body 是 `{"detail": {"code", "message", "retryAfterSeconds"}}`，同时带 `Retry-After` 头。worker 不读取这三项。
+上传额度只在 production 生效，development/test 从不检查（范围校验在所有模式下都跑）。`POST /uploads/demo` 在读取 body 之前先由 multipart middleware 按 session owner 预检一次，route 在建 demo 之前再权威检查一次；预检本身出错时 fail closed，返回 `503` `upload_quota_unavailable`（`Retry-After: 30`）。分片上传在建会话时预检一次（只作提示），权威检查在 `complete` 的提交事务里。拒绝响应的 body 是 `{"detail": {"code", "message", "retryAfterSeconds"}}`，同时带 `Retry-After` 头。worker 不读取这三项。
+
+分片上传的七个 `UPLOAD_*` 设置在所有模式下都做范围校验（API 和 worker 启动时）。全站会话上限和暂存盘余量是资源限制，不是额度，开发模式也生效。
 
 ## Render clip 与 render worker
 

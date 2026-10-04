@@ -16,6 +16,7 @@ from app.services.demo_service.constants import REPLAY_ARTIFACT_MISSING_MESSAGE
 from app.services.demo_service.errors import DemoGoneError, ReplayBlobUnavailableError
 from app.services.demo_service.gone import gone_rows_raise, row_identity
 from app.services.demo_service.projection import _project_fields, _public_render_failure, _public_replay_contract
+from app.services.demo_service.replay_warmer import announce_replay_ready
 from app.services.storage import ArtifactStoreError
 
 
@@ -266,12 +267,15 @@ class ReplayBlob(ServiceComponent):
         self.finish_replay_update(pending)
 
     def finish_replay_update(self, pending: _PendingReplayUpdate) -> None:
+        """After the commit of a video write: drop the previous replay, warm the new one."""
         if (
             pending.previous_reference
             and pending.previous_reference.startswith("artifact://")
             and pending.previous_reference != pending.next_reference
         ):
             self._service.delete_artifact_safely(pending.previous_reference)
+        # The replay key moved, so the cached response did too (replay_warmer.py).
+        announce_replay_ready(pending.demo_id)
 
     def abort_replay_update(self, pending: _PendingReplayUpdate | None) -> None:
         if pending is None:

@@ -10,7 +10,7 @@ Production 隐藏 dev/QA 路由：`POST /uploads/mock`、`POST /demos/{demo_id}/
 
 Production 的 Steam 登录受 `STEAM_LOGIN_ALLOWLIST` 限制（逗号分隔的 Steam ID64，或 `*`）。Session 记录登录时的 Steam ID；名单不是 `*` 时，每次解析 session 都会重新核对名单：被移出名单的用户、以及没有记录 Steam ID 的旧 session，在所有需要登录的路由上都会得到 `401`。
 
-Production 的上传额度（`DEMO_UPLOAD_DAILY_LIMIT`、`DEMO_ACTIVE_PARSE_LIMIT`、`PARSE_QUEUE_GLOBAL_LIMIT`）作用于 `POST /uploads/demo` 和 `POST /demos/{demo_id}/parse/retry`。拒绝时返回 `{"detail": {"code": ..., "message": ..., "retryAfterSeconds": ...}}`、`Retry-After` 头和 `Cache-Control: private, no-store`：`parse_queue_full` → `503`，`active_parse_limit` → `429`，`upload_daily_limit` → `429`（仅上传），额度检查本身不可用时 `upload_quota_unavailable` → `503`（仅上传）。上传在读取 body 之前就会被拒绝。development/test 不检查额度。
+Production 的上传额度（`DEMO_UPLOAD_DAILY_LIMIT`、`DEMO_ACTIVE_PARSE_LIMIT`、`PARSE_QUEUE_GLOBAL_LIMIT`）作用于 `POST /uploads/demo`、分片上传的 `POST /uploads/sessions/{session_id}/complete` 和 `POST /demos/{demo_id}/parse/retry`。拒绝时返回 `{"detail": {"code": ..., "message": ..., "retryAfterSeconds": ...}}`、`Retry-After` 头和 `Cache-Control: private, no-store`：`parse_queue_full` → `503`，`active_parse_limit` → `429`，`upload_daily_limit` → `429`（仅上传），额度检查本身不可用时 `upload_quota_unavailable` → `503`（仅上传）。`POST /uploads/demo` 在读取 body 之前就会被拒绝；分片上传在建会话（`POST /uploads/sessions`）时先做一次同样的检查，只作提示，权威检查在 `complete` 的提交事务里，那里额度不足时会话回到 `open`、已收到的分片保留，不写上传账本。development/test 不检查额度。
 
 ## 用户 API
 
@@ -39,9 +39,10 @@ Production 的上传额度（`DEMO_UPLOAD_DAILY_LIMIT`、`DEMO_ACTIVE_PARSE_LIMI
 - `GET /demos/{demo_id}/status`（同样带可选 `matchSummary`）
 - `GET /demos/{demo_id}/diagnostics`
 - `POST /demos/{demo_id}/parse/retry`（production 受全站/个人处理中额度限制：`503` `parse_queue_full`、`429` `active_parse_limit`）
-- `GET /uploads/quota`（当前 owner 的上传额度，每日已用次数来自上传账本，删除比赛不退还：`{dailyLimit, dailyUsed, dailyResetSeconds, activeLimit, activeCount, maxUploadBytes}`；development/test 下各 limit 为 `null`；`Cache-Control: private, no-store`；仅供提示，上传时仍以 `POST /uploads/demo` 的检查为准，不报告全站 `PARSE_QUEUE_GLOBAL_LIMIT`）
+- `GET /uploads/quota`（当前 owner 的上传额度，每日已用次数来自上传账本，删除比赛不退还：`{dailyLimit, dailyUsed, dailyResetSeconds, activeLimit, activeCount, maxUploadBytes}`；development/test 下各 limit 为 `null`；`Cache-Control: private, no-store`；仅供提示，上传时仍以 `POST /uploads/demo` 或分片上传 `complete` 的检查为准，不报告全站 `PARSE_QUEUE_GLOBAL_LIMIT`）
 - `POST /uploads/mock`（仅 development/test；production 返回 `404`）
-- `POST /uploads/demo`（production 受上传额度限制：`503` `parse_queue_full`、`429` `active_parse_limit` / `upload_daily_limit`、`503` `upload_quota_unavailable`）
+- `POST /uploads/demo`（单个 multipart 请求上传整个 `.dem`，保留给 curl 和冒烟脚本，前端改用下面的分片上传；production 受上传额度限制：`503` `parse_queue_full`、`429` `active_parse_limit` / `upload_daily_limit`、`503` `upload_quota_unavailable`）
+- `POST /uploads/sessions`、`GET /uploads/sessions/current`、`GET /uploads/sessions/{session_id}`、`POST /uploads/sessions/{session_id}/token`、`PUT /uploads/sessions/{session_id}/parts/{index}`、`POST /uploads/sessions/{session_id}/complete`、`DELETE /uploads/sessions/{session_id}`（分片、并行、可续传的 `.dem` 上传，见下方[分片上传会话](#分片上传会话)）
 
 ### Replay and coaching
 
@@ -93,6 +94,51 @@ curl -F "file=@sample.dem" http://localhost:8000/uploads/demo
 # development/test harness only:
 curl -H "X-Dev-User-Id: owner-a" -F "file=@sample.dem" http://localhost:8000/uploads/demo
 ```
+
+### 分片上传会话
+
+浏览器上传 `.dem` 走这条路径：先建会话，再把文件按 `partSize`（`UPLOAD_PART_BYTES`，默认 8 MiB）切片，每次最多 `maxParallelParts`（默认 4）片并行 `PUT`，最后 `complete`。中断后可以续传：已收到的分片保存在 API 所在主机的本地磁盘上（命名卷 `upload-staging`），直到会话完成、放弃或过期（从创建算起 `UPLOAD_SESSION_TTL_SECONDS`，默认 24 小时，不续期）。`complete` 把各片拼成一个流交给与 `POST /uploads/demo` 完全相同的 intake（隔离区、SHA-256、签名检查、转正、建行、派发），所以结果、错误码和额度规则都与旧路由一致。
+
+所有响应都带 `Cache-Control: private, no-store`。会话类错误用结构化的 `{"detail": {"code", "message", "retryAfterSeconds"?, ...}}`（额外字段平铺在 `detail` 里）；intake 错误沿用旧路由的 `{"detail": "<安全文案>", "errorCode": "<code>"}`。
+
+| 路由 | 认证 | 成功 | 主要错误 |
+| --- | --- | --- | --- |
+| `POST /uploads/sessions`，body `{filename, size, contentType?, replace?}` | cookie；production 还要 `Origin` | `201` `{sessionId, uploadToken, partSize, partCount, maxParallelParts, expiresAt, receivedParts: []}` | `400` `INTAKE_TYPE_REJECTED` / `INTAKE_EMPTY` / `INTAKE_TRUNCATED` / `INTAKE_CONTENT_MISMATCH`；`413` `INTAKE_TOO_LARGE`；额度 `429` / `503`（形状同上）；`409` `upload_session_exists`（每个 owner 同时只有一个未完成的会话，`detail` 附 `sessionId, filename, size, receivedBytes, state`；`replace: true` 丢弃旧的 `open` 会话后重建，旧会话正在 `completing` 时仍是 `409`）；`503` `upload_capacity_busy`（全站同时打开的会话达到 `UPLOAD_SESSION_GLOBAL_LIMIT`）；`503` `upload_storage_full`（暂存盘余量不足 `size + UPLOAD_STAGING_MIN_FREE_BYTES`）；`503` `INTAKE_STORAGE_UNAVAILABLE`；`401` `account_deleted` |
+| `GET /uploads/sessions/current` | cookie | `200` `{session: <状态> 或 null}`（不用 `204`，前端的 JSON helper 总会解析 body） | — |
+| `GET /uploads/sessions/{session_id}` | cookie，按 owner 隔离 | `200` `{sessionId, state, filename, size, partSize, partCount, maxParallelParts, receivedParts, receivedBytes, part0Sha256?, expiresAt, demo?, error?}`；`state` 为 `open` / `completing` / `completed` / `failed`；`demo` 是 `completed` 时建好的 `DemoListItem`，`error` 是 `failed` 时的 `{errorCode, message}` | `404`（别人的、不存在或已过期的会话） |
+| `POST /uploads/sessions/{session_id}/token` | cookie；production 还要 `Origin` | `200` `{uploadToken, ...状态}`，旧令牌随即失效 | `404`；`409` `upload_session_not_open` |
+| `PUT /uploads/sessions/{session_id}/parts/{index}`，body 为这一片的原始字节 | 只认 `X-Upload-Token`（不认 cookie，也不需要）；production 下 `Origin` 必须是站点源 | `200` `{index, sizeBytes, sha256, receivedCount}`；同一片可以重复上传 | `404` `upload_session_not_found`（会话不存在、已过期或令牌不对，不区分）；`400` `upload_part_invalid`（index 越界，`Content-Length` 缺失或不等于这一片的长度，body 长度不符，`X-Part-SHA256` 格式不对）；`422` `upload_part_digest_mismatch`（与 `X-Part-SHA256` 不符，不写入）；`409` `upload_session_not_open`；`400` `INTAKE_CONTENT_MISMATCH`（第 0 片是压缩包或可执行文件的签名，会话随即转为 `failed`）；`503` `INTAKE_BUSY` 带 `Retry-After`（全站分片池 `UPLOAD_PART_POOL` 或本会话的并行上限已满）；`503` `INTAKE_STORAGE_UNAVAILABLE`；`413`（`Content-Length` 超过 `UPLOAD_PART_BYTES + 64 KiB`）；`403`（`Origin` 不对） |
+| `POST /uploads/sessions/{session_id}/complete` | cookie；production 还要 `Origin` | 首次 `201` `DemoListItem`；已经完成过、比赛还在时 `200` 同一个 `DemoListItem`；会话的租约还在、intake 槽却空闲时（上一次尝试中断了；真正在处理的尝试占着 intake 槽，这时得到的是 `503` `INTAKE_BUSY`）返回 `202` `{state: "completing"}`，客户端隔几秒再次 `POST …/complete`（API 重启后的租约由这次请求接手；`GET /uploads/sessions/{id}` 只读状态，不会接手） | `409` `upload_parts_missing`（`detail.missingParts`，补传后再 `complete`）；`409` `upload_parts_in_flight` 带 `Retry-After: 1`；额度 `429` / `503`（会话回到 `open`）；`401` `account_deleted`；intake 拒绝 `400` / `413`（会话转为 `failed`，暂存分片随即删除）；`503` `INTAKE_BUSY`（intake 槽被另一次整文件 intake 占用）；`503` `INTAKE_STORAGE_UNAVAILABLE`（会话回到 `open`）；`503` `INTAKE_UNAVAILABLE`（派发失败：比赛已建好，会话已 `completed`，由解析任务的过期恢复重新派发）；`404` |
+| `DELETE /uploads/sessions/{session_id}` | cookie；production 还要 `Origin` | `204`，删除会话行和暂存分片 | `404`；`409` `upload_session_not_open`（正在 `completing`） |
+
+**令牌与 CSRF**：只有 `PUT ^/uploads/sessions/[0-9a-f]{32}/parts/[0-9]{1,5}$` 这一条精确的方法加路径免于会话 cookie 检查；路由自己核对上传令牌（数据库只存它的 sha256，用 `hmac.compare_digest` 比对）和 `Origin`，不回退到 cookie。令牌只能往这一个会话的暂存目录里写字节；退出登录不会让它失效，到会话过期为止。Caddy 的访问日志删掉 `X-Upload-Token`。
+
+**完整性**：服务器自己算每一片的 SHA-256 并严格核对长度；带了 `X-Part-SHA256`（64 位小写十六进制）就比对。整个文件的 SHA-256 由 intake 在拼接流上计算，写进 job 元数据的 `sourceArtifact`，和旧路由一样。
+
+**完成恰好一次**：`complete` 先非阻塞地拿 intake 槽，再把会话改为 `completing`（租约 900 秒），等本会话进行中的分片结束（最多 2 秒），把各片拼成流交给 intake，最后在额度锁里一次提交：账户围栏、上传账本、比赛和解析任务、会话改为 `completed`。客户端断开也没关系：重试的 `complete` 得到 `202` 或建好的比赛；租约过期后（API 重启时立即）下一次 `complete` 先清掉上一次尝试留下的对象再接手。
+
+**上传账本**：只在 `complete` 的提交事务里写一行。放弃、过期、失败的会话什么都不写；删除比赛不退还。
+
+**单进程前提**：分片池、每个会话的进行中计数和 intake 槽都在 API 进程内存里，依赖 Compose 只运行一个 uvicorn 进程（`docker-compose.prod.yml`）。
+
+**测速日志**：每个完成的会话在 API 日志里记一行 `Upload session completed: bytes=… parts=… part_puts=… seconds=…`（不含文件名、owner 或 IP）。
+
+```bash
+# development/test: the owner comes from X-Dev-User-Id (or DEV_USER_ID).
+SIZE=$(stat -c %s sample.dem)
+curl -s -X POST http://localhost:8000/uploads/sessions -H "X-Dev-User-Id: owner-a" \
+  -H "Content-Type: application/json" -d "{\"filename\":\"sample.dem\",\"size\":$SIZE}"
+# -> {"sessionId":"<sid>","uploadToken":"<token>","partSize":8388608,"partCount":N,...}
+# Part i is bytes [i*partSize, (i+1)*partSize) of the file; the last part is the rest.
+dd if=sample.dem bs=8388608 skip=0 count=1 status=none | curl -s -X PUT \
+  http://localhost:8000/uploads/sessions/<sid>/parts/0 -H "X-Upload-Token: <token>" \
+  -H "Content-Type: application/octet-stream" --data-binary @-
+curl -s http://localhost:8000/uploads/sessions/<sid> -H "X-Dev-User-Id: owner-a"      # receivedParts
+curl -s -X POST http://localhost:8000/uploads/sessions/<sid>/complete -H "X-Dev-User-Id: owner-a"
+curl -i -X DELETE http://localhost:8000/uploads/sessions/<sid> -H "X-Dev-User-Id: owner-a"  # abandon
+```
+
+`scripts/cloud_preview_smoke.py` 的样本上传走的就是这条路径（逐片上传，校验每片的 SHA-256，处理 `202` 和缺片）。
 
 ### 重试失败的解析
 
@@ -246,6 +292,7 @@ Demo list items 和 `GET /demos/{demo_id}/status` 带可选的 `matchSummary`（
 - ETag 由这些算出：缓存版本（`backend/app/services/demo_service/replay_response_cache.py` 的 `PUBLIC_REPLAY_CACHE_VERSION`，公开投影、读取时补的默认值或序列化变化时提升）、`REPLAY_CONTRACT_VERSION`、地图配置的指纹（读取时会按地图配置刷新地图信息、重投影旧回放）、比赛的回放存储引用，以及公开的视频状态（回放里的视频信息，加上私有视频对象此刻是否还在：视频就绪时每次请求都向存储确认一次）。每次接受新回放（解析完成、后台回放升级、每次视频写入）都存到一个新的 `artifact://` 引用，存储不会覆盖已有的引用，同一个引用的内容不再改变；所以引用或视频状态一变 ETag 就变。
 - API 进程里有一份按总字节数限定的 LRU 缓存，存最近返回的回放响应（gzip 后的字节）。命中时不读存储、不重算：客户端接受 gzip 时原样返回并带 `Content-Encoding: gzip`（`JsonGzipMiddleware` 不会再压一次），否则解压后返回。没命中时照常计算，再存进缓存。大小由 `REPLAY_RESPONSE_CACHE_MB` 控制（默认 64）。production 只跑一个 uvicorn 进程，所有请求共用这一份；它只在内存里，API 重启即清空。实测（Mirage 样例，本地 Docker）没命中时服务端每次要处理约 1.1 秒（读存储、补默认值、投影、序列化、gzip），以前刷新页面也要重来一遍；命中缓存时约 8 毫秒（仍然要传约 1.8 MB 的 gzip 回放），`304` 约 4 毫秒。
 - 只缓存 `artifact://` 引用的回放。开发环境遗留的 `local://` 引用（原地改写，内容会变）和 `REPLAY_RESPONSE_CACHE_MB=0` 时，照旧每次读取、计算，不带 `ETag`。
+- 预热：API 进程里一个后台线程（`backend/app/services/demo_service/replay_warmer.py`）提前把响应算好放进这份缓存，走的就是路由没命中时的同一段代码，所以存进去的字节和 `ETag` 与请求自己算出来的完全一样。触发时机：API 启动时最近完成的 `REPLAY_WARM_RECENT` 场真实、未归档的比赛（默认 10，模拟比赛不占名额，按 `completed_at` 倒序，最旧的先算，最新的最后成为最近使用）；worker 在解析完成、回放升级提交之后，把比赛 id 发到 Redis 频道 `REPLAY_READY_CHANNEL`（默认 `cs2:replay-ready`，只是一次 best-effort 的 publish，失败不影响任务），预热线程订阅这个频道；每次视频写入（手动 MP4、标定、render worker 回调、render 状态变化）提交之后，API 进程里直接排队，worker 里同样发到频道。队列去重，最多排 32 场，超出丢最早的；一次只算一场，每场用自己的短数据库会话。只预热存在、已完成、`artifact://` 引用的比赛；缓存关闭、已有当前 `ETag` 的项、刚删除的比赛都跳过。Redis 不可用时只记一行警告，按 1 秒起、最长 60 秒的退避重连，API 照常服务。`REPLAY_WARM_ENABLED=0` 关闭预热线程，worker 也不再发布。预热不改变路由的检查顺序：owner、`404`、`409` 仍然先查。实测（进程内，合成回放，gzip 后约 1.8 MB）：没预热时第一次 GET 约 755 毫秒，后台预热一场约 720 毫秒，预热后的第一次 GET 约 24 毫秒（中位数，含进程内传输）。
 - 删除：`DELETE /demos/{id}` 和 `DELETE /auth/account` 提交后，API 进程立即清掉相应比赛的缓存项，刚删除的比赛 id 也不再接受写入缓存（删除前已经开始读回放的请求不会在删除后把它存进去）。运维命令 `app.cli.delete_data` 和 worker 在别的进程里删除，清不到 API 进程的内存；但路由先查数据库，比赛不在就返回 `404`，缓存里的内容不会再被返回，之后被 LRU 挤出或在 API 重启时丢弃。见 [data_deletion_v1](data_deletion_v1.md#并发与加固)。
 
 ### Replay contract（`replay_contract_v5`）

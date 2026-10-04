@@ -56,6 +56,7 @@ from app.services.demo_service.constants import PARSE_JOB_TYPES
 from app.services.demo_service.errors import DemoGoneError
 from app.services.demo_service.gone import rows_missing
 from app.services.demo_service.parse_lifecycle import _match_summary_or_none
+from app.services.demo_service.replay_warmer import announce_replay_ready
 
 logger = logging.getLogger(__name__)
 
@@ -346,6 +347,8 @@ class ReplayUpgrade(ServiceComponent):
             self._service.delete_artifact_safely(new_key)
             return outcome
         self._delete_previous_replay(demo_id, expected_replay_key, new_key)
+        # Committed: let the API warm the new replay's response (replay_warmer.py).
+        announce_replay_ready(demo_id)
         return outcome
 
     def _delete_previous_replay(self, demo_id: str, previous: str | None, current: str) -> None:

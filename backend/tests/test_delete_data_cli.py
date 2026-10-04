@@ -7,6 +7,7 @@ import unittest
 import uuid
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 from sqlalchemy.orm import sessionmaker
 from test_data_deletion import (
@@ -19,13 +20,15 @@ from test_data_deletion import (
     seed_account,
     seed_demo,
     seed_session,
+    seed_upload_session,
 )
 
 from app.cli import delete_data
 from app.core.config import Settings
-from app.models import Account, CoachingFeedback, DeletionTask, Demo, ExternalIdentity
+from app.models import Account, CoachingFeedback, DeletionTask, Demo, ExternalIdentity, UploadSession
+from app.services import deletion_service as deletion_module
 from app.services.auth_service import AuthService
-from app.services.storage import LocalArtifactStore
+from app.services.storage import LocalArtifactStore, UploadStagingStore
 
 STEAM_ID = "76561198000000042"
 OTHER_STEAM_ID = "76561198000000043"
@@ -119,6 +122,23 @@ class DeleteDataCliTest(unittest.TestCase):
         again_code, again = self.run_cli("account", OWNER, "--yes")
         self.assertEqual(again_code, delete_data.EXIT_INCOMPLETE)
         self.assertIn(f"account {OWNER}: not found", again)
+
+    def test_an_account_deletion_takes_its_unfinished_uploads_too(self) -> None:
+        staging = UploadStagingStore(Path(self.temp_dir.name) / "upload-staging")
+        with self.Session() as db:
+            owner_upload = seed_upload_session(db, staging, OWNER, parts={0: b"part-zero"})
+            other_upload = seed_upload_session(db, staging, OTHER_OWNER, parts={0: b"part-zero"})
+
+        # The CLI builds its DeletionService without a staging store, so it
+        # resolves the configured one, as in the api container.
+        with patch.object(deletion_module, "upload_staging_store_from_settings", return_value=staging):
+            code, output = self.run_cli("account", "--steam-id", STEAM_ID, "--yes")
+
+        self.assertEqual(code, delete_data.EXIT_OK, output)
+        self.assertEqual(self.count(UploadSession, owner_id=OWNER), 0)
+        self.assertFalse(staging.session_exists(OWNER, owner_upload))
+        self.assertEqual(self.count(UploadSession, owner_id=OTHER_OWNER), 1)
+        self.assertEqual(staging.list_parts(OTHER_OWNER, other_upload), {0: len(b"part-zero")})
 
     def test_account_deletion_is_refused_outside_production(self) -> None:
         code, output = self.run_cli("account", OWNER, "--yes", runtime_settings=Settings(auth_mode="development"))

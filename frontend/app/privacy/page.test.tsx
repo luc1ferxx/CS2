@@ -39,11 +39,20 @@ describe("PrivacyPage", () => {
       "携带的道具和按键记录（移动、静步、蹲、跳和鼠标左右键）"
     );
     expect(screen.getByRole("region", { name: "你上传的比赛" })).toHaveTextContent("开枪记录（时间、移动速度、武器）");
+    expect(screen.getByRole("region", { name: "你上传的比赛" })).toHaveTextContent(
+      "上传还没完成时，已经收到的部分连同文件名和大小暂存在网站服务器的本地磁盘上，上传完成时转存为比赛文件；你放弃上传、上传开始 24 小时后仍未完成，或删除账户时，这些暂存的部分会被删除。"
+    );
     expect(screen.getByRole("region", { name: "登录时我们拿到什么" })).toHaveTextContent(
       "删除账户不会把你移出名单；如需移出，请联系站长。"
     );
     expect(screen.getByRole("region", { name: "保存多久" })).toHaveTextContent("数据不会因此自动删除");
-    expect(screen.getByRole("region", { name: "Cookie 和浏览器存储" })).toHaveTextContent("__Host-cs2_session");
+    expect(screen.getByRole("region", { name: "保存多久" })).toHaveTextContent("未完成的上传最多保留 24 小时。");
+    const storage = screen.getByRole("region", { name: "Cookie 和浏览器存储" });
+    expect(storage).toHaveTextContent("__Host-cs2_session");
+    expect(storage).toHaveTextContent(
+      "未完成的上传：文件名、大小、文件的修改时间和上传编号，用来在刷新页面后接着上传；上传完成或放弃后清除。"
+    );
+    expect(storage).toHaveTextContent("删除账户时，这两项都会在当前浏览器清除");
     expect(screen.getByRole("region", { name: "Cookie 和浏览器存储" })).not.toHaveTextContent("回放会按浏览器的缓存规则暂存");
     expect(screen.getByRole("region", { name: "数据存在哪里、谁能接触" })).toHaveTextContent(DATA_REGION_FALLBACK);
     const contact = screen.getByRole("region", { name: "联系" });

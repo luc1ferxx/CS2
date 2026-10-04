@@ -7,6 +7,7 @@ from starlette.responses import JSONResponse, Response
 from starlette.types import ASGIApp
 
 from app.core.config import Settings, settings
+from app.core.upload_slots import is_upload_part_request
 from app.services.auth_service import AuthService, get_auth_service
 
 DEV_OWNER_HEADER = "X-Dev-User-Id"
@@ -33,6 +34,11 @@ class SessionCsrfMiddleware(BaseHTTPMiddleware):
             self.settings.auth_mode == "production"
             and request.method not in SAFE_METHODS
             and not request.url.path.startswith("/render-worker/")
+            # A chunked-upload part authenticates with its session's upload
+            # token, never the cookie; the route checks the token and Origin.
+            # Matched on the raw scope path the router sees: `url.path` goes
+            # through urlsplit, which silently drops tabs and newlines.
+            and not is_upload_part_request(request.method, request.scope.get("path", ""))
         ):
             session_token = request.cookies.get(self.settings.auth_session_cookie_name)
             owner_id = self.auth_service_factory().resolve_session(session_token)

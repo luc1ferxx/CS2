@@ -123,7 +123,7 @@ FRONTEND_URL="$FRONTEND_URL" \
 python3 scripts/cloud_preview_smoke.py
 ```
 
-The preview Compose shape sets `AUTH_MODE=production`, so there the smoke also needs `AUTH_SESSION_COOKIE` (the value of a signed-in invited account's `__Host-cs2_session` cookie) and `SAMPLE_DEMO_PATH`. It reads `/auth/me` capabilities first: with `devTools=false` it skips the mock upload and uses the uploaded sample for the replay, coaching, and media checks (and fails without `SAMPLE_DEMO_PATH`); with `renderClips=false` it skips the `render_clip` step, and with `renderClips=true` it sends a SteamID64 POV `playerId` from the sample's replay players (failing if the sample has none, since `RENDER_WORKER_MODE=external` refuses clips without one). Each run uploads the sample through `POST /uploads/demo`, so it counts toward that account's `DEMO_UPLOAD_DAILY_LIMIT`. Keep the cookie value out of shell history and handoff evidence.
+The preview Compose shape sets `AUTH_MODE=production`, so there the smoke also needs `AUTH_SESSION_COOKIE` (the value of a signed-in invited account's `__Host-cs2_session` cookie) and `SAMPLE_DEMO_PATH`. It reads `/auth/me` capabilities first: with `devTools=false` it skips the mock upload and uses the uploaded sample for the replay, coaching, and media checks (and fails without `SAMPLE_DEMO_PATH`); with `renderClips=false` it skips the `render_clip` step, and with `renderClips=true` it sends a SteamID64 POV `playerId` from the sample's replay players (failing if the sample has none, since `RENDER_WORKER_MODE=external` refuses clips without one). Each run uploads the sample through a chunked upload session (`POST /uploads/sessions`, one token-authorized `PUT` per part, then `complete`, the same path the browser uses; an unfinished session left by an earlier run is replaced), so it counts toward that account's `DEMO_UPLOAD_DAILY_LIMIT`. Keep the cookie value out of shell history and handoff evidence.
 
 For a production-auth RC, set `AUTH_MODE=production`, explicitly set `AUTH_PROVIDER=steam` (or compatibility `oidc`) and matching `NEXT_PUBLIC_AUTH_PROVIDER`, secure `__Host-` cookies, one exact HTTPS origin for frontend/API/auth/media routing, a real server-only `STEAM_WEB_API_KEY`, `STEAM_LOGIN_ALLOWLIST` (invited Steam ID64s, or `*` to open Steam sign-in), random `STEAM_CREDENTIAL_ENCRYPTION_KEY`, disabled V1 scheduler, `STEAM_DEMO_PROVIDER=disabled`, `STEAM_DEMO_EXPERIMENTAL_REPLAY_CDN_ENABLED=0`, the selected identity provider's complete configuration, and a non-default render-worker service credential through the deployment secret/config system. Verify that `/diagnostics`, the dev/QA routes (`/uploads/mock`, manual video upload/calibration, `/render/mock`), and `/docs`/`/openapi.json` return `404`, and that `render/clip` returns `404` unless `RENDER_CLIPS_ENABLED=1`; do not run the development script as a substitute for independently authenticated owner A/B browser/API sessions.
 
@@ -145,7 +145,7 @@ For demos owned separately by A and B, exercise all of these surfaces:
 - Library list; status; replay; coaching; demo diagnostics.
 - Rename; archive; unarchive; permanent delete (`DELETE /demos/{demo_id}`).
 - Account deletion (`DELETE /auth/account`), with dedicated throwaway invited accounts only.
-- Mock upload; real `.dem` upload; parser retry.
+- Mock upload; real `.dem` upload (legacy `POST /uploads/demo` and the chunked upload session routes); parser retry.
 - Video status; development/QA video upload; calibration.
 - Mock render; `render_clip`; render-job retry; render-job list.
 - Private video full GET, HEAD, satisfiable Range, and unsatisfiable Range.
@@ -161,6 +161,7 @@ Expected results:
 - Logout deletes the server-side Redis session and clears the cookie. Reusing the old cookie fails.
 - Deleting one of A's demos returns `204`, and a repeat returns `404`. B's attempt on A's demo returns `404`, and A's rows and objects are untouched. Afterwards the demo's rows, verdicts, and stored objects are gone. A linked Steam match is unlinked and importable again. A's daily upload count does not go down.
 - Account deletion needs the body `{"confirm":"delete-my-account"}`, otherwise it returns `400` `confirmation_required`. It returns `204` and expires the session cookie. A second session of the same account, opened earlier in another browser, then gets `401` on every route. An upload that commits after the deletion returns `401` `account_deleted` and leaves no row or object. B is unaffected.
+- Chunked upload sessions are owner-scoped: B's `GET`, `token`, `complete` and `DELETE` on A's session id return `404`; a part `PUT` with a wrong or missing `X-Upload-Token` returns `404` and writes nothing; a part `PUT` from an untrusted `Origin` returns `403`; anonymous `POST /uploads/sessions` returns `401`. A part `PUT` needs no cookie (it is the one write exempt from the session check) and works with A's token after A signs out, until the session expires; after A's account deletion it returns `404` and recreates nothing.
 - Invalid signature or algorithm, issuer, audience, nonce, timestamps, missing required claims, unknown JWKS key, reused/mismatched state, and unsafe or oversized `return_to` inputs are denied or reduced to the safe dashboard target.
 - Unsafe cookie-authenticated mutations with a missing or untrusted `Origin` receive `403` and create no row, job, metadata, or artifact change; render-worker service calls remain on their independent credential boundary.
 - User-facing demo/replay/video payloads contain no `owner_id`, `storageKey`, unknown internal replay fields, `local://`, absolute local path, issuer, subject, or token; replay/source keys and replay `demoId` remain bound to the requested demo.
@@ -185,6 +186,14 @@ Open `/dashboard` in the target frontend and verify:
 - Empty, loading, fetch-failed, archived-only, and search/filter no-result states are clear when practical to exercise.
 - Mock upload creates a demo and the post-create notice/table action opens it. Production hides both `示例比赛` buttons and the Demo Detail mock-render/manual video tools because `/auth/me` reports `capabilities.devTools=false`.
 - Real/sample `.dem` upload parses and opens when `SAMPLE_DEMO_PATH` or another approved local sample is available.
+- Chunked upload resume and cancel (use a large sample, and Chrome DevTools network throttling so there is time to act):
+  - Network drop: switch the network off (DevTools `Offline`, or the OS) mid-upload. The upload shows as paused, does not count as failed, and continues by itself when the network returns; the finished demo is the only new row.
+  - Reload: reload `/dashboard` mid-upload. A one-line banner `有一个未完成的上传：{name}（已传 N%）` offers `选择同一个文件继续`, `完成上传` (only when every part arrived) and `放弃`. Re-picking the same file sends only the missing parts; picking a different file asks before replacing the unfinished upload.
+  - Cancel: `取消` stops the upload, the banner does not come back after a reload, and no demo appears.
+  - Restart the api container mid-upload (local Docker only): the upload pauses, then resumes against the same session.
+  - Two tabs: starting a second upload in another tab is refused with the existing-upload choice, not a second parallel session.
+  - Production, with a throwaway invited account: delete the account on `/account` while an upload is unfinished. The deletion succeeds, the other tab's upload stops (its parts get `404`), and signing in again shows no unfinished-upload banner.
+  - Quota: with the daily limit reached, `complete` answers the limit copy and the banner keeps `完成上传` for later.
 - Corrupt `.dem` failure shows compact parser metadata such as `INVALID_DEMO` without stack traces or local paths.
 - Demo Library search, status/map filters, sort order, rename, archive, and show archived work.
 - Demo Detail summary is readable: file, map, calibration/fallback, rounds, coaching count, parser status/failure, media status, and render status.
@@ -236,4 +245,5 @@ For a release-candidate handoff, record:
 - Private media GET/HEAD/Range, copied/guessed URL, legacy static path, traversal, symlink, logout, and expiry results.
 - Manual browser smoke result, including callback/session-expired/sign-out behavior, desktop/mobile viewport coverage, screenshots, and known limitations.
 - Coarse `/health` status and proof that system `/diagnostics` is `404` in production while demo diagnostics remain owner-scoped.
+- Chunked upload results: network-drop resume, reload resume, cancel, and (production) account deletion during an upload; plus one `Upload session completed: bytes=… seconds=…` line from the API log per finished upload, as the speed baseline.
 - Deletion results: match delete, the owner B `404`, double delete, the unchanged upload count, and the empty deletion outbox after about 35 minutes. For a production RC, also record the throwaway account deletion with its second-session `401`, and the `/privacy` region/contact as shown.

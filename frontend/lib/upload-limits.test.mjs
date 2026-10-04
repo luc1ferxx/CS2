@@ -119,6 +119,25 @@ const { demoFileProblem, demoUploadErrorMessage, uploadLimitMessage, uploadQuota
   assert.equal(demoUploadErrorMessage(400, null, null), null);
   assert.equal(demoUploadErrorMessage(409, "something_else", null), null);
 
+  // The upload session codes: resource limits are the server's, a missing part asks for the file again.
+  assert.match(demoUploadErrorMessage(503, "upload_capacity_busy", 30), /你的文件没有问题/);
+  assert.match(demoUploadErrorMessage(503, "upload_storage_full", 60), /暂存空间不足.*你的文件没有问题/);
+  assert.match(demoUploadErrorMessage(409, "upload_session_exists", null), /未完成的上传/);
+  assert.match(demoUploadErrorMessage(409, "upload_parts_missing", null), /选择同一个文件继续/);
+  assert.match(demoUploadErrorMessage(409, "upload_parts_in_flight", 1), /传送中/);
+  assert.match(demoUploadErrorMessage(409, "upload_session_not_open", null), /已经结束/);
+  assert.match(demoUploadErrorMessage(400, "upload_part_invalid", null), /重新上传/);
+  assert.match(demoUploadErrorMessage(422, "upload_part_digest_mismatch", null), /校验没有通过/);
+  assert.match(demoUploadErrorMessage(404, "upload_session_gone", null), /过期或已被放弃/);
+  assert.match(demoUploadErrorMessage(401, "account_deleted", null), /账户已删除/);
+  // The part 0 signature check reuses the intake's code and copy.
+  assert.equal(demoUploadErrorMessage(400, "INTAKE_CONTENT_MISMATCH", null), NOT_A_DEMO);
+  // A quota refusal at completion keeps the quota copy.
+  assert.equal(
+    demoUploadErrorMessage(429, "upload_daily_limit", 3600),
+    "今天的上传次数已用完，约 1 小时 后可以继续上传。"
+  );
+
   assert.equal(demoFileProblem({ name: "match.dem", size: 300 * 1024 * 1024 }), null);
   assert.equal(demoFileProblem({ name: "MATCH.DEM", size: 10 }), null);
   assert.equal(demoFileProblem({ name: "match.dem.gz", size: 10 }), NOT_A_DEMO);

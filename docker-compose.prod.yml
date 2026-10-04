@@ -8,7 +8,9 @@
 # published service; api and frontend are reachable solely on the private
 # compose network. Artifacts live in the S3-compatible bucket the preview
 # override already requires; the base local artifact volumes stay declared but
-# production does not rely on them.
+# production does not rely on them. The one exception is the base file's
+# `upload-staging` volume (api and worker): the parts of unfinished chunked
+# uploads wait on this host's disk until `complete` moves them to the bucket.
 name: cs2coach
 
 x-logging: &default-logging

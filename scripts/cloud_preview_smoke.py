@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import sys
 import time
 import urllib.error
 import urllib.request
-import uuid
 from collections import Counter
 from collections.abc import Mapping, Sequence
 from http.client import HTTPConnection, HTTPException, HTTPSConnection
@@ -21,7 +21,11 @@ OWNER_ID = os.getenv("DEV_USER_ID", "cloud-preview-smoke")
 AUTH_SESSION_COOKIE = os.getenv("AUTH_SESSION_COOKIE", "").strip()
 SAMPLE_DEMO_PATH = os.getenv("SAMPLE_DEMO_PATH")
 SAMPLE_DEMO_NAME = os.getenv("SAMPLE_DEMO_NAME")
-UPLOAD_CHUNK_BYTES = 1024 * 1024
+# Chunked upload session (the browser's path): attempts per part, the poll
+# interval while `complete` answers 202, and how long complete may take.
+PART_ATTEMPTS = 5
+UPLOAD_SESSION_POLL_SECONDS = 2
+UPLOAD_COMPLETE_TIMEOUT_SECONDS = 600
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -430,75 +434,263 @@ def upload_sample_and_wait(sample_path: Path) -> tuple[str, Any]:
 
 
 def upload_sample_demo(path: Path) -> str:
+    """Upload a sample through the browser's chunked upload session; returns the demo id.
+
+    POST /uploads/sessions -> PUT every part (raw bytes, exact Content-Length,
+    X-Upload-Token, X-Part-SHA256) -> POST .../complete, sent again while the
+    API answers 202 and re-sending any part it reports missing. Parts go one at a
+    time: the smoke checks the contract, not throughput.
+    """
     path = resolve_sample_demo_path(str(path), require_sample=True)
     if path is None:
         raise SmokeFailure("SAMPLE_DEMO_PATH is required")
-    boundary = f"----cloud-preview-smoke-{uuid.uuid4().hex}"
-    preamble = b"".join(
-        [
-            f"--{boundary}\r\n".encode(),
-            (
-                'Content-Disposition: form-data; name="file"; '
-                f'filename="{path.name}"\r\n'
-            ).encode(),
-            b"Content-Type: application/octet-stream\r\n\r\n",
-        ]
+    size = path.stat().st_size
+    started = time.monotonic()
+    session = create_upload_session(path.name, size)
+    session_id = required_str(session, "sessionId")
+    token = required_str(session, "uploadToken")
+    plan = UploadPlan.from_session(session, size)
+    stats = UploadStats()
+    received = {index for index in session.get("receivedParts") or [] if isinstance(index, int)}
+    upload_parts(path, session_id, token, plan, plan.missing(received), stats)
+    demo_id = complete_upload_session(path, session_id, token, plan, stats)
+    print(
+        f"upload session {session_id}: {plan.part_count} part(s) of {plan.part_size} bytes, "
+        f"{stats.bytes_sent} bytes sent in {time.monotonic() - started:.1f}s, "
+        f"{stats.retries} retr{'y' if stats.retries == 1 else 'ies'}"
     )
-    closing = f"\r\n--{boundary}--\r\n".encode()
+    return demo_id
 
+
+class UploadPlan:
+    """The server's part layout for one session: index i covers [i*part_size, ...)."""
+
+    def __init__(self, *, file_size: int, part_size: int, part_count: int) -> None:
+        if part_size <= 0 or part_count <= 0:
+            raise SmokeFailure(f"upload session has an invalid part layout: {part_size} x {part_count}")
+        if (file_size + part_size - 1) // part_size != part_count:
+            raise SmokeFailure(
+                f"upload session part layout does not cover the file: {part_count} part(s) of "
+                f"{part_size} bytes for {file_size} bytes"
+            )
+        self.file_size = file_size
+        self.part_size = part_size
+        self.part_count = part_count
+
+    @classmethod
+    def from_session(cls, session: dict[str, Any], file_size: int) -> UploadPlan:
+        part_size = session.get("partSize")
+        part_count = session.get("partCount")
+        if not isinstance(part_size, int) or not isinstance(part_count, int):
+            raise SmokeFailure(f"upload session response missing partSize/partCount: {session}")
+        return cls(file_size=file_size, part_size=part_size, part_count=part_count)
+
+    def part_range(self, index: int) -> tuple[int, int]:
+        """(offset, length) of one part; the last part is the remainder."""
+        if not 0 <= index < self.part_count:
+            raise SmokeFailure(f"part index {index} is outside 0..{self.part_count - 1}")
+        offset = index * self.part_size
+        return offset, min(self.part_size, self.file_size - offset)
+
+    def missing(self, received: set[int]) -> list[int]:
+        return [index for index in range(self.part_count) if index not in received]
+
+
+class UploadStats:
+    def __init__(self) -> None:
+        self.bytes_sent = 0
+        self.retries = 0
+
+
+def create_upload_session(filename: str, size: int) -> dict[str, Any]:
+    body: dict[str, Any] = {"filename": filename, "size": size, "contentType": "application/octet-stream"}
     try:
-        response_status, response_body = post_multipart_file(
-            "/uploads/demo",
-            path,
-            boundary=boundary,
-            preamble=preamble,
-            closing=closing,
-        )
-    except OSError as exc:
-        raise SmokeFailure(f"sample upload failed: {exc}") from exc
-
-    if response_status >= 400:
-        raise SmokeFailure(f"sample upload failed with HTTP {response_status}: {response_body}")
-    payload = json.loads(response_body)
-    return required_str(payload, "id")
+        payload = request_json("POST", "/uploads/sessions", body)
+    except HttpStatusFailure as exc:
+        if exc.status != 409 or error_code(exc) != "upload_session_exists":
+            raise
+        # A previous smoke run of this owner left an unfinished session; one
+        # open session per owner, so replace it (refused while it completes).
+        print("replacing an unfinished upload session left by an earlier run")
+        payload = request_json("POST", "/uploads/sessions", {**body, "replace": True})
+    if not isinstance(payload, dict):
+        raise SmokeFailure(f"upload session response was not an object: {payload}")
+    return payload
 
 
-def post_multipart_file(
-    path: str,
-    file_path: Path,
-    *,
-    boundary: str,
-    preamble: bytes,
-    closing: bytes,
-) -> tuple[int, str]:
+def upload_parts(
+    path: Path,
+    session_id: str,
+    token: str,
+    plan: UploadPlan,
+    indexes: Sequence[int],
+    stats: UploadStats,
+) -> None:
+    with path.open("rb") as handle:
+        for index in indexes:
+            offset, length = plan.part_range(index)
+            handle.seek(offset)
+            data = handle.read(length)
+            if len(data) != length:
+                raise SmokeFailure(f"sample changed while uploading: part {index} read {len(data)} of {length} bytes")
+            put_part_with_retry(session_id, token, index, data, stats)
+
+
+def put_part_with_retry(session_id: str, token: str, index: int, data: bytes, stats: UploadStats) -> None:
+    digest = hashlib.sha256(data).hexdigest()
+    for attempt in range(1, PART_ATTEMPTS + 1):
+        try:
+            status, body, retry_after = put_upload_part(session_id, token, index, data, digest)
+        except (OSError, HTTPException) as exc:
+            if attempt == PART_ATTEMPTS:
+                raise SmokeFailure(f"upload part {index} failed: {exc}") from exc
+            stats.retries += 1
+            time.sleep(min(2 ** attempt, 10))
+            continue
+        if status == 200:
+            payload = _json_object(body)
+            if payload.get("sha256") not in (None, digest):
+                raise SmokeFailure(f"upload part {index}: the API stored a different SHA-256")
+            stats.bytes_sent += len(data)
+            return
+        # Part pool or this session's parallel limit is full: wait and resend.
+        if status == 503 and attempt < PART_ATTEMPTS:
+            stats.retries += 1
+            time.sleep(retry_after if retry_after is not None else 2)
+            continue
+        raise SmokeFailure(f"PUT upload part {index} failed with HTTP {status}: {body}")
+    raise SmokeFailure(f"upload part {index} did not succeed after {PART_ATTEMPTS} attempts")
+
+
+def put_upload_part(
+    session_id: str,
+    token: str,
+    index: int,
+    data: bytes,
+    digest: str,
+) -> tuple[int, str, float | None]:
+    """One raw part PUT; returns (status, body, Retry-After seconds)."""
     parsed = urlsplit(API_BASE_URL)
     if parsed.scheme not in {"http", "https"} or parsed.hostname is None:
         raise SmokeFailure(f"API_BASE_URL must be http or https: {API_BASE_URL}")
-
-    base_path = parsed.path.rstrip("/")
-    request_path = f"{base_path}{path}"
+    request_path = f"{parsed.path.rstrip('/')}/uploads/sessions/{session_id}/parts/{index}"
     connection_class = HTTPSConnection if parsed.scheme == "https" else HTTPConnection
     connection = connection_class(parsed.hostname, parsed.port, timeout=120)
-    content_length = len(preamble) + file_path.stat().st_size + len(closing)
     try:
-        connection.putrequest("POST", request_path)
-        for header_name, header_value in auth_headers("POST").items():
-            connection.putheader(header_name, header_value)
-        connection.putheader("Content-Type", f"multipart/form-data; boundary={boundary}")
-        connection.putheader("Content-Length", str(content_length))
-        connection.endheaders()
-        connection.send(preamble)
-        with file_path.open("rb") as handle:
-            while chunk := handle.read(UPLOAD_CHUNK_BYTES):
-                connection.send(chunk)
-        connection.send(closing)
+        # The upload token alone authorizes a part (no cookie, like the
+        # browser); production also checks that Origin is the site's own.
+        connection.request(
+            "PUT",
+            request_path,
+            body=data,
+            headers={
+                "X-Upload-Token": token,
+                "X-Part-SHA256": digest,
+                "Content-Type": "application/octet-stream",
+                "Content-Length": str(len(data)),
+                "Origin": frontend_origin(),
+            },
+        )
         response = connection.getresponse()
         body = response.read().decode("utf-8", errors="replace")
-        return response.status, body
-    except HTTPException as exc:
-        raise SmokeFailure(f"sample upload failed: {exc}") from exc
+        return response.status, body, _retry_after_seconds(response.getheader("Retry-After"))
     finally:
         connection.close()
+
+
+def complete_upload_session(
+    path: Path,
+    session_id: str,
+    token: str,
+    plan: UploadPlan,
+    stats: UploadStats,
+    *,
+    timeout_seconds: float | None = None,
+) -> str:
+    """POST complete until the API returns the demo; resend parts it reports missing."""
+    deadline = time.monotonic() + (
+        UPLOAD_COMPLETE_TIMEOUT_SECONDS if timeout_seconds is None else timeout_seconds
+    )
+    complete_path = f"/uploads/sessions/{session_id}/complete"
+    while time.monotonic() < deadline:
+        try:
+            payload = request_json("POST", complete_path)
+        except HttpStatusFailure as exc:
+            code = error_code(exc)
+            if exc.status == 409 and code == "upload_parts_missing":
+                missing = [index for index in error_field(exc, "missingParts") or [] if isinstance(index, int)]
+                if not missing:
+                    raise
+                print(f"upload session {session_id}: re-sending {len(missing)} missing part(s)")
+                upload_parts(path, session_id, token, plan, missing, stats)
+                continue
+            if (exc.status == 409 and code == "upload_parts_in_flight") or (
+                exc.status == 503 and code == "INTAKE_BUSY"
+            ):
+                stats.retries += 1
+                time.sleep(_retry_after_from_detail(exc, default=2))
+                continue
+            raise
+        if isinstance(payload, dict) and isinstance(payload.get("id"), str) and payload["id"]:
+            return str(payload["id"])
+        if isinstance(payload, dict) and payload.get("state") == "completing":
+            # 202: another attempt holds the lease. Complete again rather than
+            # only reading the state: after an API restart the lease has ended
+            # and only a new `complete` takes the session over; once the other
+            # attempt finishes, this answers 200 with its demo (or its error).
+            time.sleep(UPLOAD_SESSION_POLL_SECONDS)
+            continue
+        raise SmokeFailure(f"upload complete returned an unexpected response: {payload}")
+    raise SmokeFailure(f"upload session {session_id} did not complete before timeout")
+
+
+def error_detail(exc: HttpStatusFailure) -> dict[str, Any]:
+    """The structured `detail` object of an API error body (the body itself when detail is text), or {}."""
+    try:
+        body = json.loads(exc.detail)
+    except ValueError:
+        return {}
+    if not isinstance(body, dict):
+        return {}
+    detail = body.get("detail")
+    return detail if isinstance(detail, dict) else body
+
+
+def error_code(exc: HttpStatusFailure) -> str | None:
+    # Session errors: {"detail": {"code": ...}}; intake errors keep today's
+    # {"detail": "...", "errorCode": ...}, for which error_detail is the body.
+    detail = error_detail(exc)
+    code = detail.get("code") or detail.get("errorCode")
+    return code if isinstance(code, str) else None
+
+
+def error_field(exc: HttpStatusFailure, key: str) -> Any:
+    return error_detail(exc).get(key)
+
+
+def _retry_after_from_detail(exc: HttpStatusFailure, *, default: float) -> float:
+    value = error_field(exc, "retryAfterSeconds")
+    if isinstance(value, (int, float)) and not isinstance(value, bool) and 0 <= value <= 60:
+        return float(value)
+    return default
+
+
+def _retry_after_seconds(value: str | None) -> float | None:
+    try:
+        seconds = float(value) if value is not None else None
+    except ValueError:
+        return None
+    if seconds is None or not 0 <= seconds <= 60:
+        return None
+    return seconds
+
+
+def _json_object(body: str) -> dict[str, Any]:
+    try:
+        payload = json.loads(body)
+    except ValueError:
+        return {}
+    return payload if isinstance(payload, dict) else {}
 
 
 def required_str(payload: dict[str, Any], key: str) -> str:

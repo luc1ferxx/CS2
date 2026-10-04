@@ -35,7 +35,7 @@ _SAFE_MESSAGES = {
     "INTAKE_REJECTED": "Uploaded demo was rejected",
 }
 
-_PROHIBITED_CONTENT_TYPES = frozenset(
+PROHIBITED_CONTENT_TYPES = frozenset(
     {
         "application/gzip",
         "application/java-archive",
@@ -236,9 +236,9 @@ class ArtifactIntakeService:
         stream: BinaryIO,
         release_stream_before_promotion: bool = False,
     ) -> AcceptedArtifact:
-        display_filename = _normalize_display_filename(filename)
-        normalized_content_type = _normalize_content_type(content_type)
-        if normalized_content_type in _PROHIBITED_CONTENT_TYPES:
+        display_filename = normalize_display_filename(filename)
+        normalized_content_type = normalize_content_type(content_type)
+        if normalized_content_type in PROHIBITED_CONTENT_TYPES:
             raise ArtifactIntakeError("INTAKE_CONTENT_MISMATCH")
 
         operation_now = self._operation_now()
@@ -289,7 +289,7 @@ class ArtifactIntakeService:
                 raise ArtifactIntakeError("INTAKE_EMPTY")
             if written.size_bytes < self.policy.min_source_bytes:
                 raise ArtifactIntakeError("INTAKE_TRUNCATED")
-            if _has_incompatible_content_prefix(captured_stream.prefix):
+            if has_incompatible_content_prefix(captured_stream.prefix):
                 raise ArtifactIntakeError("INTAKE_CONTENT_MISMATCH")
             if release_stream_before_promotion:
                 try:
@@ -473,7 +473,7 @@ class ArtifactIntakeService:
             pass
 
 
-def _normalize_display_filename(filename: str) -> str:
+def normalize_display_filename(filename: str) -> str:
     if not isinstance(filename, str):
         raise ArtifactIntakeError("INTAKE_TYPE_REJECTED")
     stripped = filename.strip()
@@ -498,7 +498,7 @@ def _normalize_display_filename(filename: str) -> str:
     return f"{normalized_stem}{stripped[-4:]}"
 
 
-def _normalize_content_type(content_type: str | None) -> str | None:
+def normalize_content_type(content_type: str | None) -> str | None:
     if content_type is None:
         return None
     if not isinstance(content_type, str) or any(ord(char) < 32 for char in content_type):
@@ -511,7 +511,7 @@ def _normalize_content_type(content_type: str | None) -> str | None:
     return base_type
 
 
-def _has_incompatible_content_prefix(prefix: bytes) -> bool:
+def has_incompatible_content_prefix(prefix: bytes) -> bool:
     signatures = (
         b"PK\x03\x04",
         b"PK\x05\x06",

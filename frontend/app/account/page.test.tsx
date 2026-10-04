@@ -6,6 +6,7 @@ import AccountPage from "@/app/account/page";
 import { useAuth } from "@/components/auth/AuthProvider";
 import * as api from "@/lib/api";
 import type { AuthAccount } from "@/lib/auth";
+import { UPLOAD_RESUME_KEY } from "@/lib/demo-upload";
 import { PLAYER_PREFERENCE_KEY } from "@/lib/personal-review";
 
 vi.mock("@/components/auth/AuthProvider", () => ({ useAuth: vi.fn() }));
@@ -50,6 +51,10 @@ describe("AccountPage", () => {
     mockAuth(STEAM_ACCOUNT);
     window.localStorage.setItem(`${PLAYER_PREFERENCE_KEY}:steam:${STEAM_ID}`, '{"version":1,"identity":"xelex"}');
     window.localStorage.setItem("unrelated", "kept");
+    window.localStorage.setItem(
+      UPLOAD_RESUME_KEY,
+      JSON.stringify({ sessionId: "0123456789abcdef0123456789abcdef", name: "big.dem", size: 10, lastModified: 1 })
+    );
   });
 
   afterEach(() => {
@@ -69,6 +74,9 @@ describe("AccountPage", () => {
     expect(within(data).getByRole("link", { name: "隐私说明" })).toHaveAttribute("href", "/privacy");
     // The invite list lives outside the account and survives its deletion; both panels say so.
     expect(data).toHaveTextContent("邀请名单（你的 SteamID64）由站长保存在服务器配置里");
+    // An unfinished upload is data too: on the server until done, abandoned or expired, and its record in this browser.
+    expect(data).toHaveTextContent("未完成的上传：已收到的部分暂存在网站服务器上");
+    expect(data).toHaveTextContent("未完成上传的文件名、大小和上传编号（完成或放弃后清除）");
     expect(screen.getByRole("region", { name: "删除账户" })).toHaveTextContent("删除账户不会把你移出邀请名单");
     // The top bar name is the way here, and says so.
     expect(screen.getByRole("link", { name: "xelex" })).toHaveAttribute("aria-current", "page");
@@ -84,6 +92,8 @@ describe("AccountPage", () => {
     expect(await screen.findByRole("heading", { name: "账户已删除" })).toBeInTheDocument();
     expect(markSignedOut).toHaveBeenCalledTimes(1);
     expect(window.localStorage.getItem(`${PLAYER_PREFERENCE_KEY}:steam:${STEAM_ID}`)).toBeNull();
+    // The unfinished upload's record goes with the account.
+    expect(window.localStorage.getItem(UPLOAD_RESUME_KEY)).toBeNull();
     expect(window.localStorage.getItem("unrelated")).toBe("kept");
     expect(screen.getByText("你的 SteamID64 仍在站长的邀请名单里；如需移出，请联系站长。")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "查看隐私说明" })).toHaveAttribute("href", "/privacy");
@@ -106,6 +116,7 @@ describe("AccountPage", () => {
     expect(screen.queryByRole("heading", { name: "账户已删除" })).not.toBeInTheDocument();
     expect(markSignedOut).not.toHaveBeenCalled();
     expect(window.localStorage.getItem(`${PLAYER_PREFERENCE_KEY}:steam:${STEAM_ID}`)).not.toBeNull();
+    expect(window.localStorage.getItem(UPLOAD_RESUME_KEY)).not.toBeNull();
   });
 
   it("explains that the local development account cannot be deleted and points at single matches", () => {

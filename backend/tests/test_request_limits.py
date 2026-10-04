@@ -7,13 +7,17 @@ from typing import Any
 from app.core.request_limits import (
     DEMO_ENVELOPE_LIMIT_BYTES,
     STEAM_CREDENTIALS_JSON_LIMIT_BYTES,
+    UPLOAD_PART_ENVELOPE_LIMIT_BYTES,
     VIDEO_ENVELOPE_LIMIT_BYTES,
     WORKER_MEDIA_ENVELOPE_LIMIT_BYTES,
     WORKER_RESULT_ENVELOPE_LIMIT_BYTES,
     MultipartRequestLimitMiddleware,
     SensitiveJsonRequestLimitMiddleware,
 )
+from app.core.upload_slots import IntakeSlot, PartPool
 from app.services.upload_quota import UploadQuotaExceeded
+
+PART_PATH = "/uploads/sessions/" + "0123456789abcdef" * 2 + "/parts/7"
 
 
 class RecordingBodyApp:
@@ -57,6 +61,7 @@ def invoke_asgi(
     chunks: Iterable[bytes] = (),
     headers: Iterable[tuple[bytes, bytes]] = (),
     state: dict[str, Any] | None = None,
+    method: str = "POST",
 ) -> tuple[int, dict[str, str], bytes, int]:
     materialized_chunks = list(chunks)
     messages = [
@@ -86,7 +91,7 @@ def invoke_asgi(
         "type": "http",
         "asgi": {"version": "3.0"},
         "http_version": "1.1",
-        "method": "POST",
+        "method": method,
         "scheme": "http",
         "path": path,
         "raw_path": path.encode(),
@@ -387,7 +392,7 @@ class MultipartRequestLimitMiddlewareTest(unittest.TestCase):
         )
         # A demo upload in flight holds the only slot: the 404 must neither
         # wait for it (503 INTAKE_BUSY) nor claim it.
-        app._active_uploads = 1
+        self.assertTrue(app.intake_slot.try_acquire())
 
         status, headers, body, receive_calls = invoke_asgi(
             app,
@@ -401,7 +406,7 @@ class MultipartRequestLimitMiddlewareTest(unittest.TestCase):
         self.assertEqual(headers["cache-control"], "private, no-store")
         self.assertEqual(receive_calls, 0)
         self.assertFalse(downstream.called)
-        self.assertEqual(app._active_uploads, 1)
+        self.assertEqual(app.intake_slot.in_use, 1)
 
     def test_disabled_manual_video_upload_leaves_other_upload_routes_streaming(self) -> None:
         for path, headers in (
@@ -446,7 +451,7 @@ class MultipartRequestLimitMiddlewareTest(unittest.TestCase):
             demo_upload_precheck=precheck,
         )
         # A quota rejection must not queue behind (or take) the upload slot.
-        app._active_uploads = 1
+        self.assertTrue(app.intake_slot.try_acquire())
 
         status, headers, body, receive_calls = invoke_asgi(
             app,
@@ -472,7 +477,7 @@ class MultipartRequestLimitMiddlewareTest(unittest.TestCase):
         self.assertEqual(calls, ["owner_v1_at_limit"])
         self.assertEqual(receive_calls, 0)
         self.assertFalse(downstream.called)
-        self.assertEqual(app._active_uploads, 1)
+        self.assertEqual(app.intake_slot.in_use, 1)
 
     def test_demo_upload_precheck_that_raises_fails_closed_before_the_body(self) -> None:
         downstream = RecordingBodyApp()
@@ -501,7 +506,7 @@ class MultipartRequestLimitMiddlewareTest(unittest.TestCase):
         self.assertEqual(headers["cache-control"], "private, no-store")
         self.assertEqual(receive_calls, 0)
         self.assertFalse(downstream.called)
-        self.assertEqual(app._active_uploads, 0)
+        self.assertEqual(app.intake_slot.in_use, 0)
         logged = " ".join(logs.output)
         self.assertNotIn("owner_v1_secret_owner", logged)
         self.assertNotIn("database unavailable", logged)
@@ -530,7 +535,7 @@ class MultipartRequestLimitMiddlewareTest(unittest.TestCase):
         self.assertEqual(json.loads(body), {"received": 4})
         self.assertEqual(calls, ["owner_v1_allowed"])
         self.assertEqual(receive_calls, 1)
-        self.assertEqual(app._active_uploads, 0)
+        self.assertEqual(app.intake_slot.in_use, 0)
 
     def test_demo_upload_precheck_is_skipped_without_owner_other_paths_or_oversize(self) -> None:
         for path, headers, state, expected_status in (
@@ -565,6 +570,103 @@ class MultipartRequestLimitMiddlewareTest(unittest.TestCase):
 
                 self.assertEqual(status, expected_status)
                 self.assertEqual(calls, [])
+
+    def test_upload_part_put_has_its_own_envelope_checked_before_and_while_reading(self) -> None:
+        self.assertEqual(UPLOAD_PART_ENVELOPE_LIMIT_BYTES, (8 * 1024 * 1024) + (64 * 1024))
+        for headers, chunks, expected_status, expected_receives in (
+            ([(b"content-length", b"9")], [b"must-not-be-read"], 413, 0),
+            ([(b"content-length", b"4")], [b"1234", b"56789"], 413, 2),
+            ([], [b"12345678"], 200, 1),
+        ):
+            with self.subTest(headers=headers, chunks=chunks):
+                downstream = RecordingBodyApp()
+                app = MultipartRequestLimitMiddleware(downstream, upload_part_envelope_limit_bytes=8)
+
+                status, response_headers, body, receive_calls = invoke_asgi(
+                    app,
+                    path=PART_PATH,
+                    method="PUT",
+                    chunks=chunks,
+                    headers=headers,
+                )
+
+                self.assertEqual(status, expected_status)
+                self.assertEqual(receive_calls, expected_receives)
+                if expected_status == 413:
+                    self.assertEqual(json.loads(body)["errorCode"], "INTAKE_TOO_LARGE")
+                    self.assertEqual(response_headers["cache-control"], "private, no-store")
+                self.assertEqual(app.part_pool.in_use, 0)
+                self.assertEqual(app.intake_slot.in_use, 0)
+
+    def test_only_an_exact_part_put_gets_the_part_envelope(self) -> None:
+        for method, path in (
+            ("POST", PART_PATH),
+            ("PUT", PART_PATH + "/"),
+            ("PUT", PART_PATH.upper()),
+            ("PUT", "/uploads/sessions/" + "a" * 32 + "/parts/123456"),
+            ("PUT", "/uploads/sessions/" + "a" * 31 + "/parts/1"),
+            ("PATCH", PART_PATH),
+        ):
+            with self.subTest(method=method, path=path):
+                downstream = RecordingBodyApp()
+                app = MultipartRequestLimitMiddleware(downstream, upload_part_envelope_limit_bytes=2)
+
+                status, _, body, _ = invoke_asgi(app, path=path, method=method, chunks=[b"123456"])
+
+                self.assertEqual(status, 200)
+                self.assertEqual(json.loads(body), {"received": 6})
+
+    def test_a_full_part_pool_answers_busy_before_the_body_and_ignores_the_intake_slot(self) -> None:
+        downstream = RecordingBodyApp()
+        pool = PartPool(2)
+        slot = IntakeSlot()
+        app = MultipartRequestLimitMiddleware(downstream, part_pool=pool, intake_slot=slot)
+        self.assertTrue(pool.try_acquire())
+        self.assertTrue(pool.try_acquire())
+
+        status, headers, body, receive_calls = invoke_asgi(
+            app, path=PART_PATH, method="PUT", chunks=[b"must-not-be-read"]
+        )
+
+        self.assertEqual(status, 503)
+        self.assertEqual(json.loads(body)["errorCode"], "INTAKE_BUSY")
+        self.assertEqual(headers["retry-after"], "2")
+        self.assertEqual(headers["cache-control"], "private, no-store")
+        self.assertEqual(receive_calls, 0)
+        self.assertFalse(downstream.called)
+        self.assertEqual(pool.in_use, 2)
+
+        # A busy intake slot (a 1 GiB intake running) does not stop parts.
+        pool.release()
+        self.assertTrue(slot.try_acquire())
+        status, _, body, _ = invoke_asgi(app, path=PART_PATH, method="PUT", chunks=[b"1234"])
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body), {"received": 4})
+        self.assertEqual((pool.in_use, slot.in_use), (1, 1))
+
+    def test_whole_file_uploads_share_the_intake_slot_the_app_passes_in(self) -> None:
+        slot = IntakeSlot()
+        app = MultipartRequestLimitMiddleware(
+            RecordingBodyApp(), intake_slot=slot, render_worker_token="expected-token"
+        )
+        self.assertTrue(slot.try_acquire())
+        for path, headers in (
+            ("/uploads/demo", []),
+            ("/demos/demo-123/video/upload", []),
+            ("/render-worker/jobs/job-123/media", [(b"x-render-worker-token", b"expected-token")]),
+        ):
+            with self.subTest(path=path):
+                status, response_headers, body, receive_calls = invoke_asgi(
+                    app, path=path, chunks=[b"1234"], headers=headers
+                )
+                self.assertEqual(status, 503)
+                self.assertEqual(json.loads(body)["errorCode"], "INTAKE_BUSY")
+                self.assertEqual(response_headers["retry-after"], "5")
+                self.assertEqual(receive_calls, 0)
+        slot.release()
+        status, _, _, _ = invoke_asgi(app, path="/uploads/demo", chunks=[b"1234"])
+        self.assertEqual(status, 200)
+        self.assertEqual(slot.in_use, 0)
 
     def test_non_target_route_passes_through_without_request_envelope_limit(self) -> None:
         downstream = RecordingBodyApp()

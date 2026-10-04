@@ -41,6 +41,7 @@
 	# - the sign-in callback query (OpenID assertion with the SteamID64,
 	#   signature and nonce, the one-time state, an OIDC code),
 	# - the render-worker token header,
+	# - the per-session upload token header of chunked .dem part uploads,
 	# - the query of redirect Locations (the sign-in redirect embeds the state).
 	# [?] instead of \? keeps the patterns free of Caddyfile escaping.
 	log {
@@ -50,6 +51,7 @@
 			fields {
 				request>uri regexp "^(/auth/(?:steam|oidc)/callback)[?].*$" "$1?[query-redacted]"
 				request>headers>X-Render-Worker-Token delete
+				request>headers>X-Upload-Token delete
 				resp_headers>Location regexp "[?].*$" "?[query-redacted]"
 			}
 		}
@@ -76,9 +78,18 @@
 	}
 
 	# Uploads are streamed to the API unbuffered; the API enforces
-	# MAX_DEMO_UPLOAD_BYTES (1 GiB) itself. 1100MB leaves room for multipart framing.
+	# MAX_DEMO_UPLOAD_BYTES (1 GiB) itself. 1100MB leaves room for multipart framing
+	# on the single-request POST /uploads/demo (kept for curl and the smoke scripts).
 	request_body /uploads/* {
 		max_size 1100MB
+	}
+	# The browser uploads a .dem as a session of raw parts (PUT, one part per
+	# request, UPLOAD_PART_BYTES <= 32 MiB). The API checks each part's exact
+	# length itself; this only caps a part body at the edge (32 MiB + 64 KiB
+	# envelope < 34MB). Both request_body limits apply here, the smaller wins.
+	@upload_part path_regexp upload_part ^/uploads/sessions/[0-9a-f]{32}/parts/[0-9]{1,5}$
+	request_body @upload_part {
+		max_size 34MB
 	}
 
 	# No `encode` on API routes: the API already gzips JSON itself, and media

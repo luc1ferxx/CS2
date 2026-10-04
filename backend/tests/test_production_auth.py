@@ -896,6 +896,50 @@ class ProductionUserRouteAuthenticationMatrixTest(unittest.TestCase):
         self.assertEqual(response.status_code, 401)
 
 
+class UploadPartCsrfExemptionTest(unittest.TestCase):
+    """Only PUT on the exact part path skips the session/Origin check; the route checks its token."""
+
+    SESSION_ID = "0123456789abcdef" * 2
+
+    def client(self) -> TestClient:
+        service = AuthService(Settings(**valid_production_settings_kwargs()), FakeRedis())
+        app = FastAPI()
+        app.add_middleware(
+            SessionCsrfMiddleware,
+            runtime_settings=service.settings,
+            auth_service_factory=lambda: service,
+        )
+
+        @app.api_route("/{path:path}", methods=["PUT", "POST", "PATCH", "DELETE"])
+        def reached(path: str) -> dict[str, str]:
+            return {"reached": path}
+
+        return TestClient(app, base_url="https://coach.example.test")
+
+    def test_exactly_the_part_put_reaches_the_route_without_a_cookie(self) -> None:
+        client = self.client()
+        exempt = client.put(f"/uploads/sessions/{self.SESSION_ID}/parts/12345", content=b"x")
+
+        self.assertEqual(exempt.status_code, 200)
+        self.assertEqual(exempt.headers["cache-control"], "private, no-store")
+        for method, path in (
+            ("POST", f"/uploads/sessions/{self.SESSION_ID}/parts/1"),
+            ("PATCH", f"/uploads/sessions/{self.SESSION_ID}/parts/1"),
+            ("DELETE", f"/uploads/sessions/{self.SESSION_ID}/parts/1"),
+            ("PUT", f"/uploads/sessions/{self.SESSION_ID}/parts/123456"),
+            ("PUT", f"/uploads/sessions/{self.SESSION_ID}/parts/1/"),
+            ("PUT", f"/uploads/sessions/{self.SESSION_ID}/parts/1%0A"),
+            ("PUT", f"/uploads/sessions/{self.SESSION_ID.upper()}/parts/1"),
+            ("PUT", f"/uploads/sessions/{self.SESSION_ID[:-1]}/parts/1"),
+            ("PUT", f"/uploads/sessions/{self.SESSION_ID}/parts/"),
+            ("PUT", f"/uploads/sessions/{self.SESSION_ID}"),
+            ("POST", f"/uploads/sessions/{self.SESSION_ID}/complete"),
+            ("POST", "/uploads/sessions"),
+        ):
+            with self.subTest(method=method, path=path):
+                self.assertEqual(client.request(method, path, content=b"x").status_code, 401)
+
+
 class FakeRedis:
     def __init__(self) -> None:
         self.values: dict[str, str] = {}

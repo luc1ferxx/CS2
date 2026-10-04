@@ -143,6 +143,27 @@ else
 fi
 request POST "$BASE/uploads/demo" --data ''
 expect_status "anonymous POST /uploads/demo -> 401" 401
+# Chunked upload sessions: creating and reading need the session cookie.
+request POST "$BASE/uploads/sessions" -H "Origin: $BASE" -H 'Content-Type: application/json' \
+  --data '{"filename":"smoke.dem","size":1}'
+if [[ "$STATUS" == "401" && "$(header content-type)" == application/json* ]]; then
+  pass "anonymous POST /uploads/sessions -> 401 from the API"
+else
+  fail "anonymous POST /uploads/sessions -> 401 from the API" "HTTP $STATUS content-type '$(header content-type)'"
+fi
+request GET "$BASE/uploads/sessions/current"
+expect_status "anonymous GET /uploads/sessions/current -> 401" 401
+# A part PUT is authorized by its X-Upload-Token alone (exempt from the cookie
+# check, never a cookie fallback): without a token it is the API's JSON 404.
+# A 401 here means the exemption is missing; a 403 means the Origin check
+# refused the site's own origin.
+request PUT "$BASE/uploads/sessions/00000000000000000000000000000000/parts/0" \
+  -H "Origin: $BASE" -H 'Content-Type: application/octet-stream' --data ''
+if [[ "$STATUS" == "404" && "$(header content-type)" == application/json* ]]; then
+  pass "PUT upload part without a token -> 404 from the API"
+else
+  fail "PUT upload part without a token -> 404 from the API" "HTTP $STATUS content-type '$(header content-type)'"
+fi
 request GET "$BASE/auth/me"
 expect_status "anonymous GET /auth/me -> 401" 401
 # Deletion routes: JSON 401 proves Caddy sent them to FastAPI, not Next.js
@@ -196,6 +217,10 @@ Manual checklist (real browser, real Steam accounts) -- $BASE
   [ ] An invited Steam account signs in via "通过 Steam 登录" and lands on /dashboard.
   [ ] A Steam account NOT in STEAM_LOGIN_ALLOWLIST ends on /auth/callback?error=not_invited.
   [ ] Upload a real .dem on /dashboard; it moves to parsed/completed.
+  [ ] Upload again and switch the network off mid-way: it pauses, then resumes by itself.
+  [ ] Reload mid-upload: the dashboard offers 选择同一个文件继续; re-picking the file resumes.
+  [ ] Cancel an upload: it leaves the list and no new match appears.
+  [ ] 'dc logs api' shows one compact line per finished upload session (bytes, seconds), no file name.
   [ ] Open the review (/demos/<id>): replay plays, rounds switch, map and coaching cards load.
   [ ] Sign out; /dashboard asks you to sign in again.
   [ ] Signed out, /privacy opens with your region/contact and the Valve disclaimer in the footer.

@@ -6,9 +6,11 @@ import DashboardPage from "@/app/dashboard/page";
 import { useAuth } from "@/components/auth/AuthProvider";
 import * as api from "@/lib/api";
 import type { AuthCapabilities } from "@/lib/auth";
+import { cancelDemoUpload, takeDemoUploadOutcome } from "@/lib/demo-upload";
 import { leaveLibraryNotice } from "@/lib/library-notice";
 import { demoSummary, ingestion } from "@/lib/test-fixtures/review";
 import type { DemoSummary } from "@/types/demo";
+import type { UploadSessionStatus } from "@/types/upload";
 
 vi.mock("@/components/auth/AuthProvider", () => ({ useAuth: vi.fn() }));
 
@@ -45,7 +47,10 @@ vi.mock("@/lib/api", async (importOriginal) => {
     updateDemo: vi.fn(),
     archiveDemo: vi.fn(),
     retryDemoParse: vi.fn(),
-    deleteDemo: vi.fn()
+    deleteDemo: vi.fn(),
+    getCurrentUploadSession: vi.fn(),
+    deleteUploadSession: vi.fn(),
+    finishDemoUpload: vi.fn()
   };
 });
 
@@ -125,6 +130,7 @@ describe("DashboardPage", () => {
     mockAuth({ devTools: true, renderClips: true });
     vi.mocked(api.listDemos).mockResolvedValue([]);
     vi.mocked(api.getUploadQuota).mockResolvedValue(NO_LIMITS);
+    vi.mocked(api.getCurrentUploadSession).mockResolvedValue(null);
   });
 
   afterEach(() => {
@@ -1191,6 +1197,235 @@ describe("DashboardPage", () => {
     expect(popover).toHaveAttribute("open");
     await user.click(screen.getByRole("heading", { name: "我的比赛" }));
     expect(popover).not.toHaveAttribute("open");
+  });
+
+  describe("unfinished uploads", () => {
+    const SID = "0123456789abcdef0123456789abcdef";
+
+    function unfinished(overrides: Partial<UploadSessionStatus> = {}): UploadSessionStatus {
+      return {
+        sessionId: SID,
+        state: "open",
+        filename: "big.dem",
+        size: 100 * MB,
+        partSize: 8 * MB,
+        partCount: 13,
+        receivedParts: [0, 1, 2, 3, 4, 5, 6, 7],
+        receivedBytes: 62 * MB,
+        expiresAt: "2026-10-05T00:00:00Z",
+        ...overrides
+      };
+    }
+
+    function resumeLine() {
+      const line = screen.getByText(/有一个未完成的上传/).closest("p");
+      if (!line) throw new Error("no resume line");
+      return line;
+    }
+
+    // An upload that runs until it is cancelled, like the real one.
+    function runsUntilCancelled(capture?: (options: api.UploadDemoFileOptions) => void) {
+      return (_file: File, options: api.UploadDemoFileOptions = {}) =>
+        new Promise<DemoSummary>((_resolve, reject) => {
+          capture?.(options);
+          options.signal?.addEventListener("abort", () => {
+            const error = new Error("Upload cancelled");
+            error.name = "AbortError";
+            reject(error);
+          });
+        });
+    }
+
+    afterEach(async () => {
+      // The upload store outlives a test; never leave one running for the next.
+      await act(async () => {
+        cancelDemoUpload();
+      });
+      takeDemoUploadOutcome();
+      window.localStorage.clear();
+    });
+
+    it("offers to continue, complete or abandon an upload left by a reload", async () => {
+      vi.mocked(api.getCurrentUploadSession).mockResolvedValue(unfinished());
+
+      render(<DashboardPage />);
+
+      expect(await screen.findByText("有一个未完成的上传：big.dem（已传 62%）")).toBeInTheDocument();
+      const line = resumeLine();
+      expect(within(line).getByRole("button", { name: "选择同一个文件继续" })).toBeEnabled();
+      // Parts are still missing: completing needs the file.
+      expect(within(line).getByRole("button", { name: "完成上传" })).toBeDisabled();
+      expect(within(line).getByRole("button", { name: "放弃" })).toBeEnabled();
+    });
+
+    it("continues the unfinished session with the file picked again", async () => {
+      const user = userEvent.setup();
+      vi.mocked(api.getCurrentUploadSession).mockResolvedValue(unfinished());
+      vi.mocked(api.uploadDemoFile).mockImplementation(runsUntilCancelled());
+      const pickerClicks = vi.fn();
+
+      render(<DashboardPage />);
+      await screen.findByText(/有一个未完成的上传/);
+      screen.getByLabelText("选择 .dem 比赛文件").addEventListener("click", pickerClicks);
+      await user.click(within(resumeLine()).getByRole("button", { name: "选择同一个文件继续" }));
+      expect(pickerClicks).toHaveBeenCalledTimes(1);
+
+      const file = new File(["demo"], "big.dem");
+      fireEvent.change(screen.getByLabelText("选择 .dem 比赛文件"), { target: { files: [file] } });
+
+      await waitFor(() => expect(api.uploadDemoFile).toHaveBeenCalledTimes(1));
+      const [sent, options] = vi.mocked(api.uploadDemoFile).mock.calls[0];
+      expect(sent).toBe(file);
+      expect(options).toMatchObject({ resumeSessionId: SID });
+      expect(options?.replace).toBeUndefined();
+      // The running upload is the resumed one: one row, no second offer.
+      expect(await screen.findByRole("article", { name: "正在上传：big.dem" })).toBeInTheDocument();
+      expect(screen.queryByText(/有一个未完成的上传/)).not.toBeInTheDocument();
+    });
+
+    it("completes an upload whose parts are all on the server without the file", async () => {
+      const user = userEvent.setup();
+      const received = Array.from({ length: 13 }, (_, index) => index);
+      vi.mocked(api.getCurrentUploadSession)
+        .mockResolvedValueOnce(unfinished({ receivedParts: received, receivedBytes: 100 * MB }))
+        .mockResolvedValue(null);
+      const landed = demoSummary({
+        id: "demo-5",
+        name: "big.dem",
+        original_filename: "big.dem",
+        status: "queued",
+        completed_at: null,
+        ingestion: ingestion({ phase: "uploaded", active: true, jobStatus: "queued" })
+      });
+      vi.mocked(api.finishDemoUpload).mockResolvedValueOnce(landed);
+
+      render(<DashboardPage />);
+      await screen.findByText("有一个未完成的上传：big.dem（已传 100%）");
+      await user.click(within(resumeLine()).getByRole("button", { name: "完成上传" }));
+
+      expect(api.finishDemoUpload).toHaveBeenCalledWith(SID, expect.objectContaining({ signal: expect.any(AbortSignal) }));
+      expect(await screen.findByText("「big.dem」已上传，正在排队处理，完成后会在这里提示。")).toBeInTheDocument();
+      expect(screen.queryByText(/有一个未完成的上传/)).not.toBeInTheDocument();
+      expect(api.uploadDemoFile).not.toHaveBeenCalled();
+    });
+
+    it("abandons the unfinished upload and forgets it in this browser", async () => {
+      const user = userEvent.setup();
+      vi.mocked(api.getCurrentUploadSession).mockResolvedValue(unfinished());
+      vi.mocked(api.deleteUploadSession).mockResolvedValueOnce(undefined);
+      window.localStorage.setItem(
+        "cs2-upload-resume:v1",
+        JSON.stringify({ sessionId: SID, name: "big.dem", size: 100 * MB, lastModified: 1 })
+      );
+
+      render(<DashboardPage />);
+      await screen.findByText(/有一个未完成的上传/);
+      await user.click(within(resumeLine()).getByRole("button", { name: "放弃" }));
+
+      expect(api.deleteUploadSession).toHaveBeenCalledWith(SID);
+      expect(await screen.findByText("已放弃未完成的上传「big.dem」。")).toBeInTheDocument();
+      expect(screen.queryByText(/有一个未完成的上传/)).not.toBeInTheDocument();
+      expect(window.localStorage.getItem("cs2-upload-resume:v1")).toBeNull();
+    });
+
+    it("asks before a different file replaces the unfinished upload, then sends it with replace", async () => {
+      const user = userEvent.setup();
+      vi.mocked(api.uploadDemoFile)
+        .mockRejectedValueOnce(
+          new api.ApiError(409, "An upload is already open.", "upload_session_exists", null, {
+            sessionId: SID,
+            filename: "big.dem",
+            size: 100 * MB,
+            receivedBytes: 62 * MB
+          })
+        )
+        .mockImplementationOnce(runsUntilCancelled());
+
+      render(<DashboardPage />);
+      await screen.findByText("开始你的第一场复盘");
+      const file = new File(["demo"], "new.dem");
+      fireEvent.change(screen.getByLabelText("选择 .dem 比赛文件"), { target: { files: [file] } });
+
+      const dialog = await screen.findByRole("dialog", { name: "放弃未完成的上传？" });
+      expect(dialog).toHaveTextContent("你还有一个未完成的上传「big.dem」（已传 62%），和刚选的「new.dem」不是同一个文件。");
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      await user.click(within(dialog).getByRole("button", { name: "放弃并上传新文件" }));
+
+      await waitFor(() => expect(api.uploadDemoFile).toHaveBeenCalledTimes(2));
+      const [sent, options] = vi.mocked(api.uploadDemoFile).mock.calls[1];
+      expect(sent).toBe(file);
+      expect(options).toMatchObject({ replace: true });
+      expect(options?.resumeSessionId).toBeUndefined();
+    });
+
+    it("names the unfinished upload from the resume line when the refusal does not", async () => {
+      vi.mocked(api.getCurrentUploadSession).mockResolvedValue(unfinished());
+      vi.mocked(api.uploadDemoFile).mockRejectedValueOnce(
+        new api.ApiError(409, "An upload is already open.", "upload_session_exists")
+      );
+
+      render(<DashboardPage />);
+      await screen.findByText(/有一个未完成的上传/);
+      fireEvent.change(screen.getByLabelText("选择 .dem 比赛文件"), {
+        target: { files: [new File(["demo"], "new.dem")] }
+      });
+
+      const dialog = await screen.findByRole("dialog", { name: "放弃未完成的上传？" });
+      expect(dialog).toHaveTextContent("你还有一个未完成的上传「big.dem」（已传 62%），和刚选的「new.dem」不是同一个文件。");
+      await userEvent.setup().click(within(dialog).getByRole("button", { name: "取消" }));
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+      expect(api.uploadDemoFile).toHaveBeenCalledTimes(1);
+    });
+
+    it("says why a running upload is paused, and that signing in again lets it go on", async () => {
+      let options: api.UploadDemoFileOptions | undefined;
+      vi.mocked(api.uploadDemoFile).mockImplementation(
+        runsUntilCancelled((uploadOptions) => {
+          options = uploadOptions;
+        })
+      );
+
+      render(<DashboardPage />);
+      await screen.findByText("开始你的第一场复盘");
+      fireEvent.change(screen.getByLabelText("选择 .dem 比赛文件"), {
+        target: { files: [new File(["demo"], "long.dem")] }
+      });
+      const row = await screen.findByRole("article", { name: "正在上传：long.dem" });
+      expect(row).toHaveTextContent("正在准备上传…");
+
+      act(() => {
+        options?.onStatus?.({ phase: "sending" });
+        options?.onProgress?.({ loaded: 30 * MB, total: 100 * MB });
+        options?.onStatus?.({ phase: "paused", reason: "reauth" });
+      });
+      expect(row).toHaveTextContent("登录已过期，上传已暂停。请重新登录后继续上传");
+      expect(row).toHaveTextContent("已传 30%");
+      expect(within(row).getByText("已暂停")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "已暂停 30%" })).toBeDisabled();
+      // Still the player's to stop.
+      expect(within(row).getByRole("button", { name: "取消上传" })).toBeInTheDocument();
+
+      act(() => options?.onStatus?.({ phase: "paused", reason: "offline" }));
+      expect(row).toHaveTextContent("网络已断开，恢复连接后会自动继续");
+
+      act(() => options?.onStatus?.({ phase: "waiting", reason: "quota", code: "active_parse_limit", retryAfterSeconds: 60 }));
+      expect(row).toHaveTextContent("文件已传完。等当前比赛处理完，会自动完成上传");
+      expect(within(row).getByText("排队中")).toBeInTheDocument();
+    });
+
+    it("offers the unfinished upload again once a run stops short", async () => {
+      vi.mocked(api.getCurrentUploadSession).mockResolvedValueOnce(null).mockResolvedValue(unfinished());
+      vi.mocked(api.uploadDemoFile).mockRejectedValueOnce(new TypeError("Failed to fetch"));
+
+      render(<DashboardPage />);
+      await screen.findByText("开始你的第一场复盘");
+      fireEvent.change(screen.getByLabelText("选择 .dem 比赛文件"), {
+        target: { files: [new File(["demo"], "big.dem")] }
+      });
+
+      expect(await screen.findByRole("alert")).toHaveTextContent("网络连接中断，请检查网络后重试。");
+      expect(await screen.findByText("有一个未完成的上传：big.dem（已传 62%）")).toBeInTheDocument();
+    });
   });
 });
 

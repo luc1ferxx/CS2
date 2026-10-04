@@ -12,7 +12,7 @@ import { AuthPanel, AuthShell } from "@/components/layout/AuthShell";
 import { SiteFooter } from "@/components/layout/SiteFooter";
 import { deleteAccount, isApiError } from "@/lib/api";
 import type { AuthAccount } from "@/lib/auth";
-import { cancelDemoUpload, getDemoUploadSnapshot } from "@/lib/demo-upload";
+import { cancelDemoUpload, clearUploadResumeRecord, getDemoUploadSnapshot } from "@/lib/demo-upload";
 import { clearPlayerPreferences } from "@/lib/personal-review";
 import { userFacingError } from "@/lib/user-errors";
 
@@ -54,6 +54,7 @@ function AccountContent({ onDeleted }: { onDeleted: () => void }) {
       return;
     }
     clearPlayerPreferences(() => window.localStorage);
+    clearUploadResumeRecord(() => window.localStorage);
     onDeleted();
     markSignedOut();
   }
@@ -93,7 +94,8 @@ function AccountContent({ onDeleted }: { onDeleted: () => void }) {
               <li>你上传的比赛：原始 .dem 文件、解析出的回放数据和复盘建议，以及你对建议的评价和改过的比赛名。</li>
               <li>账户资料：SteamID64、Steam 公开昵称和头像地址。</li>
               <li>Steam 比赛记录（只在你主动关联后）：加密保存的游戏验证码和比赛分享码。</li>
-              <li>这个浏览器里：你在比赛里选的玩家。</li>
+              <li>未完成的上传：已收到的部分暂存在网站服务器上，完成后转存为比赛文件；放弃、24 小时后过期或删除账户时删除。</li>
+              <li>这个浏览器里：你在比赛里选的玩家，以及未完成上传的文件名、大小和上传编号（完成或放弃后清除）。</li>
             </ul>
             {development ? null : (
               <p>另外，邀请名单（你的 SteamID64）由站长保存在服务器配置里，不属于账户数据；如需移出名单，请联系站长。</p>
@@ -118,6 +120,7 @@ function AccountContent({ onDeleted }: { onDeleted: () => void }) {
               <p>永久删除你的账户和全部数据：</p>
               <ul>
                 <li>所有比赛，包括 .dem 文件、回放数据、复盘建议和你的评价</li>
+                <li>未完成的上传</li>
                 <li>Steam 比赛记录的关联</li>
                 <li>账户资料（SteamID64、昵称和头像地址）</li>
               </ul>
@@ -178,7 +181,7 @@ function AccountDeletedPanel() {
         }
       >
         <p>你的账户和全部数据已从网站删除，所有设备上的登录已退出。</p>
-        <p className="auth-note">每日备份里的副本会在 30 天内自动清除。这个浏览器里保存的玩家选择也已清除。</p>
+        <p className="auth-note">每日备份里的副本会在 30 天内自动清除。这个浏览器里保存的玩家选择和未完成上传的记录也已清除。</p>
         <p className="auth-note">你的 SteamID64 仍在站长的邀请名单里；如需移出，请联系站长。</p>
       </AuthPanel>
     </AuthShell>

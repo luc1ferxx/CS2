@@ -10,6 +10,7 @@ import base64
 import hashlib
 import io
 import json
+import os
 import tempfile
 import threading
 import time
@@ -24,7 +25,7 @@ from unittest.mock import patch
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, event, inspect, text
+from sqlalchemy import create_engine, event, inspect, select, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import NullPool, StaticPool
@@ -48,6 +49,7 @@ from app.models import (
     SteamConnection,
     SteamMatch,
     UploadLedger,
+    UploadSession,
 )
 from app.services import deletion_service as deletion_module
 from app.services.auth_service import AuthService, get_auth_service
@@ -61,6 +63,8 @@ from app.services.storage import (
     LocalArtifactStore,
     LocalStorageService,
     S3ArtifactStore,
+    StagingSessionGone,
+    UploadStagingStore,
 )
 from app.services.upload_quota import UploadQuotaService, prune_upload_ledger, record_upload
 
@@ -281,6 +285,51 @@ def seed_steam_match(db: Session, owner_id: str, *, demo_id: str | None, steam_i
     )
     db.commit()
     return match_id
+
+
+def seed_upload_session(
+    db: Session,
+    staging: UploadStagingStore | None,
+    owner_id: str,
+    *,
+    state: str = "open",
+    demo_id: str | None = None,
+    parts: dict[int, bytes] | None = None,
+    created_at: datetime | None = None,
+    expires_at: datetime | None = None,
+) -> str:
+    """One upload_sessions row in a valid state; with `staging`, its directory and parts too."""
+    session_id = uuid.uuid4().hex
+    now = created_at or datetime.now(UTC)
+    part_size = 4 * 1024 * 1024
+    if staging is not None:
+        staging.create_session(owner_id, session_id)
+        for index, data in (parts or {}).items():
+            staging.write_part(owner_id, session_id, index, data, expected_size=len(data))
+    active = state in ("open", "completing")
+    db.add(
+        UploadSession(
+            id=session_id,
+            owner_id=owner_id,
+            active_owner_id=owner_id if active else None,
+            state=state,
+            display_filename="match.dem",
+            content_type="application/octet-stream",
+            file_size=part_size * 2,
+            part_size=part_size,
+            part_count=2,
+            token_sha256=hashlib.sha256(session_id.encode()).hexdigest(),
+            pending_demo_id=str(uuid.uuid4()) if state == "completing" else None,
+            demo_id=demo_id if state == "completed" else None,
+            error_code="INTAKE_TRUNCATED" if state == "failed" else None,
+            lease_until=now + timedelta(minutes=15) if state == "completing" else None,
+            created_at=now,
+            updated_at=now,
+            expires_at=expires_at or now + timedelta(hours=24),
+        )
+    )
+    db.commit()
+    return session_id
 
 
 def session_key(token: str) -> str:
@@ -1389,12 +1438,332 @@ class AccountFenceTest(unittest.TestCase):
             self.assertTrue(account_exists_for_write(db, OWNER, Settings(auth_mode="production")))
 
 
+class UploadSessionDeletionTest(unittest.TestCase):
+    """Chunked upload sessions go with their account (rows and staged parts) and their demo."""
+
+    def setUp(self) -> None:
+        self.engine = fk_engine()
+        self.Session = sessionmaker(bind=self.engine, autocommit=False, autoflush=False)
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp_dir.name)
+        self.store = LocalArtifactStore(self.root / "artifacts")
+        self.staging = UploadStagingStore(self.root / "staging")
+        self.redis = FakeRedis()
+        self.auth_service = AuthService(production_auth_settings(), self.redis)
+        with self.Session() as db:
+            seed_account(db, OWNER, steam_id="76561198000000042")
+            seed_account(db, OTHER_OWNER, steam_id="76561198000000043")
+
+    def tearDown(self) -> None:
+        self.temp_dir.cleanup()
+        self.engine.dispose()
+
+    def service(self, db: Session, **kwargs: Any) -> DeletionService:
+        return DeletionService(
+            db,
+            artifact_store=self.store,
+            upload_staging=kwargs.pop("upload_staging", self.staging),
+            runtime_settings=kwargs.pop("runtime_settings", production_auth_settings()),
+            **kwargs,
+        )
+
+    def delete_account(self, owner_id: str = OWNER, **kwargs: Any) -> bool:
+        with self.Session() as db:
+            return self.service(db, **kwargs).delete_account(
+                owner_id, revoke_sessions=self.auth_service.revoke_owner_sessions
+            )
+
+    def session_ids(self, owner_id: str) -> set[str]:
+        with self.Session() as db:
+            return set(db.scalars(select(UploadSession.id).where(UploadSession.owner_id == owner_id)))
+
+    def test_account_deletion_removes_every_session_row_and_the_staged_parts(self) -> None:
+        with self.Session() as db:
+            open_id = seed_upload_session(db, self.staging, OWNER, parts={0: b"part-zero", 1: b"part-one"})
+            demo_id = seed_demo(db, OWNER)
+            seed_upload_session(db, None, OWNER, state="completed", demo_id=demo_id)
+            seed_upload_session(db, None, OWNER, state="failed")
+            other_id = seed_upload_session(db, self.staging, OTHER_OWNER, parts={0: b"other-part"})
+
+        self.assertTrue(self.delete_account())
+
+        self.assertEqual(self.session_ids(OWNER), set())
+        self.assertFalse(self.staging.session_exists(OWNER, open_id))
+        self.assertEqual(self.staging.list_parts(OWNER, open_id), {})
+        # The other owner's upload keeps its row, directory and part.
+        self.assertEqual(self.session_ids(OTHER_OWNER), {other_id})
+        self.assertEqual(self.staging.list_parts(OTHER_OWNER, other_id), {0: len(b"other-part")})
+
+    def test_a_late_part_after_the_account_deletion_never_recreates_the_directory(self) -> None:
+        with self.Session() as db:
+            session_id = seed_upload_session(db, self.staging, OWNER, parts={0: b"part-zero"})
+        self.assertTrue(self.delete_account())
+
+        # A part PUT that looked the token up just before the commit writes now.
+        with self.assertRaises(StagingSessionGone):
+            self.staging.write_part(OWNER, session_id, 1, b"late-part", expected_size=len(b"late-part"))
+
+        self.assertFalse(self.staging.session_exists(OWNER, session_id))
+        self.assertEqual([path for path in (self.root / "staging").rglob("*") if path.is_file()], [])
+
+    def test_a_completing_session_is_deleted_with_the_account(self) -> None:
+        with self.Session() as db:
+            session_id = seed_upload_session(db, self.staging, OWNER, state="completing", parts={0: b"p0", 1: b"p1"})
+
+        self.assertTrue(self.delete_account())
+
+        self.assertEqual(self.session_ids(OWNER), set())
+        self.assertFalse(self.staging.session_exists(OWNER, session_id))
+        with self.Session() as db:
+            self.assertEqual(db.query(UploadLedger).count(), 0)
+            self.assertEqual(db.query(Demo).filter_by(owner_id=OWNER).count(), 0)
+
+    def test_a_failed_staging_purge_never_fails_the_account_deletion(self) -> None:
+        def raising(_owner_id: str) -> bool:
+            raise OSError("disk gone")
+
+        for purge in (raising, lambda _owner_id: False):
+            with self.subTest(purge=purge):
+                with self.Session() as db:
+                    if db.get(Account, OWNER) is None:
+                        seed_account(db, OWNER)
+                    session_id = seed_upload_session(db, self.staging, OWNER, parts={0: b"part-zero"})
+                broken = UploadStagingStore(self.root / "staging")
+                with (
+                    patch.object(broken, "purge_owner", side_effect=purge),
+                    self.assertLogs(deletion_module.logger, level="WARNING") as logs,
+                ):
+                    self.assertTrue(self.delete_account(upload_staging=broken))
+                self.assertEqual(self.session_ids(OWNER), set())
+                self.assertTrue(any("Upload staging purge" in line for line in logs.output))
+                self.assertFalse(any(OWNER in line for line in logs.output))
+                # No row owns the directory any more: the hourly sweep's orphan.
+                self.assertTrue(self.staging.session_exists(OWNER, session_id))
+
+    def test_deleting_a_demo_removes_the_completed_session_that_created_it(self) -> None:
+        with self.Session() as db:
+            demo_id = seed_demo(db, OWNER)
+            kept_demo = seed_demo(db, OWNER)
+            completed = seed_upload_session(db, None, OWNER, state="completed", demo_id=demo_id)
+            kept = seed_upload_session(db, None, OWNER, state="completed", demo_id=kept_demo)
+            open_id = seed_upload_session(db, self.staging, OWNER, parts={0: b"part-zero"})
+            other_demo = seed_demo(db, OTHER_OWNER, demo_id=str(uuid.uuid4()))
+            other = seed_upload_session(db, None, OTHER_OWNER, state="completed", demo_id=other_demo)
+
+        with self.Session() as db:
+            self.assertTrue(self.service(db, runtime_settings=Settings(auth_mode="test")).delete_demo(OWNER, demo_id))
+
+        self.assertNotIn(completed, self.session_ids(OWNER))
+        self.assertEqual(self.session_ids(OWNER), {kept, open_id})
+        self.assertEqual(self.session_ids(OTHER_OWNER), {other})
+        # An unrelated open upload of the owner keeps its staged parts.
+        self.assertEqual(self.staging.list_parts(OWNER, open_id), {0: len(b"part-zero")})
+
+    def test_another_owners_demo_id_never_deletes_a_session(self) -> None:
+        with self.Session() as db:
+            demo_id = seed_demo(db, OWNER)
+            # A malformed row of another owner naming the same demo id stays.
+            stray = seed_upload_session(db, None, OTHER_OWNER, state="completed", demo_id=demo_id)
+
+        with self.Session() as db:
+            self.assertTrue(self.service(db, runtime_settings=Settings(auth_mode="test")).delete_demo(OWNER, demo_id))
+
+        self.assertEqual(self.session_ids(OTHER_OWNER), {stray})
+
+
+class UploadSessionAccountDeletionApiTest(unittest.TestCase):
+    """Account deletion against the real chunked upload routes (production auth, FK-enforcing SQLite)."""
+
+    PART_BYTES = 4 * 1024 * 1024
+
+    def setUp(self) -> None:
+        self.engine = fk_engine()
+        self.Session = sessionmaker(bind=self.engine, autocommit=False, autoflush=False)
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp_dir.name)
+        self.staging = UploadStagingStore(self.root / "staging")
+        self.redis = FakeRedis()
+        self.settings_patch = patched_settings(
+            auth_mode="production",
+            artifact_storage_backend="local",
+            artifact_storage_root=self.root / "artifacts",
+            demo_upload_daily_limit=10,
+            demo_active_parse_limit=2,
+            parse_queue_global_limit=50,
+            upload_staging_root=self.root / "staging",
+            upload_part_bytes=self.PART_BYTES,
+            upload_staging_min_free_bytes=0,
+        )
+        self.settings_patch.__enter__()
+        self.redis_patch = patch("app.services.demo_service.get_redis_client", return_value=self.redis)
+        self.redis_patch.start()
+        self.auth_service = AuthService(production_auth_settings(), self.redis)
+        with self.Session() as db:
+            seed_account(db, OWNER)
+            seed_account(db, OTHER_OWNER, steam_id="76561198000000043")
+        seed_session(self.redis, SESSION_TOKEN, OWNER, issued_at_ms=int(time.time() * 1000) - 1000)
+        # 4 MiB + 1 KiB: two parts, a .dem-looking first part.
+        self.data = b"PBDEMS2\x00" + b"\x01" * (self.PART_BYTES + 1024 - 8)
+
+    def tearDown(self) -> None:
+        self.redis_patch.stop()
+        self.settings_patch.__exit__(None, None, None)
+        self.temp_dir.cleanup()
+        self.engine.dispose()
+
+    def app(self) -> FastAPI:
+        from app.core.upload_slots import IntakeSlot, get_intake_slot
+        from app.services.upload_session_service import get_upload_session_factory, get_upload_staging
+
+        service = self.auth_service
+        app = FastAPI()
+        app.add_middleware(
+            SessionCsrfMiddleware,
+            runtime_settings=service.settings,
+            auth_service_factory=lambda: service,
+        )
+        app.include_router(auth_api.router)
+        app.include_router(deletion_api.router)
+        app.include_router(uploads_api.router)
+        app.dependency_overrides[get_auth_service] = lambda: service
+
+        def override_get_db() -> Iterator[Session]:
+            db = self.Session()
+            try:
+                yield db
+            finally:
+                db.close()
+
+        app.dependency_overrides[get_db] = override_get_db
+        app.dependency_overrides[get_upload_staging] = lambda: self.staging
+        app.dependency_overrides[get_upload_session_factory] = lambda: self.Session
+        slot = IntakeSlot()
+        app.dependency_overrides[get_intake_slot] = lambda: slot
+        return app
+
+    def client(self, *, cookie: bool = True) -> TestClient:
+        client = TestClient(self.app(), base_url=ORIGIN, headers={"Origin": ORIGIN})
+        if cookie:
+            client.cookies.set("__Host-cs2_session", SESSION_TOKEN)
+        return client
+
+    def create_session(self, client: TestClient) -> tuple[str, str]:
+        response = client.post("/uploads/sessions", json={"filename": "match.dem", "size": len(self.data)})
+        self.assertEqual(response.status_code, 201, response.text)
+        body = response.json()
+        self.assertEqual(body["partCount"], 2)
+        return body["sessionId"], body["uploadToken"]
+
+    def put_part(self, client: TestClient, session_id: str, token: str, index: int) -> Any:
+        chunk = self.data[index * self.PART_BYTES : (index + 1) * self.PART_BYTES]
+        return client.put(
+            f"/uploads/sessions/{session_id}/parts/{index}",
+            content=chunk,
+            headers={"X-Upload-Token": token, "Content-Type": "application/octet-stream"},
+        )
+
+    def test_a_completed_upload_counts_once_and_deleting_its_demo_refunds_nothing(self) -> None:
+        client = self.client()
+        session_id, token = self.create_session(client)
+        for index in (1, 0):
+            self.assertEqual(self.put_part(client, session_id, token, index).status_code, 200)
+
+        done = client.post(f"/uploads/sessions/{session_id}/complete")
+
+        self.assertEqual(done.status_code, 201, done.text)
+        demo_id = done.json()["id"]
+        self.assertFalse(self.staging.session_exists(OWNER, session_id))
+        with self.Session() as db:
+            row = db.get(UploadSession, session_id)
+            assert row is not None
+            self.assertEqual((row.state, row.demo_id, row.active_owner_id), ("completed", demo_id, None))
+            self.assertEqual(db.query(UploadLedger).filter_by(owner_id=OWNER).count(), 1)
+        again = client.post(f"/uploads/sessions/{session_id}/complete")
+        self.assertEqual((again.status_code, again.json()["id"]), (200, demo_id))
+
+        deleted = client.delete(f"/demos/{demo_id}")
+
+        self.assertEqual(deleted.status_code, 204, deleted.text)
+        with self.Session() as db:
+            self.assertIsNone(db.get(UploadSession, session_id))
+            self.assertIsNone(db.get(Demo, demo_id))
+            self.assertEqual(db.query(UploadLedger).filter_by(owner_id=OWNER).count(), 1)
+        # The completed session went with its demo: complete is now a 404.
+        self.assertEqual(client.post(f"/uploads/sessions/{session_id}/complete").status_code, 404)
+
+    def test_a_part_after_the_account_deletion_is_404_and_recreates_nothing(self) -> None:
+        client = self.client()
+        session_id, token = self.create_session(client)
+        self.assertEqual(self.put_part(client, session_id, token, 0).status_code, 200)
+
+        deleted = client.request("DELETE", "/auth/account", json=ACCOUNT_CONFIRMATION)
+
+        self.assertEqual(deleted.status_code, 204, deleted.text)
+        with self.Session() as db:
+            self.assertEqual(db.query(UploadSession).count(), 0)
+        self.assertFalse(self.staging.session_exists(OWNER, session_id))
+        # The token outlives sign-out by design, but not its session row.
+        late = self.put_part(self.client(cookie=False), session_id, token, 1)
+        self.assertEqual(late.status_code, 404, late.text)
+        self.assertEqual(late.json()["detail"]["code"], "upload_session_not_found")
+        self.assertEqual(stored_files(self.root / "staging"), [])
+        with self.Session() as db:
+            self.assertEqual(db.query(UploadLedger).count(), 0)
+
+    def test_completing_while_the_account_is_deleted_is_refused_and_leaves_nothing(self) -> None:
+        from app.services.demo_service import DemoService
+        from app.services.upload_session_service import sweep_upload_sessions
+
+        client = self.client()
+        session_id, token = self.create_session(client)
+        for index in (0, 1):
+            self.assertEqual(self.put_part(client, session_id, token, index).status_code, 200)
+        original_prepare = DemoService.prepare_real_demo
+
+        def prepare_then_delete_account(service: Any, **kwargs: Any) -> Any:
+            prepared = original_prepare(service, **kwargs)
+            # The whole account deletion commits while `complete` is between
+            # its intake and its commit.
+            with self.Session() as other:
+                DeletionService(
+                    other,
+                    upload_staging=self.staging,
+                    runtime_settings=production_auth_settings(),
+                ).delete_account(OWNER, revoke_sessions=self.auth_service.revoke_owner_sessions)
+            return prepared
+
+        with patch.object(DemoService, "prepare_real_demo", prepare_then_delete_account):
+            response = client.post(f"/uploads/sessions/{session_id}/complete")
+
+        self.assertEqual(response.status_code, 401, response.text)
+        self.assertEqual(response.json()["detail"]["code"], "account_deleted")
+        with self.Session() as db:
+            self.assertEqual(db.query(Demo).count(), 0)
+            self.assertEqual(db.query(DemoJob).count(), 0)
+            self.assertEqual(db.query(UploadLedger).count(), 0)
+            self.assertEqual(db.query(UploadSession).count(), 0)
+            self.assertEqual(db.query(Account).filter_by(owner_id=OWNER).count(), 0)
+        self.assertEqual(self.redis.payloads, [])
+        # The prepared source was discarded; any staged leftover has no row and
+        # goes with the orphan sweep (here, once it is old enough).
+        self.assertEqual(stored_files(self.root / "artifacts"), [])
+        with self.Session() as db:
+            sweep_upload_sessions(
+                db,
+                self.staging,
+                deletion_module.artifact_store_from_settings(),
+                now=datetime.now(UTC) + timedelta(minutes=11),
+            )
+        self.assertEqual(stored_files(self.root / "staging"), [])
+
+
 class IdleTickMaintenanceTest(unittest.TestCase):
     def setUp(self) -> None:
         self.engine = fk_engine()
         self.Session = sessionmaker(bind=self.engine, autocommit=False, autoflush=False)
         self.temp_dir = tempfile.TemporaryDirectory()
         self.store = LocalArtifactStore(Path(self.temp_dir.name))
+        self.staging = UploadStagingStore(Path(self.temp_dir.name) / "upload-staging")
 
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
@@ -1440,13 +1809,83 @@ class IdleTickMaintenanceTest(unittest.TestCase):
             db.commit()
 
         deletion_module.run_hourly_storage_maintenance(
-            force=True, session_factory=self.Session, artifact_store=self.store
+            force=True, session_factory=self.Session, artifact_store=self.store, upload_staging=self.staging
         )
 
         self.assertIsNone(self.store.head(aborted))
         self.assertIsNotNone(self.store.head(streaming))
         with self.Session() as db:
             self.assertEqual(db.query(UploadLedger).count(), 1)
+
+    def age_session_dir(self, session_id: str, age: timedelta) -> None:
+        marker = next(path for path in self.staging.root.rglob(".session") if path.parent.name == session_id)
+        stamp = (datetime.now(UTC) - age).timestamp()
+        os.utime(marker, (stamp, stamp))
+
+    def test_hourly_maintenance_sweeps_expired_upload_sessions_and_orphaned_staging(self) -> None:
+        now = datetime.now(UTC)
+        with self.Session() as db:
+            expired = seed_upload_session(
+                db, self.staging, OWNER, parts={0: b"part-zero"},
+                created_at=now - timedelta(hours=25), expires_at=now - timedelta(hours=1),
+            )
+            live = seed_upload_session(db, self.staging, OTHER_OWNER, parts={0: b"part-zero"})
+        # Directories whose row is gone: an account deletion's failed purge
+        # (old enough to sweep) and a session still being created (too new).
+        old_orphan, new_orphan = uuid.uuid4().hex, uuid.uuid4().hex
+        self.staging.create_session(OWNER, old_orphan)
+        self.staging.create_session(OWNER, new_orphan)
+        self.age_session_dir(old_orphan, timedelta(minutes=20))
+
+        deletion_module.run_hourly_storage_maintenance(
+            force=True, session_factory=self.Session, artifact_store=self.store, upload_staging=self.staging
+        )
+
+        with self.Session() as db:
+            self.assertEqual(set(db.scalars(select(UploadSession.id))), {live})
+            # Abandoned and expired sessions never touch the ledger.
+            self.assertEqual(db.query(UploadLedger).count(), 0)
+        self.assertFalse(self.staging.session_exists(OWNER, expired))
+        self.assertFalse(self.staging.session_exists(OWNER, old_orphan))
+        self.assertTrue(self.staging.session_exists(OWNER, new_orphan))
+        self.assertEqual(self.staging.list_parts(OTHER_OWNER, live), {0: len(b"part-zero")})
+
+    def test_one_failing_hourly_chore_never_skips_the_others(self) -> None:
+        now = datetime.now(UTC)
+        aborted = put_artifact(self.store, OWNER, "aborted", state="quarantine", now=now - timedelta(hours=2))
+        with self.Session() as db:
+            record_upload(db, OWNER, now=now - timedelta(hours=30))
+            db.commit()
+            expired = seed_upload_session(
+                db, self.staging, OWNER, created_at=now - timedelta(hours=25), expires_at=now - timedelta(hours=1)
+            )
+
+        # The sweep fails: the quarantine cleanup and the ledger prune still run.
+        with (
+            patch("app.services.upload_session_service.sweep_upload_sessions", side_effect=RuntimeError("sweep")),
+            self.assertRaises(RuntimeError),
+        ):
+            deletion_module.run_hourly_storage_maintenance(
+                force=True, session_factory=self.Session, artifact_store=self.store, upload_staging=self.staging
+            )
+        self.assertIsNone(self.store.head(aborted))
+        with self.Session() as db:
+            self.assertEqual(db.query(UploadLedger).count(), 0)
+            self.assertEqual(db.query(UploadSession).count(), 1)
+
+        # The quarantine cleanup fails: the upload session sweep still runs.
+        from app.services.artifact_intake import ArtifactIntakeService
+
+        with (
+            patch.object(ArtifactIntakeService, "cleanup_abandoned", side_effect=ArtifactStoreError("down")),
+            self.assertRaises(ArtifactStoreError),
+        ):
+            deletion_module.run_hourly_storage_maintenance(
+                force=True, session_factory=self.Session, artifact_store=self.store, upload_staging=self.staging
+            )
+        with self.Session() as db:
+            self.assertEqual(db.query(UploadSession).count(), 0)
+        self.assertFalse(self.staging.session_exists(OWNER, expired))
 
 
 class SessionRevocationMarkerTest(unittest.TestCase):

@@ -19,13 +19,22 @@ from app.core.features import api_docs_kwargs
 from app.core.json_compression import JsonGzipMiddleware
 from app.core.redis import get_redis_client
 from app.core.request_limits import (
+    PART_ENVELOPE_OVERHEAD_BYTES,
     MultipartRequestLimitMiddleware,
     SensitiveJsonRequestLimitMiddleware,
 )
+from app.core.upload_slots import INTAKE_SLOT
 from app.services.artifact_intake import ArtifactIntakeError, ArtifactIntakePolicy, ArtifactIntakeService
 from app.services.deletion_service import DeletionService
+from app.services.demo_service.replay_warmer import start_replay_warmer, stop_replay_warmer
 from app.services.storage import artifact_store_from_settings
 from app.services.upload_quota import prune_upload_ledger, upload_quota_precheck
+from app.services.upload_session_service import (
+    install_upload_metrics_log,
+    reset_completing_leases,
+    sweep_upload_sessions,
+    upload_staging_from_settings,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +62,20 @@ def on_startup() -> None:
             prune_upload_ledger(db)
     except Exception:
         logger.warning("Deletion outbox drain was unavailable during startup")
+    # One API process: a `complete` still marked in progress died with the
+    # previous process, so its lease ends now and a retried `complete` takes
+    # over at once. Then expired sessions and orphaned staging go. Neither may
+    # stop the API from starting.
+    try:
+        with SessionLocal() as db:
+            reset_completing_leases(db)
+    except Exception:
+        logger.warning("Upload session lease reset was unavailable during startup")
+    try:
+        with SessionLocal() as db:
+            sweep_upload_sessions(db, upload_staging_from_settings(), store)
+    except Exception:
+        logger.warning("Upload session sweep was unavailable during startup")
     if settings.artifact_storage_backend == "local":
         for storage_dir in (
             settings.replay_storage_dir,
@@ -61,6 +84,13 @@ def on_startup() -> None:
             settings.summary_storage_dir,
         ):
             storage_dir.mkdir(parents=True, exist_ok=True)
+    # Warm the replay response cache in the background: the most recently
+    # completed demos now, later every replay the worker announces. Only in
+    # this process (one uvicorn process in production); never fatal.
+    try:
+        start_replay_warmer()
+    except Exception:
+        logger.warning("Replay response warmer was unavailable during startup")
 
 
 @asynccontextmanager
@@ -70,6 +100,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     # stay in on_startup() so they remain a plain function to call and patch.
     on_startup()
     yield
+    stop_replay_warmer()
 
 
 app = FastAPI(
@@ -80,6 +111,8 @@ app = FastAPI(
 )
 install_auth_callback_access_log_redaction()
 suppress_outbound_http_request_logging()
+# One INFO line per completed chunked upload (sizes and duration only) on stderr.
+install_upload_metrics_log()
 
 # JSON only: media Range responses and streamed downloads pass through untouched.
 # Added first so it sits innermost, next to the routes: SessionCsrfMiddleware is
@@ -99,6 +132,10 @@ app.add_middleware(
     demo_upload_precheck=(
         upload_quota_precheck(SessionLocal) if settings.auth_mode == "production" else None
     ),
+    # Shared with the chunked upload's `complete` route: one intake at a time.
+    intake_slot=INTAKE_SLOT,
+    upload_part_envelope_limit_bytes=settings.upload_part_bytes + PART_ENVELOPE_OVERHEAD_BYTES,
+    part_pool_size=settings.upload_part_pool,
 )
 app.add_middleware(SensitiveJsonRequestLimitMiddleware)
 app.add_middleware(SessionCsrfMiddleware)

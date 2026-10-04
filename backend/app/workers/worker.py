@@ -31,6 +31,10 @@ from app.services.demo_service import (
     DemoGoneError,
     DemoService,
 )
+from app.services.demo_service.replay_warmer import (
+    install_replay_ready_publisher,
+    uninstall_replay_ready_publisher,
+)
 from app.services.diagnostics import write_worker_heartbeat
 from app.services.mock_replay_service import build_mock_replay
 from app.services.storage import ArtifactStoreError, StorageKeyError
@@ -618,6 +622,9 @@ def run_worker() -> None:
         f"Worker {queue.consumer_id} listening on Redis queue: {settings.redis_queue_name}",
         flush=True,
     )
+    # Finished parses, replay upgrades and video writes in this process are
+    # announced to the API's replay warmer (replay_warmer.py); never a warmer here.
+    install_replay_ready_publisher(redis_client)
 
     def tick() -> None:
         """Stay visibly alive while a long parse blocks this loop.
@@ -729,6 +736,7 @@ def run_worker() -> None:
     finally:
         # Only reached on a graceful exit. A hard kill leaves the lease to
         # expire, which is exactly the signal the reaper looks for.
+        uninstall_replay_ready_publisher()
         queue.unregister()
 
 

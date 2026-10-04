@@ -40,6 +40,7 @@ from app.services.demo_service.constants import (
 from app.services.demo_service.errors import DemoDispatchError, DemoGoneError
 from app.services.demo_service.gone import row_identity, rows_missing
 from app.services.demo_service.match_summary import build_match_summary
+from app.services.demo_service.replay_warmer import announce_replay_ready
 from app.services.demo_service.steam_match import SteamMatchParseState
 from app.services.storage import ArtifactStoreError
 
@@ -370,6 +371,8 @@ class ParseLifecycle(ServiceComponent):
             and previous_replay_reference != replay_storage_key
         ):
             self._service.delete_artifact_safely(previous_replay_reference)
+        # Committed: let the API warm the replay response (replay_warmer.py).
+        announce_replay_ready(demo_id)
         return True
 
     def fail_parse_job(

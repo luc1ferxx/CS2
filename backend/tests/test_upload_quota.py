@@ -27,9 +27,11 @@ from app.core.auth import SessionCsrfMiddleware
 from app.core.config import Settings, settings
 from app.core.database import SCHEMA_UPGRADE_LOCK_ID, Base, get_db
 from app.core.request_limits import MultipartRequestLimitMiddleware
+from app.core.upload_slots import IntakeSlot, get_intake_slot
 from app.models import Account, Demo, DemoJob, UploadLedger
 from app.services.auth_service import AuthService, get_auth_service
 from app.services.demo_service import ACTIVE_DEMO_STATUSES, DemoService, demo_ingest
+from app.services.storage import UploadStagingStore
 from app.services.upload_quota import (
     PARSE_ADMISSION_LOCK_ID,
     UploadQuotaExceeded,
@@ -39,6 +41,7 @@ from app.services.upload_quota import (
     retry_admission,
     upload_quota_precheck,
 )
+from app.services.upload_session_service import get_upload_session_factory, get_upload_staging
 
 NOW = datetime(2026, 9, 24, 12, 0, tzinfo=UTC)
 OWNER = "owner_v1_quota_owner"
@@ -524,6 +527,13 @@ class ProductionUploadQuotaApiTest(unittest.TestCase):
             ("parse_queue_global_limit", 50),
         ):
             object.__setattr__(settings, name, value)
+        # Chunked upload sessions stage their parts outside the artifact root.
+        self.staging_dir = tempfile.TemporaryDirectory()
+        self.staging = UploadStagingStore(Path(self.staging_dir.name))
+        self.intake_slot = IntakeSlot()
+        for name, value in (("upload_staging_min_free_bytes", 0), ("upload_session_global_limit", 6)):
+            self.original_settings[name] = getattr(settings, name)
+            object.__setattr__(settings, name, value)
 
         self.redis = FakeRedis()
         self.redis_patch = patch(
@@ -537,6 +547,7 @@ class ProductionUploadQuotaApiTest(unittest.TestCase):
         for name, value in self.original_settings.items():
             object.__setattr__(settings, name, value)
         self.temp_dir.cleanup()
+        self.staging_dir.cleanup()
         self.engine.dispose()
 
     def client(self, *, precheck: Any = None) -> TestClient:
@@ -581,9 +592,31 @@ class ProductionUploadQuotaApiTest(unittest.TestCase):
                 db.close()
 
         app.dependency_overrides[get_db] = override_get_db
+        app.dependency_overrides[get_upload_session_factory] = lambda: self.Session
+        app.dependency_overrides[get_upload_staging] = lambda: self.staging
+        app.dependency_overrides[get_intake_slot] = lambda: self.intake_slot
         client = TestClient(app, base_url=ORIGIN, headers={"Origin": ORIGIN})
         client.cookies.set("__Host-cs2_session", SESSION_TOKEN)
         return client
+
+    def staged_session(self, client: TestClient) -> str:
+        """An open upload session of VALID_DEMO with every part received."""
+        created = client.post("/uploads/sessions", json={"filename": "quota.dem", "size": len(VALID_DEMO)})
+        self.assertEqual(created.status_code, 201, created.text)
+        body = created.json()
+        part_size = body["partSize"]
+        for index in range(body["partCount"]):
+            part = client.put(
+                f"/uploads/sessions/{body['sessionId']}/parts/{index}",
+                content=VALID_DEMO[index * part_size : (index + 1) * part_size],
+                headers={"X-Upload-Token": body["uploadToken"]},
+            )
+            self.assertEqual(part.status_code, 200, part.text)
+        return str(body["sessionId"])
+
+    def ledger_count(self) -> int:
+        with self.Session() as db:
+            return db.query(UploadLedger).count()
 
     def seed(self, owner_id: str, *, status: str, age: timedelta, count: int = 1) -> list[str]:
         ids = []
@@ -923,6 +956,52 @@ class ProductionUploadQuotaApiTest(unittest.TestCase):
         self.assertEqual(len(self.redis.payloads), 2)
         # A refused upload leaves no row behind.
         self.assertEqual(len(self.demo_ids() - before), statuses.count(201))
+
+    def test_a_session_complete_racing_parse_retries_shares_the_active_limit(self) -> None:
+        self.use_file_database()
+        failed_ids = self.upload_failed_demos(3)
+        session_id = self.staged_session(self.client())
+        object.__setattr__(settings, "demo_active_parse_limit", 2)
+        ledger_before = self.ledger_count()
+
+        statuses = self.race(
+            [
+                *(
+                    lambda client, demo_id=demo_id: client.post(f"/demos/{demo_id}/parse/retry")
+                    for demo_id in failed_ids
+                ),
+                lambda client: client.post(f"/uploads/sessions/{session_id}/complete"),
+            ]
+        )
+
+        admitted = [status for status in statuses if status in {200, 201}]
+        self.assertEqual(len(admitted), 2, statuses)
+        self.assertEqual(set(statuses) - {200, 201}, {429})
+        self.assertEqual(self.active_demo_count(), 2)
+        self.assertEqual(len(self.redis.payloads), 2)
+        # Only an admitted complete writes its ledger row.
+        self.assertEqual(self.ledger_count() - ledger_before, statuses.count(201))
+
+    def test_a_complete_refused_by_the_final_check_leaves_no_ledger_demo_or_artifact(self) -> None:
+        client = self.client()
+        session_id = self.staged_session(client)
+        object.__setattr__(settings, "demo_active_parse_limit", 1)
+        landed = self.seed(OWNER, status="queued", age=timedelta(0))
+        before = self.demo_ids()
+        ledger_before = self.ledger_count()
+
+        response = client.post(f"/uploads/sessions/{session_id}/complete")
+
+        self.assert_quota_response(response, status_code=429, code="active_parse_limit")
+        self.assertEqual(self.demo_ids(), before)
+        self.assertEqual(self.ledger_count(), ledger_before)
+        self.assertEqual(self.redis.payloads, [])
+        self.assertEqual(self.stored_files(), [])
+        with self.Session() as db:
+            db.get(Demo, landed[0]).status = "completed"
+            db.commit()
+        self.assertEqual(client.post(f"/uploads/sessions/{session_id}/complete").status_code, 201)
+        self.assertEqual(self.ledger_count(), ledger_before + 1)
 
     def test_nothing_checks_out_a_connection_or_deletes_an_artifact_inside_the_admission(
         self,

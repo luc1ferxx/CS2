@@ -56,6 +56,21 @@ const INTAKE_ERROR_COPY: Record<string, string> = {
   INTAKE_BUSY: "上传的人较多，服务正忙，请稍后重试。你的文件没有问题。"
 };
 
+// Keyed by the upload session codes (backend api/uploads.py), plus the
+// engine's own upload_session_gone (lib/chunked-upload.ts).
+const SESSION_ERROR_COPY: Record<string, string> = {
+  upload_session_exists: "你还有一个未完成的上传。请先在上方继续或放弃它，再上传新的文件。",
+  upload_capacity_busy: "同时上传的人较多，请稍后再试。你的文件没有问题。",
+  upload_storage_full: "服务器暂存空间不足，请稍后再试。你的文件没有问题。",
+  upload_part_invalid: "上传的数据和文件对不上，请重新上传。",
+  upload_part_digest_mismatch: "上传过程中数据校验没有通过，请重新上传。",
+  upload_session_not_open: "这次上传已经结束，请刷新比赛列表查看结果。",
+  upload_parts_missing: "文件还没有全部传完。请选择同一个文件继续上传。",
+  upload_parts_in_flight: "文件还在传送中，请稍后再试。",
+  upload_session_gone: "这次上传已过期或已被放弃，请重新上传。",
+  account_deleted: "账户已删除，上传已停止。"
+};
+
 // Copy for a rejected .dem upload, or null to fall back to the generic request copy.
 export function demoUploadErrorMessage(
   status: number,
@@ -71,6 +86,9 @@ export function demoUploadErrorMessage(
   }
   if (detailCode && INTAKE_ERROR_COPY[detailCode]) {
     return INTAKE_ERROR_COPY[detailCode];
+  }
+  if (detailCode && SESSION_ERROR_COPY[detailCode]) {
+    return SESSION_ERROR_COPY[detailCode];
   }
   if (status >= 500) return SERVER_INTAKE_MESSAGE;
   return null;

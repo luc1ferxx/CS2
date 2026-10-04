@@ -81,6 +81,15 @@ services:
       MAX_VIDEO_UPLOAD_BYTES: ${MAX_VIDEO_UPLOAD_BYTES:-2147483648}
       MAX_REPLAY_ARTIFACT_BYTES: ${MAX_REPLAY_ARTIFACT_BYTES:-134217728}
       UPLOAD_CHUNK_BYTES: ${UPLOAD_CHUNK_BYTES:-1048576}
+      # Chunked .dem upload sessions: parts staged on the upload-staging volume
+      # until `complete` hands them to the normal intake (docs/api_reference_v1.md).
+      UPLOAD_STAGING_ROOT: ${UPLOAD_STAGING_ROOT:-/data/upload-staging}
+      UPLOAD_PART_BYTES: ${UPLOAD_PART_BYTES:-8388608}
+      UPLOAD_MAX_PARALLEL_PARTS: ${UPLOAD_MAX_PARALLEL_PARTS:-4}
+      UPLOAD_PART_POOL: ${UPLOAD_PART_POOL:-8}
+      UPLOAD_SESSION_TTL_SECONDS: ${UPLOAD_SESSION_TTL_SECONDS:-86400}
+      UPLOAD_SESSION_GLOBAL_LIMIT: ${UPLOAD_SESSION_GLOBAL_LIMIT:-6}
+      UPLOAD_STAGING_MIN_FREE_BYTES: ${UPLOAD_STAGING_MIN_FREE_BYTES:-5368709120}
       DEMO_UPLOAD_DAILY_LIMIT: ${DEMO_UPLOAD_DAILY_LIMIT:-10}
       DEMO_ACTIVE_PARSE_LIMIT: ${DEMO_ACTIVE_PARSE_LIMIT:-2}
       PARSE_QUEUE_GLOBAL_LIMIT: ${PARSE_QUEUE_GLOBAL_LIMIT:-50}
@@ -104,6 +113,7 @@ services:
       - upload-data:/data/uploads
       - video-data:/data/videos
       - summary-data:/data/summaries
+      - upload-staging:/data/upload-staging
     healthcheck:
       test:
         [
@@ -142,6 +152,9 @@ services:
       MAX_VIDEO_UPLOAD_BYTES: ${MAX_VIDEO_UPLOAD_BYTES:-2147483648}
       MAX_REPLAY_ARTIFACT_BYTES: ${MAX_REPLAY_ARTIFACT_BYTES:-134217728}
       UPLOAD_CHUNK_BYTES: ${UPLOAD_CHUNK_BYTES:-1048576}
+      # The worker's hourly maintenance sweeps expired upload sessions and
+      # orphaned staging directories on the same volume as the API.
+      UPLOAD_STAGING_ROOT: ${UPLOAD_STAGING_ROOT:-/data/upload-staging}
       ARTIFACT_STORAGE_ROOT: ${ARTIFACT_STORAGE_ROOT:-/data}
       REPLAY_STORAGE_DIR: ${REPLAY_STORAGE_DIR:-/data/replays}
       DEMO_UPLOAD_STORAGE_DIR: ${DEMO_UPLOAD_STORAGE_DIR:-/data/uploads}
@@ -158,6 +171,7 @@ services:
       - upload-data:/data/uploads
       - video-data:/data/videos
       - summary-data:/data/summaries
+      - upload-staging:/data/upload-staging
     depends_on:
       postgres:
         condition: service_healthy
@@ -192,3 +206,7 @@ volumes:
   upload-data:
   video-data:
   summary-data:
+  # Parts of unfinished chunked uploads (API writes, API and worker sweep).
+  # Kept across deploys so an interrupted upload resumes; up to
+  # UPLOAD_SESSION_GLOBAL_LIMIT x MAX_DEMO_UPLOAD_BYTES.
+  upload-staging:

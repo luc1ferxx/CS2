@@ -1,5 +1,7 @@
+import hashlib
 import importlib.util
 import io
+import json
 import os
 import tempfile
 import unittest
@@ -22,6 +24,8 @@ from app.core.config import settings
 from app.core.database import Base, get_db
 from app.core.redis import get_redis_client
 from app.models.coaching import CoachingEvent
+from app.models.demo import Demo
+from app.models.upload_session import UploadSession
 from app.services.demo_service import DemoService
 
 STEAM_A = "76561198000000001"
@@ -443,6 +447,346 @@ class CloudPreviewCapabilitiesTest(unittest.TestCase):
             self.smoke.capabilities_from_auth_me({"authenticated": True}),
             {"devTools": False, "renderClips": False},
         )
+
+
+class CloudPreviewChunkedUploadTest(unittest.TestCase):
+    """upload_sample_demo goes through the chunked upload session the browser uses."""
+
+    PART = 4
+
+    def setUp(self) -> None:
+        self.smoke = load_smoke_module()
+        self.smoke.API_BASE_URL = "https://coach.example.test"
+        self.smoke.FRONTEND_URL = "https://coach.example.test"
+        self.smoke.UPLOAD_SESSION_POLL_SECONDS = 0
+        self.sleeps: list[float] = []
+        sleeper = mock.patch.object(self.smoke.time, "sleep", side_effect=self.sleeps.append)
+        sleeper.start()
+        self.addCleanup(sleeper.stop)
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.data = b"PBDEMS2\0" + bytes(range(10))  # 18 bytes -> parts of 4, 4, 4, 4, 2
+        self.sample = Path(directory.name) / "sample.dem"
+        self.sample.write_bytes(self.data)
+        self.calls: list[tuple[str, str, dict | None]] = []
+        self.parts: dict[int, bytes] = {}
+        self.part_headers: list[tuple[str, int, str]] = []
+        self.part_replies: dict[int, list[tuple[int, str, float | None]]] = {}
+        self.complete_replies: list[object] = []
+        self.status_replies: list[dict] = []
+        self.create_replies: list[object] = []
+        self.smoke.request_json = self.fake_request_json
+        self.smoke.put_upload_part = self.fake_put_upload_part
+
+    def session(self, **extra: object) -> dict:
+        return {
+            "sessionId": "a" * 32,
+            "uploadToken": "upload-token",
+            "partSize": self.PART,
+            "partCount": 5,
+            "maxParallelParts": 4,
+            "expiresAt": "2026-10-05T00:00:00Z",
+            "receivedParts": [],
+            **extra,
+        }
+
+    def http_error(self, status: int, body: dict) -> Exception:
+        return self.smoke.HttpStatusFailure(
+            f"HTTP {status}", status=status, detail=json.dumps(body)
+        )
+
+    def fake_request_json(self, method, path, payload=None):
+        self.calls.append((method, path, payload))
+        if (method, path) == ("POST", "/uploads/sessions"):
+            reply = self.create_replies.pop(0) if self.create_replies else self.session()
+        elif path.endswith("/complete"):
+            reply = self.complete_replies.pop(0)
+        elif method == "GET" and path.startswith("/uploads/sessions/"):
+            reply = self.status_replies.pop(0)
+        else:
+            raise AssertionError(f"unexpected request {method} {path}")
+        if isinstance(reply, Exception):
+            raise reply
+        return reply
+
+    def fake_put_upload_part(self, session_id, token, index, data, digest):
+        self.part_headers.append((token, index, digest))
+        queued = self.part_replies.get(index)
+        if queued:
+            return queued.pop(0)
+        self.parts[index] = data
+        return 200, json.dumps({"index": index, "sizeBytes": len(data), "sha256": digest, "receivedCount": len(self.parts)}), None
+
+    def test_the_plan_covers_the_file_and_the_last_part_is_the_remainder(self) -> None:
+        plan = self.smoke.UploadPlan(file_size=18, part_size=4, part_count=5)
+
+        self.assertEqual([plan.part_range(index) for index in range(5)], [(0, 4), (4, 4), (8, 4), (12, 4), (16, 2)])
+        self.assertEqual(plan.missing({0, 3}), [1, 2, 4])
+        with self.assertRaises(self.smoke.SmokeFailure):
+            plan.part_range(5)
+        with self.assertRaises(self.smoke.SmokeFailure):
+            self.smoke.UploadPlan(file_size=18, part_size=4, part_count=4)
+
+    def test_every_part_is_sent_with_its_token_and_digest_then_completed(self) -> None:
+        self.complete_replies = [{"id": "demo-1", "status": "queued"}]
+        output = io.StringIO()
+
+        with redirect_stdout(output):
+            demo_id = self.smoke.upload_sample_demo(self.sample)
+
+        self.assertEqual(demo_id, "demo-1")
+        self.assertEqual(b"".join(self.parts[index] for index in range(5)), self.data)
+        self.assertEqual(
+            self.part_headers,
+            [("upload-token", index, hashlib.sha256(self.parts[index]).hexdigest()) for index in range(5)],
+        )
+        create = self.calls[0]
+        self.assertEqual(create[2], {"filename": "sample.dem", "size": 18, "contentType": "application/octet-stream"})
+        self.assertEqual(self.calls[-1][:2], ("POST", f"/uploads/sessions/{'a' * 32}/complete"))
+        self.assertIn("5 part(s) of 4 bytes, 18 bytes sent", output.getvalue())
+
+    def test_an_unfinished_session_from_an_earlier_run_is_replaced(self) -> None:
+        self.create_replies = [
+            self.http_error(409, {"detail": {"code": "upload_session_exists", "message": "x", "sessionId": "b" * 32}}),
+            self.session(),
+        ]
+        self.complete_replies = [{"id": "demo-1"}]
+
+        with redirect_stdout(io.StringIO()):
+            self.smoke.upload_sample_demo(self.sample)
+
+        creates = [payload for method, path, payload in self.calls if path == "/uploads/sessions"]
+        self.assertEqual(len(creates), 2)
+        self.assertNotIn("replace", creates[0])
+        self.assertIs(creates[1]["replace"], True)
+
+    def test_other_create_errors_are_not_retried(self) -> None:
+        self.create_replies = [self.http_error(429, {"detail": {"code": "upload_daily_limit", "message": "x"}})]
+
+        with self.assertRaises(self.smoke.HttpStatusFailure), redirect_stdout(io.StringIO()):
+            self.smoke.upload_sample_demo(self.sample)
+
+        self.assertEqual(self.parts, {})
+
+    def test_a_busy_part_is_resent_after_retry_after(self) -> None:
+        self.part_replies[2] = [(503, '{"detail":{"code":"INTAKE_BUSY"}}', 2.0)]
+        self.complete_replies = [{"id": "demo-1"}]
+
+        with redirect_stdout(io.StringIO()):
+            self.smoke.upload_sample_demo(self.sample)
+
+        self.assertEqual([index for _, index, _ in self.part_headers], [0, 1, 2, 2, 3, 4])
+        self.assertIn(2.0, self.sleeps)
+        self.assertEqual(len(self.parts), 5)
+
+    def test_a_rejected_part_fails_the_smoke(self) -> None:
+        self.part_replies[0] = [(400, '{"detail":"Unsupported content.","errorCode":"INTAKE_CONTENT_MISMATCH"}', None)]
+
+        with self.assertRaises(self.smoke.SmokeFailure) as raised, redirect_stdout(io.StringIO()):
+            self.smoke.upload_sample_demo(self.sample)
+
+        self.assertIn("HTTP 400", str(raised.exception))
+        self.assertFalse(any(path.endswith("/complete") for _, path, _ in self.calls))
+
+    def test_missing_parts_are_resent_before_completing_again(self) -> None:
+        self.complete_replies = [
+            self.http_error(409, {"detail": {"code": "upload_parts_missing", "message": "x", "missingParts": [1, 4]}}),
+            {"id": "demo-1"},
+        ]
+
+        with redirect_stdout(io.StringIO()):
+            demo_id = self.smoke.upload_sample_demo(self.sample)
+
+        self.assertEqual(demo_id, "demo-1")
+        self.assertEqual([index for _, index, _ in self.part_headers], [0, 1, 2, 3, 4, 1, 4])
+
+    def test_a_202_is_completed_again_until_the_demo_exists(self) -> None:
+        # Completing again (not reading the state) is what takes over a lease
+        # an API restart ended; the finished attempt then answers 200.
+        self.complete_replies = [{"state": "completing"}, {"state": "completing"}, {"id": "demo-9"}]
+
+        with redirect_stdout(io.StringIO()):
+            demo_id = self.smoke.upload_sample_demo(self.sample)
+
+        self.assertEqual(demo_id, "demo-9")
+        completes = [path for method, path, _ in self.calls if path.endswith("/complete")]
+        self.assertEqual(completes, [f"/uploads/sessions/{'a' * 32}/complete"] * 3)
+        self.assertFalse([path for method, path, _ in self.calls if method == "GET"])
+        self.assertEqual(self.sleeps, [self.smoke.UPLOAD_SESSION_POLL_SECONDS] * 2)
+
+    def test_a_session_that_failed_while_completing_fails_the_smoke(self) -> None:
+        self.complete_replies = [
+            {"state": "completing"},
+            self.http_error(400, {"detail": "Uploaded demo is truncated", "errorCode": "INTAKE_TRUNCATED"}),
+        ]
+
+        with self.assertRaises(self.smoke.SmokeFailure) as raised, redirect_stdout(io.StringIO()):
+            self.smoke.upload_sample_demo(self.sample)
+
+        self.assertIn("HTTP 400", str(raised.exception))
+        self.assertIn("INTAKE_TRUNCATED", raised.exception.detail)
+
+    def test_parts_in_flight_and_a_busy_intake_slot_wait_and_complete_again(self) -> None:
+        self.complete_replies = [
+            self.http_error(409, {"detail": {"code": "upload_parts_in_flight", "message": "x", "retryAfterSeconds": 1}}),
+            self.http_error(503, {"detail": {"code": "INTAKE_BUSY", "message": "x"}}),
+            {"id": "demo-1"},
+        ]
+
+        with redirect_stdout(io.StringIO()):
+            self.assertEqual(self.smoke.upload_sample_demo(self.sample), "demo-1")
+
+        self.assertEqual(self.sleeps, [1.0, 2])
+
+    def test_a_resumed_session_sends_only_the_parts_it_lacks(self) -> None:
+        self.create_replies = [self.session(receivedParts=[0, 1, 3])]
+        self.complete_replies = [{"id": "demo-1"}]
+
+        with redirect_stdout(io.StringIO()):
+            self.smoke.upload_sample_demo(self.sample)
+
+        self.assertEqual([index for _, index, _ in self.part_headers], [2, 4])
+
+
+class CloudPreviewChunkedUploadContractTest(unittest.TestCase):
+    """The smoke's chunked upload against the real upload session routes (development auth)."""
+
+    PART_BYTES = 4 * 1024 * 1024
+
+    def setUp(self) -> None:
+        from app.api import uploads as uploads_api
+        from app.core.upload_slots import IntakeSlot, get_intake_slot
+        from app.services.storage import UploadStagingStore
+        from app.services.upload_session_service import get_upload_session_factory, get_upload_staging
+
+        self.smoke = load_smoke_module()
+        self.engine = create_engine(
+            "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool,
+        )
+        Base.metadata.create_all(self.engine)
+        self.addCleanup(self.engine.dispose)
+        self.Session = sessionmaker(bind=self.engine, autoflush=False)
+        temp_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(temp_dir.cleanup)
+        self.root = Path(temp_dir.name)
+        changed = {
+            "auth_mode": "development",
+            "artifact_storage_backend": "local",
+            "artifact_storage_root": self.root / "artifacts",
+            "upload_staging_root": self.root / "staging",
+            "upload_part_bytes": self.PART_BYTES,
+            "upload_staging_min_free_bytes": 0,
+        }
+        for key, value in changed.items():
+            self.addCleanup(object.__setattr__, settings, key, getattr(settings, key))
+            object.__setattr__(settings, key, value)
+        redis_patch = mock.patch("app.services.demo_service.get_redis_client", return_value=QueueRedis())
+        redis_patch.start()
+        self.addCleanup(redis_patch.stop)
+
+        self.staging = UploadStagingStore(self.root / "staging")
+        slot = IntakeSlot()
+        app = FastAPI()
+        app.include_router(uploads_api.router)
+        app.dependency_overrides[get_db] = self.override_get_db
+        app.dependency_overrides[get_upload_staging] = lambda: self.staging
+        app.dependency_overrides[get_upload_session_factory] = lambda: self.Session
+        app.dependency_overrides[get_intake_slot] = lambda: slot
+        self.client = TestClient(app)
+        self.addCleanup(self.client.close)
+        self.smoke.request_json = self.forward_json
+        self.smoke.put_upload_part = self.forward_part
+        sleeper = mock.patch.object(self.smoke.time, "sleep")
+        sleeper.start()
+        self.addCleanup(sleeper.stop)
+
+    def override_get_db(self):
+        with self.Session() as db:
+            yield db
+
+    def forward_json(self, method, path, payload=None):
+        response = self.client.request(
+            method, path, json=payload, headers={"X-Dev-User-Id": "smoke-owner"}
+        )
+        if response.status_code >= 400:
+            raise self.smoke.HttpStatusFailure(
+                f"{method} {path} failed with HTTP {response.status_code}",
+                status=response.status_code,
+                detail=response.text,
+            )
+        return response.json() if response.content else None
+
+    def forward_part(self, session_id, token, index, data, digest):
+        # Exactly the headers the smoke's http.client PUT sends.
+        response = self.client.put(
+            f"/uploads/sessions/{session_id}/parts/{index}",
+            content=data,
+            headers={
+                "X-Upload-Token": token,
+                "X-Part-SHA256": digest,
+                "Content-Type": "application/octet-stream",
+                "Origin": self.smoke.frontend_origin(),
+            },
+        )
+        retry_after = response.headers.get("Retry-After")
+        return response.status_code, response.text, float(retry_after) if retry_after else None
+
+    def sample(self, data: bytes) -> Path:
+        path = self.root / "sample.dem"
+        path.write_bytes(data)
+        return path
+
+    def test_the_smoke_uploads_a_sample_through_a_session(self) -> None:
+        data = b"PBDEMS2\x00" + b"\x02" * (self.PART_BYTES + 100)
+
+        with redirect_stdout(io.StringIO()) as output:
+            demo_id = self.smoke.upload_sample_demo(self.sample(data))
+
+        self.assertIn("2 part(s)", output.getvalue())
+        with self.Session() as db:
+            demo = db.get(Demo, demo_id)
+            self.assertIsNotNone(demo)
+            self.assertEqual(demo.owner_id, "smoke-owner")
+            session = db.query(UploadSession).one()
+            self.assertEqual((session.state, session.demo_id), ("completed", demo_id))
+        self.assertEqual(self.staging.list_parts("smoke-owner", session.id), {})
+
+    def test_a_second_run_replaces_an_unfinished_session(self) -> None:
+        data = b"PBDEMS2\x00" + b"\x03" * 64
+        left = self.forward_json("POST", "/uploads/sessions", {"filename": "old.dem", "size": len(data)})
+
+        with redirect_stdout(io.StringIO()):
+            demo_id = self.smoke.upload_sample_demo(self.sample(data))
+
+        with self.Session() as db:
+            self.assertIsNone(db.get(UploadSession, left["sessionId"]))
+            self.assertIsNotNone(db.get(Demo, demo_id))
+
+    def test_an_archive_fails_on_its_first_part(self) -> None:
+        data = b"PK\x03\x04" + b"\x00" * (self.PART_BYTES + 100)
+
+        with self.assertRaises(self.smoke.SmokeFailure) as raised, redirect_stdout(io.StringIO()):
+            self.smoke.upload_sample_demo(self.sample(data))
+
+        self.assertIn("INTAKE_CONTENT_MISMATCH", str(raised.exception))
+        with self.Session() as db:
+            self.assertEqual(db.query(Demo).count(), 0)
+
+
+class QueueRedis:
+    """Accepts the parser dispatch of a completed upload."""
+
+    def __init__(self) -> None:
+        self.payloads: list[str] = []
+
+    def lpush(self, _queue: str, payload: str) -> None:
+        self.payloads.append(payload)
+
+    def setex(self, key: str, ttl: int, value: str) -> None:
+        return None
+
+    def get(self, key: str) -> str | None:
+        return None
 
 
 class CloudPreviewRenderPovTest(unittest.TestCase):

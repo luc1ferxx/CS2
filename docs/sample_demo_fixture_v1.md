@@ -33,7 +33,7 @@ Run with a sample:
 SAMPLE_DEMO_PATH="$PWD/sample-demos/sample.dem" python3 scripts/cloud_preview_smoke.py
 ```
 
-The script validates the path, uploads through `POST /uploads/demo`, waits for parser completion, and prints the created demo id, name, map, round count, coaching event count, and map calibration/fallback status.
+The script validates the path, uploads it through a chunked upload session (`POST /uploads/sessions`, one `PUT` per part, then `complete`, as the browser does), waits for parser completion, and prints the created demo id, name, map, round count, coaching event count, and map calibration/fallback status.
 
 Require a sample in stricter preview validation:
 
@@ -61,7 +61,7 @@ For ad hoc seeding without the full smoke:
 curl -H "X-Dev-User-Id: dev-user" -F "file=@${SAMPLE_DEMO_PATH}" http://localhost:8000/uploads/demo
 ```
 
-This intentionally uses the normal upload endpoint. Do not seed the database directly for parser smoke checks.
+This intentionally uses a normal upload endpoint: the single-request `POST /uploads/demo`, kept for curl next to the browser's chunked upload sessions, runs the same intake. Do not seed the database directly for parser smoke checks.
 
 ## Reliability Expectations
 

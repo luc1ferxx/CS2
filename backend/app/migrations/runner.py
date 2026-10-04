@@ -8,6 +8,7 @@ from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import (
     JSON,
+    BigInteger,
     CheckConstraint,
     Column,
     DateTime,
@@ -375,6 +376,72 @@ def _add_demo_match_summary_v1(connection: Connection) -> None:
     connection.execute(text("ALTER TABLE demos ADD COLUMN match_summary JSON"))
 
 
+def _create_upload_sessions_v1(connection: Connection) -> None:
+    # A frozen copy of app/models/upload_session.py as of this migration; the
+    # model/migration parity test in test_database_migrations.py keeps them equal.
+    if "upload_sessions" in set(inspect(connection).get_table_names()):
+        raise RuntimeError(
+            "Upload session schema exists without its tracked schema migration"
+        )
+    metadata = MetaData()
+    upload_sessions = Table(
+        "upload_sessions",
+        metadata,
+        Column("id", String(32), primary_key=True),
+        Column("owner_id", String(64), nullable=False),
+        Column("active_owner_id", String(64), nullable=True),
+        Column("state", String(16), nullable=False),
+        Column("display_filename", String(255), nullable=False),
+        Column("content_type", String(255), nullable=True),
+        Column("file_size", BigInteger, nullable=False),
+        Column("part_size", Integer, nullable=False),
+        Column("part_count", Integer, nullable=False),
+        Column("token_sha256", String(64), nullable=False),
+        Column("pending_demo_id", String(36), nullable=True),
+        Column("demo_id", String(36), nullable=True),
+        Column("error_code", String(64), nullable=True),
+        Column("lease_until", DateTime(timezone=True), nullable=True),
+        Column("created_at", DateTime(timezone=True), nullable=False),
+        Column("updated_at", DateTime(timezone=True), nullable=False),
+        Column("expires_at", DateTime(timezone=True), nullable=False),
+        UniqueConstraint("active_owner_id", name="uq_upload_sessions_active_owner_id"),
+        CheckConstraint(
+            "state IN ('open', 'completing', 'completed', 'failed')",
+            name="ck_upload_sessions_state",
+        ),
+        CheckConstraint(
+            "(state IN ('open', 'completing') AND active_owner_id IS NOT NULL "
+            "AND active_owner_id = owner_id) "
+            "OR (state IN ('completed', 'failed') AND active_owner_id IS NULL)",
+            name="ck_upload_sessions_active_owner",
+        ),
+        CheckConstraint(
+            "state != 'completing' OR (pending_demo_id IS NOT NULL AND lease_until IS NOT NULL)",
+            name="ck_upload_sessions_completing",
+        ),
+        CheckConstraint(
+            "state != 'completed' OR demo_id IS NOT NULL",
+            name="ck_upload_sessions_completed",
+        ),
+        CheckConstraint(
+            "state != 'failed' OR error_code IS NOT NULL",
+            name="ck_upload_sessions_failed",
+        ),
+        CheckConstraint(
+            "file_size > 0 AND part_size > 0 AND part_count > 0",
+            name="ck_upload_sessions_sizes",
+        ),
+        CheckConstraint(
+            "length(token_sha256) = 64",
+            name="ck_upload_sessions_token",
+        ),
+    )
+    Index("ix_upload_sessions_owner_id", upload_sessions.c.owner_id)
+    Index("ix_upload_sessions_demo_id", upload_sessions.c.demo_id)
+    Index("ix_upload_sessions_expires_at", upload_sessions.c.expires_at)
+    upload_sessions.create(connection)
+
+
 MIGRATIONS = (
     SchemaMigration(
         version="2026071901",
@@ -420,6 +487,16 @@ MIGRATIONS = (
         name="add_demo_match_summary",
         checksum=_checksum("demo-match-summary-v1:nullable-json-column,no-backfill-in-migration"),
         upgrade=_add_demo_match_summary_v1,
+    ),
+    SchemaMigration(
+        version="2026100401",
+        name="create_upload_sessions",
+        checksum=_checksum(
+            "upload-sessions-v1:owner,unique-active-owner,state-machine-checks,filename,"
+            "content-type,file-part-sizes,token-sha256,pending-demo,demo,error-code,lease,"
+            "timestamps,expiry;indexes:owner,demo,expires-at"
+        ),
+        upgrade=_create_upload_sessions_v1,
     ),
 )
 

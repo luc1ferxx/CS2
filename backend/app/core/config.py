@@ -17,6 +17,17 @@ MAX_STAGE3_DEMO_UPLOAD_BYTES = 1024 * 1024 * 1024
 MAX_STAGE3_VIDEO_UPLOAD_BYTES = 2 * 1024 * 1024 * 1024
 MAX_STAGE3_REPLAY_ARTIFACT_BYTES = 128 * 1024 * 1024
 MINIMUM_PARSE_MEMORY_LIMIT_BYTES = 2 * 1024 * 1024 * 1024
+MEBIBYTE = 1024 * 1024
+MIN_UPLOAD_PART_BYTES = 4 * MEBIBYTE
+MAX_UPLOAD_PART_BYTES = 32 * MEBIBYTE
+MAX_UPLOAD_PARALLEL_PARTS = 6
+MAX_UPLOAD_PART_POOL = 32
+# Part bodies are held in memory while they are hashed and written.
+MAX_UPLOAD_PART_POOL_BYTES = 256 * MEBIBYTE
+MIN_UPLOAD_SESSION_TTL_SECONDS = 3_600
+MAX_UPLOAD_SESSION_TTL_SECONDS = 7 * 86_400
+MAX_UPLOAD_SESSION_GLOBAL_LIMIT = 64
+MAX_UPLOAD_STAGING_MIN_FREE_BYTES = 1024 * 1024 * MEBIBYTE
 DEVELOPMENT_STEAM_CREDENTIAL_ENCRYPTION_KEY = (
     "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8="
 )
@@ -313,6 +324,33 @@ class Settings:
     # LRU by total size; services/demo_service/replay_response_cache.py), in MB.
     # 0 turns the cache, its ETag and the 304 answers off.
     replay_response_cache_mb: int = int(os.getenv("REPLAY_RESPONSE_CACHE_MB", "64"))
+    # Background warming of that cache (services/demo_service/replay_warmer.py):
+    # one API thread warms a demo after its parse, replay upgrade or video write,
+    # and at startup the REPLAY_WARM_RECENT most recently completed demos (0 seeds
+    # none). The worker announces finished parses and upgrades on the Redis
+    # pub/sub channel below; off, the worker publishes nothing either.
+    replay_warm_enabled: bool = _bool_from_env("REPLAY_WARM_ENABLED", True)
+    replay_warm_recent: int = max(0, int(os.getenv("REPLAY_WARM_RECENT", "10")))
+    replay_ready_channel: str = os.getenv("REPLAY_READY_CHANNEL", "cs2:replay-ready").strip()
+    # Chunked, resumable .dem upload sessions (services/upload_session_service.py).
+    # Parts are staged on the API host's local disk (services/storage/staging.py,
+    # never the artifact store) until `complete` hands them to the normal intake.
+    # A "part" is one PUT of UPLOAD_PART_BYTES; unrelated to UPLOAD_CHUNK_BYTES,
+    # the intake's fixed 1 MiB read buffer. Server memory for part bodies is
+    # bounded by UPLOAD_PART_POOL x UPLOAD_PART_BYTES. The TTL is a hard limit
+    # from creation, not sliding. The global limit and the free-space floor are
+    # resource limits and apply in every mode.
+    upload_staging_root: Path = Path(
+        os.getenv("UPLOAD_STAGING_ROOT", str(DEFAULT_ARTIFACT_STORAGE_ROOT / "upload-staging"))
+    )
+    upload_part_bytes: int = int(os.getenv("UPLOAD_PART_BYTES", str(8 * 1024 * 1024)))
+    upload_max_parallel_parts: int = int(os.getenv("UPLOAD_MAX_PARALLEL_PARTS", "4"))
+    upload_part_pool: int = int(os.getenv("UPLOAD_PART_POOL", "8"))
+    upload_session_ttl_seconds: int = int(os.getenv("UPLOAD_SESSION_TTL_SECONDS", "86400"))
+    upload_session_global_limit: int = int(os.getenv("UPLOAD_SESSION_GLOBAL_LIMIT", "6"))
+    upload_staging_min_free_bytes: int = int(
+        os.getenv("UPLOAD_STAGING_MIN_FREE_BYTES", str(5 * 1024 * 1024 * 1024))
+    )
     cors_origins_raw: str = os.getenv(
         "CORS_ORIGINS",
         "http://localhost:3000,http://127.0.0.1:3000",
@@ -388,6 +426,7 @@ class Settings:
             self._validate_artifact_storage_configuration()
             self._validate_beta_access_configuration()
             self._validate_upload_quota_configuration()
+            self._validate_upload_session_configuration()
             return
 
         if self.auth_provider == "oidc":
@@ -474,6 +513,7 @@ class Settings:
         self._validate_steam_demo_import_configuration()
         self._validate_beta_access_configuration()
         self._validate_upload_quota_configuration()
+        self._validate_upload_session_configuration()
 
     def validate_worker_runtime_configuration(self) -> None:
         if self.render_worker_mode not in {"fallback", "external"}:
@@ -483,6 +523,8 @@ class Settings:
             self._validate_production_render_worker_token()
         self._validate_artifact_storage_configuration()
         self._validate_parse_queue_configuration()
+        # The worker's hourly maintenance sweeps expired upload sessions.
+        self._validate_upload_session_configuration()
         if self.render_clip_queue_timeout_seconds <= 0:
             raise RuntimeError("RENDER_CLIP_QUEUE_TIMEOUT_SECONDS must be a positive integer")
 
@@ -786,6 +828,57 @@ class Settings:
         for env_name, value, maximum in limits:
             if not 0 <= value <= maximum:
                 raise RuntimeError(f"{env_name} must be between 0 and {maximum}")
+
+    def _validate_upload_session_configuration(self) -> None:
+        # Pure range checks: no filesystem access, so a missing staging root is
+        # an operational problem reported by the storage layer, not here.
+        if str(self.upload_staging_root) in {"", "."}:
+            raise RuntimeError("UPLOAD_STAGING_ROOT must name a directory")
+        # `.root` rather than is_absolute(): "/data/upload-staging" is rooted but
+        # not absolute on Windows, where the tests run.
+        if self.auth_mode == "production" and not self.upload_staging_root.root:
+            raise RuntimeError("UPLOAD_STAGING_ROOT must be an absolute path in production")
+        if (
+            not MIN_UPLOAD_PART_BYTES <= self.upload_part_bytes <= MAX_UPLOAD_PART_BYTES
+            or self.upload_part_bytes % MEBIBYTE
+        ):
+            raise RuntimeError(
+                "UPLOAD_PART_BYTES must be a whole number of MiB between "
+                f"{MIN_UPLOAD_PART_BYTES} and {MAX_UPLOAD_PART_BYTES}"
+            )
+        if not 1 <= self.upload_max_parallel_parts <= MAX_UPLOAD_PARALLEL_PARTS:
+            raise RuntimeError(
+                f"UPLOAD_MAX_PARALLEL_PARTS must be between 1 and {MAX_UPLOAD_PARALLEL_PARTS}"
+            )
+        if not self.upload_max_parallel_parts <= self.upload_part_pool <= MAX_UPLOAD_PART_POOL:
+            raise RuntimeError(
+                "UPLOAD_PART_POOL must be between UPLOAD_MAX_PARALLEL_PARTS and "
+                f"{MAX_UPLOAD_PART_POOL}"
+            )
+        if self.upload_part_pool * self.upload_part_bytes > MAX_UPLOAD_PART_POOL_BYTES:
+            raise RuntimeError(
+                "UPLOAD_PART_POOL x UPLOAD_PART_BYTES must be at most "
+                f"{MAX_UPLOAD_PART_POOL_BYTES} bytes"
+            )
+        if not (
+            MIN_UPLOAD_SESSION_TTL_SECONDS
+            <= self.upload_session_ttl_seconds
+            <= MAX_UPLOAD_SESSION_TTL_SECONDS
+        ):
+            raise RuntimeError(
+                "UPLOAD_SESSION_TTL_SECONDS must be between "
+                f"{MIN_UPLOAD_SESSION_TTL_SECONDS} and {MAX_UPLOAD_SESSION_TTL_SECONDS}"
+            )
+        if not 1 <= self.upload_session_global_limit <= MAX_UPLOAD_SESSION_GLOBAL_LIMIT:
+            raise RuntimeError(
+                "UPLOAD_SESSION_GLOBAL_LIMIT must be between 1 and "
+                f"{MAX_UPLOAD_SESSION_GLOBAL_LIMIT}"
+            )
+        if not 0 <= self.upload_staging_min_free_bytes <= MAX_UPLOAD_STAGING_MIN_FREE_BYTES:
+            raise RuntimeError(
+                "UPLOAD_STAGING_MIN_FREE_BYTES must be between 0 and "
+                f"{MAX_UPLOAD_STAGING_MIN_FREE_BYTES}"
+            )
 
     def _validate_production_oidc_configuration(self) -> None:
         required = (

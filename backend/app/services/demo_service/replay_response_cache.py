@@ -34,6 +34,11 @@ cannot store it afterwards. The cache lives in one process: a delete run by
 the CLI or by the worker's outbox drain cannot reach the API's memory, and
 those entries stay unreachable (the route answers 404 first) until the LRU
 drops them or the API restarts.
+
+Warming: ``replay_warmer.py`` fills this same cache in the background (after a
+parse, a replay upgrade or a video write, and at API startup) through
+``warm_replay_response``, which runs the route's own miss path, so a warmed
+entry is the bytes a request would have built, under the ETag it computes.
 """
 
 from __future__ import annotations
@@ -46,7 +51,7 @@ import threading
 from collections import OrderedDict
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, TypeGuard, cast
+from typing import TYPE_CHECKING, Any, Literal, TypeGuard, cast
 
 from app.core.config import settings
 from app.parser.map_config import SUPPORTED_MAP_NAMES, get_map_config
@@ -175,6 +180,11 @@ class ReplayResponseCache:
             self._entries.move_to_end(etag)
             return entry.body
 
+    def contains(self, etag: str) -> bool:
+        """Whether a body is stored for this ETag, without counting as a use."""
+        with self._lock:
+            return etag in self._entries
+
     def put(self, etag: str, *, demo_id: str, owner_id: str, body: bytes) -> bool:
         """Store one body; False when it was not kept (deleted demo, over budget)."""
         budget = self._budget_bytes()
@@ -214,6 +224,11 @@ class ReplayResponseCache:
                 self._videos.popitem(last=False)
 
     # -- eviction ---------------------------------------------------------------
+
+    def refuses(self, demo_id: str) -> bool:
+        """Whether this demo was just deleted, so ``put`` would refuse its body."""
+        with self._lock:
+            return demo_id in self._evicted_demo_ids
 
     def evict_demo(self, demo_id: str) -> int:
         """Drop every response and memo of one demo and refuse its later puts."""
@@ -293,28 +308,85 @@ def cached_replay_response(
     if not cache.enabled or not is_cacheable_replay_key(replay_key):
         return None
 
+    resolved = _resolve(service, demo, cache, replay_key)
+    if if_none_match_matches(if_none_match, resolved.etag):
+        return CachedReplay(etag=resolved.etag, not_modified=True, gzip_body=None)
+
+    body = cache.get(resolved.etag)
+    if body is None:
+        body, _ = _render_and_store(service, demo, cache, resolved)
+    return CachedReplay(etag=resolved.etag, not_modified=False, gzip_body=body)
+
+
+WarmOutcome = Literal["warmed", "present", "disabled", "uncacheable", "refused"]
+
+
+def warm_replay_response(
+    service: DemoService,
+    demo: Demo,
+    *,
+    cache: ReplayResponseCache | None = None,
+) -> WarmOutcome:
+    """Store the response the route would build for this completed demo, ahead of its first GET.
+
+    Takes the route's own miss path, so the body and its ETag are the ones a
+    request would have produced. Owner-agnostic: the caller decides which demo
+    to warm (replay_warmer.py checks it exists and is completed), and the route
+    still runs its owner, 404 and 409 checks before it ever reads the entry.
+    "refused" means the demo was deleted before or during the warm (the cache's
+    recently-deleted guard), or the body exceeds the whole budget.
+    """
+    cache = replay_response_cache if cache is None else cache
+    replay_key = getattr(demo, "replay_storage_key", None)
+    if not cache.enabled:
+        return "disabled"
+    if not is_cacheable_replay_key(replay_key):
+        return "uncacheable"
+    if cache.refuses(demo.id):
+        return "refused"
+    resolved = _resolve(service, demo, cache, replay_key)
+    if cache.contains(resolved.etag):
+        return "present"
+    if cache.refuses(demo.id):
+        return "refused"
+    _, stored = _render_and_store(service, demo, cache, resolved)
+    return "warmed" if stored else "refused"
+
+
+@dataclass(frozen=True)
+class _Resolved:
+    etag: str
+    video_status: dict[str, Any]
+    # The parsed replay when resolving had to read it (no video memo), else None.
+    replay: dict[str, Any] | None
+
+
+def _resolve(service: DemoService, demo: Demo, cache: ReplayResponseCache, replay_key: str) -> _Resolved:
+    """The ETag of a cacheable demo's response; reads the artifact only when the video memo misses."""
     replay: dict[str, Any] | None = None
     internal_video = cache.video_for(replay_key)
     if internal_video is None:
         replay = _load_replay(service, demo)
         internal_video = _video_section(replay)
         cache.remember_video(replay_key, demo_id=demo.id, owner_id=demo.owner_id, video=internal_video)
-
     video_status = service.public_video_status(demo, internal_video=internal_video)
-    etag = replay_etag(replay_key, video_status)
-    if if_none_match_matches(if_none_match, etag):
-        return CachedReplay(etag=etag, not_modified=True, gzip_body=None)
+    return _Resolved(etag=replay_etag(replay_key, video_status), video_status=video_status, replay=replay)
 
-    body = cache.get(etag)
-    if body is None:
-        if replay is None:
-            replay = _load_replay(service, demo)
-        # Same composition as ReplayBlob.public_replay, with the video status the ETag hashed.
-        public = _public_replay_contract(replay, video_status)
-        encoded = json.dumps(public, ensure_ascii=False, allow_nan=False, separators=(",", ":")).encode("utf-8")
-        body = gzip.compress(encoded, compresslevel=GZIP_LEVEL, mtime=0)
-        cache.put(etag, demo_id=demo.id, owner_id=demo.owner_id, body=body)
-    return CachedReplay(etag=etag, not_modified=False, gzip_body=body)
+
+def _render_and_store(
+    service: DemoService,
+    demo: Demo,
+    cache: ReplayResponseCache,
+    resolved: _Resolved,
+) -> tuple[bytes, bool]:
+    """The miss path, shared by the route and the warmer: build the gzip body and offer it to the cache."""
+    replay = resolved.replay if resolved.replay is not None else _load_replay(service, demo)
+    # Same composition as ReplayBlob.public_replay, with the video status the ETag hashed.
+    public = _public_replay_contract(replay, resolved.video_status)
+    encoded = json.dumps(public, ensure_ascii=False, allow_nan=False, separators=(",", ":")).encode("utf-8")
+    body = gzip.compress(encoded, compresslevel=GZIP_LEVEL, mtime=0)
+    stored = cache.put(resolved.etag, demo_id=demo.id, owner_id=demo.owner_id, body=body)
+    return body, stored
 
 
 def _load_replay(service: DemoService, demo: Demo) -> dict[str, Any]:

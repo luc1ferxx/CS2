@@ -25,7 +25,7 @@
 
 | 场景 | 说明 |
 | --- | --- |
-| 比赛库 `/dashboard` | 上传 `.dem`（显示进度，可取消，可拖拽）、解析状态、失败原因与重新处理、每场比分（战队名取自 demo）、搜索、按地图和状态筛选、排序、重命名、软归档；永久删除（需确认，不可撤销） |
+| 比赛库 `/dashboard` | 上传 `.dem`（分片并行上传，断网自动重试，刷新页面后重新选择同一个文件即可续传；显示进度，可取消，可拖拽）、解析状态、失败原因与重新处理、每场比分（战队名取自 demo）、搜索、按地图和状态筛选、排序、重命名、软归档；永久删除（需确认，不可撤销） |
 | 复盘工作区 `/demos/{id}` | 战术地图、回合条、时间轴、播放控制与键盘快捷键；地图、时间轴、回合和建议共用同一个时间与回合状态；复盘位置写入网址，刷新后可恢复；再次打开同一场比赛时，浏览器先向 API 校验，回放没变就不重新下载（`304`），API 也在内存里缓存最近返回的回放，省掉每次约 1 秒的读取和计算 |
 | 实时名单与道具 | 播放时两队名单随时间更新：金钱、血量、护甲、武器、携带的道具、到此刻的击杀/死亡、全队装备价值；地图上显示飞行中的道具和烟雾、火、闪光、手雷的效果范围 |
 | 实时按键显示 | 回放时显示一名玩家此刻按着的键：W/A/S/D、静步（Shift）、蹲（Ctrl）、跳（空格）和鼠标左右键，按下的键亮起；跟随在地图或名单上点选的玩家，没有点选时跟随正在复盘的玩家，阵亡后隐藏。面板不遮挡地图：宽屏复盘工作台上放在该玩家所在队伍名单的底部，较窄、较矮的屏幕和手机上放在地图下方。按键来自 demo 里的 usercmd 记录，没有这类数据的 demo 不显示（目前只在 BLAST.tv 的 GOTV demo 上验证过）；较早上传的比赛在后台重新解析后才会出现。面板的视觉设计改编自 [cs2-sandbox](https://github.com/bugkingZHT/cs2-sandbox)（MIT，见 [THIRD_PARTY_NOTICES](THIRD_PARTY_NOTICES.md)） |
@@ -84,19 +84,20 @@ cd frontend && npm install && npm run dev
 浏览器 ── Next.js 15 前端（App Router）
             │
             ▼
-         FastAPI API ──── PostgreSQL   账号、Steam 身份、比赛元数据、任务、建议、评价、上传账本、删除任务
+         FastAPI API ──── PostgreSQL   账号、Steam 身份、比赛元数据、任务、建议、评价、上传账本、上传会话、删除任务
             │        ├─── Redis        解析任务队列、登录会话
-            │        └─── 对象存储     .dem 原文件、回放 JSON、视频（开发用本地目录，生产用私有 S3 兼容存储）
+            │        ├─── 对象存储     .dem 原文件、回放 JSON、视频（开发用本地目录，生产用私有 S3 兼容存储）
+            │        └─── 本地暂存盘   未完成上传的分片（命名卷 upload-staging，完成时转存到对象存储）
             ▼
          解析 worker（独立子进程解析，有超时与内存上限）→ 规则分析 → 写回回放与建议
             ⋮
          独立渲染机（可选，操作者手动启用）：领取片段任务 → 渲染 → 回传 MP4
 ```
 
-- **上传流程**：先流式写入隔离区，同时计算真实长度和 SHA-256，校验通过后才转为正式文件并创建解析任务。
+- **上传流程**：浏览器先建上传会话，再把 `.dem` 按 8 MiB 分片、最多 4 片并行上传到 API 主机的本地暂存盘（每片核对长度和 SHA-256，第 0 片当场检查文件签名），断网时退避重试，刷新后可续传；最后 `complete` 把各片拼成一个流交给原有的 intake：先流式写入隔离区，同时计算真实长度和 SHA-256，校验通过后才转为正式文件，并在同一个事务里建比赛、解析任务和上传账本。旧的单请求 `POST /uploads/demo` 保留给 curl 和冒烟脚本，走同一个 intake。见 [api_reference_v1](docs/api_reference_v1.md#分片上传会话)。
 - **存储与数据库**：所有文件都经过 `backend/app/services/storage/` 的统一接口读写；PostgreSQL 只存元数据和存储引用。
 - **任务队列**：带租约和数据库对账。worker 崩溃后，任务会自动回到队列。
-- **回放响应缓存**：`GET /demos/{id}/replay` 先做 owner 检查，再按回放存储引用和公开视频状态算出 `ETag`，带 `Cache-Control: private, no-store`（和其他登录后的响应一样，浏览器不保存回放），`If-None-Match` 匹配时返回 `304`。API 进程在内存里按 LRU 缓存最近返回的 gzip 响应（`REPLAY_RESPONSE_CACHE_MB`，默认 64，`0` 关闭），重启即清空；删除比赛后路由直接返回 `404`。见 [api_reference_v1](docs/api_reference_v1.md#回放响应缓存etag-与-304)。
+- **回放响应缓存**：`GET /demos/{id}/replay` 先做 owner 检查，再按回放存储引用和公开视频状态算出 `ETag`，带 `Cache-Control: private, no-store`（和其他登录后的响应一样，浏览器不保存回放），`If-None-Match` 匹配时返回 `304`。API 进程在内存里按 LRU 缓存最近返回的 gzip 响应（`REPLAY_RESPONSE_CACHE_MB`，默认 64，`0` 关闭），重启即清空；删除比赛后路由直接返回 `404`。缓存会在后台预热：解析完成、回放升级、视频写入之后（worker 通过 Redis 频道 `REPLAY_READY_CHANNEL` 通知 API），以及 API 重启时最近完成的 `REPLAY_WARM_RECENT` 场真实比赛（默认 10），所以第一次打开也直接命中（`REPLAY_WARM_ENABLED`，默认开）。预热只填同一份内存缓存，不另存任何东西。见 [api_reference_v1](docs/api_reference_v1.md#回放响应缓存etag-与-304)。
 - **比分摘要**：解析完成时把双方战队名、开局阵营和最终比分存进 `demos.match_summary`（按玩家帧判定每回合阵营，半场和加时换边都算对），比赛库和复盘页从 `matchSummary` 读取；此前已完成、或摘要版本低于当前版本（2）的比赛由 worker 空闲时回填，只读 replay 和源 `.dem`，不改 replay。阵营、队伍和比分的判定规则前后端各实现一份，写在 `match_summary.py` 和 `frontend/lib/match-stats.ts` 的注释里，由共享用例 `fixtures/match-rules/` 固定。见 [api_reference_v1](docs/api_reference_v1.md)。
 - **后台补算**：worker 空闲时（队列里有任务就让出）每轮最多处理一场已完成的比赛，不改比赛状态和时间，也不占上传次数。
   - 回放早于当前契约的比赛，从存储的 `.dem` 重新解析一次（`REPLAY_UPGRADE_ENABLED` / `REPLAY_UPGRADE_MAX_ATTEMPTS` / `REPLAY_UPGRADE_RETRY_SECONDS`）；这一步不重新分析建议。
@@ -142,7 +143,7 @@ PYTHONPATH=backend .venv/bin/python -m unittest discover backend/tests
 
 ## 配置
 
-完整列表（91 项）见 [Configuration Reference](docs/configuration_reference_v1.md)。最常用的：
+完整列表（101 项）见 [Configuration Reference](docs/configuration_reference_v1.md)。最常用的：
 
 | 变量 | 默认值 | 说明 |
 | --- | --- | --- |
@@ -160,6 +161,7 @@ PYTHONPATH=backend .venv/bin/python -m unittest discover backend/tests
 | `STEAM_CREDENTIAL_ENCRYPTION_KEY` | 仓库内的开发 key | production 必须换成 32 随机字节的 URL-safe base64，例如 `python -c "import os,base64;print(base64.urlsafe_b64encode(os.urandom(32)).decode())"` |
 | `RENDER_WORKER_MODE` / `RENDER_WORKER_TOKEN` | `fallback` / `dev-render-worker-token` | production 必须更换 token |
 | `MAX_DEMO_UPLOAD_BYTES` | `1073741824` | 单个 `.dem` 的实际字节上限 |
+| `UPLOAD_PART_BYTES` / `UPLOAD_SESSION_TTL_SECONDS` / `UPLOAD_SESSION_GLOBAL_LIMIT` / `UPLOAD_STAGING_MIN_FREE_BYTES` | `8388608` / `86400` / `6` / `5368709120` | 分片上传：分片大小、会话从创建算起的硬过期时间、全站同时未完成的上传数、暂存盘至少保留的余量（后两项是资源限制，所有模式都生效）。暂存目录 `UPLOAD_STAGING_ROOT`（默认 `/data/upload-staging`）在 API 主机的本地磁盘上 |
 | `DEV_USER_ID` | `dev-user` | 仅 development/test |
 
 **production 启动检查**：以下任何一项不满足，服务都会拒绝启动：
@@ -178,7 +180,7 @@ PYTHONPATH=backend .venv/bin/python -m unittest discover backend/tests
 
 - **生产（单台海外 VPS）**：`docker-compose.prod.yml` 叠加在 base 和 preview 之上，加入 Caddy（自动 HTTPS、同源路由）；`scripts/deploy/` 提供初始化、部署/回滚、生产冒烟、每日备份和恢复演练。步骤见 [vps_deploy_v1](docs/vps_deploy_v1.md)。
 - **预览环境**：`docker compose -f docker-compose.yml -f docker-compose.preview.yml up --build`，使用 production 模式和生产构建的前端。必填变量、冒烟命令与回滚步骤见 [cloud_preview_deploy_v1](docs/cloud_preview_deploy_v1.md)。
-- **冒烟测试**：`scripts/cloud_preview_smoke.py` 会读取 `/auth/me` 返回的能力开关，跳过 production 隐藏的模拟数据和片段步骤。对 production 预览需要提供已登录的会话 cookie 和一份真实 `.dem`；每次运行都会占用该账号滚动 24 小时上传配额（`DEMO_UPLOAD_DAILY_LIMIT`）中的一次。
+- **冒烟测试**：`scripts/cloud_preview_smoke.py` 会读取 `/auth/me` 返回的能力开关，跳过 production 隐藏的模拟数据和片段步骤。对 production 预览需要提供已登录的会话 cookie 和一份真实 `.dem`，样本和浏览器一样走分片上传会话；每次运行都会占用该账号滚动 24 小时上传配额（`DEMO_UPLOAD_DAILY_LIMIT`）中的一次。
 - **上线检查清单**：[deployment_readiness_v1](docs/deployment_readiness_v1.md) 和 [release_candidate_qa_v1](docs/release_candidate_qa_v1.md)。
 
 在正式开放之前，[上线计划](docs/rules_2d_beta_launch_v1.md) 中还有这些没有完成：解析器的 CPU、磁盘与输出隔离（目前只有超时和内存上限），数据库迁移，自动部署（目前是手动运行 `scripts/deploy/deploy.sh`），监控告警，在真实部署上完成一次备份恢复演练，存储孤儿清理，以及真实 demo 语料的强制冒烟门禁。
@@ -189,7 +191,9 @@ PYTHONPATH=backend .venv/bin/python -m unittest discover backend/tests
 - **数据隔离**：所有用户接口都按账号隔离；私有媒体在每次读取时都会重新校验会话和归属，不存在公开的静态文件目录。
 - **开发工具**：模拟数据、手动 MP4、模拟渲染和 API 文档页在 production 一律返回 `404`；前端根据 `/auth/me` 返回的能力开关隐藏对应入口。
 - **防滥用**：
-  - 上传配额在接收文件之前就会检查；
+  - 上传配额在接收文件之前就会检查（分片上传在建会话时预检，`complete` 时权威检查）；
+  - 分片上传：每个账号同时只有一个未完成的上传，全站同时最多 `UPLOAD_SESSION_GLOBAL_LIMIT` 个，暂存盘余量不足时拒绝新上传；同时读取的分片数有全站上限，整文件 intake 同一时间只有一个；
+  - 分片 `PUT` 只认这次上传的令牌（数据库只存其哈希，Caddy 日志删掉这个请求头），是唯一不检查会话 cookie 的写请求，但仍要求 `Origin` 是站点源；
   - 并发的上传和重试通过加锁排队，不能绕过同时处理数的上限；
   - 解析在子进程里运行，默认超时 20 分钟、内存上限 4 GB。
 - **Steam 比赛授权**：与登录分离。Game Authentication Code 和分享码在服务端以 AES-256-GCM 加密保存，不会回传给浏览器。
@@ -206,16 +210,17 @@ PYTHONPATH=backend .venv/bin/python -m unittest discover backend/tests
   - 原始 `.dem` 按原样保存（用于重新解析），另外保存解析出的回放数据和建议。回放数据包括每名玩家的位置、血量、金钱、武器、携带的道具和按键记录（移动、静步、蹲、跳和鼠标左右键）、开枪记录（每一枪的时间、移动速度和武器），以及每颗道具的轨迹、落点和投掷者出手那一刻的站位与视角，全部来自 `.dem` 本身；较早上传的比赛会在后台用已保存的 `.dem` 重新解析一次来补上。规则更新后，网站会在后台用已保存的回放数据重新计算建议，不收集新的数据；有的建议可能因此不再显示，用户对它的评价仍随比赛保存，直到删除这场比赛或账户。
   - `.dem` 里包含同场所有玩家的 SteamID64、游戏内昵称、位置和击杀记录，只对上传者本人可见。其他玩家如希望移除，可以联系站长。
   - 另外保存的只有：用户对建议的评价（有帮助 / 无关 / 判断不足），以及改过的比赛名。
+  - 上传还没完成时，已收到的分片连同规范化后的文件名和大小暂存在网站服务器的本地磁盘上（命名卷 `upload-staging`），上传完成时转存为比赛文件；放弃、从开始上传起 24 小时后仍未完成，或删除账户时删除。
 - **Steam 比赛记录（可选）**：只有用户主动关联时才保存，内容是加密后的游戏验证码和比赛分享码。每次点"同步"才向 Valve 查询；断开关联即删除。
 - **Cookie 和浏览器存储**：
   - 只有两个必需的 cookie：`__Host-cs2_session` 保持登录 1 小时，`__Host-cs2_steam_state` 只在登录过程中存在 5 分钟。没有统计或广告 cookie。
-  - localStorage 只存一项"你在比赛里选的玩家"偏好（含本人 SteamID64）。删除账户时在当前浏览器清除。
+  - localStorage 只存两项："你在比赛里选的玩家"偏好（含本人 SteamID64），以及未完成上传的续传记录（文件名、大小、文件修改时间和上传编号，上传完成或放弃后清除）。删除账户时两项都在当前浏览器清除。
 - **日志**：服务器访问日志记录 IP 地址、浏览器标识和访问的页面地址（含搜索词），用于排查故障和防滥用。日志按大小轮转（每个服务最多约 50 MB），不按时间删除。
 - **存放位置和第三方**：
   - 网站跑在一台海外 VPS 上，地区由 `NEXT_PUBLIC_DATA_REGION` 写在隐私页。比赛文件和备份在 Cloudflare R2 私有存储桶。
   - 经手数据的第三方只有：VPS 服务商、Cloudflare（存储）、Valve/Steam（登录、公开资料、用户主动开启的比赛记录同步）、Let's Encrypt（只签发 HTTPS 证书）。不出售，也不共享给其他人。
 - **保存与删除**：
-  - 账户和比赛一直保存，直到用户删除；会话 1 小时后过期。
+  - 账户和比赛一直保存，直到用户删除；会话 1 小时后过期；未完成的上传最多保留 24 小时。
   - 可以永久删除单场比赛（`DELETE /demos/{id}`），也可以在 `/account` 删除账户和全部数据（`DELETE /auth/account`，仅 production），所有设备上的登录同时失效。
   - 删除立即作用于数据库和存储，存储清理失败会自动重试。API 为加快打开速度在内存里暂存的回放响应只在内存里，删除后读不到，重启后也不保留。每日备份里的副本最多再保留 30 天；从备份恢复后，站长会重做那之后的删除。
   - 用户自己无法删除时（同场其他玩家的移除请求、已被移出邀请名单的用户），站长用运维命令 `python -m app.cli.delete_data` 代为删除，走同一套删除流程（见 [data_deletion_v1](docs/data_deletion_v1.md#代用户删除)）。
@@ -232,6 +237,7 @@ PYTHONPATH=backend .venv/bin/python -m unittest discover backend/tests
 - **不能自动下载比赛**：Valve 没有公开个人比赛的下载接口，仓库也没有获得许可的来源，所以只能手动上传 `.dem`。相关导入代码已经写好并有测试，但在这个版本里走不到。
 - **解析是单 worker 串行执行**：崩溃恢复是自动的，但有分钟级延迟。租约为 60 秒；如果 Redis 数据全部丢失，排队中的任务约 5 分钟（`PARSE_REDISPATCH_AFTER_SECONDS`）后重新投递，正在解析的任务要等 `PARSE_RECLAIM_AFTER_SECONDS`（默认 30 分钟）。
 - **CI 不解析真实 `.dem`**：真实文件只在可选的样本冒烟测试里校验。
+- **并行分片不一定更快**：站点走 HTTP/2 / HTTP/3，浏览器把并行的分片复用在同一条连接上，提速可能远小于并行数。上线后用 API 日志里每个会话一行的 `Upload session completed: bytes=… seconds=…` 测速，再决定分片大小和并行数。
 - **健康检查很粗**：`/health` 在数据库、Redis 或 worker 配置任一项检查失败时返回 HTTP 503 `{"status":"degraded"}`（正常为 200 `{"status":"ok"}`），但不说明是哪一项；production 下要看 `docker compose logs api` 才能定位。
 - **数据覆盖有限**：
   - 解析帧是采样数据；炸弹和道具事件尽量提取，不保证完整；

@@ -2,6 +2,18 @@ import type { CoachingEvent, CoachingFeedback, CoachingVerdict } from "@/types/c
 import type { DemoStatus, DemoSummary } from "@/types/demo";
 import type { ReplayData, ReplayVideo } from "@/types/replay";
 import type {
+  UploadCompleteResult,
+  UploadPartReceipt,
+  UploadPartRequest,
+  UploadSessionCreated,
+  UploadSessionCreateRequest,
+  UploadSessionCurrent,
+  UploadSessionStatus,
+  UploadSessionTokenResponse,
+  UploadStatus
+} from "@/types/upload";
+import type { ChunkedUploadTransport } from "@/lib/chunked-upload";
+import type {
   SteamConnection,
   SteamConnectionCredentials,
   SteamMatch,
@@ -24,12 +36,16 @@ export class ApiError extends Error {
   readonly code: ApiErrorCode;
   readonly detailCode: string | null;
   readonly retryAfterSeconds: number | null;
+  // Any other fields of a structured error (e.g. the session in the way of a
+  // new upload, or the missing part numbers); null when there are none.
+  readonly detailData: Readonly<Record<string, unknown>> | null;
 
   constructor(
     status: number,
     message: string,
     detailCode: string | null = null,
-    retryAfterSeconds: number | null = null
+    retryAfterSeconds: number | null = null,
+    detailData: Readonly<Record<string, unknown>> | null = null
   ) {
     super(message);
     this.name = "ApiError";
@@ -37,6 +53,7 @@ export class ApiError extends Error {
     this.code = status === 401 ? "unauthenticated" : "request_failed";
     this.detailCode = detailCode;
     this.retryAfterSeconds = retryAfterSeconds;
+    this.detailData = detailData;
   }
 }
 
@@ -402,6 +419,7 @@ interface ResponseErrorDetails {
   message: string;
   detailCode: string | null;
   retryAfterSeconds: number | null;
+  detailData: Record<string, unknown> | null;
 }
 
 async function responseErrorDetails(response: Response): Promise<ResponseErrorDetails> {
@@ -410,26 +428,41 @@ async function responseErrorDetails(response: Response): Promise<ResponseErrorDe
 
 function errorDetailsFromBody(body: string): ResponseErrorDetails {
   if (!body) {
-    return { message: "", detailCode: null, retryAfterSeconds: null };
+    return { message: "", detailCode: null, retryAfterSeconds: null, detailData: null };
   }
 
   try {
     const parsed = JSON.parse(body) as { detail?: unknown };
     if (typeof parsed.detail === "string") {
-      return { message: parsed.detail, detailCode: null, retryAfterSeconds: null };
+      return { message: parsed.detail, detailCode: null, retryAfterSeconds: null, detailData: extraFields(parsed, {}) };
     }
     if (isStructuredApiDetail(parsed.detail)) {
       return {
         message: parsed.detail.message,
         detailCode: parsed.detail.code,
-        retryAfterSeconds: positiveSeconds(parsed.detail.retryAfterSeconds)
+        retryAfterSeconds: positiveSeconds(parsed.detail.retryAfterSeconds),
+        detailData: extraFields(parsed, parsed.detail)
       };
     }
   } catch {
-    return { message: body, detailCode: null, retryAfterSeconds: null };
+    return { message: body, detailCode: null, retryAfterSeconds: null, detailData: null };
   }
 
-  return { message: body, detailCode: null, retryAfterSeconds: null };
+  return { message: body, detailCode: null, retryAfterSeconds: null, detailData: null };
+}
+
+const KNOWN_ERROR_FIELDS = new Set(["detail", "code", "message", "retryAfterSeconds", "errorCode"]);
+
+// Fields beside the known ones, read from the body and from a structured detail (which wins).
+function extraFields(body: unknown, detail: object): Record<string, unknown> | null {
+  const extras: Record<string, unknown> = {};
+  for (const source of [body, detail]) {
+    if (typeof source !== "object" || source === null || Array.isArray(source)) continue;
+    for (const [key, value] of Object.entries(source)) {
+      if (!KNOWN_ERROR_FIELDS.has(key)) extras[key] = value;
+    }
+  }
+  return Object.keys(extras).length > 0 ? extras : null;
 }
 
 async function throwResponseError(response: Response): Promise<never> {
@@ -444,7 +477,8 @@ async function throwResponseError(response: Response): Promise<never> {
     detail.message || `Request failed with ${response.status}`,
     detail.detailCode,
     // The body is read first: a cross-origin dev setup may not expose the header.
-    detail.retryAfterSeconds ?? retryAfterHeaderSeconds(response.headers.get("Retry-After"))
+    detail.retryAfterSeconds ?? retryAfterHeaderSeconds(response.headers.get("Retry-After")),
+    detail.detailData
   );
 }
 
@@ -492,15 +526,117 @@ export interface UploadProgress {
 
 export interface UploadDemoFileOptions {
   onProgress?: (progress: UploadProgress) => void;
+  // Preparing, sending, paused (offline, retrying, signed out), verifying, waiting for the quota.
+  onStatus?: (status: UploadStatus) => void;
   signal?: AbortSignal;
+  // The unfinished session the player chose to continue with this file.
+  resumeSessionId?: string | null;
+  // The player confirmed discarding the unfinished session for this file.
+  replace?: boolean;
 }
 
-// createDemoUpload over XMLHttpRequest, which reports upload progress and can
-// be aborted. Failures raise the same ApiError as every other request, plus
-// the intake's sibling `errorCode` as detailCode when there is no structured one.
-export function uploadDemoFile(file: File, options: UploadDemoFileOptions = {}): Promise<DemoSummary> {
-  const { onProgress, signal } = options;
-  return new Promise<DemoSummary>((resolve, reject) => {
+// The upload session routes answer the intake's refusals as {detail, errorCode};
+// read that sibling code too. `notifyUnauthorized: false` keeps a 401 from
+// swapping the page for the sign-in wall while an upload only pauses for it.
+export interface UploadRequestOptions {
+  notifyUnauthorized?: boolean;
+}
+
+async function uploadSessionFetch(path: string, init: RequestInit, options: UploadRequestOptions = {}): Promise<Response> {
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    ...init,
+    credentials: "include",
+    headers: {
+      "Content-Type": "application/json",
+      ...(init.headers ?? {})
+    },
+    cache: "no-store"
+  });
+  if (!response.ok) {
+    const body = await response.text();
+    throw uploadResponseError(
+      response.status,
+      body,
+      response.headers.get("Retry-After"),
+      options.notifyUnauthorized !== false
+    );
+  }
+  return response;
+}
+
+function uploadResponseError(status: number, body: string, retryAfter: string | null, notifyUnauthorized: boolean): ApiError {
+  if (status === 401 && notifyUnauthorized) {
+    for (const listener of unauthorizedListeners) {
+      listener();
+    }
+  }
+  const detail = errorDetailsFromBody(body);
+  return new ApiError(
+    status,
+    detail.message || `Request failed with ${status}`,
+    detail.detailCode ?? siblingErrorCode(body),
+    detail.retryAfterSeconds ?? retryAfterHeaderSeconds(retryAfter),
+    detail.detailData
+  );
+}
+
+function uploadSessionPath(sessionId: string, suffix = ""): string {
+  return `/uploads/sessions/${encodeURIComponent(sessionId)}${suffix}`;
+}
+
+export async function createUploadSession(request: UploadSessionCreateRequest): Promise<UploadSessionCreated> {
+  const response = await uploadSessionFetch("/uploads/sessions", {
+    method: "POST",
+    body: JSON.stringify(request)
+  });
+  return (await response.json()) as UploadSessionCreated;
+}
+
+// The owner's unfinished session (open or completing), or null.
+export async function getCurrentUploadSession(): Promise<UploadSessionStatus | null> {
+  const response = await uploadSessionFetch("/uploads/sessions/current", { method: "GET" });
+  const body = (await response.json()) as Partial<UploadSessionCurrent> | null;
+  return body?.session ?? null;
+}
+
+export async function getUploadSession(sessionId: string, options: UploadRequestOptions = {}): Promise<UploadSessionStatus> {
+  const response = await uploadSessionFetch(uploadSessionPath(sessionId), { method: "GET" }, options);
+  return (await response.json()) as UploadSessionStatus;
+}
+
+// A fresh upload token for an open session; the previous token stops working.
+export async function refreshUploadSessionToken(
+  sessionId: string,
+  options: UploadRequestOptions = {}
+): Promise<UploadSessionTokenResponse> {
+  const response = await uploadSessionFetch(uploadSessionPath(sessionId, "/token"), { method: "POST" }, options);
+  return (await response.json()) as UploadSessionTokenResponse;
+}
+
+export async function completeUploadSession(
+  sessionId: string,
+  options: UploadRequestOptions = {}
+): Promise<UploadCompleteResult> {
+  const response = await uploadSessionFetch(uploadSessionPath(sessionId, "/complete"), { method: "POST" }, options);
+  const body = (await response.json()) as (Partial<DemoSummary> & { state?: unknown }) | null;
+  if (response.status === 202 || !body || typeof body.id !== "string") {
+    return { kind: "completing" };
+  }
+  return { kind: "demo", demo: body as DemoSummary, created: response.status === 201 };
+}
+
+// Abandons an unfinished upload: the session and every part on the server go.
+export async function deleteUploadSession(sessionId: string): Promise<void> {
+  await uploadSessionFetch(uploadSessionPath(sessionId), { method: "DELETE" });
+}
+
+// One part over XMLHttpRequest, for its upload progress. The upload token is
+// the only credential the route reads (withCredentials stays off, so a
+// cross-origin dev API gets no cookie either), and a 401 here says nothing
+// about the sign-in session.
+export function putUploadPart(request: UploadPartRequest): Promise<UploadPartReceipt> {
+  const { sessionId, index, token, body, sha256, signal, onProgress } = request;
+  return new Promise<UploadPartReceipt>((resolve, reject) => {
     if (signal?.aborted) {
       reject(uploadAbortError());
       return;
@@ -509,35 +645,27 @@ export function uploadDemoFile(file: File, options: UploadDemoFileOptions = {}):
     const onAbortSignal = () => xhr.abort();
     const settle = () => signal?.removeEventListener("abort", onAbortSignal);
 
-    xhr.open("POST", `${API_BASE_URL}/uploads/demo`);
-    xhr.withCredentials = true;
+    xhr.open("PUT", `${API_BASE_URL}${uploadSessionPath(sessionId, `/parts/${index}`)}`);
+    xhr.withCredentials = false;
+    xhr.setRequestHeader("Content-Type", "application/octet-stream");
+    xhr.setRequestHeader("X-Upload-Token", token);
+    if (sha256) {
+      xhr.setRequestHeader("X-Part-SHA256", sha256);
+    }
     xhr.upload.onprogress = (event) => {
-      onProgress?.({ loaded: event.loaded, total: event.lengthComputable ? event.total : file.size });
+      onProgress?.(event.loaded);
     };
     xhr.onload = () => {
       settle();
       if (xhr.status >= 200 && xhr.status < 300) {
         try {
-          resolve(JSON.parse(xhr.responseText) as DemoSummary);
+          resolve(JSON.parse(xhr.responseText) as UploadPartReceipt);
         } catch {
           reject(new ApiError(xhr.status, "Upload response was not valid JSON"));
         }
         return;
       }
-      if (xhr.status === 401) {
-        for (const listener of unauthorizedListeners) {
-          listener();
-        }
-      }
-      const detail = errorDetailsFromBody(xhr.responseText ?? "");
-      reject(
-        new ApiError(
-          xhr.status,
-          detail.message || `Request failed with ${xhr.status}`,
-          detail.detailCode ?? siblingErrorCode(xhr.responseText ?? ""),
-          detail.retryAfterSeconds ?? retryAfterHeaderSeconds(xhr.getResponseHeader("Retry-After"))
-        )
-      );
+      reject(uploadResponseError(xhr.status, xhr.responseText ?? "", xhr.getResponseHeader("Retry-After"), false));
     };
     // Same message fetch uses, so the shared error copy reads it as a network failure.
     xhr.onerror = () => {
@@ -549,11 +677,53 @@ export function uploadDemoFile(file: File, options: UploadDemoFileOptions = {}):
       reject(uploadAbortError());
     };
     signal?.addEventListener("abort", onAbortSignal);
-
-    const formData = new FormData();
-    formData.append("file", file);
-    xhr.send(formData);
+    xhr.send(body);
   });
+}
+
+// The engine pauses on a signed-out 401 instead of handing the page to the sign-in wall.
+const uploadSessionTransport: ChunkedUploadTransport = {
+  getCurrentSession: () => getCurrentUploadSession(),
+  getSession: (sessionId) => getUploadSession(sessionId, { notifyUnauthorized: false }),
+  createSession: (request) => createUploadSession(request),
+  refreshToken: (sessionId) => refreshUploadSessionToken(sessionId, { notifyUnauthorized: false }),
+  putPart: (request) => putUploadPart(request),
+  completeSession: (sessionId) => completeUploadSession(sessionId, { notifyUnauthorized: false }),
+  deleteSession: (sessionId) => deleteUploadSession(sessionId)
+};
+
+// Uploads a .dem through an upload session: parts of a server-chosen size, a
+// few at a time, retried and resumable (lib/chunked-upload.ts), then completed
+// into a match. Failures raise the same ApiError as every other request (with
+// the intake's sibling `errorCode` as detailCode), a network failure the
+// TypeError fetch raises, and a cancel an AbortError.
+export async function uploadDemoFile(file: File, options: UploadDemoFileOptions = {}): Promise<DemoSummary> {
+  // Loaded on first use; lib/auth.test.mjs runs this module with no other lib module available.
+  const engine = await import("@/lib/chunked-upload");
+  try {
+    return await engine.runChunkedUpload(file, { ...options, transport: uploadSessionTransport });
+  } catch (error) {
+    throw asApiError(error);
+  }
+}
+
+// Completes an unfinished session whose parts are all on the server, without the file.
+export async function finishDemoUpload(sessionId: string, options: UploadDemoFileOptions = {}): Promise<DemoSummary> {
+  const engine = await import("@/lib/chunked-upload");
+  try {
+    return await engine.finishChunkedUpload(sessionId, { ...options, transport: uploadSessionTransport });
+  } catch (error) {
+    throw asApiError(error);
+  }
+}
+
+// The engine's own refusals (an archive picked as a .dem, a session that is gone) read like the API's.
+function asApiError(error: unknown): unknown {
+  if (typeof error === "object" && error !== null && (error as { name?: unknown }).name === "UploadEngineError") {
+    const engineError = error as { status: number; message: string; detailCode: string | null; retryAfterSeconds: number | null };
+    return new ApiError(engineError.status, engineError.message, engineError.detailCode, engineError.retryAfterSeconds);
+  }
+  return error;
 }
 
 export function isUploadAbortError(error: unknown): boolean {

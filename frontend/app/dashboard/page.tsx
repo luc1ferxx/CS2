@@ -28,6 +28,9 @@ import {
   archiveDemo,
   createMockUpload,
   deleteDemo,
+  deleteUploadSession,
+  finishDemoUpload,
+  getCurrentUploadSession,
   getUploadQuota,
   isApiError,
   isUploadAbortError,
@@ -61,15 +64,20 @@ import {
 } from "@/lib/demo-library";
 import {
   cancelDemoUpload,
+  clearUploadResumeRecord,
   getDemoUploadSnapshot,
   startDemoUpload,
   subscribeDemoUpload,
   takeDemoUploadOutcome,
   formatMegabytes,
+  uploadBusyLabel as uploadButtonLabel,
   uploadEtaLabel,
+  uploadHoldLabel,
   uploadPercent,
   uploadProgressLabel,
+  uploadStateLabel,
   type DemoUploadOutcome,
+  type DemoUploadRequest,
   type DemoUploadSnapshot
 } from "@/lib/demo-upload";
 import { takeLibraryNotice } from "@/lib/library-notice";
@@ -83,6 +91,7 @@ import {
 import { usePoll } from "@/lib/use-poll";
 import { requestFailureKind, userFacingError } from "@/lib/user-errors";
 import type { DemoProcessingStatus, DemoSummary } from "@/types/demo";
+import type { ExistingUploadSession, UploadSessionStatus } from "@/types/upload";
 
 const DEFAULT_FILTERS: DemoLibraryFilters = {
   search: "",
@@ -110,6 +119,12 @@ type LibraryNotice =
 interface UploadFailure {
   message: string;
   code: string | null;
+}
+
+// A picked file that differs from the owner's unfinished upload, waiting for the player's word.
+interface ReplaceTarget {
+  file: File;
+  existing: ExistingUploadSession;
 }
 
 export default function DashboardPage() {
@@ -153,6 +168,12 @@ function DashboardContent() {
   const [notice, setNotice] = useState<LibraryNotice | null>(null);
   const [importOptionsLoaded, setImportOptionsLoaded] = useState(false);
   const [quota, setQuota] = useState<UploadQuota | null>(null);
+  // The owner's unfinished upload session (this browser or another), for the resume line.
+  const [resumeSession, setResumeSession] = useState<UploadSessionStatus | null>(null);
+  const [abandoning, setAbandoning] = useState(false);
+  const [replaceTarget, setReplaceTarget] = useState<ReplaceTarget | null>(null);
+  // Set by 选择同一个文件继续 until the picker hands over a file.
+  const resumeIntentRef = useRef<string | null>(null);
   const [dragActive, setDragActive] = useState(false);
   const [now, setNow] = useState(() => Date.now());
   const upload = useSyncExternalStore(subscribeDemoUpload, getDemoUploadSnapshot, serverUploadSnapshot);
@@ -196,9 +217,22 @@ function DashboardContent() {
     }
   }, []);
 
+  const refreshResumeSession = useCallback(async () => {
+    try {
+      const session = (await getCurrentUploadSession()) ?? null;
+      setResumeSession(session && (session.state === "open" || session.state === "completing") ? session : null);
+    } catch {
+      // Advisory: picking the same file again still resumes it.
+    }
+  }, []);
+
   useEffect(() => {
     void loadDemos();
   }, [loadDemos]);
+
+  useEffect(() => {
+    void refreshResumeSession();
+  }, [refreshResumeSession]);
 
   // A line left by the page that sent the player here (a match deleted from its own page).
   useEffect(() => {
@@ -361,7 +395,7 @@ function DashboardContent() {
     }
   }
 
-  async function handleDemoUpload(file: File) {
+  async function handleDemoUpload(file: File, request: DemoUploadRequest = {}) {
     if (getDemoUploadSnapshot()) {
       setNotice({ kind: "message", message: "正在上传另一场比赛，完成后再添加下一场。" });
       return;
@@ -377,9 +411,49 @@ function DashboardContent() {
       return;
     }
     setUploadError(null);
+    const resumeSessionId = request.replace ? null : request.resumeSessionId ?? resumeIntentRef.current;
+    resumeIntentRef.current = null;
+    const upload: DemoUploadRequest = request.replace ? { replace: true } : resumeSessionId ? { resumeSessionId } : {};
     // The outcome is read back from the upload store below, so it still shows
     // when this page remounted while the upload ran.
-    startDemoUpload(file, uploadDemoFile).catch(() => {});
+    startDemoUpload(file, uploadDemoFile, Date.now, upload).catch(() => {});
+  }
+
+  // Completes an unfinished upload whose parts are all on the server; no file needed.
+  function finishResumeSession(session: UploadSessionStatus) {
+    if (getDemoUploadSnapshot()) return;
+    setUploadError(null);
+    setRetryError(null);
+    startDemoUpload({ name: session.filename, size: session.size }, (_source, options) =>
+      finishDemoUpload(session.sessionId, options)
+    ).catch(() => {});
+  }
+
+  function continueResumeSession(session: UploadSessionStatus) {
+    resumeIntentRef.current = session.sessionId;
+    openUploadPicker();
+  }
+
+  async function abandonResumeSession(session: UploadSessionStatus) {
+    setAbandoning(true);
+    try {
+      await deleteUploadSession(session.sessionId);
+    } catch (err) {
+      // Already gone (expired, or abandoned in another tab) is what the player asked for.
+      if (requestFailureKind(err) !== "not_found") {
+        setUploadError({
+          message: userFacingError(err, "放弃上传失败，请重试。", { conflict: "这次上传正在完成，暂时无法放弃。" }),
+          code: null
+        });
+        setAbandoning(false);
+        void refreshResumeSession();
+        return;
+      }
+    }
+    clearUploadResumeRecord(() => window.localStorage);
+    setResumeSession(null);
+    setAbandoning(false);
+    setNotice({ kind: "message", message: `已放弃未完成的上传「${session.filename}」。` });
   }
 
   function showUploadOutcome(outcome: DemoUploadOutcome) {
@@ -388,16 +462,32 @@ function DashboardContent() {
       setDemos((current) => (current.some((item) => item.id === demo.id) ? current : [demo, ...current]));
       setNotice({ kind: "upload", demo });
       setError(null);
+      setResumeSession(null);
     } else if (isUploadAbortError(outcome.error)) {
+      // A cancel deletes the session as well.
+      setResumeSession(null);
       pendingFocusRef.current = [UPLOAD_BUTTON];
       setNotice({ kind: "message", message: `已取消上传「${outcome.fileName}」。` });
     } else {
       const err = outcome.error;
-      const message =
-        (isApiError(err)
-          ? demoUploadErrorMessage(err.status, err.detailCode, err.retryAfterSeconds, maxUploadBytes)
-          : null) ?? userFacingError(err, "上传比赛失败，请检查文件后重试。");
-      setUploadError({ message, code: isApiError(err) ? err.detailCode : null });
+      if (
+        isApiError(err) &&
+        err.status === 409 &&
+        err.detailCode === "upload_session_exists" &&
+        outcome.source instanceof File &&
+        !outcome.request?.replace
+      ) {
+        // A different file than the unfinished upload: discarding that one is the player's call.
+        setReplaceTarget({ file: outcome.source, existing: existingSession(err.detailData, resumeSession) });
+      } else {
+        const message =
+          (isApiError(err)
+            ? demoUploadErrorMessage(err.status, err.detailCode, err.retryAfterSeconds, maxUploadBytes)
+            : null) ?? userFacingError(err, "上传比赛失败，请检查文件后重试。");
+        setUploadError({ message, code: isApiError(err) ? err.detailCode : null });
+      }
+      // A paused or refused upload keeps its session; the resume line offers it.
+      void refreshResumeSession();
     }
     void refreshQuota();
   }
@@ -587,13 +677,8 @@ function DashboardContent() {
     void refreshQuota();
   }
 
-  const uploadBusyLabel = upload
-    ? upload.phase === "verifying"
-      ? "校验中…"
-      : `上传中 ${uploadPercent(upload)}%`
-    : creating
-      ? "正在添加…"
-      : null;
+  const uploadBusyLabel = upload ? uploadButtonLabel(upload) : creating ? "正在添加…" : null;
+  const showResume = resumeSession !== null && upload === null;
   const showEmptyState = emptyState !== null && !(upload && emptyState.kind === "empty");
   const firstRun = showEmptyState && emptyState?.kind === "empty";
 
@@ -649,6 +734,16 @@ function DashboardContent() {
 
           {quotaSummary.blockedReason && !uploadError ? (
             <p className="lib-quota">{quotaSummary.blockedReason}</p>
+          ) : null}
+          {showResume && resumeSession ? (
+            <ResumeUploadLine
+              session={resumeSession}
+              disabled={uploadDisabled}
+              abandoning={abandoning}
+              onContinue={() => continueResumeSession(resumeSession)}
+              onFinish={() => finishResumeSession(resumeSession)}
+              onAbandon={() => void abandonResumeSession(resumeSession)}
+            />
           ) : null}
 
           <div className="lib-toolbar" role="group" aria-label="搜索与筛选比赛">
@@ -847,6 +942,20 @@ function DashboardContent() {
         </details>
       </div>
       <SiteFooter />
+
+      <ConfirmDialog
+        open={replaceTarget !== null}
+        title="放弃未完成的上传？"
+        confirmLabel="放弃并上传新文件"
+        onConfirm={() => {
+          const target = replaceTarget;
+          setReplaceTarget(null);
+          if (target) void handleDemoUpload(target.file, { replace: true });
+        }}
+        onCancel={() => setReplaceTarget(null)}
+      >
+        {replaceTarget ? <ReplaceUploadCopy target={replaceTarget} /> : null}
+      </ConfirmDialog>
 
       <ConfirmDialog
         open={deleteTarget !== null}
@@ -1170,7 +1279,8 @@ function UploadProgressRow({ upload, onCancel }: { upload: DemoUploadSnapshot; o
   const percent = uploadPercent(upload);
   const now = Date.now();
   const label = uploadProgressLabel(upload, now);
-  const eta = verifying ? null : uploadEtaLabel(upload, now);
+  const hold = uploadHoldLabel(upload);
+  const eta = upload.phase === "sending" ? uploadEtaLabel(upload, now) : null;
   return (
     <article className="lib-row is-uploading" aria-label={`正在上传：${upload.fileName}`}>
       <span className="lib-thumb" aria-hidden="true" />
@@ -1180,8 +1290,14 @@ function UploadProgressRow({ upload, onCancel }: { upload: DemoUploadSnapshot; o
         </div>
         {/* Percent, size and time left as separate readings, not one joined string. */}
         <div className="lib-progress-facts">
-          {verifying ? (
+          {verifying || upload.phase === "preparing" || upload.phase === "waiting" ? (
             <span>{label}</span>
+          ) : hold ? (
+            <>
+              <span>{hold}</span>
+              <span className="lib-progress-pct">已传 {percent}%</span>
+              <span>{formatMegabytes(upload.loaded)} / {formatMegabytes(upload.total)} MB</span>
+            </>
           ) : (
             <>
               <span className="lib-progress-pct">上传中 {percent}%</span>
@@ -1207,7 +1323,7 @@ function UploadProgressRow({ upload, onCancel }: { upload: DemoUploadSnapshot; o
       <div className="c-num c-signals" />
       <div className="c-date" />
       <div className="c-state">
-        <span className="status-text progress">{verifying ? "校验中" : "上传中"}</span>
+        <span className="status-text progress">{uploadStateLabel(upload)}</span>
       </div>
       <div className="c-actions">
         {verifying ? null : (
@@ -1218,6 +1334,85 @@ function UploadProgressRow({ upload, onCancel }: { upload: DemoUploadSnapshot; o
       </div>
     </article>
   );
+}
+
+// The owner's unfinished upload after a reload (or from another tab): a browser
+// cannot reopen the file, so continuing means picking it again; with every part
+// on the server it can be completed without it.
+function ResumeUploadLine({
+  session,
+  disabled,
+  abandoning,
+  onContinue,
+  onFinish,
+  onAbandon
+}: {
+  session: UploadSessionStatus;
+  disabled: boolean;
+  abandoning: boolean;
+  onContinue: () => void;
+  onFinish: () => void;
+  onAbandon: () => void;
+}) {
+  const completing = session.state === "completing";
+  const allReceived = session.partCount > 0 && new Set(session.receivedParts).size >= session.partCount;
+  const percent = completing ? 100 : uploadPercent({ loaded: session.receivedBytes, total: session.size });
+  return (
+    <p className="lib-quota" role="status">
+      有一个未完成的上传：{session.filename}（已传 {percent}%）
+      <button className="text-button" type="button" disabled={disabled || completing} onClick={onContinue}>
+        选择同一个文件继续
+      </button>
+      <button
+        className="text-button"
+        type="button"
+        disabled={disabled || !(allReceived || completing)}
+        title={allReceived || completing ? undefined : "还有部分文件没有传完，请选择同一个文件继续"}
+        onClick={onFinish}
+      >
+        完成上传
+      </button>
+      <button className="text-button" type="button" disabled={abandoning || completing} onClick={onAbandon}>
+        放弃
+      </button>
+    </p>
+  );
+}
+
+function ReplaceUploadCopy({ target }: { target: ReplaceTarget }) {
+  const { existing, file } = target;
+  const percent =
+    existing.size && existing.receivedBytes !== null
+      ? uploadPercent({ loaded: existing.receivedBytes, total: existing.size })
+      : null;
+  return (
+    <>
+      <p>
+        你还有一个未完成的上传{existing.filename ? `「${existing.filename}」` : ""}
+        {percent !== null ? `（已传 ${percent}%）` : ""}，和刚选的「{file.name}」不是同一个文件。
+      </p>
+      <p className="confirm-dialog-note">
+        继续会放弃那次上传已传的部分，改为上传「{file.name}」。想接着传那个文件，请取消后重新选择它。
+      </p>
+    </>
+  );
+}
+
+// The 409's own account of the session in the way, else what the resume line already knows.
+function existingSession(
+  data: Readonly<Record<string, unknown>> | null,
+  known: UploadSessionStatus | null
+): ExistingUploadSession {
+  const text = (value: unknown) => (typeof value === "string" && value ? value : null);
+  const count = (value: unknown) => (typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null);
+  const sessionId = text(data?.sessionId);
+  const fallback = known && (sessionId === null || sessionId === known.sessionId) ? known : null;
+  return {
+    sessionId: sessionId ?? fallback?.sessionId ?? null,
+    filename: text(data?.filename) ?? fallback?.filename ?? null,
+    size: count(data?.size) ?? fallback?.size ?? null,
+    receivedBytes: count(data?.receivedBytes) ?? fallback?.receivedBytes ?? null
+  };
 }
 
 function LibrarySkeletonRows() {
