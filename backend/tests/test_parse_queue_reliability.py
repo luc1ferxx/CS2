@@ -397,6 +397,29 @@ class ParseSubprocessTest(unittest.TestCase):
         self.assertTrue(heartbeat["alive"])
 
 
+class ParseChildEnvironmentTest(unittest.TestCase):
+    def test_the_parse_child_runs_openblas_single_threaded(self) -> None:
+        # numpy's OpenBLAS reserves buffers per core at import and they count
+        # against the child's RLIMIT_DATA; the v5 shots pass overran 4 GiB with it.
+        captured: dict[str, str] = {}
+        process = FakeProcess(exits_after_polls=0, return_code=EXIT_PARSE_ERROR)
+
+        def popen(*args: object, env: dict[str, str], **kwargs: object) -> FakeProcess:
+            captured.update(env)
+            return process
+
+        with parse_limits(timeout_seconds=15, renew_seconds=10), patch(
+            "app.workers.worker.subprocess.Popen", side_effect=popen
+        ), patch.dict("os.environ", {}, clear=False):
+            import os
+
+            os.environ.pop("OPENBLAS_NUM_THREADS", None)
+            with self.assertRaises(DemoParserError):
+                run_parse_subprocess(Path("source.dem"), on_tick=lambda: None)
+
+        self.assertEqual(captured.get("OPENBLAS_NUM_THREADS"), "1")
+
+
 class ParseQueueConfigurationTest(unittest.TestCase):
     """Two settings that break the parser quietly if they are wrong.
 

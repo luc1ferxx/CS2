@@ -560,6 +560,61 @@ const events = [
     { died: true, killer: "donk", finding: "T 方首个阵亡，最近的队友约 980 单位外" });
 }
 
+{
+  // Shooting rules: the facts line says how fast the shot was against the weapon's stable speed.
+  const shooting = (ruleId, context) => coachingEvent({ id: ruleId, round_number: 4, tick_start: 10, severity: "low",
+    structured_context_json: { ruleId, weapon: "m4a1_silencer", weaponLabel: "M4A1-S", accurateSpeed: 76, ...context } });
+  const facts = (ruleId, context) => coachingFacts(shooting(ruleId, context));
+  assert.equal(facts("no_counter_strafe", { speed: 168, hit: false, died: false, keysAtShot: ["A"], counterStrafe: false }),
+    "第一枪时速度约 168（M4A1-S 稳定线 76），按着 A 没有反向急停，没打中");
+  assert.equal(facts("no_counter_strafe", { speed: 140, hit: true, died: true, attackerName: "donk", keysAtShot: ["W", "D"], counterStrafe: false,
+    occurrencesInRound: 2 }), "第一枪时速度约 140（M4A1-S 稳定线 76），按着 W+D 没有反向急停，被 donk 击杀，这回合共 2 次");
+  assert.equal(facts("no_counter_strafe", { speed: 0, airborne: true, hit: false, died: true, keysAtShot: ["A"], counterStrafe: false }),
+    "第一枪时速度约 0（M4A1-S 稳定线 76），在空中开枪，没打中，2 秒内阵亡", "in the air, the keys are not the point");
+  assert.equal(facts("no_counter_strafe", { speed: 150, hit: false, keysAtShot: ["D"], counterStrafe: true }),
+    "第一枪时速度约 150（M4A1-S 稳定线 76），反向点了但开枪太早，没打中", "a counter-strafe that came too late");
+  assert.equal(facts("no_counter_strafe", { speed: 150, hit: false, keysAtShot: [], counterStrafe: false }), "第一枪时速度约 150（M4A1-S 稳定线 76），没打中");
+  assert.equal(facts("no_counter_strafe", { speed: 150, hit: false }), "第一枪时速度约 150（M4A1-S 稳定线 76），没打中", "no inputs, no key part");
+  assert.equal(facts("moving_shots", { speed: 201, movingShotCount: 4, hit: false, died: false, occurrencesInRound: 1 }),
+    "边移动边开了 4 枪（最高速度约 201，M4A1-S 稳定线 76），一枪没中");
+  assert.equal(facts("moving_shots", { speed: 201, movingShotCount: 3, hit: true, died: true, attackerName: "donk", occurrencesInRound: 3 }),
+    "边移动边开了 3 枪（最高速度约 201，M4A1-S 稳定线 76），一枪没中，被 donk 击杀，这回合共 3 次");
+  for (const text of [facts("moving_shots", { speed: 201, movingShotCount: 3 }), facts("no_counter_strafe", { speed: 150, hit: false })]) {
+    assert.doesNotMatch(text, /tick|m4a1_silencer|[a-z]+_[a-z]+/, "the weapon label, never the weapon key");
+  }
+
+  // Rule names, the filter list and the side come from the card.
+  assert.equal(ruleLabelForRuleId("moving_shots"), "移动射击");
+  assert.equal(ruleLabelForRuleId("no_counter_strafe"), "第一枪没急停");
+  const model = buildCoachingReviewModel(
+    [shooting("moving_shots", { speed: 201, movingShotCount: 3 }), shooting("no_counter_strafe", { speed: 150 }),
+      { ...shooting("no_counter_strafe", { speed: 160 }), id: "ncs-2" }],
+    players, { severity: "all", rule: "no_counter_strafe", search: "" });
+  assert.deepEqual(normalize(model.availableRules), [
+    { id: "moving_shots", label: "移动射击", count: 1 },
+    { id: "no_counter_strafe", label: "第一枪没急停", count: 2 }
+  ]);
+  assert.equal(model.filteredCount, 2);
+  assert.equal(coachingEventSide(shooting("moving_shots", { side: "CT" })), "CT");
+  assert.equal(coachingEventSide(shooting("moving_shots", {})), null);
+
+  // As a kill-feed row: a death after the burst puts the killer in front and leaves it out of the finding.
+  assert.deepEqual(normalize(coachingFeed(shooting("no_counter_strafe", { speed: 150, hit: false, died: true, attackerName: "donk" }))),
+    { died: true, killer: "donk", finding: "第一枪时速度约 150（M4A1-S 稳定线 76），没打中" });
+  assert.deepEqual(normalize(coachingFeed(shooting("moving_shots", { speed: 201, movingShotCount: 3, died: true }))),
+    { died: true, killer: null, finding: "边移动边开了 3 枪（最高速度约 201，M4A1-S 稳定线 76），一枪没中" });
+  assert.deepEqual(normalize(coachingFeed(shooting("moving_shots", { speed: 201, movingShotCount: 3, died: false, attackerName: "donk" }))),
+    { died: false, killer: null, finding: "边移动边开了 3 枪（最高速度约 201，M4A1-S 稳定线 76），一枪没中" });
+
+  // Player evidence: side first, then the weapon and the speeds; held keys read W+A.
+  const evidence = playerEvidenceForEvent(shooting("no_counter_strafe", { side: "T", speed: 150, movingShotCount: 1, shotCount: 2,
+    keysAtShot: ["W", "A"] }));
+  assert.deepEqual(normalize(evidence.map((item) => item.label)), ["side", "weaponLabel", "speed", "accurateSpeed", "movingShotCount"]);
+  assert.equal(evidence.find((item) => item.label === "weaponLabel").value, "M4A1-S");
+  const keys = playerEvidenceForEvent(shooting("no_counter_strafe", { keysAtShot: ["W", "A"] })).find((item) => item.label === "keysAtShot");
+  assert.equal(keys.value, "W+A");
+}
+
 function coachingEvent(overrides) {
   return {
     id: overrides.id,

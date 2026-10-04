@@ -631,6 +631,49 @@ class ReplayUpgradeTest(unittest.TestCase):
         self.assertFalse(after["pending"])
         self.assertIsNone(self.run_pass())
 
+    def test_a_v4_replay_is_owed_the_v5_upgrade_and_gets_its_shots(self) -> None:
+        demo_id = self.upload_and_parse()
+        # A demo parsed under contract v4: the job carries the v4 marker and the replay has no shots.
+        with self.Session() as db:
+            service = DemoService(db, storage=self.legacy, artifact_store=self.store, internal=True)
+            demo = db.get(Demo, demo_id)
+            replay = copy.deepcopy(service.load_replay_blob(demo))
+            assert replay is not None
+            replay["contractVersion"] = "replay_contract_v4"
+            replay.pop("shots", None)
+            previous = demo.replay_storage_key
+            demo.replay_storage_key = service.write_replay_blob(demo_id, replay)
+            job = service.latest_parse_job(demo)
+            assert job is not None
+            metadata = json.loads(job.metadata_json)
+            metadata[VERSION_KEY] = "replay_contract_v4"
+            job.metadata_json = json.dumps(metadata, separators=(",", ":"))
+            db.commit()
+            service.delete_artifact_safely(previous)
+        before = self.snapshot(demo_id)
+        self.assertEqual(before["replay"]["shots"], {})
+        self.assertTrue(before["pending"])
+        with self.Session() as db:
+            self.assertEqual(DemoService.for_internal(db).demo_ids_due_for_replay_upgrade(limit=5), [demo_id])
+
+        shots = {"t-entry": [[90, 180, 0, "ak47"], [96, 20, 1, "ak47"]], "ct-1": [[98, 4, 0, "m4a1_silencer"]]}
+
+        def parse_with_shots(source_path: Path, on_tick: Any = None) -> dict[str, Any]:
+            return {**parsed_match(), "shots": shots}
+
+        self.assertEqual(self.run_pass(parse_with_shots), "upgraded")
+        after = self.snapshot(demo_id)
+        self.assertEqual(after["version"], REPLAY_CONTRACT_VERSION)
+        self.assertEqual(after["metadata"][VERSION_KEY], REPLAY_CONTRACT_VERSION)
+        self.assertEqual(after["replay"]["shots"], shots)
+        self.assertEqual((after["replay"]["diagnostics"]["shotSource"], after["replay"]["diagnostics"]["shotCount"]),
+                         ("weapon_fire", 3))
+        # The upgrade swaps the replay only: status, timestamps and the coaching rows stay.
+        for key in ("status", "completed_at", "updated_at", "event_ids", "coaching_event_count"):
+            self.assertEqual(after[key], before[key], key)
+        self.assertFalse(after["pending"])
+        self.assertIsNone(self.run_pass())
+
     def test_waiting_work_stops_the_upgrade_and_gives_the_attempt_back(self) -> None:
         demo_id = self.upload_and_parse()
         self.make_old(demo_id)

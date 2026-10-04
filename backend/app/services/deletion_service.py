@@ -52,6 +52,7 @@ from app.models.demo import Demo
 from app.models.job import DemoJob
 from app.models.steam import SteamConnection, SteamMatch
 from app.services.demo_service.constants import RENDER_CLIP_STALE_AFTER_SECONDS
+from app.services.demo_service.replay_response_cache import replay_response_cache
 from app.services.storage import (
     ArtifactReferenceError,
     ArtifactStore,
@@ -254,6 +255,8 @@ class DeletionService:
         task_id = self._run_transaction(transaction)
         if task_id is None:
             return False
+        # Committed: drop this process's cached replay responses of the demo.
+        replay_response_cache.evict_demo(demo_id)
         # This request holds the task's lease; the drain takes over if it dies.
         self.run_task(task_id)
         return True
@@ -424,6 +427,9 @@ class DeletionService:
         task_id = self._run_transaction(transaction)
         if task_id is None:
             return False
+        # Committed: drop this process's cached replay responses of every demo
+        # of the owner, including those the owner task deletes later.
+        replay_response_cache.evict_owner(owner_id)
         self.run_task(task_id)
         return True
 

@@ -9,6 +9,7 @@ from app.parser.player_inputs import normalize_player_inputs
 from app.parser.player_states import normalize_player_states
 from app.parser.replay_contract import REPLAY_CONTRACT_VERSION
 from app.parser.replay_contract import normalize_replay_events as normalize_contract_events
+from app.parser.shots import normalize_shots
 from app.parser.utility_tracks import normalize_utility
 
 SIDE_COLORS = {"T": "#f5b542", "CT": "#2ed3d0"}
@@ -74,6 +75,7 @@ def normalize_parser_output(demo_id: str, parsed: dict[str, Any]) -> dict[str, A
         "playerStates": normalize_player_states(parsed.get("playerStates")),
         "utility": utility,
         "inputs": normalize_player_inputs(parsed.get("inputs")),
+        "shots": normalize_shots(parsed.get("shots")),
         "generatedAt": datetime.now(UTC).isoformat(),
     }
 

@@ -15,7 +15,9 @@ export type RuleFilter =
   | "retake_desync"
   | "weak_utility_before_execute"
   | "late_post_plant_utility"
-  | "post_plant_spacing_with_bomb_event";
+  | "post_plant_spacing_with_bomb_event"
+  | "moving_shots"
+  | "no_counter_strafe";
 
 export interface CoachingReviewFilters {
   severity: SeverityFilter;
@@ -94,6 +96,8 @@ const RULE_LABELS: Record<string, string> = {
   isolated_entry: "首杀交火缺少支援",
   late_post_plant_utility: "下包后的道具时机",
   mock: "模拟建议",
+  moving_shots: "移动射击",
+  no_counter_strafe: "第一枪没急停",
   poor_spacing: "队友站位间距",
   post_plant_spacing_with_bomb_event: "下包后的站位分工",
   post_plant_spread: "下包后站位集中",
@@ -154,7 +158,15 @@ const EVIDENCE_KEYS = [
   "maxNearestDistance",
   "minPairDistance",
   "clusterDistance",
-  "retakeSiteDistance"
+  "retakeSiteDistance",
+  // Shooting rules; `side` above comes first, so their cards show 阵营 then these.
+  "weaponLabel",
+  "speed",
+  "accurateSpeed",
+  "movingShotCount",
+  "shotCount",
+  "keysAtShot",
+  "occurrencesInRound"
 ];
 
 export function buildCoachingReviewModel(
@@ -359,7 +371,9 @@ export function ruleFilterForRuleId(ruleId: string): RuleFilter {
     ruleId === "retake_desync" ||
     ruleId === "weak_utility_before_execute" ||
     ruleId === "late_post_plant_utility" ||
-    ruleId === "post_plant_spacing_with_bomb_event"
+    ruleId === "post_plant_spacing_with_bomb_event" ||
+    ruleId === "moving_shots" ||
+    ruleId === "no_counter_strafe"
   ) {
     return ruleId;
   }
@@ -551,9 +565,50 @@ export function coachingFacts(event: CoachingEvent): string {
       const utility = utilityName(context.utilityType) || utilityName(context.utilityLabel) || "道具";
       return seconds ? `下包约 ${seconds} 秒后投出第一个${utility}` : "";
     }
+    case "moving_shots":
+    case "no_counter_strafe":
+      return shootingFacts(context, ruleIdForEvent(event), true);
     default:
       return "";
   }
+}
+
+const SHOOTING_RULES = new Set(["moving_shots", "no_counter_strafe"]);
+const MOVEMENT_KEYS = new Set(["W", "A", "S", "D"]);
+
+/**
+ * The facts line of a shooting card: how fast the shot was against the weapon's
+ * stable speed, how it was taken (in the air, or holding a key without
+ * counter-strafing), the outcome and how often it happened in the round.
+ * `withDeath` false leaves the death out (the kill-feed row already shows it).
+ */
+function shootingFacts(context: Record<string, unknown>, rule: string, withDeath: boolean): string {
+  const speed = factSpeed(context.speed);
+  const accurate = factSpeed(context.accurateSpeed);
+  const weapon = factText(context.weaponLabel);
+  const stableLine = accurate ? `${weapon ? `${weapon} ` : ""}稳定线 ${accurate}` : "";
+  const killer = factText(context.attackerName);
+  const death = withDeath && context.died === true ? (killer ? `被 ${killer} 击杀` : "2 秒内阵亡") : "";
+  const occurrences = typeof context.occurrencesInRound === "number" && Number.isInteger(context.occurrencesInRound) &&
+    context.occurrencesInRound > 1 ? `这回合共 ${context.occurrencesInRound} 次` : "";
+  if (rule === "moving_shots") {
+    const count = factNumber(context.movingShotCount, 0);
+    const detail = [speed ? `最高速度约 ${speed}` : "", stableLine].filter(Boolean).join("，");
+    return joinFacts(`边移动边开${count ? `了 ${count} 枪` : "枪"}${detail ? `（${detail}）` : ""}`, "一枪没中", death, occurrences);
+  }
+  const keys = Array.isArray(context.keysAtShot) ?
+    context.keysAtShot.filter((key): key is string => typeof key === "string" && MOVEMENT_KEYS.has(key)) : [];
+  const how = context.airborne === true ? "在空中开枪" :
+    keys.length > 0 && context.counterStrafe === false ? `按着 ${keys.join("+")} 没有反向急停` :
+      // Tapped the opposite key, but fired before the speed came down.
+      context.counterStrafe === true ? "反向点了但开枪太早" : "";
+  return joinFacts(
+    speed ? `第一枪时速度约 ${speed}${stableLine ? `（${stableLine}）` : ""}` : "",
+    how,
+    context.hit === false ? "没打中" : "",
+    death,
+    occurrences
+  );
 }
 
 export function playerEvidenceForEvent(event: CoachingEvent): EvidenceSummaryItem[] {
@@ -569,6 +624,7 @@ export function playerEvidenceForEvent(event: CoachingEvent): EvidenceSummaryIte
     else if (key === "spacingType") text = SPACING_TYPE_NAMES[String(value)] ?? formatEvidenceValue(value);
     else if (key === "utilityType" || key === "utilityLabel") text = utilityName(value) || formatEvidenceValue(value);
     else if (key === "utilityTypes" && Array.isArray(value)) text = value.slice(0, 6).map((item) => utilityName(item) || String(item)).join("、");
+    else if (key === "keysAtShot" && Array.isArray(value)) text = value.slice(0, 4).join("+");
     else text = formatEvidenceValue(value);
     summary.push({ label: key, value: text });
     if (summary.length >= 5) break;
@@ -618,6 +674,11 @@ export function coachingFeed(event: CoachingEvent): CoachingFeed {
   if (rule === "isolated_entry") {
     // Newer isolated_entry cards record the killer too (analyzer death impact).
     return { died: true, killer: factText(context.attackerName) || null, finding: coachingFacts(event) };
+  }
+  if (SHOOTING_RULES.has(rule)) {
+    // Died within the window after the burst: the row reads killer ✕ player, so the finding leaves the death out.
+    const died = context.died === true;
+    return { died, killer: died ? factText(context.attackerName) || null : null, finding: shootingFacts(context, rule, false) };
   }
   return { died: false, killer: null, finding: coachingFacts(event) };
 }
@@ -699,6 +760,11 @@ function utilityName(value: unknown): string {
 function factNumber(value: unknown, digits: number): string {
   if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) return "";
   return digits === 0 ? String(Math.round(value)) : value.toFixed(digits).replace(/\.?0+$/, "");
+}
+
+// A speed in units per second; 0 is a real value (a jump straight up).
+function factSpeed(value: unknown): string {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? String(Math.round(value)) : "";
 }
 
 function factText(value: unknown): string {

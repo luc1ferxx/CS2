@@ -10,14 +10,16 @@ from typing import Any, SupportsFloat, SupportsIndex, TypeGuard
 from app.parser.map_config import is_current_transform, legacy_radar_reprojection, map_metadata_for
 from app.parser.player_inputs import INPUT_SOURCE, input_track_capped, normalize_player_inputs
 from app.parser.player_states import normalize_player_states
+from app.parser.shots import SHOT_SOURCE, normalize_shots, shot_count, shot_track_capped
 from app.parser.utility_tracks import normalize_utility
 
 # v2 adds `playerStates` (equipment change points) and `utility` (grenade
 # trajectories); v3 adds `inputs` (per-player key change points); v4 adds an
-# optional `throwOrigin` (the thrower's pose at release) per throw. Older replays
-# load with them empty; the worker's re-parse backstop upgrades completed demos
-# whose stored version is older than this one.
-REPLAY_CONTRACT_VERSION = "replay_contract_v4"
+# optional `throwOrigin` (the thrower's pose at release) per throw; v5 adds
+# `shots` (per-player gun shots with speed, airborne flag and weapon). Older
+# replays load with them empty; the worker's re-parse backstop upgrades completed
+# demos whose stored version is older than this one.
+REPLAY_CONTRACT_VERSION = "replay_contract_v5"
 _CONTRACT_VERSION_PATTERN = re.compile(r"replay_contract_v(\d{1,4})")
 
 PARSER_EVENT_TYPES = {
@@ -135,6 +137,7 @@ def normalize_replay_contract(replay: dict[str, Any]) -> dict[str, Any]:
     normalized["playerStates"] = normalize_player_states(normalized.get("playerStates"))
     normalized["utility"] = normalize_utility(normalized.get("utility"), rounds, tick_rate)
     normalized["inputs"] = normalize_player_inputs(normalized.get("inputs"))
+    normalized["shots"] = normalize_shots(normalized.get("shots"))
     normalized["video"] = _normalize_video(normalized.get("video"), tick_rate, tick_start, tick_end)
     normalized["generatedAt"] = str(normalized.get("generatedAt") or datetime.now(UTC).isoformat())
     normalized["contractVersion"] = _contract_version(raw)
@@ -419,6 +422,8 @@ def _replay_diagnostics(raw: dict[str, Any], normalized: dict[str, Any]) -> dict
         degraded_fields.append("utility")
     if "inputs" in raw and not isinstance(raw.get("inputs"), dict):
         degraded_fields.append("inputs")
+    if "shots" in raw and not isinstance(raw.get("shots"), dict):
+        degraded_fields.append("shots")
     metadata = normalized.get("mapMetadata")
     if isinstance(metadata, dict) and (_optional_int(metadata.get("legacyEdgePositionsHidden")) or 0) > 0:
         degraded_fields.append("legacyRadarEdgePositions")
@@ -434,8 +439,12 @@ def _replay_diagnostics(raw: dict[str, Any], normalized: dict[str, Any]) -> dict
     inputs = normalized.get("inputs") or {}
     if any(input_track_capped(track) for track in inputs.values()):
         degraded_fields.append("inputsCapped")
+    shots = normalized.get("shots") or {}
+    if any(shot_track_capped(track) for track in shots.values()):
+        degraded_fields.append("shotsCapped")
     # No flag for a v3 replay without inputs: many demo sources carry no usercmd
-    # data, and `inputSource: null` already says so.
+    # data, and `inputSource: null` already says so. Likewise no flag for a v5
+    # replay without shots: `shotSource: null` says it.
     if (replay_contract_number(normalized["contractVersion"]) or 0) >= 2:
         # A v2 parse whose grenade or equipment extraction came back empty is a
         # partial success: flag it here, never as a failed parse.
@@ -461,6 +470,8 @@ def _replay_diagnostics(raw: dict[str, Any], normalized: dict[str, Any]) -> dict
         "playerStateCount": player_state_count,
         "inputSource": INPUT_SOURCE if inputs else None,
         "inputPlayerCount": len(inputs),
+        "shotSource": SHOT_SOURCE if shots else None,
+        "shotCount": shot_count(shots),
     }
 
 

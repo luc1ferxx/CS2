@@ -38,11 +38,13 @@ describe("PrivacyPage", () => {
     expect(screen.getByRole("region", { name: "你上传的比赛" })).toHaveTextContent(
       "携带的道具和按键记录（移动、静步、蹲、跳和鼠标左右键）"
     );
+    expect(screen.getByRole("region", { name: "你上传的比赛" })).toHaveTextContent("开枪记录（时间、移动速度、武器）");
     expect(screen.getByRole("region", { name: "登录时我们拿到什么" })).toHaveTextContent(
       "删除账户不会把你移出名单；如需移出，请联系站长。"
     );
     expect(screen.getByRole("region", { name: "保存多久" })).toHaveTextContent("数据不会因此自动删除");
     expect(screen.getByRole("region", { name: "Cookie 和浏览器存储" })).toHaveTextContent("__Host-cs2_session");
+    expect(screen.getByRole("region", { name: "Cookie 和浏览器存储" })).not.toHaveTextContent("回放会按浏览器的缓存规则暂存");
     expect(screen.getByRole("region", { name: "数据存在哪里、谁能接触" })).toHaveTextContent(DATA_REGION_FALLBACK);
     const contact = screen.getByRole("region", { name: "联系" });
     expect(contact).toHaveTextContent("本站没有公开联系方式。受邀用户请直接联系邀请你的站长；同场的其他玩家可以请上传这场比赛的人删除它。");
@@ -50,7 +52,8 @@ describe("PrivacyPage", () => {
     const deletion = screen.getByRole("region", { name: "删除" });
     expect(within(deletion).getByRole("link", { name: "账户与数据" })).toHaveAttribute("href", "/account");
     expect(deletion).toHaveTextContent("删除比赛不会恢复当天的上传次数。");
-    expect(screen.getByText("最近更新：2026-10-03")).toBeInTheDocument();
+    expect(deletion).toHaveTextContent("在内存里暂存的回放只在内存里，删除后读不到，服务器重启后也不保留。");
+    expect(screen.getByText("最近更新：2026-10-04")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "隐私说明" })).toHaveAttribute("aria-current", "page");
   });
 

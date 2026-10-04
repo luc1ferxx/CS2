@@ -1,4 +1,5 @@
-export type CoachingCategory = "objective" | "positioning" | "trading" | "timing" | "utility";
+// "mechanics": the shooting rules (moving_shots, no_counter_strafe).
+export type CoachingCategory = "objective" | "positioning" | "trading" | "timing" | "utility" | "mechanics";
 export type CoachingSeverity = "info" | "low" | "medium" | "high" | "critical";
 
 export interface CoachingEvent {

@@ -99,6 +99,7 @@ def _public_replay_contract(
             if isinstance(item, dict)
         ],
         "inputs": _public_inputs(replay.get("inputs")),
+        "shots": _public_shots(replay.get("shots")),
         "generatedAt": replay["generatedAt"],
         "contractVersion": replay["contractVersion"],
         "diagnostics": _public_replay_diagnostics(replay.get("diagnostics")),
@@ -147,6 +148,21 @@ def _public_inputs(value: Any) -> dict[str, list[list[int]]]:
             [entry[0], entry[1]]
             for entry in track
             if isinstance(entry, (list, tuple)) and len(entry) == 2
+        ]
+        for player_id, track in value.items()
+        if isinstance(track, list)
+    }
+
+
+def _public_shots(value: Any) -> dict[str, list[list[Any]]]:
+    """Gun shots as ``[tick, speed, flags, weapon]`` rows; the stored replay was normalized on load."""
+    if not isinstance(value, dict):
+        return {}
+    return {
+        str(player_id): [
+            [entry[0], entry[1], entry[2], entry[3]]
+            for entry in track
+            if isinstance(entry, (list, tuple)) and len(entry) == 4
         ]
         for player_id, track in value.items()
         if isinstance(track, list)
@@ -317,6 +333,8 @@ def _public_replay_diagnostics(value: Any) -> dict[str, Any] | None:
             "playerStateCount",
             "inputSource",
             "inputPlayerCount",
+            "shotSource",
+            "shotCount",
         ),
     )
     family_counts = value.get("eventFamilyCounts")

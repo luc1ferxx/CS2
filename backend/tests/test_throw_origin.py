@@ -202,14 +202,14 @@ def _parsed_match(origin: dict[str, Any] | None) -> dict[str, Any]:
 
 
 class ContractV4Test(unittest.TestCase):
-    def test_version_is_v4_and_v3_replays_are_owed_the_upgrade(self) -> None:
-        self.assertEqual(REPLAY_CONTRACT_VERSION, "replay_contract_v4")
-        self.assertTrue(replay_contract_is_current("replay_contract_v4"))
+    def test_v3_replays_are_owed_the_upgrade(self) -> None:
+        # v5 (shots) is current now; v4 still carries throw origins.
+        self.assertEqual(REPLAY_CONTRACT_VERSION, "replay_contract_v5")
         self.assertFalse(replay_contract_is_current("replay_contract_v3"))
 
     def test_parser_output_keeps_the_origin_in_world_units_and_counts_it(self) -> None:
         replay = normalize_parser_output("demo-1", _parsed_match(EXPECTED_ORIGIN))
-        self.assertEqual(replay["contractVersion"], "replay_contract_v4")
+        self.assertEqual(replay["contractVersion"], REPLAY_CONTRACT_VERSION)
         throw = replay["utility"][0]
         self.assertEqual(throw["throwOrigin"], EXPECTED_ORIGIN)  # not projected like the points
         self.assertLessEqual(throw["points"][0]["x"], 100.0)

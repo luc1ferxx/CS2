@@ -111,6 +111,28 @@ describe("CoachingPanel", () => {
     expect(within(cardFor(untradedLate)).getByText("5 秒内没有队友补枪")).toBeInTheDocument();
   });
 
+  it("lists the two shooting suggestion types in the type filter and filters to one", async () => {
+    const user = userEvent.setup();
+    const moving = coachingEvent({
+      id: "moving-1", tick_start: 250, tick_end: 280, category: "mechanics", severity: "low",
+      structured_context_json: { ruleId: "moving_shots", weaponLabel: "AK-47", accurateSpeed: 73, speed: 201, movingShotCount: 3 }
+    });
+    const firstShot = coachingEvent({
+      id: "ncs-1", tick_start: 500, tick_end: 520, category: "mechanics", severity: "low",
+      structured_context_json: { ruleId: "no_counter_strafe", weaponLabel: "AWP", accurateSpeed: 68, speed: 150, hit: false }
+    });
+    renderPanel([spacingEarly, moving, firstShot]);
+
+    await user.click(screen.getByText("筛选建议"));
+    const select = screen.getByRole("combobox", { name: "建议类型" });
+    expect(within(select).getAllByRole("option").map((option) => option.textContent))
+      .toEqual(["全部建议类型", "移动射击（1）", "第一枪没急停（1）", "队友站位间距（1）"]);
+
+    await user.selectOptions(select, "no_counter_strafe");
+    expect(cardTitles()).toEqual(["第一枪没有急停"]);
+    expect(within(cardFor(firstShot)).getByText("第一枪时速度约 150（AWP 稳定线 68），没打中")).toBeInTheDocument();
+  });
+
   it("asks for the viewer's player and points to the picker while nobody is selected", async () => {
     const user = userEvent.setup();
     const props = renderPanel([], { selectedPlayerName: null, onChoosePlayer: vi.fn() });

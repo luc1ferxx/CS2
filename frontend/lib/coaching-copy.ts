@@ -8,6 +8,8 @@ interface CoachingCopy {
   limitation: string;
 }
 
+const SHOT_LIMITATION = "速度取自每一枪记录的移动速度；没有计算弹道恢复、蹲下、开镜和对手的移动，没打中也可能有别的原因。";
+
 const RULE_COPY: Record<string, CoachingCopy> = {
   untraded_death: {
     title: "复盘这次未被补枪的交火",
@@ -48,6 +50,16 @@ const RULE_COPY: Record<string, CoachingCopy> = {
     title: "回看下包后的道具时机",
     guidance: "回看触发这次投掷的情况，判断把道具留到对手回防时是否更合适。",
     limitation: "间隔较长不一定代表投掷太晚；保留道具可能合理，部分道具事件也可能缺失。"
+  },
+  moving_shots: {
+    title: "边移动边开枪",
+    guidance: "步枪、狙击枪和沙鹰要先停下再开枪：反向点一下移动键，速度降下来再打。",
+    limitation: SHOT_LIMITATION
+  },
+  no_counter_strafe: {
+    title: "第一枪没有急停",
+    guidance: "练习急停：松开移动键并反向点一下，再开第一枪。",
+    limitation: SHOT_LIMITATION
   }
 };
 
@@ -62,7 +74,10 @@ const EVIDENCE_LABELS: Record<string, string> = {
   side: "阵营", site: "包点", sameAreaDistance: "同区域距离阈值", isolatedTeammateDistance: "支援距离阈值",
   poorSpacingMinDistance: "最小间距阈值", poorSpacingMaxDistance: "最大间距阈值",
   maxNearestDistance: "最远的最近队友距离", minPairDistance: "最近的两人距离",
-  clusterDistance: "集中站位距离阈值", retakeSiteDistance: "回防距离阈值"
+  clusterDistance: "集中站位距离阈值", retakeSiteDistance: "回防距离阈值",
+  weapon: "武器代码", weaponLabel: "武器", speed: "开枪时速度（单位/秒）", accurateSpeed: "稳定线（单位/秒）",
+  shotCount: "这次连射枪数", movingShotCount: "移动中开的枪数", airborne: "在空中开枪", hit: "有命中",
+  died: "2 秒内阵亡", keysAtShot: "开枪时按着的移动键", counterStrafe: "有反向急停", occurrencesInRound: "本回合出现次数"
 };
 
 function ruleId(event: CoachingEvent): string {

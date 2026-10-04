@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 from app.parser.player_inputs import parse_player_inputs
 from app.parser.player_states import PLAYER_STATE_PROPS, build_player_states
 from app.parser.replay_contract import normalize_bomb_site
+from app.parser.shots import parse_shots
 from app.parser.utility_tracks import parse_utility_tracks, with_throw_origins
 from app.services.upload_service import MAX_DEMO_UPLOAD_BYTES, safe_upload_filename
 
@@ -166,6 +167,12 @@ def parse_demo_file(source_path: Path) -> dict[str, Any]:
     inputs: dict[str, list[list[int]]] = _best_effort(
         lambda: parse_player_inputs(parser, rounds, death_records), {},
     )
+    # Contract v5: gun shots with the shooter's speed and airborne flag, best
+    # effort ({} when the demo lacks weapon_fire or its velocity props). Also
+    # before the tick records: weapon_fire with player props is a full demo pass,
+    # and on top of the live tick records it overran the parse child's 4 GiB
+    # RLIMIT_DATA (demoparser2 aborts on a failed allocation, uncatchable).
+    shots: dict[str, list[list[int | str]]] = _best_effort(lambda: parse_shots(parser), {})
     tick_records = _parse_tick_records(parser, sample_ticks)
     if not tick_records:
         raise DemoParserError(
@@ -199,6 +206,7 @@ def parse_demo_file(source_path: Path) -> dict[str, Any]:
         "playerStates": player_states,
         "utility": utility,
         "inputs": inputs,
+        "shots": shots,
         # Not part of the replay contract: the worker folds it into the demo's
         # match summary, and the normalizer never copies it into the replay blob.
         "teamNames": parse_team_names(parser, team_name_sample_ticks(rounds)),

@@ -155,6 +155,7 @@ worker 空闲时（队列里有任务就让出）依次跑这两项，每项每�
 | `MAX_VIDEO_UPLOAD_BYTES` | `2147483648` | actual streamed dev/QA/worker video limit |
 | `MAX_REPLAY_ARTIFACT_BYTES` | `134217728` | replay JSON artifact limit |
 | `UPLOAD_CHUNK_BYTES` | `1048576` | bounded upload/read chunk size |
+| `REPLAY_RESPONSE_CACHE_MB` | `64` | API; 进程内存里缓存 `GET /demos/{demo_id}/replay` 算好的 gzip 响应（按总字节数 LRU），并给响应加 `ETag`，`If-None-Match` 命中时返回 `304`；`0` 关闭缓存、`ETag` 和 `304`。目前的 Compose 文件没有把它转发进 `api` 容器，容器里用默认值 |
 | `DEMO_UPLOAD_DAILY_LIMIT` | `10` | API; 仅 production：每个 owner 在滚动 24 小时内（按上传账本 `upload_ledger` 计数：每次上传或 Steam 导入写一行，24 小时后清理；归档和永久删除的比赛都照样算）最多新建的 demo 数，超出时 `POST /uploads/demo` 返回 `429` `upload_daily_limit`，`Retry-After` 为窗口内对应那次上传移出窗口的秒数。范围 `0`..`1000`，`0` 表示不限 |
 | `DEMO_ACTIVE_PARSE_LIMIT` | `2` | API; 仅 production：每个 owner 同时处于 `queued`/`parsing`/`analyzing` 的 demo 上限，上传和解析重试超出时返回 `429` `active_parse_limit`（`Retry-After: 60`）。范围 `0`..`100`，`0` 表示不限 |
 | `PARSE_QUEUE_GLOBAL_LIMIT` | `50` | API; 仅 production：所有 owner 合计处于上述状态的 demo 上限（按数据库计数，不看 Redis 队列长度），上传和解析重试超出时返回 `503` `parse_queue_full`（`Retry-After: 60`）。范围 `0`..`100000`，`0` 表示不限 |

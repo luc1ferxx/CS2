@@ -1,10 +1,10 @@
-"""Opt-in check of replay contract v2/v3 against real demos.
+"""Opt-in check of replay contract v2/v3/v5 against real demos.
 
 Skipped unless ``REPLAY_V2_SAMPLE_CHECK=1``. It parses every ``*.dem`` in the
 repo root (git-ignored samples) plus ``SAMPLE_DEMO_PATH`` when set, and checks
 the v2 extras against the demo's own events: one track per detonation, landing
-points on the detonate position, money/weapon ranges and the size budget; and
-the v3 key inputs' shape and size.
+points on the detonate position, money/weapon ranges and the size budget; the
+v3 key inputs' shape and size; and the v5 gun shots' shape and size.
 """
 
 import json
@@ -20,6 +20,8 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 SIZE_BUDGET = 1.25
 # v3 inputs on top of that: ~4 % on a full Mirage match.
 INPUTS_BUDGET = 0.08
+# v5 shots: ~0.2 % (about 2,000 gun shots, 50 KB) on the four BLAST matches.
+SHOTS_BUDGET = 0.005
 
 
 def _sample_demos() -> list[Path]:
@@ -108,8 +110,9 @@ class SampleDemoContractV2Test(unittest.TestCase):
         self.assertTrue(weapons)
         self.assertTrue(all(0 < len(weapon) <= 32 for weapon in weapons))
 
-        v1 = {key: value for key, value in replay.items() if key not in ("playerStates", "utility", "inputs")}
-        self.assertLessEqual(_size({key: value for key, value in replay.items() if key != "inputs"}), _size(v1) * SIZE_BUDGET)
+        v1 = {key: value for key, value in replay.items() if key not in ("playerStates", "utility", "inputs", "shots")}
+        v2 = {key: value for key, value in replay.items() if key not in ("inputs", "shots")}
+        self.assertLessEqual(_size(v2), _size(v1) * SIZE_BUDGET)
 
         # v3 key inputs: the sample demos are GOTV recordings, which carry usercmd data.
         inputs = replay["inputs"]
@@ -119,6 +122,18 @@ class SampleDemoContractV2Test(unittest.TestCase):
         for track in inputs.values():
             self.assertTrue(all(earlier[0] < later[0] and earlier[1] != later[1] for earlier, later in pairwise(track)))
         self.assertLessEqual(_size(inputs), _size(v1) * INPUTS_BUDGET)
+
+        # v5 gun shots: every GOTV demo has weapon_fire with the shooter's velocity.
+        from app.parser.shots import weapon_key
+
+        shots = replay["shots"]
+        self.assertTrue(shots)
+        self.assertLessEqual(set(shots), frame_ids)
+        for track in shots.values():
+            self.assertTrue(all(earlier < later for earlier, later in pairwise(track)))
+            self.assertTrue(all(0 <= speed <= 1000 and flags in (0, 1) and weapon_key(weapon) == weapon
+                                for _, speed, flags, weapon in track))
+        self.assertLessEqual(_size(shots), _size(v1) * SHOTS_BUDGET)
 
 
 if __name__ == "__main__":

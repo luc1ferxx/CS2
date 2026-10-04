@@ -232,6 +232,10 @@ export interface ReplayContractDiagnostics {
   inputPlayerCount?: number;
   /** v4: number of throws with a `throwOrigin`. Absent on older API responses. */
   throwOriginCount?: number;
+  /** v5: `"weapon_fire"` when gun shots were extracted, else null. Absent on older API responses. */
+  shotSource?: string | null;
+  /** v5: number of gun shots kept across all players. Absent on older API responses. */
+  shotCount?: number;
 }
 
 export interface ReplayData {
@@ -256,6 +260,14 @@ export interface ReplayData {
    * `[tick, 0]` entry marks death. Optional per demo (needs usercmd data); older replays get `{}`.
    */
   inputs?: Record<string, Array<[number, number]>>;
+  /**
+   * v5 only: per-player gun shots as compact `[tick, speed, flags, weapon]` tuples, sorted by tick.
+   * `speed` is the horizontal movement speed at the shot in units per second (int, 0..1000),
+   * `flags` bit 1 = airborne, `weapon` the weapon key without the `weapon_` prefix
+   * (`ak47`, `m4a1_silencer`, `deagle`, ...). Knives, grenades, C4 and the taser are not shots.
+   * Keyed by player id (the frames' id). Optional per demo; older replays get `{}`.
+   */
+  shots?: Record<string, Array<[number, number, number, string]>>;
   generatedAt: string;
   diagnostics?: ReplayContractDiagnostics | null;
 }

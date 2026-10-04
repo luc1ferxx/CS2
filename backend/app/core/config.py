@@ -309,6 +309,10 @@ class Settings:
     coaching_recompute_enabled: bool = _bool_from_env("COACHING_RECOMPUTE_ENABLED", True)
     coaching_recompute_max_attempts: int = int(os.getenv("COACHING_RECOMPUTE_MAX_ATTEMPTS", "3"))
     coaching_recompute_retry_seconds: int = int(os.getenv("COACHING_RECOMPUTE_RETRY_SECONDS", "900"))
+    # In-process cache of finished GET /demos/{id}/replay responses (gzip bytes,
+    # LRU by total size; services/demo_service/replay_response_cache.py), in MB.
+    # 0 turns the cache, its ETag and the 304 answers off.
+    replay_response_cache_mb: int = int(os.getenv("REPLAY_RESPONSE_CACHE_MB", "64"))
     cors_origins_raw: str = os.getenv(
         "CORS_ORIGINS",
         "http://localhost:3000,http://127.0.0.1:3000",

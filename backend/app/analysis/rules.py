@@ -3,9 +3,9 @@ from __future__ import annotations
 import math
 import uuid
 from bisect import bisect_left, bisect_right
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, NamedTuple
 
 from app.analysis.round_economy import buy_kinds_by_side
 from app.parser.map_config import REFERENCE_WORLD_UNITS_PER_PERCENT, get_map_config
@@ -53,6 +53,33 @@ class RuleConfig:
     retake_desync_seconds: float = 4.0
     execute_utility_window_seconds: float = 12.0
     min_execute_utility_events: int = 2
+    # Shooting rules (recorded `shots`). The CS2 max player speed (units/second)
+    # of each judged weapon; a shot is accurate while the speed is at most
+    # round(shot_accurate_speed_ratio * max). SMGs, shotguns, the other pistols
+    # and LMGs are run-and-gun weapons and are never judged.
+    shot_weapon_max_speeds: tuple[tuple[str, int], ...] = (
+        ("ak47", 215), ("m4a1", 225), ("m4a1_silencer", 225), ("galilar", 215), ("famas", 220),
+        ("aug", 220), ("sg556", 210), ("awp", 200), ("ssg08", 230), ("scar20", 215), ("g3sg1", 215),
+        ("deagle", 230), ("revolver", 220),
+    )
+    shot_accurate_speed_ratio: float = 0.34
+    # Consecutive shots of one judged weapon at most this far apart are one burst.
+    shot_burst_gap_seconds: float = 0.5
+    # A burst opens a fight when the player fired no gun in this long before it.
+    shot_opener_quiet_seconds: float = 1.0
+    # no_counter_strafe: the first shot is this many units/second above the accurate speed.
+    counter_strafe_margin: float = 40.0
+    moving_shots_min: int = 3
+    shot_death_window_seconds: float = 2.0
+    # A damage event this many ticks after a shot (or on its tick) is that shot's hit.
+    shot_hit_window_ticks: int = 2
+    # An opposite movement key pressed this long before the first shot is a counter-strafe.
+    counter_strafe_window_seconds: float = 0.15
+    shot_card_lead_seconds: float = 0.5
+    shot_card_tail_seconds: float = 0.25
+    # At most this many no_counter_strafe cards per player per match: the ones
+    # where the player died first, then the fastest first shot, then the earliest.
+    no_counter_strafe_max_per_match: int = 3
 
 
 DEFAULT_RULE_CONFIG = RuleConfig()
@@ -81,6 +108,28 @@ UTILITY_LABELS = {
     "molotov": "Molotov",
     "smoke": "Smoke",
 }
+SHOOTING_RULES = ("moving_shots", "no_counter_strafe")
+SHOT_WEAPON_LABELS = {
+    "ak47": "AK-47",
+    "m4a1": "M4A4",
+    "m4a1_silencer": "M4A1-S",
+    "galilar": "Galil AR",
+    "famas": "FAMAS",
+    "aug": "AUG",
+    "sg556": "SG 553",
+    "awp": "AWP",
+    "ssg08": "SSG 08",
+    "scar20": "SCAR-20",
+    "g3sg1": "G3SG1",
+    "deagle": "Desert Eagle",
+    "revolver": "R8 Revolver",
+}
+SHOT_FLAG_AIRBORNE = 1
+# The movement bits of the replay's `inputs` masks, in the order cards list them.
+MOVEMENT_KEY_BITS = (("W", 8), ("A", 512), ("S", 16), ("D", 1024))
+OPPOSITE_MOVEMENT_BIT = {8: 16, 16: 8, 512: 1024, 1024: 512}
+# Damage from these is never a gun shot's hit; damage without a weapon still counts.
+NON_GUN_DAMAGE_WEAPONS = {"hegrenade", "inferno", "molotov", "incgrenade", "flashbang", "smokegrenade", "decoy", "world"}
 
 _SEVERITY_ORDER = {
     "critical": 0,
@@ -89,6 +138,11 @@ _SEVERITY_ORDER = {
     "low": 3,
     "info": 4,
 }
+
+_SHOT_LIMITATION = (
+    "Speed comes from the velocity recorded with each shot; spread recovery, crouching, scope state and the "
+    "target's movement are not modelled, and a miss can have other causes."
+)
 
 _REVIEW_GUIDANCE = {
     "untraded_death": (
@@ -119,6 +173,20 @@ _REVIEW_GUIDANCE = {
         "Review the team's utility around your plant and decide whether an exposed approach needed a flash or smoke.",
         "This is team context, not a planter mistake. A plant is not an execute timestamp; older or unrecorded utility may still matter.",
     ),
+    "moving_shots": (
+        "Stop before you shoot: with rifles, snipers and the Deagle, tap the opposite movement key and fire once your speed has dropped.",
+        _SHOT_LIMITATION,
+    ),
+    "no_counter_strafe": (
+        "Practise counter-strafing: release the movement key and tap the opposite one, then take the first shot.",
+        _SHOT_LIMITATION,
+    ),
+}
+
+_EVIDENCE_SOURCES = {
+    "untraded_death": "recorded_kills",
+    "moving_shots": "recorded_shots",
+    "no_counter_strafe": "recorded_shots",
 }
 
 
@@ -906,6 +974,382 @@ def find_retake_desyncs(
     return events
 
 
+class RecordedShot(NamedTuple):
+    tick: int
+    speed: int
+    airborne: bool
+    weapon: str
+
+
+@dataclass
+class ShotBurst:
+    """Consecutive shots of one judged weapon in one live round, at most the burst gap apart."""
+
+    round_number: int
+    weapon: str
+    # The player fired no gun in the opener-quiet window before the first shot.
+    opener: bool
+    shots: list[RecordedShot]
+
+
+def find_shooting_issues(
+    replay: dict[str, Any],
+    config: RuleConfig = DEFAULT_RULE_CONFIG,
+) -> list[CoachingEventCandidate]:
+    """moving_shots and no_counter_strafe, from the recorded gun shots (replay contract v5 `shots`).
+
+    Only rifles, snipers, the Deagle and the R8 are judged (`shot_weapon_max_speeds`).
+    A shot is moving above its weapon's accurate speed or in the air, and hit when
+    a gun damage event of the shooter lands on its tick or up to
+    `shot_hit_window_ticks` after it. A weapon change, a shot of another gun or a
+    gap longer than the burst gap ends a burst.
+
+    - moving_shots: a burst with at least `moving_shots_min` moving shots, none of which hit.
+    - no_counter_strafe: an opener burst whose first shot was clearly too fast
+      (accurate speed + `counter_strafe_margin`) or airborne, that is no
+      moving_shots burst, and in which no shot hit or after which the player died
+      within `shot_death_window_seconds`.
+
+    One card per player per round: the first moving_shots burst, else the first
+    no_counter_strafe one; `occurrencesInRound` counts the round's bursts that
+    qualified for either. A player keeps at most `no_counter_strafe_max_per_match`
+    no_counter_strafe cards (died first, then the fastest first shot, then the
+    earliest); moving_shots is not capped. Best effort: no `shots`, or a replay
+    without any damage event (the family is missing, so no miss can be told),
+    gives no cards.
+    """
+    shots_by_player = _recorded_shots(replay.get("shots"))
+    if not shots_by_player:
+        return []
+    context = ReplayContext(replay)
+    if not any(_event_type(event) == "damage" for event in context.events):
+        return []
+
+    tick_rate = context.tick_rate
+    max_speeds = dict(config.shot_weapon_max_speeds)
+    hits = _gun_hits_by_attacker(context.events)
+    round_of = _live_round_lookup(context)
+    raw_inputs = replay.get("inputs")
+    inputs: dict[str, Any] = raw_inputs if isinstance(raw_inputs, dict) else {}
+    death_window_ticks = round(tick_rate * config.shot_death_window_seconds)
+    events: list[CoachingEventCandidate] = []
+
+    for player_id in sorted(shots_by_player):
+        bursts = _shot_bursts(
+            shots_by_player[player_id],
+            max_speeds,
+            round_of,
+            gap_ticks=round(tick_rate * config.shot_burst_gap_seconds),
+            quiet_ticks=round(tick_rate * config.shot_opener_quiet_seconds),
+        )
+        player_hits = hits.get(player_id, ([], []))
+        by_round: dict[int, list[tuple[str, ShotBurst, dict[str, Any]]]] = {}
+        for burst in bursts:
+            accurate = _accurate_speed(max_speeds[burst.weapon], config)
+            moving_flags = [shot.speed > accurate or shot.airborne for shot in burst.shots]
+            victims_by_shot = [_shot_victims(player_hits, shot.tick, config.shot_hit_window_ticks) for shot in burst.shots]
+            moving = [shot for shot, is_moving in zip(burst.shots, moving_flags, strict=True) if is_moving]
+            moving_hit = any(victims for victims, is_moving in zip(victims_by_shot, moving_flags, strict=True) if is_moving)
+            burst_hit = any(victims_by_shot)
+            death = context.death_by_round_and_victim.get((burst.round_number, player_id))
+            death_tick = _int_or_none(death.get("tick")) if death else None
+            died = death_tick is not None and 0 <= death_tick - burst.shots[-1].tick <= death_window_ticks
+            first = burst.shots[0]
+            if len(moving) >= config.moving_shots_min and not moving_hit:
+                rule_id = "moving_shots"
+            elif (
+                burst.opener
+                and (first.speed > accurate + config.counter_strafe_margin or first.airborne)
+                and (not burst_hit or died)
+            ):
+                rule_id = "no_counter_strafe"
+            else:
+                continue
+            by_round.setdefault(burst.round_number, []).append((rule_id, burst, {
+                "accurate": accurate,
+                "moving": moving,
+                "hit": burst_hit,
+                "victims": [victim for victims in victims_by_shot for victim in victims],
+                "death": death if died else None,
+            }))
+
+        picks = []
+        for round_number in sorted(by_round):
+            qualified = by_round[round_number]
+            rule_id, burst, facts = next(
+                (item for item in qualified if item[0] == "moving_shots"),
+                qualified[0],
+            )
+            picks.append((rule_id, burst, facts, len(qualified)))
+        kept = _kept_no_counter_strafe(picks, config.no_counter_strafe_max_per_match)
+
+        input_track: tuple[list[int], list[int]] | None = None
+        for index, (rule_id, burst, facts, occurrences) in enumerate(picks):
+            if rule_id == "no_counter_strafe" and index not in kept:
+                continue
+            if input_track is None:
+                input_track = _input_track(inputs.get(player_id))
+            events.append(_shooting_card(
+                replay, context, config, player_id, rule_id, burst, facts,
+                occurrences=occurrences, input_track=input_track,
+            ))
+
+    return events
+
+
+def _kept_no_counter_strafe(picks: list[tuple[str, ShotBurst, dict[str, Any], int]], limit: int) -> set[int]:
+    """Indexes of the no_counter_strafe picks kept: died first, then the fastest first shot, then the earliest."""
+    candidates = [index for index, pick in enumerate(picks) if pick[0] == "no_counter_strafe"]
+    candidates.sort(key=lambda index: (
+        picks[index][2]["death"] is None,
+        -picks[index][1].shots[0].speed,
+        picks[index][1].shots[0].tick,
+    ))
+    return set(candidates[:max(0, limit)])
+
+
+def _shooting_card(
+    replay: dict[str, Any],
+    context: ReplayContext,
+    config: RuleConfig,
+    player_id: str,
+    rule_id: str,
+    burst: ShotBurst,
+    facts: dict[str, Any],
+    *,
+    occurrences: int,
+    input_track: tuple[list[int], list[int]],
+) -> CoachingEventCandidate:
+    tick_rate = context.tick_rate
+    first, last = burst.shots[0], burst.shots[-1]
+    moving: list[RecordedShot] = facts["moving"]
+    accurate: int = facts["accurate"]
+    death: dict[str, Any] | None = facts["death"]
+    label = SHOT_WEAPON_LABELS.get(burst.weapon, burst.weapon)
+    player_name = context.player_name(player_id)
+    round_info = context.round_by_number.get(burst.round_number, {})
+    live_start = _round_int(round_info, "freezeEndTick", _round_int(round_info, "startTick", 0))
+    tick_start = max(live_start, first.tick - round(tick_rate * config.shot_card_lead_seconds))
+    tick_end = last.tick + round(tick_rate * config.shot_card_tail_seconds)
+
+    killer_id = _optional_str(death.get("attackerId")) if death else None
+    killer_name = _optional_str(death.get("attackerName")) if death else None
+    if killer_id == player_id:
+        killer_id = killer_name = None
+    if rule_id == "moving_shots":
+        speed = max(shot.speed for shot in moving)
+        airborne = any(shot.airborne for shot in moving)
+        title = "Review shots fired while moving"
+        message = (
+            f"{player_name} fired {len(moving)} {label} shots while moving (up to {speed} units/s; "
+            f"accurate at or below {accurate}) and none of them hit."
+        )
+        confidence = 0.6
+    else:
+        speed = first.speed
+        airborne = first.airborne
+        title = "Review the first shot of a fight"
+        outcomes = [
+            *([] if facts["hit"] else ["no shot of the burst hit"]),
+            *([f"{player_name} died within {_format_seconds(config.shot_death_window_seconds)} seconds"] if death else []),
+        ]
+        message = (
+            f"{player_name} took the first {label} shot at {speed} units/s{' in the air' if airborne else ''} "
+            f"(accurate at or below {accurate}); {' and '.join(outcomes)}."
+        )
+        confidence = 0.55
+
+    keys = _movement_keys(input_track, first.tick, round(tick_rate * config.counter_strafe_window_seconds))
+    side = context.side_for_at(player_id, None, first.tick)
+    return _event(
+        replay,
+        rule_id=rule_id,
+        round_number=burst.round_number,
+        player_id=player_id,
+        player_name=player_name,
+        tick_start=tick_start,
+        tick_end=tick_end,
+        category="mechanics",
+        severity="low",
+        title=title,
+        message=message,
+        involved_player_ids=[player_id, *facts["victims"], killer_id],
+        evidence_ticks=[shot.tick for shot in moving],
+        metadata={
+            "weapon": burst.weapon,
+            "weaponLabel": label,
+            "accurateSpeed": accurate,
+            "speed": speed,
+            "shotCount": len(burst.shots),
+            "movingShotCount": len(moving),
+            "airborne": airborne,
+            "hit": bool(facts["hit"]),
+            "died": death is not None,
+            **({"attackerName": killer_name} if killer_name else {}),
+            **({"side": side} if side in {"T", "CT"} else {}),
+            **({"keysAtShot": keys[0], "counterStrafe": keys[1]} if keys is not None else {}),
+            "occurrencesInRound": occurrences,
+        },
+        confidence=confidence,
+    )
+
+
+def _accurate_speed(max_speed: int, config: RuleConfig) -> int:
+    return round(config.shot_accurate_speed_ratio * max_speed)
+
+
+def _recorded_shots(value: Any) -> dict[str, list[RecordedShot]]:
+    """Well-formed `[tick, speed, flags, weapon]` rows per player id, sorted by tick; junk rows are skipped."""
+    if not isinstance(value, dict):
+        return {}
+    tracks: dict[str, list[RecordedShot]] = {}
+    for raw_id, rows in value.items():
+        player_id = _optional_str(raw_id)
+        if not player_id or not isinstance(rows, list):
+            continue
+        shots = []
+        for row in rows:
+            if not isinstance(row, (list, tuple)) or len(row) < 4:
+                continue
+            tick, speed, flags, weapon = row[0], row[1], row[2], row[3]
+            if not _plain_int(tick) or not _plain_int(flags) or not isinstance(weapon, str) or not weapon:
+                continue
+            if isinstance(speed, bool) or not isinstance(speed, (int, float)) or not math.isfinite(speed) or speed < 0:
+                continue
+            shots.append(RecordedShot(int(tick), round(speed), bool(int(flags) & SHOT_FLAG_AIRBORNE), weapon))
+        if shots:
+            tracks[player_id] = sorted(shots, key=lambda shot: shot.tick)
+    return tracks
+
+
+def _plain_int(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _live_round_lookup(context: ReplayContext) -> Callable[[int], int | None]:
+    """`live_round_at` by bisection: shots run to tens of thousands per demo."""
+    intervals = sorted(
+        (_round_int(item, "freezeEndTick", _round_int(item, "startTick", 0)), _round_int(item, "endTick", 0), number)
+        for item in context.rounds
+        if (number := _int_or_none(item.get("roundNumber"))) is not None
+    )
+    starts = [start for start, _, _ in intervals]
+
+    def round_of(tick: int) -> int | None:
+        index = bisect_right(starts, tick) - 1
+        if index < 0 or tick > intervals[index][1]:
+            return None
+        return intervals[index][2]
+
+    return round_of
+
+
+def _shot_bursts(
+    shots: list[RecordedShot],
+    max_speeds: dict[str, int],
+    round_of: Callable[[int], int | None],
+    *,
+    gap_ticks: int,
+    quiet_ticks: int,
+) -> list[ShotBurst]:
+    bursts: list[ShotBurst] = []
+    current: ShotBurst | None = None
+    previous_tick: int | None = None
+    for shot in shots:
+        round_number = round_of(shot.tick)
+        if round_number is None or shot.weapon not in max_speeds:
+            current = None
+        elif (
+            current is not None
+            and current.weapon == shot.weapon
+            and current.round_number == round_number
+            and shot.tick - current.shots[-1].tick <= gap_ticks
+        ):
+            current.shots.append(shot)
+        else:
+            opener = previous_tick is None or shot.tick - previous_tick > quiet_ticks
+            current = ShotBurst(round_number=round_number, weapon=shot.weapon, opener=opener, shots=[shot])
+            bursts.append(current)
+        previous_tick = shot.tick
+    return bursts
+
+
+def _gun_hits_by_attacker(events: list[dict[str, Any]]) -> dict[str, tuple[list[int], list[str | None]]]:
+    """Attacker id -> (sorted damage ticks, victim ids) of the damage events a gun can have caused."""
+    rows: dict[str, list[tuple[int, str | None]]] = {}
+    for event in events:
+        if _event_type(event) != "damage":
+            continue
+        tick = _event_tick(event)
+        raw_metadata = event.get("metadata")
+        metadata: dict[str, Any] = raw_metadata if isinstance(raw_metadata, dict) else {}
+        attacker_id = _optional_str(metadata.get("attackerId")) or _optional_str(event.get("playerId"))
+        if tick is None or not attacker_id:
+            continue
+        victim_id = _optional_str(metadata.get("victimId"))
+        if victim_id == attacker_id:
+            continue
+        weapon = metadata.get("weapon")
+        if isinstance(weapon, str) and weapon.strip().lower().removeprefix("weapon_") in NON_GUN_DAMAGE_WEAPONS:
+            continue
+        rows.setdefault(attacker_id, []).append((tick, victim_id))
+    hits: dict[str, tuple[list[int], list[str | None]]] = {}
+    for attacker_id, items in rows.items():
+        items.sort(key=lambda item: item[0])
+        hits[attacker_id] = ([tick for tick, _ in items], [victim for _, victim in items])
+    return hits
+
+
+def _shot_victims(hits: tuple[list[int], list[str | None]], tick: int, window_ticks: int) -> list[str | None]:
+    """One entry per damage of the shooter on [tick, tick + window]: the victim id, None when unrecorded."""
+    ticks, victims = hits
+    index = bisect_left(ticks, tick)
+    found = []
+    while index < len(ticks) and ticks[index] <= tick + window_ticks:
+        found.append(victims[index])
+        index += 1
+    return found
+
+
+def _input_track(value: Any) -> tuple[list[int], list[int]]:
+    """A player's v3 `inputs` change points as sorted (ticks, masks) columns; empty without a usable track."""
+    if not isinstance(value, list):
+        return [], []
+    pairs = sorted(
+        (
+            (int(item[0]), int(item[1]))
+            for item in value
+            if isinstance(item, (list, tuple)) and len(item) >= 2 and _plain_int(item[0]) and _plain_int(item[1])
+        ),
+        key=lambda item: item[0],
+    )
+    return [tick for tick, _ in pairs], [mask for _, mask in pairs]
+
+
+def _movement_keys(track: tuple[list[int], list[int]], tick: int, window_ticks: int) -> tuple[list[str], bool] | None:
+    """(movement keys held at `tick` in W A S D order, counter-strafed); None when the inputs do not cover `tick`.
+
+    The mask at a tick is the last change point at or before it. Counter-strafed:
+    a movement key was pressed in (tick - window, tick] while its opposite key
+    had been held earlier in that window.
+    """
+    ticks, masks = track
+    index = bisect_right(ticks, tick) - 1
+    if index < 0:
+        return None
+    held = [label for label, bit in MOVEMENT_KEY_BITS if masks[index] & bit]
+    start_index = bisect_right(ticks, tick - window_ticks) - 1
+    seen = previous = masks[start_index] if start_index >= 0 else 0
+    counter_strafed = False
+    for mask in masks[start_index + 1:index + 1]:
+        pressed = mask & ~previous
+        if any(pressed & bit and seen & OPPOSITE_MOVEMENT_BIT[bit] for _, bit in MOVEMENT_KEY_BITS):
+            counter_strafed = True
+        seen |= mask
+        previous = mask
+    return held, counter_strafed
+
+
 class ReplayContext:
     def __init__(self, replay: dict[str, Any]):
         self.replay = replay
@@ -1350,7 +1794,7 @@ def _event(
     normalized_ticks = [int(tick) for tick in _unique_values(evidence_ticks)]
     action, limitation = _REVIEW_GUIDANCE[rule_id]
     map_metadata = replay.get("mapMetadata")
-    if rule_id not in {"untraded_death", "weak_utility_before_execute"}:
+    if rule_id not in {"untraded_death", "weak_utility_before_execute", *SHOOTING_RULES}:
         limitation += " Distances are straight-line world units, not travel distance."
         if isinstance(map_metadata, dict) and not map_metadata.get("calibrated"):
             limitation += " Map calibration is approximate."
@@ -1377,7 +1821,7 @@ def _event(
             "assessment": "review_candidate",
             "action": action,
             "limitation": limitation,
-            "evidenceSource": "recorded_kills" if rule_id == "untraded_death" else "parser_events_and_sampled_positions",
+            "evidenceSource": _EVIDENCE_SOURCES.get(rule_id, "parser_events_and_sampled_positions"),
             **metadata,
         },
         "confidence": max(0.0, min(1.0, confidence)),

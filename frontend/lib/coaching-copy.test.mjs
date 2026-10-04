@@ -65,6 +65,20 @@ for (const id of ["__proto__", "toString", "constructor"]) {
   assert.equal(copy.coachingCopy({ ...unknown, structured_context_json: { ...unknown.structured_context_json, ruleId: id } }).title, unknown.title);
   assert.equal(copy.coachingEvidenceLabel(id), id);
 }
+// The shooting rules have their own Chinese copy (the analyzer adds no distance or calibration note to them).
+for (const [ruleId, title, guidance] of [
+  ["moving_shots", "边移动边开枪", /先停下再开枪：反向点一下移动键/],
+  ["no_counter_strafe", "第一枪没有急停", /练习急停：松开移动键并反向点一下/]
+]) {
+  const shot = copy.coachingCopy({ ...event, category: "mechanics", structured_context_json: {
+    ruleId, limitation: "Speed comes from the velocity recorded with each shot; a miss can have other causes." } });
+  assert.equal(shot.title, title);
+  assert.match(shot.guidance, guidance);
+  assert.equal(shot.limitation, "速度取自每一枪记录的移动速度；没有计算弹道恢复、蹲下、开镜和对手的移动，没打中也可能有别的原因。");
+  assert.equal(copy.coachingRuleLabel(ruleId, "fallback"), title);
+}
+for (const [key, label] of [["weaponLabel", "武器"], ["accurateSpeed", "稳定线（单位/秒）"], ["keysAtShot", "开枪时按着的移动键"],
+  ["counterStrafe", "有反向急停"], ["occurrencesInRound", "本回合出现次数"]]) assert.equal(copy.coachingEvidenceLabel(key), label);
 for (const search of ["过近", "补枪", "xelex", "poor_spacing", "2.1", "直线距离"]) assert.equal(copy.coachingMatchesSearch(reviewEvent, search), true, search);
 assert.equal(copy.coachingMatchesSearch(reviewEvent, "不存在的内容"), false);
 

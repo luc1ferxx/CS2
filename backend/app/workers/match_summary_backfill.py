@@ -63,6 +63,10 @@ def run_team_names_subprocess(
         environment["PYTHONPATH"] = (
             f"{PACKAGE_ROOT}{os.pathsep}{existing_path}" if existing_path else PACKAGE_ROOT
         )
+        # pandas pulls in numpy's OpenBLAS, which reserves buffers for every core
+        # at import (1.3 GB of the child's RLIMIT_DATA on a 32-thread host);
+        # the parse never uses BLAS. Measured: Mirage peak 4.3 GB -> 2.9 GB.
+        environment.setdefault("OPENBLAS_NUM_THREADS", "1")
         # Fixed argv, no shell; the only variable parts are a path this process
         # materialized and integers.
         process = subprocess.Popen(

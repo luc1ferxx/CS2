@@ -45,7 +45,7 @@ Production 的上传额度（`DEMO_UPLOAD_DAILY_LIMIT`、`DEMO_ACTIVE_PARSE_LIMI
 
 ### Replay and coaching
 
-- `GET /demos/{demo_id}/replay`（紧凑 JSON；客户端发送 `Accept-Encoding: gzip` 时 gzip 压缩。JSON 响应 ≥1 KB 时都按此压缩，媒体、Range 与流式响应不压缩）
+- `GET /demos/{demo_id}/replay`（紧凑 JSON；客户端发送 `Accept-Encoding: gzip` 时 gzip 压缩。JSON 响应 ≥1 KB 时都按此压缩，媒体、Range 与流式响应不压缩。带 `ETag` 和 `Cache-Control: private, no-store`，`If-None-Match` 命中时返回 `304`，见下方[回放响应缓存](#回放响应缓存etag-与-304)）
 - `GET /demos/{demo_id}/coaching`（每条事件附带当前 owner 自己的 `feedback`：`{verdict, note, updated_at}` 或 `null`）
 - `PUT /demos/{demo_id}/coaching/{event_id}/feedback`（body `{"verdict": "helpful" | "irrelevant" | "unsure", "note"?: ≤240 字符}`；事件不属于该 demo（包括后台重算后已不存在的建议）→ 404）
 - `DELETE /demos/{demo_id}/coaching/{event_id}/feedback`（204，幂等）
@@ -237,9 +237,20 @@ Demo list items 和 `GET /demos/{demo_id}/status` 带可选的 `matchSummary`（
 
 队伍 = 首个有人可判定阵营的回合里同一阵营的玩家；A 队开局 T，B 队开局 CT。每名玩家每回合的阵营取该回合 `startTick`–`endTick` 之间玩家帧里的多数（平票取最早的一帧；该回合没有范围内的帧时用它的全部帧；仍没有就用该回合的击杀记录），队伍阵营由队员投票，无法判定的回合沿用最近一个已判定回合的阵营；不按回合号推断，所以半场和加时换边都算对。完整规则写在两边实现的文件头注释里，并由前后端共用的 `fixtures/match-rules/` 用例固定；比分 = 该队所在阵营获胜的回合数。`name` 是 demo 里的战队名（`team_clan_name`，匹配赛通常没有 → `null`）。解析完成时写入 `demos.match_summary`；此前已完成的比赛（没有摘要，或摘要 `version` 低于 2）由 worker 空闲时回填或重算（每 30 秒最多 3 场：比分读已存 replay，战队名在 parse 子进程里只读源 `.dem` 的几个 tick；读不到名字就只存比分；从不改 replay）。计算在 `backend/app/services/demo_service/match_summary.py`，与前端 `frontend/lib/match-stats.ts` 的定义保持一致。
 
-### Replay contract（`replay_contract_v4`）
+### 回放响应缓存（ETag 与 304）
 
-`GET /demos/{demo_id}/replay` 返回 `contractVersion`、`mapName`、`mapMetadata`（含 `transform` 与 `worldUnitsPerPercent: {x, y}`，一个雷达百分点对应的世界单位）、`tickRate`、`video`、`rounds`、`players`、`frames`（每帧每名玩家 `x/y` 雷达百分比、`z` 世界高度、`hp`、`alive`、`hasBomb`）、`events`、`diagnostics`，以及 v2 新增的 `playerStates`、`utility`，v3 新增的 `inputs`（见下方[按键记录](#按键记录inputsv3)）和 v4 在每颗投掷物上新增的可选 `throwOrigin`（见下方[出手站位](#出手站位throworiginv4)）。v2 的两项：
+`GET /demos/{demo_id}/replay` 先做和以前一样的检查：比赛不存在或不属于当前 owner → `404`，还没完成 → `409`，回放不存在 → `404`。已删除的比赛和别人的比赛走不到缓存。
+
+- 通过检查后，`200` 响应带强 `ETag`（带引号的 32 位十六进制）、`Cache-Control: private, no-store` 和 `Vary: Accept-Encoding`。浏览器不保存回放：`core/auth.py` 的 `_protect_browser_response` 给所有登录后的路径加 `private, no-store`，回放也不例外；ETag 主要给非浏览器客户端校验用，提速靠下面的服务端缓存。
+- 请求的 `If-None-Match` 与当前 ETag 相同（支持 `*`、逗号分隔的多个值和 `W/` 前缀）时返回 `304`，没有 body，带同样的 `ETag`、`Cache-Control` 和 `Vary`。前端的请求一律是 `cache: "no-store"`，不发 `If-None-Match`。
+- ETag 由这些算出：缓存版本（`backend/app/services/demo_service/replay_response_cache.py` 的 `PUBLIC_REPLAY_CACHE_VERSION`，公开投影、读取时补的默认值或序列化变化时提升）、`REPLAY_CONTRACT_VERSION`、地图配置的指纹（读取时会按地图配置刷新地图信息、重投影旧回放）、比赛的回放存储引用，以及公开的视频状态（回放里的视频信息，加上私有视频对象此刻是否还在：视频就绪时每次请求都向存储确认一次）。每次接受新回放（解析完成、后台回放升级、每次视频写入）都存到一个新的 `artifact://` 引用，存储不会覆盖已有的引用，同一个引用的内容不再改变；所以引用或视频状态一变 ETag 就变。
+- API 进程里有一份按总字节数限定的 LRU 缓存，存最近返回的回放响应（gzip 后的字节）。命中时不读存储、不重算：客户端接受 gzip 时原样返回并带 `Content-Encoding: gzip`（`JsonGzipMiddleware` 不会再压一次），否则解压后返回。没命中时照常计算，再存进缓存。大小由 `REPLAY_RESPONSE_CACHE_MB` 控制（默认 64）。production 只跑一个 uvicorn 进程，所有请求共用这一份；它只在内存里，API 重启即清空。实测（Mirage 样例，本地 Docker）没命中时服务端每次要处理约 1.1 秒（读存储、补默认值、投影、序列化、gzip），以前刷新页面也要重来一遍；命中缓存时约 8 毫秒（仍然要传约 1.8 MB 的 gzip 回放），`304` 约 4 毫秒。
+- 只缓存 `artifact://` 引用的回放。开发环境遗留的 `local://` 引用（原地改写，内容会变）和 `REPLAY_RESPONSE_CACHE_MB=0` 时，照旧每次读取、计算，不带 `ETag`。
+- 删除：`DELETE /demos/{id}` 和 `DELETE /auth/account` 提交后，API 进程立即清掉相应比赛的缓存项，刚删除的比赛 id 也不再接受写入缓存（删除前已经开始读回放的请求不会在删除后把它存进去）。运维命令 `app.cli.delete_data` 和 worker 在别的进程里删除，清不到 API 进程的内存；但路由先查数据库，比赛不在就返回 `404`，缓存里的内容不会再被返回，之后被 LRU 挤出或在 API 重启时丢弃。见 [data_deletion_v1](data_deletion_v1.md#并发与加固)。
+
+### Replay contract（`replay_contract_v5`）
+
+`GET /demos/{demo_id}/replay` 返回 `contractVersion`、`mapName`、`mapMetadata`（含 `transform` 与 `worldUnitsPerPercent: {x, y}`，一个雷达百分点对应的世界单位）、`tickRate`、`video`、`rounds`、`players`、`frames`（每帧每名玩家 `x/y` 雷达百分比、`z` 世界高度、`hp`、`alive`、`hasBomb`）、`events`、`diagnostics`，以及 v2 新增的 `playerStates`、`utility`，v3 新增的 `inputs`（见下方[按键记录](#按键记录inputsv3)），v4 在每颗投掷物上新增的可选 `throwOrigin`（见下方[出手站位](#出手站位throworiginv4)）和 v5 新增的 `shots`（见下方[开枪记录](#开枪记录shotsv5)）。v2 的两项：
 
 ```json
 {
@@ -263,8 +274,8 @@ Demo list items 和 `GET /demos/{demo_id}/status` 带可选的 `matchSummary`（
 - `playerStates`：按玩家 id（与 `frames[].players[].id` 相同）存装备/经济的**变化点**，只有字段变化才新增一条，按 tick 升序；时刻 t 的状态 = 最后一条 `tick ≤ t`。每条是完整快照；某字段缺失表示这场 demo 没有该数据，不是 0。`weapon` 是 demo 里的武器显示名（≤32 字符，死亡或空手为 `null`）；`grenades` 每颗一项，取值 `smoke`/`flash`/`he`/`molotov`（燃烧瓶与燃烧弹）/`decoy`。在帧的采样 tick 上取样，不写进每一帧。
 - `utility`：每颗投掷物一条，`id` 确定（`utility-{type}-{实体id}-{throwTick}`）。`points` 与帧同一雷达百分比坐标（0–100，`z` 为世界高度），飞行中约每 4 tick 一个点，首尾必留，停在引爆处，每颗最多 120 点；最后一点即落点。`detonateTick` 取对应引爆事件（燃烧取 `inferno_startburn`），找不到时取最后移动的 tick；`endTick` 为效果结束（烟 `smokegrenade_expired`、火 `inferno_expire`，缺失时按烟 18 秒、火 7 秒；空中爆掉的燃烧瓶、闪光、手雷、诱饵弹 = `detonateTick`），且不晚于下一回合的 `startTick`（回合重置会清掉烟和火）。回合结束 10 秒以后才投出的道具（回合之间的暂停、重开）不属于任何回合，不收录。这两条在解析时和每次读取回放时都会执行，早先存下的回放读出来也一样。`throwerSide` 按比分摘要同一条阵营规则取该回合的阵营。
 - 抽取失败（例如 demo 没有投掷物数据）只让对应字段为空，不算解析失败；v2 回放缺数据时 `diagnostics.degradedFields` 含 `utility` / `playerStates`，`diagnostics.utilityCount`、`diagnostics.playerStateCount` 给出条数。
-- 旧回放照常加载：v1 读出 `playerStates: {}`、`utility: []`，v1 和 v2 都读出 `inputs: {}`，v1–v3 的投掷物没有 `throwOrigin`，前端隐藏依赖它们的部分；worker 空闲时在后台把回放早于当前契约版本的已完成比赛重新解析成 v4（状态保持 `completed`；这一步不重新分析，建议和评价原样保留，建议之后由后台的建议重算按 `COACHING_RULES_VERSION` 单独更新，见下方“建议事件的结构化上下文”）。v3 只加了按键记录、v4 只加了出手站位，规则分析都没有变，所以这两次升级不需要重算建议。
-- 数据都来自上传的 `.dem`，与位置数据同属一类，随比赛一起删除。v2 时 Mirage 样例从 23.2 MB 增至 25.6 MB（+10%）；v3 的按键记录再加约 1.1 MB（增至 26.7 MB，+4%）；v4 的出手站位再加约 55 KB（+0.2%）。
+- 旧回放照常加载：v1 读出 `playerStates: {}`、`utility: []`，v1 和 v2 都读出 `inputs: {}`，v1–v3 的投掷物没有 `throwOrigin`，v1–v4 读出 `shots: {}`，前端隐藏依赖它们的部分；worker 空闲时在后台把回放早于当前契约版本的已完成比赛重新解析成 v5（状态保持 `completed`；这一步不重新分析，建议和评价原样保留，建议之后由后台的建议重算按 `COACHING_RULES_VERSION` 单独更新，见下方“建议事件的结构化上下文”）。v3 只加了按键记录、v4 只加了出手站位，规则分析都没有变，所以这两次升级不需要重算建议。v5 的开枪记录供两条射击规则使用，规则版本同时升到 `coaching_rules_v3`：建议重算要等回放升级完成才运行，所以旧比赛先重新解析出 `shots`，再由重算用新回放算出射击类建议。
+- 数据都来自上传的 `.dem`，与位置数据同属一类，随比赛一起删除。v2 时 Mirage 样例从 23.2 MB 增至 25.6 MB（+10%）；v3 的按键记录再加约 1.1 MB（增至 26.7 MB，+4%）；v4 的出手站位再加约 55 KB（+0.2%）；v5 的开枪记录再加 46–56 KB（四场样例，+0.2%；gzip 后 +10–12 KB）。
 
 #### 按键记录（`inputs`，v3）
 
@@ -322,6 +333,32 @@ Demo list items 和 `GET /demos/{demo_id}/status` 带可选的 `matchSummary`（
 - `airborne`（可选）：出手时是否在空中（demo 的 `is_airborne`）。滚轮跳不进 `usercmd_buttonstate_1`，所以跳投要看这一项，按键记录里不一定有跳。
 - 解析时只多一次 `parse_ticks`（每颗投掷物两个 tick；Mirage 样例 508 颗、约 0.2 秒，解析的峰值内存不变）。读不到这些属性时这颗投掷物就没有 `throwOrigin`，不算解析失败；`diagnostics.throwOriginCount` 是带 `throwOrigin` 的投掷物数，为 0 不算降级（`degradedFields` 不标）。归一化时 `x/y/z/pitch/yaw` 有一个不是有限数字就整项丢掉，`speed` 不是有限的非负数、`airborne` 不是布尔值时只丢那一项。前端没有 `throwOrigin` 时不显示站位指令。
 
+#### 开枪记录（`shots`，v5）
+
+```json
+{
+  "shots": {
+    "76561198998266210": [
+      [10806, 226, 1, "glock"], [10816, 230, 1, "glock"], [10825, 232, 1, "glock"],
+      [10835, 164, 0, "glock"], [10998, 49, 0, "glock"]
+    ]
+  }
+}
+```
+
+（Mirage 样例里 xelex 的前 5 枪：第一回合手枪局的格洛克，前三枪是在空中开的。格洛克不在射击规则判定的枪里。四场样例每场 2,023–2,341 枪。）
+
+- 按玩家 id（与 `frames[].players[].id` 相同：十进制 SteamID64，没有时用昵称）存每一枪，每项是 `[tick, speed, flags, weapon]`，按 tick 升序。热身和回合之间的枪也收录，规则只看回合进行中的枪：
+  - `tick`：开枪的 tick（整数）。
+  - `speed`：开枪那一刻的水平移动速度，单位/秒，取整，限制在 0–1000。取 `weapon_fire` 事件附带的玩家属性 `velocity_X/Y`，`speed = round(hypot(vx, vy))`。
+  - `flags`：位掩码，`1` = 开枪时在空中（`is_airborne`）；其余位暂不使用，为 0。读不到 `is_airborne` 时退回只读速度，这时所有枪的 `flags` 都是 0。
+  - `weapon`：武器键名，即 demo 里的武器名去掉 `weapon_` 前缀（`[a-z0-9_]{1,32}`，例如 `ak47`、`m4a1_silencer`、`deagle`）。它不是显示名，`playerStates` 里的 `weapon` 才是显示名。
+- 只收枪械：刀（`knife*`、`bayonet`）、投掷物（`smokegrenade`、`flashbang`、`hegrenade`、`molotov`、`incgrenade`、`decoy`）、`c4` 和电击枪 `taser` 不收。速度不是有限数字的行丢掉（四场样例每场约 2 枪）。
+- 与 `throwOrigin.speed` 的区别：`throwOrigin` 按 tick 解析，那里的 `velocity_X/Y` 比位置晚一个 tick，而且只有前两个 tick 也一起解析时才有值，所以改用两行位置计算；`shots` 用的是事件解析时附带的 `velocity_X/Y`，四场样例里几乎每一枪都有值。
+- 解析时只多一次 `parse_event("weapon_fire", …)`（四场样例每场多 0.7–1.8 秒）。抽取失败或一枪都没有时 `shots: {}`，不算解析失败；`diagnostics.shotSource` 有数据时为 `"weapon_fire"`，否则为 `null`，`diagnostics.shotCount` 是收录的总枪数。
+- 存储前的归一化：不是四项、`tick`/`speed`/`flags` 不是整数、`tick` 或 `flags` 为负、`weapon` 不是枪械键名的条目丢掉；`speed` 限制在 0–1000，`flags` 只留已知位；按 tick 排序，完全相同的条目去重；每名玩家最多 20,000 条、最多 64 名玩家，有玩家达到上限时截断，并在 `diagnostics.degradedFields` 里标出 `shotsCapped`。存下的 `shots` 不是对象时读出 `{}`，`degradedFields` 含 `shots`；v5 回放没有开枪记录不算降级，只表现为 `shotSource: null`。
+- 只给两条射击规则（`moving_shots`、`no_counter_strafe`，见下方“建议事件的结构化上下文”）用，复盘界面暂不直接显示。数据来自上传的 `.dem`，随比赛一起删除。
+
 ### 建议事件的结构化上下文（`structured_context_json`）
 
 `GET /demos/{demo_id}/coaching` 的每条事件带 `structured_context_json`：通用字段（`ruleId`、`involvedPlayerIds`、`evidenceTicks`、`targetPlayerId`、`action`、`limitation`，用到解析事件时还有 `relatedEventIds`）加上各规则自己的依据。规则版本 `coaching_rules_v2`（`backend/app/analysis/version.py` 的 `COACHING_RULES_VERSION`）新增了下列字段。它们都是**可选**的：旧版规则生成、还没重算的事件没有这些字段，数据不足时也会省略（不猜），读取方按缺失处理。
@@ -368,6 +405,23 @@ Demo list items 和 `GET /demos/{demo_id}/status` 带可选的 `matchSummary`（
 - `manDisadvantage`：阵亡前人数不少于对方，阵亡后少于对方。
 
 旧比赛在重算之前，或重算失败、尝试次数用完的比赛，仍可能有已不再生成的事件：`late_post_plant_utility`、单独的 `poor_spacing`（`spacingType: "too_far"`）等，前端照常显示。
+
+**射击规则（`coaching_rules_v3`）**：规则版本 `coaching_rules_v3` 新增 `moving_shots`（移动射击）和 `no_counter_strafe`（第一枪没急停），类别 `mechanics`、严重程度 `low`、`evidenceSource: "recorded_shots"`，判定依据是回放 v5 的 `shots` 和 `damage` 事件（缺任何一样都不出这两类建议）。规则定义和阈值见 [coaching_feedback_v1](coaching_feedback_v1.md#v3两条射击规则)。`evidenceTicks` 是这一串里移动中开枪的 tick；`involvedPlayerIds` 是开枪者，已知时加上被打中的人和击杀者。卡片从第一枪前 0.5 秒（不早于冻结时间结束）到最后一枪后 0.25 秒。每名玩家整场最多 3 张 `no_counter_strafe`（阵亡的优先，其次第一枪更快的）。上下文字段：
+
+| 字段 | 含义 |
+| --- | --- |
+| `weapon` | 武器键名，与 `shots` 里的相同（如 `ak47`）。注意阵亡卡片的 `weapon` 是击杀事件里存的字符串，两者不是同一种取值 |
+| `weaponLabel` | 武器显示名：AK-47、M4A4、M4A1-S、Galil AR、FAMAS、AUG、SG 553、AWP、SSG 08、SCAR-20、G3SG1、Desert Eagle、R8 Revolver |
+| `accurateSpeed` | 这把枪的稳定线（单位/秒）：最大移动速度的 34 %，取整 |
+| `speed` | `no_counter_strafe`：第一枪的速度；`moving_shots`：移动中各枪里的最高速度 |
+| `shotCount` / `movingShotCount` | 这一串的枪数 / 其中移动中开的枪数 |
+| `airborne` | `no_counter_strafe`：第一枪是否在空中；`moving_shots`：移动中的枪里有没有在空中开的 |
+| `hit` | 这一串里有没有一枪打中人（开枪后 2 tick 内有开枪者用枪造成的 `damage`） |
+| `died` | 最后一枪之后 2 秒内阵亡；有击杀者名字时另带 `attackerName` |
+| `side` | 开枪者这一回合的阵营（`T` / `CT`；判定不出时省略） |
+| `keysAtShot` | 第一枪时按着的移动键，按 W A S D 的顺序，例如 `["A"]`，可能为空 |
+| `counterStrafe` | 第一枪前 0.15 秒内有没有反向急停：这段时间里按下某个移动键时，它的反方向键在这段时间里按过。`keysAtShot` 和 `counterStrafe` 只在按键记录覆盖第一枪时才有，否则两项都省略 |
+| `occurrencesInRound` | 这一回合里这名玩家符合这两条规则之一的串数（每名玩家每回合最多一张卡） |
 
 ### Parser failure taxonomy
 

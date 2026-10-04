@@ -13,6 +13,7 @@ from app.analysis.rules import (
     find_post_plant_spacing_with_bomb_event,
     find_post_plant_spread_issues,
     find_retake_desyncs,
+    find_shooting_issues,
     find_untraded_deaths,
     find_weak_utility_before_execute,
     merge_death_cards,
@@ -40,6 +41,7 @@ def analyze_replay(
         *find_post_plant_spacing_with_bomb_event(replay, config),
         *find_retake_desyncs(replay, config),
         *find_weak_utility_before_execute(replay, config),
+        *find_shooting_issues(replay, config),
     ]
     # One card per death, before the personal copies: a death card has one subject.
     events = merge_death_cards(events, too_far_stretches(stretches, config, tick_rate), tick_rate)

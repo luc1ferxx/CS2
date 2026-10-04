@@ -135,6 +135,10 @@ def run_parse_subprocess(
         environment["PYTHONPATH"] = (
             f"{PACKAGE_ROOT}{os.pathsep}{existing_path}" if existing_path else PACKAGE_ROOT
         )
+        # pandas pulls in numpy's OpenBLAS, which reserves buffers for every core
+        # at import (1.3 GB of the child's RLIMIT_DATA on a 32-thread host);
+        # the parse never uses BLAS. Measured: Mirage peak 4.3 GB -> 2.9 GB.
+        environment.setdefault("OPENBLAS_NUM_THREADS", "1")
         # Fixed argv, no shell: the only caller-supplied value is a path this
         # process produced, and it is passed as its own argument.
         process = subprocess.Popen(

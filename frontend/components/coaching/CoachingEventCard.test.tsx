@@ -211,6 +211,50 @@ describe("CoachingEventCard", () => {
     expect(within(line).getByText("T 方首个阵亡，最近的队友约 980 单位外")).toBeInTheDocument();
   });
 
+  it("reads a shooting card as the shot's speed against the weapon's stable line, with its Chinese copy", async () => {
+    const user = userEvent.setup();
+    const event = coachingEvent({
+      id: "ncs-1", category: "mechanics", severity: "low", title: "Review the first shot of a fight",
+      message: "T Entry took the first AK-47 shot at 150 units/s (accurate at or below 73); no shot of the burst hit.",
+      structured_context_json: {
+        ruleId: "no_counter_strafe", weapon: "ak47", weaponLabel: "AK-47", accurateSpeed: 73, speed: 150, shotCount: 2,
+        movingShotCount: 1, airborne: false, hit: false, died: true, attackerName: "CT Anchor", side: "T",
+        keysAtShot: ["A"], counterStrafe: false, occurrencesInRound: 1, evidenceTicks: [400]
+      }
+    });
+    const props = renderCard(event, { side: "T" });
+
+    const line = screen.getByRole("heading", { level: 3 });
+    expect(within(line).getByText("CT Anchor")).toHaveClass("side-ct");
+    expect(within(line).getByText("第一枪时速度约 150（AK-47 稳定线 73），按着 A 没有反向急停，没打中")).toBeInTheDocument();
+    expect(screen.getByText("练习急停：松开移动键并反向点一下，再开第一枪。")).toBeInTheDocument();
+    expect(document.querySelector(".coaching-feed-chip")).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "查看依据：第一枪没有急停" }));
+    expect(props.onToggleInspect).toHaveBeenCalledWith("ncs-1");
+  });
+
+  it("shows a shooting card's evidence and limits in Chinese when inspected", () => {
+    renderCard(coachingEvent({
+      id: "moving-1", category: "mechanics", severity: "low",
+      structured_context_json: {
+        ruleId: "moving_shots", weapon: "m4a1_silencer", weaponLabel: "M4A1-S", accurateSpeed: 76, speed: 201, shotCount: 4,
+        movingShotCount: 3, hit: false, died: false, side: "CT", occurrencesInRound: 2
+      }
+    }), { inspected: true });
+
+    expect(screen.getByRole("heading", { level: 3 })).toHaveTextContent("边移动边开了 3 枪（最高速度约 201，M4A1-S 稳定线 76），一枪没中，这回合共 2 次");
+    expect(screen.getByText("步枪、狙击枪和沙鹰要先停下再开枪：反向点一下移动键，速度降下来再打。")).toBeInTheDocument();
+    expect(screen.getByText("速度取自每一枪记录的移动速度；没有计算弹道恢复、蹲下、开镜和对手的移动，没打中也可能有别的原因。")).toBeInTheDocument();
+    const facts = document.querySelector(".coaching-inspector-facts") as HTMLElement;
+    expect(within(facts).getByText("移动射击")).toBeInTheDocument();
+    expect(within(facts).getByText("武器")).toBeInTheDocument();
+    expect(within(facts).getByText("M4A1-S")).toBeInTheDocument();
+    expect(within(facts).getByText("开枪时速度（单位/秒）")).toBeInTheDocument();
+    expect(within(facts).getByText("移动中开的枪数")).toBeInTheDocument();
+    expect(within(facts).queryByText("m4a1_silencer")).not.toBeInTheDocument();
+  });
+
   it("says how long a stacked pair stayed together", () => {
     renderCard(stackedSpacingEvent());
     expect(screen.getByRole("heading", { level: 3 })).toHaveTextContent("两名队友相距约 88 单位，持续 3.5 秒");
