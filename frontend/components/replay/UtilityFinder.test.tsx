@@ -45,12 +45,16 @@ function finderReplay(): ReplayData {
   };
 }
 
-function Harness({ replay, currentRound = 1, onJump = () => {} }: {
+// Most cases look across the whole match; the default (this round) has its own case.
+const ALL_ROUNDS: UtilityFinderState = { ...DEFAULT_UTILITY_FINDER_STATE, roundScope: "all" };
+
+function Harness({ replay, currentRound = 1, onJump = () => {}, initial = ALL_ROUNDS }: {
   replay: ReplayData;
   currentRound?: number | null;
   onJump?: (utility: ReplayUtility) => void;
+  initial?: UtilityFinderState;
 }) {
-  const [state, setState] = useState<UtilityFinderState>(DEFAULT_UTILITY_FINDER_STATE);
+  const [state, setState] = useState<UtilityFinderState>(initial);
   return (
     <div className="review-app">
       <UtilityFinder replay={replay} teams={matchTeams(replay)} currentRound={currentRound} state={state}
@@ -94,7 +98,14 @@ afterEach(() => {
 });
 
 describe("UtilityFinder", () => {
-  it("lists every smoke by default with the round clock counted from freeze end", () => {
+  it("opens on the reviewed round's smokes", () => {
+    render(<Harness replay={finderReplay()} currentRound={2} initial={DEFAULT_UTILITY_FINDER_STATE} />);
+    expect(screen.getByRole("button", { name: "本回合（2）" })).toHaveAttribute("aria-pressed", "true");
+    expect(count()).toHaveTextContent("烟雾弹 1 颗");
+    expect(rows().map((row) => row.textContent)).toEqual(["第 2 回合0:02Bravo看这颗"]);
+  });
+
+  it("lists every smoke across the match with the round clock counted from freeze end", () => {
     render(<Harness replay={finderReplay()} />);
     expect(count()).toHaveTextContent("烟雾弹 3 颗");
     expect(rows().map((row) => row.textContent)).toEqual([

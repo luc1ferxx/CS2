@@ -40,8 +40,9 @@ export interface UtilityFinderState {
   floor: TacticalMapLevel;
 }
 
+// Opens on the round being reviewed: a whole match of smokes piles up into one blot.
 export const DEFAULT_UTILITY_FINDER_STATE: UtilityFinderState = {
-  type: "smoke", team: "all", playerId: null, roundScope: "all", rect: null, floor: "upper"
+  type: "smoke", team: "all", playerId: null, roundScope: "current", rect: null, floor: "upper"
 };
 
 const ROUND_SCOPES: { value: UtilityRoundScope; label: string }[] = [
