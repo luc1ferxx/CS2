@@ -13,10 +13,11 @@ from app.parser.player_states import normalize_player_states
 from app.parser.utility_tracks import normalize_utility
 
 # v2 adds `playerStates` (equipment change points) and `utility` (grenade
-# trajectories); v3 adds `inputs` (per-player key change points). Older replays
+# trajectories); v3 adds `inputs` (per-player key change points); v4 adds an
+# optional `throwOrigin` (the thrower's pose at release) per throw. Older replays
 # load with them empty; the worker's re-parse backstop upgrades completed demos
 # whose stored version is older than this one.
-REPLAY_CONTRACT_VERSION = "replay_contract_v3"
+REPLAY_CONTRACT_VERSION = "replay_contract_v4"
 _CONTRACT_VERSION_PATTERN = re.compile(r"replay_contract_v(\d{1,4})")
 
 PARSER_EVENT_TYPES = {
@@ -425,7 +426,10 @@ def _replay_diagnostics(raw: dict[str, Any], normalized: dict[str, Any]) -> dict
     events = _dict_list(normalized.get("events"))
     family_counts = _event_family_counts(events)
     normalized_legacy = bool(normalized["contractVersion"] == "legacy" or missing_fields or degraded_fields)
-    utility_count = len(normalized.get("utility") or [])
+    utility = normalized.get("utility") or []
+    utility_count = len(utility)
+    # No flag for a v4 replay without origins either: the count says it.
+    throw_origin_count = sum(1 for throw in utility if isinstance(throw, dict) and "throwOrigin" in throw)
     player_state_count = len(normalized.get("playerStates") or {})
     inputs = normalized.get("inputs") or {}
     if any(input_track_capped(track) for track in inputs.values()):
@@ -453,6 +457,7 @@ def _replay_diagnostics(raw: dict[str, Any], normalized: dict[str, Any]) -> dict
             family for family, count in family_counts.items() if count == 0
         ],
         "utilityCount": utility_count,
+        "throwOriginCount": throw_origin_count,
         "playerStateCount": player_state_count,
         "inputSource": INPUT_SOURCE if inputs else None,
         "inputPlayerCount": len(inputs),

@@ -30,7 +30,8 @@
 | 实时名单与道具 | 播放时两队名单随时间更新：金钱、血量、护甲、武器、携带的道具、到此刻的击杀/死亡、全队装备价值；地图上显示飞行中的道具和烟雾、火、闪光、手雷的效果范围 |
 | 实时按键显示 | 回放时显示一名玩家此刻按着的键：W/A/S/D、静步（Shift）、蹲（Ctrl）、跳（空格）和鼠标左右键，按下的键亮起；跟随在地图或名单上点选的玩家，没有点选时跟随正在复盘的玩家，阵亡后隐藏。面板不遮挡地图：宽屏复盘工作台上放在该玩家所在队伍名单的底部，较窄、较矮的屏幕和手机上放在地图下方。按键来自 demo 里的 usercmd 记录，没有这类数据的 demo 不显示（目前只在 BLAST.tv 的 GOTV demo 上验证过）；较早上传的比赛在后台重新解析后才会出现。面板的视觉设计改编自 [cs2-sandbox](https://github.com/bugkingZHT/cs2-sandbox)（MIT，见 [THIRD_PARTY_NOTICES](THIRD_PARTY_NOTICES.md)） |
 | 回合经济 | 回合条下标出两队每回合的经济类型（手枪局 / 全起 / 强起 / 半起 / ECO，按冻结时间结束时的装备价值和余钱判断），可按类型和队伍筛选回合；"经济"面板画出每回合两队的装备价值，并统计各经济类型的回合数和胜场。旧比赛没有经济数据时不显示 |
-| 道具反查 | 回放区的"道具反查"页：按道具类型、投掷队伍或玩家、回合范围筛选，在地图上拖框选出落点区域，列出落在选区里的每一颗；点"看这颗"回到战术回放、停在出手前 2 秒，并只突出投掷者（"显示全部"恢复）。旧比赛在后台补齐道具数据前，这一页会提示稍后刷新 |
+| 道具反查 | 回放区的"道具反查"页：按道具类型、投掷队伍或玩家、回合范围筛选，在地图上拖框选出落点区域，列出落在选区里的每一颗；点列表里的一颗或地图上的轨迹打开这颗道具的投掷分析（见下一行），分析里的"在战术回放里看"回到战术回放、停在出手前 2 秒，并只突出投掷者（"显示全部"恢复）。旧比赛在后台补齐道具数据前，这一页会提示稍后刷新 |
+| 道具投掷分析 | 在道具反查里点一颗道具，或在战术回放里点一颗飞行中的烟雾弹、闪光弹、手雷或燃烧瓶，右侧换成这颗道具的分析，地图放大到它的轨迹和投掷者出手前后的走位（可切回全图）：出手按键（左键扔 / 右键扔 / 左右键一起扔）、扔法（站投、走投、蹲投、跳投、跳蹲投）、出手前后各 1 秒的慢放（0.25x / 0.5x / 1x，按键面板同步），以及"复制站位指令"：复制 `setpos …; setang …` 控制台指令，在开了作弊（`sv_cheats 1`）的练习服里站到出手点、对准出手视角。按键和扔法依赖 demo 里的 usercmd 记录；站位指令要回放里有出手站位，较早上传的比赛在后台重新解析后才有。面板布局和扔法判定改编自 [cs2-sandbox](https://github.com/bugkingZHT/cs2-sandbox)（MIT，见 [THIRD_PARTY_NOTICES](THIRD_PARTY_NOTICES.md)） |
 | 个人复盘 | 默认用登录的 Steam 账号匹配比赛中的玩家（本地 development 模式默认匹配 xelex），也可切换成其他玩家；只列出该玩家的建议，按回合分组、回合内按严重程度排序，一键跳到最值得回看的一条 |
 | 建议 | 按回合分组；可按严重程度、规则和关键词筛选；"查看这一刻"跳到事件前几秒；每条建议可评价"有帮助 / 无关 / 判断不足"。每次阵亡最多一张卡，标出击杀武器和阵亡前后双方人数，输掉的回合另标「回合输了」，站位过远等同一次阵亡的其他原因附在卡片里；建议多于 5 条时，「全部回合」视图（没有筛选和搜索时）顶部先列出「本场最值得回看」的 5 条（按回合输赢、首个阵亡、人数劣势排序），下面的回合分组只列其余的 |
 | 建议评价 | 评价按事件 ID 保存，重新解析和规则更新后的后台重算之后，建议还在就仍然有效；按规则汇总的评价是调整规则阈值的依据，见 [coaching_feedback_v1](docs/coaching_feedback_v1.md) |
@@ -201,7 +202,7 @@ PYTHONPATH=backend .venv/bin/python -m unittest discover backend/tests
   - 服务器用 Steam Web API 读取公开昵称和头像地址并保存，每次登录更新。
   - 未受邀的账号不会被保存，但登录时仍会向 Steam 查询一次公开资料。
 - **上传的比赛**：
-  - 原始 `.dem` 按原样保存（用于重新解析），另外保存解析出的回放数据和建议。回放数据包括每名玩家的位置、血量、金钱、武器、携带的道具和按键记录（移动、静步、蹲、跳和鼠标左右键），以及每颗道具的轨迹和落点，全部来自 `.dem` 本身；较早上传的比赛会在后台用已保存的 `.dem` 重新解析一次来补上。规则更新后，网站会在后台用已保存的回放数据重新计算建议，不收集新的数据；有的建议可能因此不再显示，用户对它的评价仍随比赛保存，直到删除这场比赛或账户。
+  - 原始 `.dem` 按原样保存（用于重新解析），另外保存解析出的回放数据和建议。回放数据包括每名玩家的位置、血量、金钱、武器、携带的道具和按键记录（移动、静步、蹲、跳和鼠标左右键），以及每颗道具的轨迹、落点和投掷者出手那一刻的站位与视角，全部来自 `.dem` 本身；较早上传的比赛会在后台用已保存的 `.dem` 重新解析一次来补上。规则更新后，网站会在后台用已保存的回放数据重新计算建议，不收集新的数据；有的建议可能因此不再显示，用户对它的评价仍随比赛保存，直到删除这场比赛或账户。
   - `.dem` 里包含同场所有玩家的 SteamID64、游戏内昵称、位置和击杀记录，只对上传者本人可见。其他玩家如希望移除，可以联系站长。
   - 另外保存的只有：用户对建议的评价（有帮助 / 无关 / 判断不足），以及改过的比赛名。
 - **Steam 比赛记录（可选）**：只有用户主动关联时才保存，内容是加密后的游戏验证码和比赛分享码。每次点"同步"才向 Valve 查询；断开关联即删除。
@@ -233,7 +234,8 @@ PYTHONPATH=backend .venv/bin/python -m unittest discover backend/tests
 - **健康检查很粗**：`/health` 在数据库、Redis 或 worker 配置任一项检查失败时返回 HTTP 503 `{"status":"degraded"}`（正常为 200 `{"status":"ok"}`），但不说明是哪一项；production 下要看 `docker compose logs api` 才能定位。
 - **数据覆盖有限**：
   - 解析帧是采样数据；炸弹和道具事件尽量提取，不保证完整；
-  - 没有视线信息（帧里没有玩家朝向）。
+  - 没有视线信息（帧里没有玩家朝向；只在道具出手那一刻记录了投掷者的视角）。
+  - 道具投掷分析的站位指令只还原出手点和视角：边走边扔或跳起扔的道具，照着站好原地扔也会落偏，面板会提示。
   - 实时按键显示依赖 demo 里的 usercmd 数据，只在 BLAST.tv 的 GOTV demo 上验证过；匹配、FACEIT、第一人称 POV 等来源可能没有这类数据，这时不显示按键面板。
 - **第一人称片段**：只在一台本地 Windows 渲染机上验收过；排队超过 `RENDER_CLIP_QUEUE_TIMEOUT_SECONDS`（默认 30 分钟）的任务会被标记失败，可以重试。
 - **单场失败比赛可以无限次重新处理**；Redis 客户端没有设置超时。
@@ -297,4 +299,4 @@ PYTHONPATH=backend .venv/bin/python -m unittest discover backend/tests
 
 雷达图由本项目用 [scripts/maps/build_radars.py](scripts/maps/README.md) 从运营者自己的 CS2 安装里的导航网格渲染（包点取自地图自带的 `func_bomb_target` 触发器，包点里的站立高度取自地图的碰撞数据），不含第三方或 Valve 的雷达美术素材，但图形由 Valve 的游戏数据派生，公开分发的条款尚未单独确认；导航网格的读取参考了 [awpy](https://github.com/pnxenopoulos/awpy)（MIT）。Nuke 的 overview 参数来自 [CS Demo Manager](https://github.com/akiver/cs-demo-manager)，Inferno 与 Anubis 的 overview 参数取自游戏 `game/csgo/pak01_dir.vpk` 里的 `resource/overviews`。详见 [ATTRIBUTION.md](frontend/public/maps/ATTRIBUTION.md)。
 
-复盘页实时按键面板的视觉设计改编自 [bugkingZHT/cs2-sandbox](https://github.com/bugkingZHT/cs2-sandbox) 的 `KeyboardOverlay.vue`（MIT，Copyright (c) 2026 huN7er），用 React 重新实现；许可原文见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+复盘页实时按键面板的视觉设计改编自 [bugkingZHT/cs2-sandbox](https://github.com/bugkingZHT/cs2-sandbox) 的 `KeyboardOverlay.vue`，道具投掷分析面板的布局和扔法判定规则改编自同一仓库的 `GrenadeAnalyzeOverlay.vue` 和 `useGrenadeAnalyzer.ts`（MIT，Copyright (c) 2026 huN7er），都用 React 重新实现；许可原文见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。

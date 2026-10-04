@@ -237,9 +237,9 @@ Demo list items 和 `GET /demos/{demo_id}/status` 带可选的 `matchSummary`（
 
 队伍 = 首个有人可判定阵营的回合里同一阵营的玩家；A 队开局 T，B 队开局 CT。每名玩家每回合的阵营取该回合 `startTick`–`endTick` 之间玩家帧里的多数（平票取最早的一帧；该回合没有范围内的帧时用它的全部帧；仍没有就用该回合的击杀记录），队伍阵营由队员投票，无法判定的回合沿用最近一个已判定回合的阵营；不按回合号推断，所以半场和加时换边都算对。完整规则写在两边实现的文件头注释里，并由前后端共用的 `fixtures/match-rules/` 用例固定；比分 = 该队所在阵营获胜的回合数。`name` 是 demo 里的战队名（`team_clan_name`，匹配赛通常没有 → `null`）。解析完成时写入 `demos.match_summary`；此前已完成的比赛（没有摘要，或摘要 `version` 低于 2）由 worker 空闲时回填或重算（每 30 秒最多 3 场：比分读已存 replay，战队名在 parse 子进程里只读源 `.dem` 的几个 tick；读不到名字就只存比分；从不改 replay）。计算在 `backend/app/services/demo_service/match_summary.py`，与前端 `frontend/lib/match-stats.ts` 的定义保持一致。
 
-### Replay contract（`replay_contract_v3`）
+### Replay contract（`replay_contract_v4`）
 
-`GET /demos/{demo_id}/replay` 返回 `contractVersion`、`mapName`、`mapMetadata`（含 `transform` 与 `worldUnitsPerPercent: {x, y}`，一个雷达百分点对应的世界单位）、`tickRate`、`video`、`rounds`、`players`、`frames`（每帧每名玩家 `x/y` 雷达百分比、`z` 世界高度、`hp`、`alive`、`hasBomb`）、`events`、`diagnostics`，以及 v2 新增的 `playerStates`、`utility` 和 v3 新增的 `inputs`（见下方[按键记录](#按键记录inputsv3)）。v2 的两项：
+`GET /demos/{demo_id}/replay` 返回 `contractVersion`、`mapName`、`mapMetadata`（含 `transform` 与 `worldUnitsPerPercent: {x, y}`，一个雷达百分点对应的世界单位）、`tickRate`、`video`、`rounds`、`players`、`frames`（每帧每名玩家 `x/y` 雷达百分比、`z` 世界高度、`hp`、`alive`、`hasBomb`）、`events`、`diagnostics`，以及 v2 新增的 `playerStates`、`utility`，v3 新增的 `inputs`（见下方[按键记录](#按键记录inputsv3)）和 v4 在每颗投掷物上新增的可选 `throwOrigin`（见下方[出手站位](#出手站位throworiginv4)）。v2 的两项：
 
 ```json
 {
@@ -263,8 +263,8 @@ Demo list items 和 `GET /demos/{demo_id}/status` 带可选的 `matchSummary`（
 - `playerStates`：按玩家 id（与 `frames[].players[].id` 相同）存装备/经济的**变化点**，只有字段变化才新增一条，按 tick 升序；时刻 t 的状态 = 最后一条 `tick ≤ t`。每条是完整快照；某字段缺失表示这场 demo 没有该数据，不是 0。`weapon` 是 demo 里的武器显示名（≤32 字符，死亡或空手为 `null`）；`grenades` 每颗一项，取值 `smoke`/`flash`/`he`/`molotov`（燃烧瓶与燃烧弹）/`decoy`。在帧的采样 tick 上取样，不写进每一帧。
 - `utility`：每颗投掷物一条，`id` 确定（`utility-{type}-{实体id}-{throwTick}`）。`points` 与帧同一雷达百分比坐标（0–100，`z` 为世界高度），飞行中约每 4 tick 一个点，首尾必留，停在引爆处，每颗最多 120 点；最后一点即落点。`detonateTick` 取对应引爆事件（燃烧取 `inferno_startburn`），找不到时取最后移动的 tick；`endTick` 为效果结束（烟 `smokegrenade_expired`、火 `inferno_expire`，缺失时按烟 18 秒、火 7 秒；空中爆掉的燃烧瓶、闪光、手雷、诱饵弹 = `detonateTick`），且不晚于下一回合的 `startTick`（回合重置会清掉烟和火）。回合结束 10 秒以后才投出的道具（回合之间的暂停、重开）不属于任何回合，不收录。这两条在解析时和每次读取回放时都会执行，早先存下的回放读出来也一样。`throwerSide` 按比分摘要同一条阵营规则取该回合的阵营。
 - 抽取失败（例如 demo 没有投掷物数据）只让对应字段为空，不算解析失败；v2 回放缺数据时 `diagnostics.degradedFields` 含 `utility` / `playerStates`，`diagnostics.utilityCount`、`diagnostics.playerStateCount` 给出条数。
-- 旧回放照常加载：v1 读出 `playerStates: {}`、`utility: []`，v1 和 v2 都读出 `inputs: {}`，前端隐藏依赖它们的部分；worker 空闲时在后台把回放早于当前契约版本的已完成比赛重新解析成 v3（状态保持 `completed`；这一步不重新分析，建议和评价原样保留，建议之后由后台的建议重算按 `COACHING_RULES_VERSION` 单独更新，见下方“建议事件的结构化上下文”）。v3 只加了按键记录，规则分析没有变，所以这次升级不需要重算建议。
-- 数据都来自上传的 `.dem`，与位置数据同属一类，随比赛一起删除。v2 时 Mirage 样例从 23.2 MB 增至 25.6 MB（+10%）；v3 的按键记录再加约 1.1 MB（增至 26.7 MB，+4%）。
+- 旧回放照常加载：v1 读出 `playerStates: {}`、`utility: []`，v1 和 v2 都读出 `inputs: {}`，v1–v3 的投掷物没有 `throwOrigin`，前端隐藏依赖它们的部分；worker 空闲时在后台把回放早于当前契约版本的已完成比赛重新解析成 v4（状态保持 `completed`；这一步不重新分析，建议和评价原样保留，建议之后由后台的建议重算按 `COACHING_RULES_VERSION` 单独更新，见下方“建议事件的结构化上下文”）。v3 只加了按键记录、v4 只加了出手站位，规则分析都没有变，所以这两次升级不需要重算建议。
+- 数据都来自上传的 `.dem`，与位置数据同属一类，随比赛一起删除。v2 时 Mirage 样例从 23.2 MB 增至 25.6 MB（+10%）；v3 的按键记录再加约 1.1 MB（增至 26.7 MB，+4%）；v4 的出手站位再加约 55 KB（+0.2%）。
 
 #### 按键记录（`inputs`，v3）
 
@@ -300,6 +300,27 @@ Demo list items 和 `GET /demos/{demo_id}/status` 带可选的 `matchSummary`（
   其他位（使用 32、换弹 8192 等）在解析时去掉，不存储。
 - **每场 demo 不一定有**：只在 BLAST.tv 的 GOTV demo 上验证过；匹配、FACEIT、第一人称 POV 等来源可能没有 usercmd 数据。没有数据或抽取失败时 `inputs: {}`，不算解析失败；`diagnostics.inputSource` 有数据时为 `"usercmd"`，否则为 `null`，`diagnostics.inputPlayerCount` 是有按键记录的玩家数。前端的按键面板在当前玩家没有记录时隐藏。
 - 存储前的归一化：只收整数、按 tick 排序、合并相邻的相同 `mask`、去掉不显示的位，坏的条目丢弃；每名玩家最多 60,000 条、最多 64 名玩家，达到上限的记录会截断，并在 `diagnostics.degradedFields` 里标出 `inputsCapped`；存下的 `inputs` 不是对象时读出 `{}`，`degradedFields` 含 `inputs`。v3 回放没有按键数据不算降级，只表现为 `inputSource: null`。
+
+#### 出手站位（`throwOrigin`，v4）
+
+```json
+{
+  "id": "utility-smoke-431-77300", "type": "smoke",
+  "throwerId": "76561198193174134", "throwerName": "xertioN", "throwerSide": "T",
+  "roundNumber": 10, "throwTick": 77300, "detonateTick": 77636, "endTick": 78718,
+  "points": [{"tick": 77300, "x": 92.85, "y": 39.06, "z": -53.0}, {"tick": 77636, "x": 43.96, "y": 49.35, "z": 50.0}],
+  "throwOrigin": {"x": 1377.26, "y": -115.65, "z": -132.61, "pitch": -20.33, "yaw": 163.28,
+                  "speed": 245.0, "airborne": true}
+}
+```
+
+（节选：Mirage 样例里 xertioN 第 10 回合的烟，边跑边跳着扔出，`points` 共 85 点，这里只列首尾。）
+
+- `utility[]` 里每颗投掷物可以带 `throwOrigin`：投掷者出手时的站位，供前端"道具投掷分析"生成复制站位指令（`setpos x y z; setang pitch yaw 0`）。取投掷者在 `throwTick - 1`（投掷物出现前的最后一个 tick）那一行的数据，这一行没有时取 `throwTick` 那一行；投掷者按 SteamID 匹配（与 `throwerId` 相同）。
+- `x/y/z` 是脚下的位置，`pitch/yaw` 是视角，都是**世界单位 / 度**，不是雷达百分比，保留 2 位小数；`pitch` 限制在 −90..90，`yaw` 归到 (−180, 180]。旧坐标变换的重投影（`legacyRadarEdgePositions`）不动它。
+- `speed`（可选）：出手时的水平速度（单位/秒，1 位小数），用 `throwTick - 1` 和 `throwTick` 两行的水平位移乘 tick 率算出，两行都有时才有。没有用 demoparser2 的 `velocity_X/Y`：它们比位置晚一个 tick，而且只有前两个 tick 也一起解析时才有值。
+- `airborne`（可选）：出手时是否在空中（demo 的 `is_airborne`）。滚轮跳不进 `usercmd_buttonstate_1`，所以跳投要看这一项，按键记录里不一定有跳。
+- 解析时只多一次 `parse_ticks`（每颗投掷物两个 tick；Mirage 样例 508 颗、约 0.2 秒，解析的峰值内存不变）。读不到这些属性时这颗投掷物就没有 `throwOrigin`，不算解析失败；`diagnostics.throwOriginCount` 是带 `throwOrigin` 的投掷物数，为 0 不算降级（`degradedFields` 不标）。归一化时 `x/y/z/pitch/yaw` 有一个不是有限数字就整项丢掉，`speed` 不是有限的非负数、`airborne` 不是布尔值时只丢那一项。前端没有 `throwOrigin` 时不显示站位指令。
 
 ### 建议事件的结构化上下文（`structured_context_json`）
 

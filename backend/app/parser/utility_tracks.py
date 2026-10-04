@@ -15,6 +15,14 @@ events (``smokegrenade_expired``, ``inferno_expire``) with fixed fallbacks.
 Points stay in world units here; ``app.parser.normalizer`` converts them to
 radar percent with the frames' transform. Everything is best effort: a demo
 without grenade data yields ``[]`` and never fails the parse.
+
+Contract v4 adds ``throwOrigin``, the thrower's pose at release in world units
+(feet origin, eye angles), for the copy-position command: the thrower's row at
+``throwTick - 1`` (the last tick before the projectile exists), else at
+``throwTick``. ``speed`` is the horizontal distance between those two rows times
+the tick rate; demoparser2's own ``velocity_X/Y`` lag a tick and only appear
+when the two preceding ticks were parsed too, so they are not read. A throw
+without a pose row simply lacks the field.
 """
 
 from __future__ import annotations
@@ -49,6 +57,10 @@ POINT_STEP_TICKS = 4
 MAX_POINTS_PER_THROW = 120
 MAX_THROWS = 4000
 MAX_NAME_LENGTH = 64
+THROW_POSE_PROPS = ["X", "Y", "Z", "pitch", "yaw"]
+THROW_POSE_OPTIONAL_PROPS = ["is_airborne"]
+# The pose is read this many ticks before the projectile's first tick.
+THROW_POSE_TICK_OFFSET = 1
 
 
 def parse_utility_tracks(
@@ -122,6 +134,142 @@ def _tracks_from_rows(
             tracks.append(track)
     tracks.sort(key=lambda item: (item["throwTick"], item["id"]))
     return tracks[:MAX_THROWS]
+
+
+def with_throw_origins(parser: Any, throws: list[dict[str, Any]], tick_rate: int) -> list[dict[str, Any]]:
+    """The throws with ``throwOrigin`` added where the thrower has a pose row.
+
+    One ``parse_ticks`` call at the pose ticks of every throw; without
+    ``is_airborne`` when that fails, then the throws come back unchanged.
+    """
+    ticks = throw_pose_ticks(throws)
+    if not ticks:
+        return throws
+    for props in ([*THROW_POSE_PROPS, *THROW_POSE_OPTIONAL_PROPS], THROW_POSE_PROPS):
+        try:
+            rows = parser.parse_ticks(list(props), ticks=ticks)
+        except Exception:
+            continue
+        return build_throw_origins(rows, throws, tick_rate)
+    return throws
+
+
+def throw_pose_ticks(throws: list[dict[str, Any]]) -> list[int]:
+    """Sorted ticks to read thrower poses at: each throw's tick and the one before it."""
+    ticks: set[int] = set()
+    for throw in throws:
+        tick = _int(throw.get("throwTick")) if isinstance(throw, dict) else None
+        if tick is None or tick < 0 or not isinstance(throw.get("throwerId"), str):
+            continue
+        ticks.add(tick)
+        if tick >= THROW_POSE_TICK_OFFSET:
+            ticks.add(tick - THROW_POSE_TICK_OFFSET)
+    return sorted(ticks)
+
+
+def build_throw_origins(rows: Any, throws: list[dict[str, Any]], tick_rate: int) -> list[dict[str, Any]]:
+    """The throws with ``throwOrigin`` from ``parse_ticks`` rows (a DataFrame or a list of dicts)."""
+    poses: dict[tuple[str, int], dict[str, Any]] = {}
+    for record in _records(rows):
+        player_id = _player_id(record.get("steamid"))
+        tick = _int(record.get("tick"))
+        if player_id is not None and tick is not None:
+            poses.setdefault((player_id, tick), record)
+    if not poses:
+        return throws
+    rate = max(1, int(tick_rate))
+    result: list[dict[str, Any]] = []
+    for throw in throws:
+        origin = _throw_origin(poses, throw, rate)
+        result.append({**throw, "throwOrigin": origin} if origin is not None else throw)
+    return result
+
+
+def _throw_origin(
+    poses: dict[tuple[str, int], dict[str, Any]],
+    throw: dict[str, Any],
+    tick_rate: int,
+) -> dict[str, Any] | None:
+    thrower = throw.get("throwerId")
+    tick = _int(throw.get("throwTick"))
+    if not isinstance(thrower, str) or tick is None:
+        return None
+    before = poses.get((thrower, tick - THROW_POSE_TICK_OFFSET))
+    at_throw = poses.get((thrower, tick))
+    pose = before if _has_pose(before) else at_throw
+    if pose is None or not _has_pose(pose):
+        return None
+    speed = None
+    if pose is before and at_throw is not None and _finite(at_throw.get("X")) and _finite(at_throw.get("Y")):
+        distance = math.hypot(float(at_throw["X"]) - float(pose["X"]), float(at_throw["Y"]) - float(pose["Y"]))
+        speed = distance * tick_rate / THROW_POSE_TICK_OFFSET
+    x, y, z, pitch, yaw = (float(pose[prop]) for prop in THROW_POSE_PROPS)
+    return normalize_throw_origin({
+        "x": x, "y": y, "z": z, "pitch": pitch, "yaw": yaw,
+        "speed": speed, "airborne": _bool(pose.get("is_airborne")),
+    })
+
+
+def _has_pose(record: dict[str, Any] | None) -> bool:
+    return record is not None and all(_finite(record.get(prop)) for prop in THROW_POSE_PROPS)
+
+
+def _bool(value: Any) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    # numpy.bool_ from a DataFrame column.
+    if getattr(getattr(value, "dtype", None), "kind", None) == "b":
+        return bool(value)
+    return None
+
+
+def normalize_throw_origin(value: Any) -> dict[str, Any] | None:
+    """A clean ``throwOrigin``; None unless x, y, z, pitch and yaw are all finite numbers.
+
+    Positions and angles keep 2 decimals, pitch is clamped to -90..90 and yaw
+    wrapped into (-180, 180]; ``speed`` (1 decimal) is kept when finite and
+    >= 0, ``airborne`` when it is a bool. Idempotent.
+    """
+    if not isinstance(value, dict):
+        return None
+    x, y, z, pitch, yaw = (_number(value.get(key)) for key in ("x", "y", "z", "pitch", "yaw"))
+    if x is None or y is None or z is None or pitch is None or yaw is None:
+        return None
+    origin: dict[str, Any] = {
+        "x": _round(x, 2),
+        "y": _round(y, 2),
+        "z": _round(z, 2),
+        "pitch": _round(max(-90.0, min(90.0, pitch)), 2),
+        "yaw": _wrap_yaw(yaw),
+    }
+    speed = _number(value.get("speed"))
+    if speed is not None and speed >= 0:
+        origin["speed"] = _round(speed, 1)
+    airborne = value.get("airborne")
+    if isinstance(airborne, bool):
+        origin["airborne"] = airborne
+    return origin
+
+
+def _number(value: Any) -> float | None:
+    """A finite int or float as a float; None for anything else (bools and strings included)."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    number = float(value)
+    return number if math.isfinite(number) else None
+
+
+def _wrap_yaw(value: float) -> float:
+    yaw = _round(math.fmod(value, 360.0), 2)
+    if yaw <= -180.0:
+        yaw = _round(yaw + 360.0, 2)
+    elif yaw > 180.0:
+        yaw = _round(yaw - 360.0, 2)
+    return yaw
+
+
+def _round(value: float, digits: int) -> float:
+    return round(value, digits) or 0.0  # no "-0.0"
 
 
 def _projectile_rows(grenades: Any) -> dict[str, list[Any]] | None:
@@ -538,7 +686,7 @@ def _normalize_throw(item: Any, rounds: list[dict[str, Any]]) -> dict[str, Any] 
         round_number = _round_for_tick(throw_tick, rounds)
     side = item.get("throwerSide")
     thrower_id = item.get("throwerId")
-    return {
+    throw: dict[str, Any] = {
         "id": throw_id,
         "type": utility_type,
         "throwerId": (thrower_id.strip()[:MAX_NAME_LENGTH] or None) if isinstance(thrower_id, str) else None,
@@ -550,6 +698,10 @@ def _normalize_throw(item: Any, rounds: list[dict[str, Any]]) -> dict[str, Any] 
         "endTick": end_tick,
         "points": points,
     }
+    origin = normalize_throw_origin(item.get("throwOrigin"))
+    if origin is not None:
+        throw["throwOrigin"] = origin
+    return throw
 
 
 def _normalize_points(value: Any) -> list[dict[str, Any]]:

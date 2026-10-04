@@ -8,6 +8,9 @@ import { decodeButtons, describePressedKeys, type PlayerButtons } from "@/lib/pl
 export interface KeyboardOverlayProps extends PlayerButtons {
   // For the accessible label: "xelex 正在按：D、蹲、左键".
   playerName?: string | null;
+  // Inside another card (道具投掷分析): the same keys and mouse without the panel's own background,
+  // border, blur and padding.
+  embedded?: boolean;
 }
 
 const PRESSED_FILL = "rgba(74, 171, 247, 0.8)";
@@ -28,11 +31,12 @@ export const KeyboardOverlay = memo(function KeyboardOverlay({
   jump,
   duck,
   speed,
-  playerName
+  playerName,
+  embedded = false
 }: KeyboardOverlayProps) {
   const label = describePressedKeys({ forward, back, left, right, attack, attack2, jump, duck, speed }, playerName);
   return (
-    <div className="keyboard-overlay" role="img" aria-label={label}>
+    <div className={`keyboard-overlay${embedded ? " embedded" : ""}`} role="img" aria-label={label}>
       <div className="wasd-section">
         <div className="keyboard-grid">
           <div className="grid-row">

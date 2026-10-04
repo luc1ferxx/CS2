@@ -173,6 +173,24 @@ export interface ReplayUtilityPoint {
   z?: number;
 }
 
+/**
+ * Replay contract v4: the thrower at release, in world units and degrees (for the 道具投掷分析
+ * copy-position command). Absent on older replays and when the parser could not read the pose.
+ */
+export interface ReplayThrowOrigin {
+  /** Player origin (feet), world units. */
+  x: number;
+  y: number;
+  z: number;
+  /** Eye angles in degrees: pitch -90..90, yaw (-180, 180]. */
+  pitch: number;
+  yaw: number;
+  /** Horizontal speed in units per second, when the demo has velocity props. */
+  speed?: number;
+  /** Whether the thrower was in the air, when the demo has is_airborne. */
+  airborne?: boolean;
+}
+
 /** One thrown grenade (replay contract v2). */
 export interface ReplayUtility {
   /** Deterministic: `utility-{type}-{entityId}-{throwTick}`. */
@@ -189,6 +207,8 @@ export interface ReplayUtility {
   endTick: number;
   /** Flight path, sorted by tick, first point at throwTick, last at detonation (landing point). */
   points: ReplayUtilityPoint[];
+  /** v4: the thrower's position and view angles at release. */
+  throwOrigin?: ReplayThrowOrigin;
 }
 
 export interface ReplayContractDiagnostics {
@@ -210,6 +230,8 @@ export interface ReplayContractDiagnostics {
   inputSource?: string | null;
   /** v3: number of players with an inputs track. Absent on older API responses. */
   inputPlayerCount?: number;
+  /** v4: number of throws with a `throwOrigin`. Absent on older API responses. */
+  throwOriginCount?: number;
 }
 
 export interface ReplayData {

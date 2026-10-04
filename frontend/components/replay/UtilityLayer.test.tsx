@@ -1,5 +1,5 @@
-import { render } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { fireEvent, render } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
 
 import { UtilityLayer } from "@/components/replay/UtilityLayer";
 import { getTacticalMapPresentation } from "@/lib/map-config";
@@ -83,6 +83,51 @@ describe("UtilityLayer", () => {
     const focused = draw(data, 700, { focus: V2_ALPHA }).container;
     expect(focused.querySelector('[data-utility-id="utility-molotov-304-600"]')?.parentElement).toHaveClass("focus-dimmed");
     expect(focused.querySelector('[data-utility-id="utility-smoke-301-300"]')?.parentElement).not.toHaveClass("focus-dimmed");
+  });
+
+  it("lets a grenade in flight be clicked for its analysis, but never a decoy or an effect", () => {
+    const decoy: ReplayUtility = {
+      id: "utility-decoy-305-320", type: "decoy", throwerId: V2_CHARLIE, throwerName: "Charlie", throwerSide: "CT",
+      roundNumber: 1, throwTick: 320, detonateTick: 400, endTick: 900,
+      points: [{ tick: 320, x: 60, y: 60 }, { tick: 400, x: 55, y: 50 }]
+    };
+    const data = replay([decoy, molotov]);
+    const map = getTacticalMapPresentation({ mapName: data.mapName });
+    const onSelect = vi.fn();
+    const { container } = render(
+      <svg viewBox="0 0 100 100">
+        <UtilityLayer replay={data} currentTick={360} map={map} floor={null} onSelect={onSelect} unitsPerPixel={0.2} />
+      </svg>
+    );
+    // The layer itself stays click-through; only the smoke's marker takes clicks.
+    expect(container.querySelector('[data-testid="utility-layer"]')).toHaveAttribute("pointer-events", "none");
+    const markers = container.querySelectorAll(".utility-flight-select");
+    expect(markers).toHaveLength(1);
+    const marker = markers[0];
+    expect(marker.closest("[data-utility-id]")).toHaveAttribute("data-utility-id", "utility-smoke-301-300");
+    expect(marker).toHaveAttribute("pointer-events", "auto");
+    expect(marker.querySelector("title")).toHaveTextContent("分析这颗道具");
+    // A 24 px target in screen pixels (the marker group is scaled back to radar percent).
+    expect(marker.querySelector(".utility-flight-hit")).toHaveAttribute("r", "12");
+    fireEvent.click(marker.querySelector(".utility-flight-hit") as Element);
+    expect(onSelect).toHaveBeenCalledTimes(1);
+    expect(onSelect).toHaveBeenLastCalledWith(expect.objectContaining({ id: "utility-smoke-301-300" }));
+    expect(container.querySelector('[data-utility-id="utility-decoy-305-320"] .utility-flight-hit')).toBeNull();
+
+    // Once it has burst the smoke is an effect again: nothing to click, the dots under it keep theirs.
+    const later = render(
+      <svg viewBox="0 0 100 100">
+        <UtilityLayer replay={data} currentTick={700} map={map} floor={null} onSelect={onSelect} />
+      </svg>
+    ).container;
+    expect(later.querySelector('[data-utility-id="utility-smoke-301-300"]')).toHaveAttribute("data-phase", "effect");
+    expect(later.querySelector(".utility-flight-select, .utility-flight-hit, [pointer-events='auto']")).toBeNull();
+  });
+
+  it("keeps grenades in flight click-through without a select handler", () => {
+    const { container } = draw(replay(), 360);
+    expect(container.querySelector('[data-phase="flight"]')).not.toBeNull();
+    expect(container.querySelector(".utility-flight-select, .utility-flight-hit, title")).toBeNull();
   });
 
   it("draws nothing for a v1 replay or a quiet moment", () => {

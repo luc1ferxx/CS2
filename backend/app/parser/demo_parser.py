@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any
 from app.parser.player_inputs import parse_player_inputs
 from app.parser.player_states import PLAYER_STATE_PROPS, build_player_states
 from app.parser.replay_contract import normalize_bomb_site
-from app.parser.utility_tracks import parse_utility_tracks
+from app.parser.utility_tracks import parse_utility_tracks, with_throw_origins
 from app.services.upload_service import MAX_DEMO_UPLOAD_BYTES, safe_upload_filename
 
 if TYPE_CHECKING:
@@ -180,9 +180,12 @@ def parse_demo_file(source_path: Path) -> dict[str, Any]:
     # Replay contract v2 extras. Best effort: either one failing is a partial
     # success (the replay just lacks it), never a parse failure.
     player_states: dict[str, list[dict[str, Any]]] = _best_effort(lambda: build_player_states(tick_records), {})
-    utility: list[dict[str, Any]] = _best_effort(
+    throws: list[dict[str, Any]] = _best_effort(
         lambda: parse_utility_tracks(parser, rounds, tick_rate, detonations=utility_records), [],
     )
+    # Contract v4: each thrower's pose at release, best effort (throws keep no
+    # throwOrigin when it fails).
+    utility = _best_effort(lambda: with_throw_origins(parser, throws, tick_rate), throws)
 
     return {
         "mapName": map_name,

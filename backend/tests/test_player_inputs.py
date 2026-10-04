@@ -249,7 +249,7 @@ class ContractV3Test(unittest.TestCase):
             "inputs": {"p1": [[20, D | USE], [10, W], [30, D]]},
         }
         replay = normalize_parser_output("demo-1", parsed)
-        self.assertEqual(replay["contractVersion"], "replay_contract_v3")
+        self.assertEqual(replay["contractVersion"], REPLAY_CONTRACT_VERSION)
         self.assertEqual(replay["inputs"], {"p1": [[10, W], [20, D]]})
         loaded = normalize_replay_contract(json.loads(json.dumps(replay)))
         self.assertEqual(loaded["inputs"], replay["inputs"])

@@ -121,6 +121,7 @@ UTILITY_FIELDS = (
     "detonateTick",
     "endTick",
 )
+THROW_ORIGIN_FIELDS = ("x", "y", "z", "pitch", "yaw", "speed", "airborne")
 
 
 def _public_player_states(value: Any) -> dict[str, list[dict[str, Any]]]:
@@ -160,6 +161,9 @@ def _public_utility(value: dict[str, Any]) -> dict[str, Any]:
         for point in points
         if isinstance(point, dict)
     ] if isinstance(points, list) else []
+    origin = value.get("throwOrigin")
+    if isinstance(origin, dict):
+        projected["throwOrigin"] = _project_fields(origin, THROW_ORIGIN_FIELDS)
     return projected
 
 
@@ -309,6 +313,7 @@ def _public_replay_diagnostics(value: Any) -> dict[str, Any] | None:
             "degradedFields",
             "missingEventFamilies",
             "utilityCount",
+            "throwOriginCount",
             "playerStateCount",
             "inputSource",
             "inputPlayerCount",

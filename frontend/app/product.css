@@ -1965,3 +1965,102 @@
 @media (prefers-reduced-motion: reduce) {
   .keyboard-overlay :is(.key, .key.active, .mouse-button, .mouse-labels span) { transition: none; animation: none; }
 }
+
+/* === S17 THROW ANALYSIS === 道具投掷分析 (spec S17, mockup v4).
+   Panel look adapted from bugkingZHT/cs2-sandbox GrenadeAnalyzeOverlay.vue (MIT, Copyright (c) 2026
+   huN7er), like the S16 key panel it embeds: a black translucent rounded card, white text and blue
+   rgba(74, 171, 247, 0.8) accents, literal colours outside the S13 palette for this one component.
+   The map layer's sizes and strokes are SVG attributes multiplied by the zoom, so its rules here set
+   colours only (a CSS stroke-width would override the attributes). */
+
+/* Analysis mode in the finder: no rectangle drafting, so the map keeps the plain cursor. */
+.review-app .utility-finder.analyzing .utility-finder-map > svg { cursor: default; }
+/* While analysis is open in the workbench, the dock (回合记录, the timeline, the transport) gives its
+   height to the map: hidden with CSS, never unmounted. */
+.review-app.is-workbench .review-stage.analysis-open > :is(.round-strip, .timeline-panel, .review-command-bar) { display: none; }
+
+/* The panel takes the finder's right column (300 px, 260 px below 1181 px wide). */
+.throw-analysis-panel { display: flex; flex-direction: column; gap: 10px; min-width: 0; min-height: 0; margin: 8px 8px 8px 0; padding: 10px; overflow-y: auto; border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 10px; background: rgba(0, 0, 0, 0.7); color: #ffffff; font-family: system-ui, "Microsoft YaHei", sans-serif; font-size: 12px; line-height: 1.4; scrollbar-width: thin; }
+.throw-analysis-panel > * { flex: none; }
+.throw-analysis-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.throw-analysis-avatar { display: inline-flex; flex: none; align-items: center; justify-content: center; width: 26px; height: 26px; border-radius: 50%; background: rgba(255, 255, 255, 0.2); color: #ffffff; font-size: 13px; font-weight: 600; }
+.throw-analysis-avatar.side-t { background: var(--t); color: #17120a; }
+.throw-analysis-avatar.side-ct { background: var(--ct); color: #0b1620; }
+.throw-analysis-name { min-width: 0; overflow: hidden; font-size: 13px; font-weight: 600; white-space: nowrap; text-overflow: ellipsis; }
+.throw-analysis-kind { flex: none; color: rgba(255, 255, 255, 0.6); }
+.throw-analysis-close { display: inline-flex; flex: none; align-items: center; justify-content: center; width: 26px; height: 26px; margin-left: auto; padding: 0; border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 50%; background: rgba(255, 255, 255, 0.1); color: rgba(255, 255, 255, 0.7); }
+.throw-analysis-close:hover { background: rgba(255, 255, 255, 0.2); color: #ffffff; }
+.throw-analysis-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.throw-analysis-segments { display: inline-flex; flex: none; overflow: hidden; border: 1px solid rgba(255, 255, 255, 0.3); border-radius: 6px; }
+.throw-analysis-segments > button { height: 22px; padding: 0 8px; border: 0; border-radius: 0; background: transparent; color: rgba(255, 255, 255, 0.7); font-size: 11px; font-weight: 500; white-space: nowrap; }
+.throw-analysis-segments > button + button { border-left: 1px solid rgba(255, 255, 255, 0.15); }
+.throw-analysis-segments > button:hover { background: rgba(255, 255, 255, 0.1); color: #ffffff; }
+.throw-analysis-segments > button[aria-pressed="true"] { background: rgba(74, 171, 247, 0.8); color: #ffffff; }
+.throw-analysis-tag { display: inline-flex; align-items: center; height: 22px; padding: 0 8px; border: 1px solid rgba(74, 171, 247, 0.5); border-radius: 6px; background: rgba(74, 171, 247, 0.2); color: #4aabf7; font-size: 11px; font-weight: 600; white-space: nowrap; }
+/* The S16 key panel without its own card (KeyboardOverlay embedded): 248 x 116 px, centred. */
+.keyboard-overlay.embedded { padding: 0; border: 0; border-radius: 0; background: none; backdrop-filter: none; }
+/* In slow motion the keys change every few frames: keep the pressed colour, drop the ring pulse. */
+.keyboard-overlay.embedded .key.active { animation: none; }
+.throw-analysis-keys { display: flex; justify-content: center; }
+.throw-analysis-muted { margin: 0; color: rgba(255, 255, 255, 0.55); font-size: 11px; }
+.throw-analysis-keys > .throw-analysis-muted { padding: 10px 0; text-align: center; }
+/* Mini timeline: play / pause, the speeds, the time from the release, then the track with the red
+   release marker. The fill and the handle carry their own per-frame left / width (never a container). */
+.throw-analysis-timeline { display: flex; flex-direction: column; gap: 7px; }
+.throw-analysis-controls { display: flex; align-items: center; gap: 6px; }
+.throw-analysis-play { display: inline-flex; flex: none; align-items: center; justify-content: center; width: 26px; height: 26px; padding: 0; border: 0; border-radius: 50%; background: rgba(74, 171, 247, 0.8); color: #ffffff; }
+.throw-analysis-play:hover { background: #4aabf7; }
+.throw-analysis-time { margin-left: auto; color: rgba(255, 255, 255, 0.85); font-family: var(--font-mono); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.throw-analysis-track { position: relative; height: 6px; margin-top: 4px; border-radius: 3px; background: rgba(255, 255, 255, 0.15); cursor: pointer; touch-action: none; }
+/* A taller hit area than the 6 px bar. */
+.throw-analysis-track::before { content: ""; position: absolute; inset: -8px 0; }
+.throw-analysis-track:focus-visible { outline-offset: 6px; }
+.throw-analysis-fill { position: absolute; top: 0; bottom: 0; left: 0; border-radius: 3px; background: rgba(74, 171, 247, 0.8); pointer-events: none; }
+.throw-analysis-release { position: absolute; top: -4px; width: 2px; height: 14px; margin-left: -1px; border-radius: 1px; background: #ff5a5a; box-shadow: 0 0 6px rgba(255, 90, 90, 0.6); pointer-events: none; }
+.throw-analysis-handle { position: absolute; top: 50%; width: 12px; height: 12px; border-radius: 50%; background: #ffffff; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4); transform: translate(-50%, -50%); pointer-events: none; }
+.throw-analysis-scale { position: relative; display: flex; justify-content: space-between; color: rgba(255, 255, 255, 0.5); font-size: 11px; }
+.throw-analysis-scale-release { position: absolute; top: 0; transform: translateX(-50%); }
+.throw-analysis-command { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
+.throw-analysis-button { display: inline-flex; align-items: center; justify-content: center; height: 26px; padding: 0 10px; border: 1px solid rgba(255, 255, 255, 0.3); border-radius: 6px; background: rgba(255, 255, 255, 0.1); color: #ffffff; font-size: 12px; font-weight: 500; white-space: nowrap; }
+.throw-analysis-button:hover { background: rgba(255, 255, 255, 0.2); }
+.throw-analysis-button.copy-copied { border-color: rgba(74, 171, 247, 0.7); color: #4aabf7; }
+.throw-analysis-button.copy-failed { border-color: rgba(255, 90, 90, 0.7); color: #ff8a8a; }
+.throw-analysis-code { align-self: stretch; padding: 5px 7px; border-radius: 6px; background: rgba(255, 255, 255, 0.06); color: rgba(255, 255, 255, 0.85); font-family: var(--font-mono); font-size: 11px; line-height: 1.45; word-break: break-all; user-select: all; }
+.throw-analysis-foot { display: flex; flex-direction: column; align-items: stretch; gap: 8px; margin-top: auto; }
+.throw-analysis-hint { margin: 0; color: rgba(255, 255, 255, 0.6); font-size: 11px; line-height: 1.45; }
+/* The 260 px column (1001-1180 px wide): the key panel at 0.9 so it fits the card. */
+@media (max-width: 1180px) {
+  .throw-analysis-panel .keyboard-overlay.embedded { zoom: 0.9; }
+}
+/* Stacked under the map (up to 1000 px wide): a full-width card below it. */
+@media (max-width: 1000px) {
+  .throw-analysis-panel { margin: 0 8px 8px; overflow: visible; }
+  .throw-analysis-panel .keyboard-overlay.embedded { zoom: 1; }
+}
+
+/* The analysed throw on the finder's map (ThrowAnalysisLayer, radar percent). */
+.throw-analysis-layer .throw-analysis-trajectory { stroke: var(--radar-text-2); }
+.throw-analysis-layer.side-t .throw-analysis-trajectory { stroke: var(--t); }
+.throw-analysis-layer.side-ct .throw-analysis-trajectory { stroke: var(--ct); }
+.throw-analysis-layer .throw-analysis-thrower-path { stroke: #ffffff; stroke-opacity: 0.85; }
+.throw-analysis-layer :is(.throw-analysis-release-dot, .throw-analysis-thrower) { fill: var(--radar-text-2); stroke: #ffffff; }
+.throw-analysis-layer.side-t :is(.throw-analysis-release-dot, .throw-analysis-thrower) { fill: var(--t); }
+.throw-analysis-layer.side-ct :is(.throw-analysis-release-dot, .throw-analysis-thrower) { fill: var(--ct); }
+.throw-analysis-layer .throw-analysis-release-ring { stroke: #ff5a5a; }
+.throw-analysis-layer .throw-analysis-effect-area { fill: none; stroke: var(--radar-text-2); }
+.throw-analysis-layer .utility-smoke .throw-analysis-effect-area { fill: var(--radar-smoke); fill-opacity: 0.55; stroke: none; }
+.throw-analysis-layer .utility-molotov .throw-analysis-effect-area { fill: var(--radar-fire); fill-opacity: 0.45; stroke: none; }
+.throw-analysis-layer .utility-flash .throw-analysis-effect-area { fill: var(--radar-flash); fill-opacity: 0.15; stroke: var(--radar-flash); }
+.throw-analysis-layer .utility-he .throw-analysis-effect-area { fill: var(--radar-he); fill-opacity: 0.15; stroke: var(--radar-he); }
+.throw-analysis-layer .throw-analysis-effect-icon { color: var(--radar-text); }
+.throw-analysis-layer .utility-smoke .throw-analysis-effect-icon { color: var(--radar-bg); opacity: 0.85; }
+.throw-analysis-layer .throw-analysis-label { fill: #ffffff; stroke: rgba(0, 0, 0, 0.7); paint-order: stroke; font-family: system-ui, "Microsoft YaHei", sans-serif; font-weight: 600; }
+.throw-analysis-layer .throw-analysis-grenade > circle { fill: var(--radar-panel); stroke: var(--radar-text-2); }
+.throw-analysis-layer.side-t .throw-analysis-grenade > circle { stroke: var(--t); }
+.throw-analysis-layer.side-ct .throw-analysis-grenade > circle { stroke: var(--ct); }
+.throw-analysis-layer .throw-analysis-grenade-icon { color: var(--radar-text); }
+
+@media (prefers-reduced-motion: reduce) {
+  :is(.throw-analysis-panel, .throw-analysis-layer),
+  :is(.throw-analysis-panel, .throw-analysis-layer) * { transition: none; animation: none; }
+}

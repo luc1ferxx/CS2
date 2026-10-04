@@ -4,8 +4,8 @@ import { CircleDashed, CircleDot, Cloud, Flame, Zap, type LucideIcon } from "luc
 import { memo } from "react";
 
 import { getTacticalMapLevel, type TacticalMapLevel, type TacticalMapPresentation } from "@/lib/map-config";
-import { utilityActiveAt, type ActiveUtility } from "@/lib/utility";
-import type { ReplayData, UtilityType } from "@/types/replay";
+import { FINDER_UTILITY_TYPES, utilityActiveAt, type ActiveUtility } from "@/lib/utility";
+import type { ReplayData, ReplayUtility, UtilityType } from "@/types/replay";
 
 // Icons encode the grenade kind only (lucide, ISC); no game artwork.
 export const UTILITY_ICONS: Record<UtilityType, LucideIcon> = {
@@ -19,6 +19,8 @@ export const UTILITY_ICONS: Record<UtilityType, LucideIcon> = {
 // On-screen pixel sizes (drawn in a group scaled back to radar percent, like the player dots).
 const ICON_PX = 12;
 const EFFECT_GLYPH_PX = 12;
+// A grenade in flight that opens its analysis takes clicks in a 24 px circle around its icon.
+const HIT_RADIUS_PX = 12;
 const FALLBACK_UNITS_PER_PIXEL = 100 / 640;
 // A smoke or fire fades in over this long and out over its last second.
 const FADE_SECONDS = 0.4;
@@ -34,6 +36,11 @@ interface UtilityLayerProps {
   focusPlayerId?: string | null;
   /** Radar-percent units per screen pixel (the viewer's overlay context). */
   unitsPerPixel?: number;
+  /**
+   * When set, a smoke, flash, fire or HE still in the air can be clicked (道具投掷分析). Effects stay
+   * click-through, so the player dots under a smoke keep their own clicks.
+   */
+  onSelect?: (utility: ReplayUtility) => void;
 }
 
 /**
@@ -50,7 +57,8 @@ export const UtilityLayer = memo(function UtilityLayer({
   floor,
   roundNumber,
   focusPlayerId = null,
-  unitsPerPixel = FALLBACK_UNITS_PER_PIXEL
+  unitsPerPixel = FALLBACK_UNITS_PER_PIXEL,
+  onSelect
 }: UtilityLayerProps) {
   const active = utilityActiveAt(replay, currentTick, { map, roundNumber });
   if (active.length === 0) return null;
@@ -71,7 +79,7 @@ export const UtilityLayer = memo(function UtilityLayer({
         <g key={item.utility.id} className={itemClass(item)}>
           {item.phase === "effect"
             ? <UtilityEffect item={item} remainingSeconds={(item.endsAt - currentTick) / tickRate} unit={unitsPerPixel} />
-            : <UtilityFlight item={item} unit={unitsPerPixel} />}
+            : <UtilityFlight item={item} unit={unitsPerPixel} onSelect={onSelect} />}
         </g>
       ))}
     </g>
@@ -119,9 +127,19 @@ function UtilityEffect({ item, remainingSeconds, unit }: { item: ActiveUtility; 
   );
 }
 
-function UtilityFlight({ item, unit }: { item: ActiveUtility; unit: number }) {
+function UtilityFlight({
+  item,
+  unit,
+  onSelect
+}: {
+  item: ActiveUtility;
+  unit: number;
+  onSelect?: (utility: ReplayUtility) => void;
+}) {
   const { utility } = item;
   const Icon = UTILITY_ICONS[utility.type];
+  // Pointer-only, like the player dots: 道具反查's list offers the same analysis to the keyboard.
+  const select = onSelect && (FINDER_UTILITY_TYPES as readonly UtilityType[]).includes(utility.type) ? onSelect : null;
   const side = utility.throwerSide ? utility.throwerSide.toLowerCase() : "unknown";
   const segments = item.trail.slice(1).map((point, index) => ({ from: item.trail[index], to: point }));
   return (
@@ -131,7 +149,17 @@ function UtilityFlight({ item, unit }: { item: ActiveUtility; unit: number }) {
           x1={segment.from.x} y1={segment.from.y} x2={segment.to.x} y2={segment.to.y}
           opacity={round2(((index + 1) / segments.length) * 0.8)} />
       ))}
-      <g transform={`translate(${item.x} ${item.y}) scale(${round4(unit)})`}>
+      <g transform={`translate(${item.x} ${item.y}) scale(${round4(unit)})`}
+        className={select ? "utility-flight-select" : undefined}
+        pointerEvents={select ? "auto" : undefined}
+        style={select ? { cursor: "pointer" } : undefined}
+        onClick={select ? () => select(utility) : undefined}>
+        {select ? (
+          <>
+            <title>分析这颗道具</title>
+            <circle className="utility-flight-hit" r={HIT_RADIUS_PX} fill="transparent" />
+          </>
+        ) : null}
         <circle className="utility-flight-body" r={ICON_PX / 2} />
         <Icon className="utility-flight-icon" x={-(ICON_PX - 4) / 2} y={-(ICON_PX - 4) / 2}
           width={ICON_PX - 4} height={ICON_PX - 4} strokeWidth={2.4} aria-hidden="true" />

@@ -75,7 +75,12 @@ import {
   type StatusFetchFailure
 } from "@/lib/demo-library";
 import { leaveLibraryNotice } from "@/lib/library-notice";
-import { mapDisplayName, tacticalRadarImagePaths, type TacticalMapLevelMode } from "@/lib/map-config";
+import {
+  getTacticalMapPresentation,
+  mapDisplayName,
+  tacticalRadarImagePaths,
+  type TacticalMapLevelMode
+} from "@/lib/map-config";
 import { matchTeams, playerMatchStats, teamKeyOfPlayer } from "@/lib/match-stats";
 import { buildReplayDiagnostics } from "@/lib/replay-diagnostics";
 import { resolvePrivateMediaSource } from "@/lib/media-url";
@@ -104,7 +109,13 @@ import { useFirstEntry } from "@/lib/use-first-entry";
 import { useSlidingIndicator } from "@/lib/use-sliding-indicator";
 import { useWorkbenchLayout } from "@/lib/use-workbench-layout";
 import { requestFailureKind, userFacingError } from "@/lib/user-errors";
-import { utilityAvailability, utilityJumpTick } from "@/lib/utility";
+import {
+  FINDER_UTILITY_TYPES,
+  replayUtility,
+  utilityAvailability,
+  utilityJumpTick,
+  utilityLevel
+} from "@/lib/utility";
 import { coachingFeed, withFeedback } from "@/lib/coaching-review";
 import {
   coachingForPlayer,
@@ -528,6 +539,13 @@ function DemoDetailContent() {
     ? utilityAvailability(replay, Boolean(status?.ingestion?.replayUpgradePending))
     : "hidden";
   const finderSelected = viewMode === "utility" && utilityTab !== "hidden";
+  // 道具投掷分析 open on a throw of this match: the workbench hides the dock so the map gets its height.
+  const finderAnalysisId = finderState.analysisId;
+  const finderAnalysisKnown = useMemo(
+    () => Boolean(finderAnalysisId && loadedReplay && replayUtility(loadedReplay).some((utility) => utility.id === finderAnalysisId)),
+    [finderAnalysisId, loadedReplay]
+  );
+  const analysisOpen = workbench && finderSelected && utilityTab === "available" && finderAnalysisKnown;
   // With key data the stacked canvas keeps a band under the map for the key panel (S16) on every
   // tab, so switching tabs never changes its height.
   const keyBand = useMemo(() => hasInputs(loadedReplay), [loadedReplay]);
@@ -924,11 +942,27 @@ function DemoDetailContent() {
     stageRef.current?.focus({ preventScroll: true });
   }, []);
 
+  // A grenade clicked in flight on 战术回放 opens its 道具投掷分析 in 道具反查: its kind, every thrower,
+  // this round, no selection, the floor it landed on.
+  const analyzeUtility = useCallback((utility: ReplayUtility) => {
+    const type = FINDER_UTILITY_TYPES.find((item) => item === utility.type);
+    if (!type) return;
+    const current = latest.current.replay;
+    const level = current ? utilityLevel(getTacticalMapPresentation(current), utility) : null;
+    setPlaying(false);
+    setFinderState((previous) => ({
+      type, team: "all", playerId: null, roundScope: "current", rect: null,
+      floor: level ?? previous.floor, analysisId: utility.id
+    }));
+    setViewMode("utility");
+  }, []);
+
   // Grenades on the map during playback (over the players); the viewer hands over the floor and round it shows.
   const utilityOverlay = useCallback((context: ReplayMapOverlayContext) => loadedReplay ? (
     <UtilityLayer replay={loadedReplay} currentTick={context.currentTick} map={context.map} floor={context.floor}
-      roundNumber={context.roundNumber} focusPlayerId={context.focusPlayerId} unitsPerPixel={context.unitsPerPixel} />
-  ) : null, [loadedReplay]);
+      roundNumber={context.roundNumber} focusPlayerId={context.focusPlayerId} unitsPerPixel={context.unitsPerPixel}
+      onSelect={analyzeUtility} />
+  ) : null, [analyzeUtility, loadedReplay]);
 
   const showSavedClips = useCallback(() => {
     const details = savedClipsRef.current;
@@ -1353,7 +1387,8 @@ function DemoDetailContent() {
             {workbench ? null : roundStrip}
             <div className="review-layout" ref={workspaceEntryRef}>
             <div className="review-main-column">
-            <section id="player" className="panel review-stage" aria-label="回放" tabIndex={-1} ref={stageRef}>
+            <section id="player" className={`panel review-stage${analysisOpen ? " analysis-open" : ""}`} aria-label="回放"
+              tabIndex={-1} ref={stageRef}>
               <div className="panel-bar review-stage-toolbar">
                 {showVideoControls || utilityTab !== "hidden" ? (
                   <div className="panel-bar-tabs review-view-switch" role="group" aria-label="回放视图" ref={viewTabs.groupRef}>
