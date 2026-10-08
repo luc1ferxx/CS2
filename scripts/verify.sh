@@ -4,7 +4,8 @@
 #
 # This runs the same checks as .github/workflows/ci.yml, in the same order, so
 # that "it passes locally" and "it passes in CI" mean the same thing. If you
-# change one, change the other.
+# change one, change the other. The one local-only step is the real-demo
+# manifest check at the end: CI has no .dem files.
 #
 # Usage:
 #   scripts/verify.sh              # everything
@@ -16,7 +17,7 @@
 set -uo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cd "$ROOT_DIR"
+cd "$ROOT_DIR" || exit 1
 
 # ---------------------------------------------------------------------------
 # Interpreter selection
@@ -88,7 +89,8 @@ skip() {
 # Python: compile, test, lint, typecheck
 # ---------------------------------------------------------------------------
 run "backend compileall"        "$PY" -m compileall -q backend/app
-run "backend tests"             env PYTHONPATH=backend "$PY" -m unittest discover backend/tests
+# The real-demo manifest check has its own step below; keep it out of this one.
+run "backend tests"             env -u REAL_DEMO_MANIFEST_CHECK PYTHONPATH=backend "$PY" -m unittest discover backend/tests
 run "render-worker compileall"  "$PY" -m compileall -q render-worker
 run "render-worker tests"       "$PY" -m unittest discover render-worker/tests
 
@@ -109,6 +111,41 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Shell scripts and the production Compose shape
+#
+# CI's shell/compose job. bash -n always runs; shellcheck and docker compose
+# are optional locally, so a missing tool is a skip. `compose config` renders
+# the three-file production shape client-side and starts nothing.
+# ---------------------------------------------------------------------------
+SHELL_SCRIPTS=(scripts/*.sh scripts/deploy/*.sh)
+
+bash_syntax() {
+  local script
+  local status=0
+  for script in "${SHELL_SCRIPTS[@]}"; do
+    bash -n "$script" || status=1
+  done
+  return "$status"
+}
+
+run "bash -n" bash_syntax
+
+if command -v shellcheck >/dev/null 2>&1; then
+  run "shellcheck" shellcheck -x "${SHELL_SCRIPTS[@]}"
+else
+  skip "shellcheck" "shellcheck is not installed (CI runs it)."
+fi
+
+if docker compose version >/dev/null 2>&1; then
+  run "compose config (production shape)" docker compose \
+    --env-file deploy/env.production.example \
+    -f docker-compose.yml -f docker-compose.preview.yml -f docker-compose.prod.yml \
+    config -q
+else
+  skip "compose config (production shape)" "docker compose is not available (CI runs it)."
+fi
+
+# ---------------------------------------------------------------------------
 # Frontend
 #
 # Telemetry is off for the same reason CI turns it off: a verification run
@@ -124,7 +161,7 @@ if ! command -v node >/dev/null 2>&1; then
 elif [ ! -d frontend/node_modules ]; then
   skip "frontend" "frontend/node_modules is missing. Install with: (cd frontend && npm ci)"
 else
-  cd "$ROOT_DIR/frontend"
+  cd "$ROOT_DIR/frontend" || exit 1
   for helper_test in lib/*.test.mjs; do
     run "frontend $(basename "$helper_test")" node "$helper_test"
   done
@@ -134,7 +171,35 @@ else
   run "frontend lint"      npm run lint
   run "frontend typecheck" npm run typecheck
   run "frontend build"     npm run build
-  cd "$ROOT_DIR"
+  cd "$ROOT_DIR" || exit 1
+fi
+
+# ---------------------------------------------------------------------------
+# Real demos (local only)
+#
+# CI has no .dem files, so this step exists only here. With a .dem in the
+# repository root, every one that backend/tests/fixtures/real_demo_manifest.json
+# knows is parsed, normalized and analyzed like the worker does (about 10 s
+# each) and compared with its aggregate entry; unknown demos are skipped. See
+# docs/sample_demo_fixture_v1.md. REPLAY_V2_SAMPLE_CHECK=1 additionally runs the
+# replay contract v2-v5 sample checks in the backend tests step (they parse the
+# demos again).
+# ---------------------------------------------------------------------------
+has_root_demo() {
+  local demo
+  for demo in "$ROOT_DIR"/*.dem; do
+    [ -f "$demo" ] && return 0
+  done
+  return 1
+}
+
+if has_root_demo; then
+  # OPENBLAS_NUM_THREADS=1 as in the worker's parse child: numpy's OpenBLAS
+  # otherwise reserves buffers for every core, and the parse never uses BLAS.
+  run "real demo manifest" env PYTHONPATH=backend REAL_DEMO_MANIFEST_CHECK=1 OPENBLAS_NUM_THREADS=1 \
+    "$PY" -m unittest discover -s backend/tests -p test_real_demo_manifest.py
+else
+  skip "real demo manifest" "no .dem in the repository root (see docs/sample_demo_fixture_v1.md)."
 fi
 
 # ---------------------------------------------------------------------------

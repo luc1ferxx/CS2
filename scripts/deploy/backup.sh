@@ -11,12 +11,27 @@
 #      after their deletion, so the total stays inside the window. Bucket
 #      versioning or lifecycle rules on the provider are the stronger
 #      protection; this is the floor.
-# Any failure exits non-zero with a "BACKUP FAILED" line. Retention still runs
-# after a failure: a broken night must not keep old copies past the window
-# /privacy promises.
+# Any failure exits non-zero with a "BACKUP FAILED" line and, when
+# ALERT_WEBHOOK_URL is set, one alert line (step and exit code only). Retention
+# still runs after a failure: a broken night must not keep old copies past the
+# window /privacy promises. A complete run GETs BACKUP_PING_URL when set.
+#
+#   bash scripts/deploy/backup.sh            # the nightly run
+#   bash scripts/deploy/backup.sh --db-only  # steps 1-2 only (deploy.sh, before
+#                                            # migrations); no ping
 set -Eeuo pipefail
 # shellcheck source=scripts/deploy/_common.sh
 source "$(dirname "${BASH_SOURCE[0]}")/_common.sh"
+
+DB_ONLY=0
+case "${1-}" in
+  "") ;;
+  --db-only) DB_ONLY=1 ;;
+  *)
+    echo "usage: $0 [--db-only]" >&2
+    exit 2
+    ;;
+esac
 
 STEP="startup"
 PARTIAL=""
@@ -74,6 +89,11 @@ on_exit() {
       artifact_retention
     ) || true
   fi
+  if ((status != 0)); then
+    # STEP names only: fail() messages can carry bucket names and paths.
+    send_alert "[cs2coach] FAIL backup: during $STEP (exit $status)" \
+      || printf 'WARNING: could not send the failure alert\n' >&2
+  fi
   exit "$status"
 }
 trap on_exit EXIT
@@ -119,7 +139,9 @@ log "Uploaded to $REMOTE_DUMPS/$NAME"
 
 dump_retention
 
-if [[ "$SYNC_ARTIFACTS" == "1" ]]; then
+if ((DB_ONLY)); then
+  log "--db-only: skipping the artifact mirror (the nightly run keeps it current)"
+elif [[ "$SYNC_ARTIFACTS" == "1" ]]; then
   STEP="artifact mirror"
   [[ -n "$ARTIFACT_BUCKET" ]] || fail "OBJECT_STORAGE_BUCKET is not set"
   log "Mirroring cs2artifacts:$ARTIFACT_BUCKET into $BACKUP_BUCKET/artifacts"
@@ -133,4 +155,9 @@ fi
 artifact_retention
 
 STEP="done"
+# deploy.sh reads the dump name from this line.
 log "Backup complete: $NAME"
+if ((!DB_ONLY)); then
+  # A missed ping is what the dead-man check alerts on; never fail the backup for it.
+  ping_url BACKUP_PING_URL || log "WARNING: BACKUP_PING_URL did not answer"
+fi

@@ -350,9 +350,10 @@ class DemoService:
         *,
         name: str | None = None,
         team_names: Mapping[str, Any] | None = None,
+        parse_stats: Mapping[str, Any] | None = None,
     ) -> bool:
         return self.parse.complete_parse_job(
-            demo, job, replay, events, name=name, team_names=team_names,
+            demo, job, replay, events, name=name, team_names=team_names, parse_stats=parse_stats,
         )
 
     def fail_parse_job(
@@ -362,8 +363,11 @@ class DemoService:
         error: str,
         *,
         error_code: str = "PARSER_FAILED",
+        parse_stats: Mapping[str, Any] | None = None,
     ) -> bool:
-        return self.parse.fail_parse_job(demo, job, error, error_code=error_code)
+        return self.parse.fail_parse_job(
+            demo, job, error, error_code=error_code, parse_stats=parse_stats,
+        )
 
     def abandon_parse_job(self, job: DemoJob) -> bool:
         return self.parse.abandon_parse_job(job)

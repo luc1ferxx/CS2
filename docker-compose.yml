@@ -1,3 +1,32 @@
+# Parse-queue, background-recompute, replay-cache and render-queue tuning, read
+# by backend/app/core/config.py. Compose `--env-file` only feeds `${}`
+# interpolation, so a setting that is not listed in a service's `environment:`
+# never reaches the container. Merged into both api and worker: some are read on
+# one side only, and the two shared ones (REPLAY_READY_CHANNEL,
+# REPLAY_WARM_ENABLED) must agree. The fallbacks repeat the code defaults;
+# backend/tests/test_compose_passthrough.py keeps the two in step and fails when
+# a new config.py setting is neither passed through nor allow-listed.
+x-worker-tuning: &worker-tuning
+  PARSE_TIMEOUT_SECONDS: ${PARSE_TIMEOUT_SECONDS:-1200}
+  PARSE_MEMORY_LIMIT_BYTES: ${PARSE_MEMORY_LIMIT_BYTES:-4294967296}
+  PARSE_LEASE_TTL_SECONDS: ${PARSE_LEASE_TTL_SECONDS:-60}
+  PARSE_LEASE_RENEW_SECONDS: ${PARSE_LEASE_RENEW_SECONDS:-15}
+  PARSE_RECLAIM_AFTER_SECONDS: ${PARSE_RECLAIM_AFTER_SECONDS:-1800}
+  PARSE_REDISPATCH_AFTER_SECONDS: ${PARSE_REDISPATCH_AFTER_SECONDS:-300}
+  PARSE_MAX_ATTEMPTS: ${PARSE_MAX_ATTEMPTS:-3}
+  REPLAY_UPGRADE_ENABLED: ${REPLAY_UPGRADE_ENABLED:-1}
+  REPLAY_UPGRADE_MAX_ATTEMPTS: ${REPLAY_UPGRADE_MAX_ATTEMPTS:-3}
+  REPLAY_UPGRADE_RETRY_SECONDS: ${REPLAY_UPGRADE_RETRY_SECONDS:-900}
+  COACHING_RECOMPUTE_ENABLED: ${COACHING_RECOMPUTE_ENABLED:-1}
+  COACHING_RECOMPUTE_MAX_ATTEMPTS: ${COACHING_RECOMPUTE_MAX_ATTEMPTS:-3}
+  COACHING_RECOMPUTE_RETRY_SECONDS: ${COACHING_RECOMPUTE_RETRY_SECONDS:-900}
+  REPLAY_RESPONSE_CACHE_MB: ${REPLAY_RESPONSE_CACHE_MB:-64}
+  REPLAY_WARM_ENABLED: ${REPLAY_WARM_ENABLED:-1}
+  REPLAY_WARM_RECENT: ${REPLAY_WARM_RECENT:-10}
+  REPLAY_READY_CHANNEL: ${REPLAY_READY_CHANNEL:-cs2:replay-ready}
+  RENDER_CLIP_QUEUE_TIMEOUT_SECONDS: ${RENDER_CLIP_QUEUE_TIMEOUT_SECONDS:-1800}
+  RENDER_CLIP_SINGLE_CONSUMER: ${RENDER_CLIP_SINGLE_CONSUMER:-1}
+
 services:
   postgres:
     image: postgres:16-alpine
@@ -26,6 +55,7 @@ services:
       context: ./backend
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000
     environment:
+      <<: *worker-tuning
       DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg2://cs2coach:cs2coach@postgres:5432/cs2coach}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       REDIS_QUEUE_NAME: ${REDIS_QUEUE_NAME:-cs2-demo-jobs}
@@ -135,6 +165,7 @@ services:
       context: ./backend
     command: python -m app.workers.worker
     environment:
+      <<: *worker-tuning
       DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg2://cs2coach:cs2coach@postgres:5432/cs2coach}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       REDIS_QUEUE_NAME: ${REDIS_QUEUE_NAME:-cs2-demo-jobs}
@@ -166,6 +197,10 @@ services:
       MAX_RENDER_CLIP_SECONDS: ${MAX_RENDER_CLIP_SECONDS:-60}
       RENDER_WORKER_MODE: ${RENDER_WORKER_MODE:-fallback}
       RENDER_WORKER_TOKEN: ${RENDER_WORKER_TOKEN:-dev-render-worker-token}
+      # The demo parser child runs as this unprivileged user when the worker
+      # runs as root on POSIX. Unset means the image's `parser` user; set it
+      # empty to keep the child on the worker's own user.
+      PARSE_CHILD_USER: ${PARSE_CHILD_USER-parser}
     volumes:
       - artifact-data:/data/artifact-v1
       - replay-data:/data/replays
@@ -173,6 +208,17 @@ services:
       - video-data:/data/videos
       - summary-data:/data/summaries
       - upload-staging:/data/upload-staging
+    # Healthy while the worker's Redis heartbeat is fresh (renewed every loop
+    # and during a parse). No service depends on it, so a stuck worker never
+    # takes the site down; GET /health/worker reports the same signal. Probed
+    # every 5 s during the start period so `up --wait` is not held for 30 s.
+    healthcheck:
+      test: ["CMD", "python", "-m", "app.workers.healthcheck"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+      start_interval: 5s
     depends_on:
       postgres:
         condition: service_healthy

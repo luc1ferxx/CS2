@@ -35,7 +35,8 @@ else
   exit 1
 fi
 # Docker Desktop's credential helper lives beside the CLI on macOS.
-export PATH="$(dirname "$DEV_DOCKER"):$PATH"
+DEV_DOCKER_DIR="$(dirname "$DEV_DOCKER")"
+export PATH="$DEV_DOCKER_DIR:$PATH"
 if ! "$DEV_DOCKER" compose version >/dev/null 2>&1; then
   printf '%s\n' 'Docker Compose is missing. Update Docker Desktop and retry.' >&2
   exit 1

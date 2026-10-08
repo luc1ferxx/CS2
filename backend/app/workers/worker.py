@@ -1,8 +1,5 @@
 import json
-import os
-import subprocess
 import sys
-import tempfile
 import time
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -38,6 +35,17 @@ from app.services.demo_service.replay_warmer import (
 from app.services.diagnostics import write_worker_heartbeat
 from app.services.mock_replay_service import build_mock_replay
 from app.services.storage import ArtifactStoreError, StorageKeyError
+from app.workers.child_process import (
+    ChildUsage,
+    child_workspace,
+    read_child_json,
+    read_stderr_tail,
+    resolve_child_identity,
+    share_private_source,
+    spawn_child,
+    stderr_capture,
+    wait_for_exit,
+)
 from app.workers.coaching_recompute import recompute_stale_coaching
 from app.workers.match_summary_backfill import backfill_match_summaries
 from app.workers.parse_child import EXIT_PARSE_ERROR
@@ -59,6 +67,27 @@ PARSE_KILL_GRACE_SECONDS = 30
 # mid-parse stops its child instead of holding the single worker (and every
 # queued upload behind it) for up to PARSE_TIMEOUT_SECONDS.
 PARSE_DELETION_CHECK_SECONDS = 15
+# What the Rust allocator writes to stderr right before it aborts (SIGABRT) on a
+# failed allocation -- which is how RLIMIT_DATA usually ends a demoparser2 parse.
+RUST_ALLOCATION_FAILURE_MARKER = "memory allocation of"
+PARSE_OUT_OF_MEMORY_PUBLIC_MESSAGE = "This demo needed more memory than the parser is allowed to use."
+# One JSON line per finished queue job on stdout (run_worker). Opaque ids and
+# numbers only: never a file name, owner, path or message.
+JOB_DONE_FIELDS = (
+    "event",
+    "jobId",
+    "type",
+    "outcome",
+    "errorCode",
+    "attempt",
+    "sourceBytes",
+    "downloadS",
+    "parseS",
+    "normalizeS",
+    "analyzeS",
+    "coachingEvents",
+    "peakRssMiB",
+)
 
 
 class ParseJobDeletedError(Exception):
@@ -69,17 +98,37 @@ def utc_now() -> datetime:
     return datetime.now(UTC)
 
 
+def new_job_report(job_id: str) -> dict[str, Any]:
+    """The fields of one `job_done` line, filled in while the job runs."""
+    report: dict[str, Any] = dict.fromkeys(JOB_DONE_FIELDS)
+    report["event"] = "job_done"
+    report["jobId"] = job_id
+    return report
+
+
+def log_job_done(report: dict[str, Any]) -> None:
+    print(
+        json.dumps({field: report.get(field) for field in JOB_DONE_FIELDS}, separators=(",", ":")),
+        flush=True,
+    )
+
+
 def process_job(
     db: Session,
     job_id: str,
     demo_id: str,
     *,
     on_tick: Callable[[], None] | None = None,
+    report: dict[str, Any] | None = None,
 ) -> None:
+    report = {} if report is None else report
     demo = db.query(Demo).filter(Demo.id == demo_id).one_or_none()
     job = db.query(DemoJob).filter(DemoJob.id == job_id).one_or_none()
     if demo is None or job is None or job.demo_id != demo.id:
+        report["outcome"] = "skipped"
         return
+    report["type"] = job.job_type
+    report["attempt"] = job.attempts
 
     if job.job_type == RENDER_CLIP_JOB_TYPE:
         process_render_clip_job(db, demo, job)
@@ -88,7 +137,7 @@ def process_job(
         process_mock_render_job(db, demo, job)
         return
     if job.job_type == "real_parse":
-        process_real_parse_job(db, demo, job, on_tick=on_tick)
+        process_real_parse_job(db, demo, job, on_tick=on_tick, report=report)
         return
     if job.job_type != "mock_parse":
         raise ValueError(f"Unsupported job type: {job.job_type}")
@@ -116,6 +165,7 @@ def run_parse_subprocess(
     source_path: Path,
     *,
     on_tick: Callable[[], None] | None = None,
+    stats: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Parse one demo in a child process and return its output.
 
@@ -123,49 +173,47 @@ def run_parse_subprocess(
     in outright, with no exception to catch. Running it here means the worker
     only ever sees an exit code, so one bad demo costs that demo instead of the
     whole loop -- and a hung parse gets a wall-clock ceiling that an in-process
-    call could not give it.
+    call could not give it. The child gets an allow-listed environment and, under
+    a root worker, an unprivileged account of its own (child_process.py).
 
     `on_tick` is called every parse_lease_renew_seconds while the child runs.
     The parent is otherwise blocked for the entire parse, which is long enough
     for both the queue lease and the worker heartbeat to lapse.
+
+    `stats`, when given, receives `parseS` (wall seconds) and `peakRssMiB` (the
+    child's peak resident memory; None where os.wait4 is unavailable), on
+    failure as well as success.
     """
     timeout_seconds = settings.parse_timeout_seconds
     renew_seconds = max(1, settings.parse_lease_renew_seconds)
+    identity = resolve_child_identity()
+    usage = ChildUsage()
+    wall_started = time.perf_counter()
 
-    with tempfile.TemporaryDirectory(prefix="cs2-parse-") as workspace:
-        output_path = Path(workspace) / "parsed.json"
-        environment = dict(os.environ)
-        existing_path = environment.get("PYTHONPATH")
-        environment["PYTHONPATH"] = (
-            f"{PACKAGE_ROOT}{os.pathsep}{existing_path}" if existing_path else PACKAGE_ROOT
-        )
-        # pandas pulls in numpy's OpenBLAS, which reserves buffers for every core
-        # at import (1.3 GB of the child's RLIMIT_DATA on a 32-thread host);
-        # the parse never uses BLAS. Measured: Mirage peak 4.3 GB -> 2.9 GB.
-        environment.setdefault("OPENBLAS_NUM_THREADS", "1")
-        # Fixed argv, no shell: the only caller-supplied value is a path this
-        # process produced, and it is passed as its own argument.
-        process = subprocess.Popen(
-            [
-                sys.executable,
-                "-m",
-                PARSE_CHILD_MODULE,
-                "--source",
-                str(source_path),
-                "--output",
-                str(output_path),
-                "--memory-limit-bytes",
-                str(settings.parse_memory_limit_bytes),
-            ],
-            env=environment,
-        )
-        started = time.monotonic()
-        try:
-            while True:
-                try:
-                    process.wait(timeout=renew_seconds)
-                    break
-                except subprocess.TimeoutExpired:
+    try:
+        with child_workspace("cs2-parse-", identity) as workspace, stderr_capture(workspace) as stderr:
+            output_path = workspace / "parsed.json"
+            share_private_source(source_path, identity)
+            process = spawn_child(
+                [
+                    sys.executable,
+                    "-m",
+                    PARSE_CHILD_MODULE,
+                    "--source",
+                    str(source_path),
+                    "--output",
+                    str(output_path),
+                    "--memory-limit-bytes",
+                    str(settings.parse_memory_limit_bytes),
+                ],
+                package_root=PACKAGE_ROOT,
+                identity=identity,
+                workspace=workspace,
+                stderr=stderr,
+            )
+            started = time.monotonic()
+            try:
+                while not wait_for_exit(process, renew_seconds, usage):
                     if on_tick is not None:
                         on_tick()
                     if time.monotonic() - started >= timeout_seconds:
@@ -176,28 +224,52 @@ def run_parse_subprocess(
                                 "Parsing this demo took too long and was stopped."
                             ),
                         ) from None
-        finally:
-            if process.poll() is None:
-                process.kill()
-                try:
-                    process.wait(timeout=PARSE_KILL_GRACE_SECONDS)
-                except subprocess.TimeoutExpired:
-                    # The kill has been delivered; a child still running after it
-                    # is stuck somewhere the signal cannot reach, usually
-                    # uninterruptible IO. Waiting on that forever would cost the
-                    # worker the very thing the subprocess was meant to protect.
-                    print(
-                        f"Parse child {process.pid} did not exit after being killed",
-                        flush=True,
-                    )
+            finally:
+                if process.poll() is None:
+                    process.kill()
+                    if not wait_for_exit(process, PARSE_KILL_GRACE_SECONDS, usage):
+                        # The kill has been delivered; a child still running after
+                        # it is stuck somewhere the signal cannot reach, usually
+                        # uninterruptible IO. Waiting on that forever would cost
+                        # the worker the very thing the subprocess was meant to
+                        # protect.
+                        print(
+                            f"Parse child {process.pid} did not exit after being killed",
+                            flush=True,
+                        )
 
-        return _parse_child_result(process.returncode, output_path)
+            stderr_tail = read_stderr_tail(stderr)
+            _replay_child_stderr(process.returncode, stderr_tail)
+            return _parse_child_result(process.returncode, output_path, stderr_tail)
+    finally:
+        if stats is not None:
+            stats["parseS"] = round(time.perf_counter() - wall_started, 2)
+            stats["peakRssMiB"] = usage.peak_rss_mib
 
 
-def _parse_child_result(return_code: int, output_path: Path) -> dict[str, Any]:
+def _replay_child_stderr(return_code: int | None, stderr_tail: str) -> None:
+    """Put the end of the child's stderr into the worker log (worker-side only).
+
+    Never into a job's failure message: that becomes the demo's user-visible
+    error, and stderr can name local paths.
+    """
+    if not stderr_tail.strip():
+        return
+    print(
+        f"Parse child exited with {return_code}; end of its stderr:\n{stderr_tail.rstrip()}",
+        flush=True,
+    )
+
+
+def _parse_child_result(
+    return_code: int,
+    output_path: Path,
+    stderr_tail: str = "",
+) -> dict[str, Any]:
     body: dict[str, Any] = {}
     try:
-        body = json.loads(output_path.read_text(encoding="utf-8"))
+        loaded = read_child_json(output_path)
+        body = loaded if isinstance(loaded, dict) else {}
     except (OSError, ValueError):
         body = {}
 
@@ -224,14 +296,23 @@ def _parse_child_result(return_code: int, output_path: Path) -> dict[str, Any]:
 
     if return_code < 0:
         # Killed by a signal. SIGKILL is what the container OOM killer sends, so
-        # it reads as a memory problem rather than a crash; anything else is the
-        # native crash this whole subprocess exists to contain.
+        # it reads as a memory problem rather than a crash. SIGABRT right after
+        # the Rust allocator's "memory allocation of N bytes failed" is
+        # RLIMIT_DATA refusing an allocation: also memory, and retrying cannot
+        # help. Anything else is the native crash this whole subprocess exists
+        # to contain.
         signal_number = -return_code
         if signal_number == 9:
             raise DemoParserError(
                 "Parser process was killed, most likely for exceeding memory",
                 error_code="PARSE_OUT_OF_MEMORY",
-                user_message="This demo needed more memory than the parser is allowed to use.",
+                user_message=PARSE_OUT_OF_MEMORY_PUBLIC_MESSAGE,
+            )
+        if signal_number == 6 and RUST_ALLOCATION_FAILURE_MARKER in stderr_tail:
+            raise DemoParserError(
+                "Parser aborted on a failed memory allocation",
+                error_code="PARSE_OUT_OF_MEMORY",
+                user_message=PARSE_OUT_OF_MEMORY_PUBLIC_MESSAGE,
             )
         raise DemoParserError(
             f"Parser process died on signal {signal_number}",
@@ -296,7 +377,14 @@ def process_real_parse_job(
     job: DemoJob,
     *,
     on_tick: Callable[[], None] | None = None,
+    report: dict[str, Any] | None = None,
 ) -> None:
+    """Parse, normalize, analyze and store one uploaded demo.
+
+    `report` (the run loop's `job_done` line) receives the outcome, error code,
+    attempt, source size and per-step timings as they become known.
+    """
+    report = {} if report is None else report
     service = DemoService.for_internal(db)
     # Read once while the rows are known to be loaded: the match can be
     # deleted at any point from here on, and each transition below reports
@@ -304,14 +392,21 @@ def process_real_parse_job(
     demo_id, job_id = demo.id, job.id
 
     if not service.claim_parse_job(demo, job):
+        report["outcome"] = "skipped"
         return
+    report["attempt"] = job.attempts
 
     tick = deletion_aware_tick(lambda: parse_job_exists(db, job_id), on_tick)
+    parse_stats: dict[str, Any] = {}
     try:
+        download_started = time.perf_counter()
         with service.materialized_source_demo(demo, job) as source_path:
-            parsed = run_parse_subprocess(source_path, on_tick=tick)
+            report["downloadS"] = _seconds_since(download_started)
+            report["sourceBytes"] = _file_size(source_path)
+            parsed = run_parse_subprocess(source_path, on_tick=tick, stats=parse_stats)
     except ParseJobDeletedError:
         # The child is already stopped and its copy of the .dem removed.
+        report.update(_parse_stats_fields(parse_stats), outcome="deleted")
         print(f"Worker job {job_id} stopped: demo deleted during parse", flush=True)
         try:
             db.rollback()
@@ -321,29 +416,61 @@ def process_real_parse_job(
     except BaseException as exc:
         if isinstance(exc, (KeyboardInterrupt, SystemExit)):
             raise
+        report.update(_parse_stats_fields(parse_stats))
         _log_job_failure(job_id, "parse", exc)
-        _fail_classified_parse_job(service, demo, job, exc, phase="parse")
+        _fail_classified_parse_job(
+            service, demo, job, exc, phase="parse", parse_stats=parse_stats, report=report,
+        )
         return
+    report.update(_parse_stats_fields(parse_stats))
 
     if not service.mark_parse_analyzing(demo, job):
+        report["outcome"] = "deleted"
         return
 
     try:
+        step_started = time.perf_counter()
         replay = normalize_parser_output(demo_id, parsed)
+        report["normalizeS"] = _seconds_since(step_started)
+        step_started = time.perf_counter()
         events = analyze_replay(replay)
+        report["analyzeS"] = _seconds_since(step_started)
     except Exception as exc:
         _log_job_failure(job_id, "normalization", exc)
-        _fail_classified_parse_job(service, demo, job, exc, phase="normalization")
+        _fail_classified_parse_job(
+            service, demo, job, exc, phase="normalization", parse_stats=parse_stats, report=report,
+        )
         return
 
     team_names = parsed.get("teamNames")
-    service.complete_parse_job(
+    report["coachingEvents"] = len(events)
+    stored = service.complete_parse_job(
         demo,
         job,
         replay,
         events,
         team_names=team_names if isinstance(team_names, dict) else None,
+        parse_stats=parse_stats,
     )
+    report["outcome"] = "completed" if stored else "deleted"
+
+
+def _parse_stats_fields(parse_stats: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "parseS": parse_stats.get("parseS"),
+        "peakRssMiB": parse_stats.get("peakRssMiB"),
+    }
+
+
+def _seconds_since(started: float) -> float:
+    return round(time.perf_counter() - started, 2)
+
+
+def _file_size(path: Path) -> int | None:
+    try:
+        return path.stat().st_size
+    except OSError:
+        return None
 
 
 def process_mock_render_job(db: Session, demo: Demo, job: DemoJob) -> None:
@@ -609,6 +736,14 @@ def _run_backstop(name: str, action: Callable[[], Any]) -> None:
 
 def run_worker() -> None:
     settings.validate_worker_runtime_configuration()
+    # Resolved now so a missing PARSE_CHILD_USER account stops the worker at
+    # startup instead of failing every parse.
+    child_identity = resolve_child_identity()
+    print(
+        "Parse child runs as "
+        + (f"user {child_identity.name}" if child_identity else "the worker's own user"),
+        flush=True,
+    )
     init_db()
     redis_client = get_redis_client()
     queue = ParseQueue(
@@ -713,11 +848,16 @@ def run_worker() -> None:
                 queue.release(payload)
                 continue
 
+            report = new_job_report(job_id)
             with SessionLocal() as db:
                 try:
-                    process_job(db, job_id, demo_id, on_tick=tick)
+                    process_job(db, job_id, demo_id, on_tick=tick, report=report)
+                    if report["outcome"] is None:
+                        report["outcome"] = "completed"
                     print(f"Completed job {job_id} for demo {demo_id}", flush=True)
                 except Exception as exc:
+                    report["outcome"] = "failed"
+                    report["errorCode"] = _job_error_code(exc)
                     _log_job_failure(job_id, "process", exc)
                     try:
                         fail_job(db, job_id, demo_id, exc)
@@ -733,6 +873,7 @@ def run_worker() -> None:
                     # process dies mid-job.
                     queue.release(payload)
                     write_worker_heartbeat(redis_client)
+                    log_job_done(report)
     finally:
         # Only reached on a graceful exit. A hard kill leaves the lease to
         # expire, which is exactly the signal the reaper looks for.
@@ -747,14 +888,20 @@ def _fail_classified_parse_job(
     exc: BaseException,
     *,
     phase: str,
+    parse_stats: dict[str, Any] | None = None,
+    report: dict[str, Any] | None = None,
 ) -> None:
     failure = _parse_failure_for_exception(exc, phase=phase)
-    service.fail_parse_job(
+    recorded = service.fail_parse_job(
         demo,
         job,
         failure["message"],
         error_code=failure["errorCode"],
+        parse_stats=parse_stats,
     )
+    if report is not None:
+        report["outcome"] = "failed" if recorded else "deleted"
+        report["errorCode"] = failure["errorCode"]
 
 
 def _parse_failure_for_exception(error: Any, *, phase: str) -> dict[str, str]:
@@ -780,6 +927,13 @@ def _parse_failure_for_exception(error: Any, *, phase: str) -> dict[str, str]:
         "errorCode": "PARSER_UNEXPECTED",
         "message": PARSER_UNEXPECTED_PUBLIC_MESSAGE,
     }
+
+
+def _job_error_code(error: BaseException) -> str:
+    """A `job_done` errorCode: the parser's classification, else the exception type."""
+    if isinstance(error, DemoParserError):
+        return error.error_code
+    return type(error).__name__
 
 
 def _log_job_failure(job_id: str, phase: str, error: BaseException) -> None:

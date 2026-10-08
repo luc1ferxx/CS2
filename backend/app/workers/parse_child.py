@@ -104,9 +104,12 @@ def main(argv: list[str] | None = None) -> int:
         )
         return EXIT_PARSE_ERROR
     except MemoryError:
-        # RLIMIT_AS turned an oversized allocation into a clean Python failure
-        # rather than an OOM kill. Name it as such so the parent does not report
-        # a memory ceiling as a mystery parser bug.
+        # RLIMIT_DATA refused an allocation Python itself made, which surfaces
+        # as a clean MemoryError rather than an OOM kill. Name it as such so the
+        # parent does not report a memory ceiling as a mystery parser bug. An
+        # allocation refused inside demoparser2/polars never gets here: the Rust
+        # allocator prints "memory allocation of N bytes failed" and aborts, and
+        # the parent classifies that SIGABRT from this process's stderr.
         _write(
             output_path,
             {

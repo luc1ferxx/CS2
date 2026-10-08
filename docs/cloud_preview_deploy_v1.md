@@ -8,9 +8,10 @@ For the production launch on one VPS (Caddy edge, `docker-compose.prod.yml`, boo
 
 ## Selected Preview Shape
 
-Use the default `docker-compose.yml` for local development. Use `docker-compose.preview.yml` as an override when the frontend should run from a production Next.js build:
+Use the default `docker-compose.yml` for local development. Use `docker-compose.preview.yml` as an override when the frontend should run from a production Next.js build. The override runs Redis with a password and refuses to start without `REDIS_PASSWORD` (export it, or keep it in `.env`):
 
 ```bash
+export REDIS_PASSWORD="$(openssl rand -hex 24)"
 docker compose -f docker-compose.yml -f docker-compose.preview.yml up --build
 ```
 
@@ -57,7 +58,7 @@ The preview override does not provision an edge proxy or cloud resource; for a s
 
 User-facing video metadata contains only `/demos/{demo_id}/media/video`, which the frontend resolves against `NEXT_PUBLIC_API_BASE_URL`. The API checks the opaque session and owner again for every GET/HEAD/Range request. There is no public `/media/videos` mount. Production must route frontend pages plus API/auth/media paths through the same exact HTTPS origin; split subdomains fail runtime validation.
 
-`GET /health` returns only HTTP `200` `{"status":"ok"}` or, when any dependency check fails, HTTP `503` `{"status":"degraded"}`, and does not echo origins, dependencies, or storage paths.
+`GET /health` returns only HTTP `200` `{"status":"ok"}` or, when any dependency check fails, HTTP `503` `{"status":"degraded"}`, and does not echo origins, dependencies, or storage paths. `GET /health/worker` answers the same two bodies for the parse worker's Redis heartbeat (`200` while it is at most 90 s old), in every mode including production; it is deliberately separate from `/health`, which caddy and the frontend wait on.
 
 `GET /diagnostics` is available only in development/test previews. Production returns `404`; use the authenticated owner-scoped `/demos/{demo_id}/diagnostics` for user-visible demo diagnosis and defer protected operational diagnostics to the observability stage.
 
@@ -75,7 +76,8 @@ Required preview values:
 | Variable | Used by | Notes |
 | --- | --- | --- |
 | `DATABASE_URL` | API, worker | Use the Compose `postgres` hostname in containers. |
-| `REDIS_URL` | API, worker | Use the Compose `redis` hostname in containers. |
+| `REDIS_URL` | API, worker | Use the Compose `redis` hostname in containers. The preview override replaces it with `redis://:${REDIS_PASSWORD}@redis:6379/0`; production config validation rejects a `REDIS_URL` without a password. |
+| `REDIS_PASSWORD` | Redis, API, worker | Required by `docker-compose.preview.yml` (and the production shape stacked on it): Redis `--requirepass`, the api/worker `REDIS_URL`, and `REDISCLI_AUTH` for the Redis healthcheck. Sign-in sessions live in Redis unsigned, so write access would mint a session for any user. Use hex (`openssl rand -hex 24`) so the URL stays valid; the parse child never receives it. |
 | `AUTH_MODE` | API | Explicit `development`, `test`, or `production`. Production never falls back to a dev owner. |
 | `AUTH_PROVIDER` | API | Required explicitly in production: `steam`, or `oidc` for the compatibility provider. |
 | `FRONTEND_PUBLIC_URL` | API | Trusted frontend callback origin. Production requires it to equal `BACKEND_PUBLIC_URL` exactly and be the sole value in `CORS_ORIGINS`. |

@@ -67,6 +67,7 @@ class SteamDemoImportConfigurationTest(unittest.TestCase):
             object_storage_prefix="cs2-artifacts-v1",
             steam_demo_provider="not-present-in-worker-env",
             steam_demo_experimental_replay_cdn_enabled=True,
+            redis_url="redis://:test-redis-password@redis:6379/0",
         ).validate_worker_runtime_configuration()
 
     def test_exact_download_host_allowlist_is_canonical_and_bounded(self) -> None:

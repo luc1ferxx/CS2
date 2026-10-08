@@ -159,6 +159,7 @@ class ProductionAuthConfigurationTest(unittest.TestCase):
             artifact_storage_backend="s3",
             object_storage_bucket="private-cs2-artifacts",
             object_storage_prefix="cs2-artifacts-v1",
+            redis_url="redis://:test-redis-password@redis:6379/0",
         ).validate_worker_runtime_configuration()
 
     def test_production_requires_secure_bounded_session_configuration(self) -> None:
@@ -291,7 +292,58 @@ def valid_production_settings_kwargs() -> dict[str, object]:
         "artifact_storage_backend": "s3",
         "object_storage_bucket": "private-cs2-artifacts",
         "object_storage_prefix": "cs2-artifacts-v1",
+        # Production Redis requires a password (config._validate_production_redis_url).
+        "redis_url": "redis://:test-redis-password@redis:6379/0",
     }
+
+
+
+class ProductionRedisPasswordTest(unittest.TestCase):
+    """Sessions sit in Redis unsigned, so production Redis must require a password."""
+
+    def worker_settings(self, redis_url: str) -> Settings:
+        return Settings(
+            auth_mode="production",
+            render_worker_token="production-worker-credential",
+            artifact_storage_backend="s3",
+            object_storage_bucket="private-cs2-artifacts",
+            object_storage_prefix="cs2-artifacts-v1",
+            redis_url=redis_url,
+        )
+
+    def test_api_and_worker_refuse_a_redis_url_without_a_password(self) -> None:
+        for redis_url in (
+            "redis://redis:6379/0",
+            "redis://:@redis:6379/0",
+            "redis://cs2coach@redis:6379/0",
+            "unix:///run/redis.sock?password=secret",
+            "redis://:secret@[not-an-address/0",
+        ):
+            with self.subTest(redis_url=redis_url):
+                values = {**valid_production_settings_kwargs(), "redis_url": redis_url}
+                with self.assertRaisesRegex(RuntimeError, "REDIS_URL must carry the Redis password") as api:
+                    Settings(**values).validate_runtime_configuration()
+                with self.assertRaisesRegex(RuntimeError, "REDIS_URL") as worker:
+                    self.worker_settings(redis_url).validate_worker_runtime_configuration()
+                # The message never echoes the URL (or a secret in it).
+                self.assertNotIn(redis_url, str(api.exception))
+                self.assertNotIn(redis_url, str(worker.exception))
+
+    def test_a_password_in_the_url_is_accepted(self) -> None:
+        for redis_url in (
+            "redis://:0123abcd@redis:6379/0",
+            "redis://default:0123abcd@redis:6379/0",
+            "rediss://:0123abcd@redis.example.test:6380/0",
+        ):
+            with self.subTest(redis_url=redis_url):
+                values = {**valid_production_settings_kwargs(), "redis_url": redis_url}
+                Settings(**values).validate_runtime_configuration()
+                self.worker_settings(redis_url).validate_worker_runtime_configuration()
+
+    def test_development_keeps_the_passwordless_local_redis(self) -> None:
+        local = Settings(auth_mode="development", artifact_storage_backend="local", redis_url="redis://redis:6379/0")
+        local.validate_runtime_configuration()
+        local.validate_worker_runtime_configuration()
 
 
 class OwnerIdentityMappingTest(unittest.TestCase):

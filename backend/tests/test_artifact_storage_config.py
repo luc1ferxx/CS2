@@ -79,6 +79,7 @@ class ArtifactStorageConfigurationTest(unittest.TestCase):
             artifact_storage_backend="s3",
             object_storage_bucket="private-cs2-artifacts",
             object_storage_prefix="cs2-artifacts-v1",
+            redis_url="redis://:test-redis-password@redis:6379/0",
         ).validate_worker_runtime_configuration()
 
 
@@ -105,6 +106,8 @@ def production_values() -> dict[str, object]:
         "artifact_storage_backend": "s3",
         "object_storage_bucket": "private-cs2-artifacts",
         "object_storage_prefix": "cs2-artifacts-v1",
+        # Production Redis requires a password (config._validate_production_redis_url).
+        "redis_url": "redis://:test-redis-password@redis:6379/0",
     }
 
 
@@ -182,6 +185,7 @@ class UploadSessionConfigurationTest(unittest.TestCase):
             artifact_storage_backend="s3",
             object_storage_bucket="private-cs2-artifacts",
             object_storage_prefix="cs2-artifacts-v1",
+            redis_url="redis://:test-redis-password@redis:6379/0",
         ).validate_worker_runtime_configuration()
         Settings(auth_mode="development", artifact_storage_backend="local").validate_worker_runtime_configuration()
 

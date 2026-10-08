@@ -60,9 +60,10 @@ Open:
 - API health: `http://localhost:8000/health`
 - Safe diagnostics: `http://localhost:8000/diagnostics`
 
-The standard stack's frontend is already a production build. For the production-auth preview shape:
+The standard stack's frontend is already a production build. For the production-auth preview shape (its Redis requires `REDIS_PASSWORD`):
 
 ```bash
+export REDIS_PASSWORD="$(openssl rand -hex 24)"
 docker compose -f docker-compose.yml -f docker-compose.preview.yml up --build
 ```
 

@@ -1,0 +1,595 @@
+{
+  "demos": [
+    {
+      "coaching": {
+        "byRule": {
+          "moving_shots": 13,
+          "no_counter_strafe": 17,
+          "poor_spacing": 29,
+          "retake_desync": 8,
+          "untraded_death": 61,
+          "weak_utility_before_execute": 6
+        },
+        "bySeverity": {
+          "low": 65,
+          "medium": 69
+        },
+        "count": 134,
+        "sha256": "77b3f7ed205553027ce1581f410e4eb8e24d1ced4f8a709d1944cbb30ba184ca"
+      },
+      "events": {
+        "byType": {
+          "bomb_dropped": 46,
+          "bomb_exploded": 5,
+          "bomb_pickup": 55,
+          "bomb_planted": 11,
+          "damage": 501,
+          "flash": 105,
+          "he": 70,
+          "kill": 154,
+          "molotov": 80,
+          "round_end": 16,
+          "round_start": 16,
+          "smoke": 114
+        },
+        "count": 1173,
+        "withPlayerByType": {
+          "bomb_dropped": 46,
+          "bomb_exploded": 5,
+          "bomb_pickup": 55,
+          "bomb_planted": 11,
+          "damage": 501,
+          "flash": 105,
+          "he": 70,
+          "kill": 153,
+          "molotov": 80,
+          "smoke": 114
+        },
+        "withPositionByType": {
+          "bomb_dropped": 46,
+          "bomb_pickup": 55,
+          "bomb_planted": 11,
+          "damage": 501,
+          "flash": 105,
+          "he": 70,
+          "kill": 154,
+          "molotov": 80,
+          "smoke": 114
+        }
+      },
+      "frames": {
+        "count": 11456,
+        "playerRows": 113738,
+        "rowsBySide": {
+          "CT": 57280,
+          "T": 56458
+        },
+        "rowsDead": 16636,
+        "rowsHurt": 16046,
+        "rowsWithBomb": 7951,
+        "rowsWithZ": 113738,
+        "withBombState": 11456
+      },
+      "generatedWith": {
+        "coachingRulesVersion": "coaching_rules_v3",
+        "demoparser2": "0.42.0",
+        "matchSummaryVersion": 2,
+        "replayContractVersion": "replay_contract_v5"
+      },
+      "inputs": {
+        "changePoints": 51177,
+        "players": 10
+      },
+      "key": {
+        "bytes": 275946444,
+        "sha256Prefix": "71134b26f9041ca7"
+      },
+      "kills": {
+        "count": 154,
+        "headshots": 63,
+        "withAttacker": 153,
+        "withPosition": 154,
+        "withWeapon": 154
+      },
+      "mapName": "de_ancient",
+      "matchSummary": {
+        "playersWithTeamName": 10,
+        "rounds": 16,
+        "teams": [
+          {
+            "score": 13,
+            "startSide": "T"
+          },
+          {
+            "score": 3,
+            "startSide": "CT"
+          }
+        ],
+        "teamsWithName": 2
+      },
+      "playerStates": {
+        "entries": 7375,
+        "players": 10,
+        "withArmor": 7373,
+        "withEquipValue": 7373,
+        "withGrenades": 4567,
+        "withMoney": 7375,
+        "withWeapon": 7095
+      },
+      "players": 10,
+      "rounds": {
+        "count": 16,
+        "winsBySide": {
+          "CT": 3,
+          "T": 13
+        },
+        "withFreezeEnd": 16
+      },
+      "shots": {
+        "airborne": 14,
+        "count": 2030,
+        "players": 10,
+        "weapons": 16
+      },
+      "tickRate": 64,
+      "utility": {
+        "byType": {
+          "flash": 105,
+          "he": 70,
+          "molotov": 83,
+          "smoke": 113
+        },
+        "count": 371,
+        "points": 14466,
+        "withThrowOrigin": 371,
+        "withThrowerSide": 371
+      }
+    },
+    {
+      "coaching": {
+        "byRule": {
+          "moving_shots": 11,
+          "no_counter_strafe": 15,
+          "poor_spacing": 68,
+          "untraded_death": 71,
+          "weak_utility_before_execute": 5
+        },
+        "bySeverity": {
+          "low": 99,
+          "medium": 71
+        },
+        "count": 170,
+        "sha256": "e3a1a8f26c7dfc7310b01cd8a3573485b93c3090fe38017f2578794e8f89e602"
+      },
+      "events": {
+        "byType": {
+          "bomb_defused": 2,
+          "bomb_dropped": 55,
+          "bomb_exploded": 3,
+          "bomb_pickup": 61,
+          "bomb_planted": 10,
+          "damage": 488,
+          "flash": 160,
+          "he": 69,
+          "kill": 133,
+          "molotov": 105,
+          "round_end": 21,
+          "round_start": 21,
+          "smoke": 130
+        },
+        "count": 1258,
+        "withPlayerByType": {
+          "bomb_defused": 2,
+          "bomb_dropped": 55,
+          "bomb_exploded": 3,
+          "bomb_pickup": 61,
+          "bomb_planted": 10,
+          "damage": 488,
+          "flash": 160,
+          "he": 69,
+          "kill": 133,
+          "molotov": 105,
+          "smoke": 130
+        },
+        "withPositionByType": {
+          "bomb_defused": 2,
+          "bomb_dropped": 55,
+          "bomb_pickup": 61,
+          "bomb_planted": 10,
+          "damage": 488,
+          "flash": 160,
+          "he": 69,
+          "kill": 133,
+          "molotov": 105,
+          "smoke": 130
+        }
+      },
+      "frames": {
+        "count": 13820,
+        "playerRows": 138200,
+        "rowsBySide": {
+          "CT": 69100,
+          "T": 69100
+        },
+        "rowsDead": 22086,
+        "rowsHurt": 12876,
+        "rowsWithBomb": 9476,
+        "rowsWithZ": 138200,
+        "withBombState": 13820
+      },
+      "generatedWith": {
+        "coachingRulesVersion": "coaching_rules_v3",
+        "demoparser2": "0.42.0",
+        "matchSummaryVersion": 2,
+        "replayContractVersion": "replay_contract_v5"
+      },
+      "inputs": {
+        "changePoints": 80901,
+        "players": 10
+      },
+      "key": {
+        "bytes": 355987240,
+        "sha256Prefix": "9a831761cc494a50"
+      },
+      "kills": {
+        "count": 133,
+        "headshots": 79,
+        "withAttacker": 133,
+        "withPosition": 133,
+        "withWeapon": 133
+      },
+      "mapName": "de_dust2",
+      "matchSummary": {
+        "playersWithTeamName": 10,
+        "rounds": 21,
+        "teams": [
+          {
+            "score": 13,
+            "startSide": "T"
+          },
+          {
+            "score": 8,
+            "startSide": "CT"
+          }
+        ],
+        "teamsWithName": 2
+      },
+      "playerStates": {
+        "entries": 9722,
+        "players": 10,
+        "withArmor": 9722,
+        "withEquipValue": 9722,
+        "withGrenades": 6943,
+        "withMoney": 9722,
+        "withWeapon": 9422
+      },
+      "players": 10,
+      "rounds": {
+        "count": 21,
+        "winsBySide": {
+          "CT": 13,
+          "T": 8
+        },
+        "withFreezeEnd": 21
+      },
+      "shots": {
+        "airborne": 14,
+        "count": 2023,
+        "players": 10,
+        "weapons": 13
+      },
+      "tickRate": 64,
+      "utility": {
+        "byType": {
+          "flash": 160,
+          "he": 69,
+          "molotov": 106,
+          "smoke": 130
+        },
+        "count": 465,
+        "points": 16033,
+        "withThrowOrigin": 465,
+        "withThrowerSide": 465
+      }
+    },
+    {
+      "coaching": {
+        "byRule": {
+          "isolated_entry": 1,
+          "moving_shots": 10,
+          "no_counter_strafe": 12,
+          "poor_spacing": 48,
+          "post_plant_spacing_with_bomb_event": 3,
+          "retake_desync": 2,
+          "untraded_death": 92,
+          "weak_utility_before_execute": 7
+        },
+        "bySeverity": {
+          "low": 77,
+          "medium": 98
+        },
+        "count": 175,
+        "sha256": "8ecf29a171186aa52a691f54fa915a7093df9542318c093685e27cba87851062"
+      },
+      "events": {
+        "byType": {
+          "bomb_defused": 4,
+          "bomb_dropped": 71,
+          "bomb_exploded": 3,
+          "bomb_pickup": 76,
+          "bomb_planted": 11,
+          "damage": 637,
+          "flash": 151,
+          "he": 81,
+          "kill": 158,
+          "molotov": 116,
+          "round_end": 24,
+          "round_start": 24,
+          "smoke": 159
+        },
+        "count": 1515,
+        "withPlayerByType": {
+          "bomb_defused": 4,
+          "bomb_dropped": 71,
+          "bomb_exploded": 3,
+          "bomb_pickup": 76,
+          "bomb_planted": 11,
+          "damage": 637,
+          "flash": 151,
+          "he": 81,
+          "kill": 158,
+          "molotov": 116,
+          "smoke": 159
+        },
+        "withPositionByType": {
+          "bomb_defused": 4,
+          "bomb_dropped": 71,
+          "bomb_pickup": 76,
+          "bomb_planted": 11,
+          "damage": 637,
+          "flash": 151,
+          "he": 81,
+          "kill": 158,
+          "molotov": 116,
+          "smoke": 159
+        }
+      },
+      "frames": {
+        "count": 15462,
+        "playerRows": 154620,
+        "rowsBySide": {
+          "CT": 77310,
+          "T": 77310
+        },
+        "rowsDead": 28223,
+        "rowsHurt": 17892,
+        "rowsWithBomb": 8776,
+        "rowsWithZ": 154620,
+        "withBombState": 15462
+      },
+      "generatedWith": {
+        "coachingRulesVersion": "coaching_rules_v3",
+        "demoparser2": "0.42.0",
+        "matchSummaryVersion": 2,
+        "replayContractVersion": "replay_contract_v5"
+      },
+      "inputs": {
+        "changePoints": 83579,
+        "players": 10
+      },
+      "key": {
+        "bytes": 386381956,
+        "sha256Prefix": "6ea1f1f71b12bec4"
+      },
+      "kills": {
+        "count": 158,
+        "headshots": 80,
+        "withAttacker": 158,
+        "withPosition": 158,
+        "withWeapon": 158
+      },
+      "mapName": "de_mirage",
+      "matchSummary": {
+        "playersWithTeamName": 10,
+        "rounds": 24,
+        "teams": [
+          {
+            "score": 13,
+            "startSide": "T"
+          },
+          {
+            "score": 11,
+            "startSide": "CT"
+          }
+        ],
+        "teamsWithName": 2
+      },
+      "playerStates": {
+        "entries": 10158,
+        "players": 10,
+        "withArmor": 10158,
+        "withEquipValue": 10158,
+        "withGrenades": 7024,
+        "withMoney": 10158,
+        "withWeapon": 9799
+      },
+      "players": 10,
+      "rounds": {
+        "count": 24,
+        "winsBySide": {
+          "CT": 17,
+          "T": 7
+        },
+        "withFreezeEnd": 24
+      },
+      "shots": {
+        "airborne": 22,
+        "count": 2341,
+        "players": 10,
+        "weapons": 17
+      },
+      "tickRate": 64,
+      "utility": {
+        "byType": {
+          "flash": 151,
+          "he": 81,
+          "molotov": 117,
+          "smoke": 159
+        },
+        "count": 508,
+        "points": 19708,
+        "withThrowOrigin": 508,
+        "withThrowerSide": 508
+      }
+    },
+    {
+      "coaching": {
+        "byRule": {
+          "moving_shots": 6,
+          "no_counter_strafe": 12,
+          "poor_spacing": 16,
+          "retake_desync": 2,
+          "untraded_death": 71,
+          "weak_utility_before_execute": 3
+        },
+        "bySeverity": {
+          "low": 37,
+          "medium": 73
+        },
+        "count": 110,
+        "sha256": "6cfdcabf012ff1809f6060c6bc1a2f208af80a51d16a811e6eaafa3073f29b77"
+      },
+      "events": {
+        "byType": {
+          "bomb_defused": 1,
+          "bomb_dropped": 50,
+          "bomb_exploded": 4,
+          "bomb_pickup": 59,
+          "bomb_planted": 10,
+          "damage": 439,
+          "flash": 81,
+          "he": 72,
+          "kill": 129,
+          "molotov": 92,
+          "round_end": 19,
+          "round_start": 19,
+          "smoke": 123
+        },
+        "count": 1098,
+        "withPlayerByType": {
+          "bomb_defused": 1,
+          "bomb_dropped": 50,
+          "bomb_exploded": 4,
+          "bomb_pickup": 59,
+          "bomb_planted": 10,
+          "damage": 439,
+          "flash": 81,
+          "he": 72,
+          "kill": 128,
+          "molotov": 92,
+          "smoke": 123
+        },
+        "withPositionByType": {
+          "bomb_defused": 1,
+          "bomb_dropped": 50,
+          "bomb_pickup": 59,
+          "bomb_planted": 10,
+          "damage": 439,
+          "flash": 81,
+          "he": 72,
+          "kill": 129,
+          "molotov": 92,
+          "smoke": 123
+        }
+      },
+      "frames": {
+        "count": 12262,
+        "playerRows": 122620,
+        "rowsBySide": {
+          "CT": 61310,
+          "T": 61310
+        },
+        "rowsDead": 20397,
+        "rowsHurt": 9847,
+        "rowsWithBomb": 9529,
+        "rowsWithZ": 122620,
+        "withBombState": 12262
+      },
+      "generatedWith": {
+        "coachingRulesVersion": "coaching_rules_v3",
+        "demoparser2": "0.42.0",
+        "matchSummaryVersion": 2,
+        "replayContractVersion": "replay_contract_v5"
+      },
+      "inputs": {
+        "changePoints": 70899,
+        "players": 10
+      },
+      "key": {
+        "bytes": 306989430,
+        "sha256Prefix": "a4561043370cdaab"
+      },
+      "kills": {
+        "count": 129,
+        "headshots": 78,
+        "withAttacker": 128,
+        "withPosition": 129,
+        "withWeapon": 129
+      },
+      "mapName": "de_nuke",
+      "matchSummary": {
+        "playersWithTeamName": 10,
+        "rounds": 19,
+        "teams": [
+          {
+            "score": 6,
+            "startSide": "T"
+          },
+          {
+            "score": 13,
+            "startSide": "CT"
+          }
+        ],
+        "teamsWithName": 2
+      },
+      "playerStates": {
+        "entries": 7779,
+        "players": 10,
+        "withArmor": 7779,
+        "withEquipValue": 7779,
+        "withGrenades": 5110,
+        "withMoney": 7779,
+        "withWeapon": 7484
+      },
+      "players": 10,
+      "rounds": {
+        "count": 19,
+        "winsBySide": {
+          "CT": 10,
+          "T": 9
+        },
+        "withFreezeEnd": 19
+      },
+      "shots": {
+        "airborne": 1,
+        "count": 2220,
+        "players": 10,
+        "weapons": 16
+      },
+      "tickRate": 64,
+      "utility": {
+        "byType": {
+          "flash": 81,
+          "he": 72,
+          "molotov": 93,
+          "smoke": 123
+        },
+        "count": 369,
+        "points": 14222,
+        "withThrowOrigin": 369,
+        "withThrowerSide": 369
+      }
+    }
+  ],
+  "schema": 1
+}

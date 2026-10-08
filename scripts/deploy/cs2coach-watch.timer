@@ -1,0 +1,12 @@
+# Every 5 minutes, starting 3 minutes after boot.
+[Unit]
+Description=CS2 Coach health watch every 5 minutes
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=5min
+AccuracySec=30s
+Unit=cs2coach-watch.service
+
+[Install]
+WantedBy=timers.target

@@ -11,6 +11,21 @@
 # production does not rely on them. The one exception is the base file's
 # `upload-staging` volume (api and worker): the parts of unfinished chunked
 # uploads wait on this host's disk until `complete` moves them to the bucket.
+#
+# Networks: postgres and redis sit only on `backend`, an internal network with
+# no route out; api and worker join it and the default network (they need
+# outbound HTTPS to R2 and Steam); caddy and frontend stay on the default
+# network only, so the public-facing containers cannot reach the database or
+# Redis at all. Redis also requires REDIS_PASSWORD (set up in the preview file,
+# which every production-auth shape uses): sessions live there unsigned, so
+# write access would mint a session for any user.
+#
+# Images are per commit: scripts/deploy/deploy.sh exports DEPLOY_SHA, which
+# names cs2coach-backend:<sha> (one image for api and worker) and
+# cs2coach-frontend:<sha>, so a rollback whose images still exist starts them
+# without a build. Unset, the tag is `latest`, which deploy.sh moves to every
+# deploy that passed, so maintenance commands (`compose exec`, restore.sh's
+# `up -d api worker`) need no DEPLOY_SHA and start the deployed images.
 name: cs2coach
 
 x-logging: &default-logging
@@ -45,17 +60,29 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD (hex, e.g. openssl rand -hex 24); production has no default}
+    networks:
+      - backend
     logging: *default-logging
 
   redis:
     restart: unless-stopped
-    # Append-only persistence keeps sign-in sessions and queued jobs across restarts.
-    command: ["redis-server", "--appendonly", "yes"]
+    # Append-only persistence keeps sign-in sessions and queued jobs across
+    # restarts. This replaces the preview command, so it repeats the password
+    # (the preview file also sets REDISCLI_AUTH, the healthcheck and REDIS_URL).
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --requirepass
+      - ${REDIS_PASSWORD:?Set REDIS_PASSWORD (hex, e.g. openssl rand -hex 24); production has no default}
     volumes:
       - redis-data:/data
+    networks:
+      - backend
     logging: *default-logging
 
   api:
+    image: cs2coach-backend:${DEPLOY_SHA:-latest}
     restart: unless-stopped
     # One uvicorn process on purpose (the in-process upload slot relies on it).
     # Forwarded client IPs are trusted from any peer only because this port is
@@ -74,15 +101,29 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-cs2coach}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-cs2coach}
     ports: !reset []
+    networks:
+      - default
+      - backend
     logging: *default-logging
 
   worker:
+    image: cs2coach-backend:${DEPLOY_SHA:-latest}
     restart: unless-stopped
     environment:
       DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-cs2coach}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-cs2coach}
+    # A runaway parse is killed inside the worker's cgroup (recorded as
+    # PARSE_OUT_OF_MEMORY) instead of pushing the whole VPS into swap. Equal
+    # limits mean no swap for the worker. Size it below the VPS RAM minus
+    # postgres, redis, api, frontend and caddy (deploy/env.production.example).
+    mem_limit: ${WORKER_MEM_LIMIT:-3g}
+    memswap_limit: ${WORKER_MEM_LIMIT:-3g}
+    networks:
+      - default
+      - backend
     logging: *default-logging
 
   frontend:
+    image: cs2coach-frontend:${DEPLOY_SHA:-latest}
     restart: unless-stopped
     command:
       - npm
@@ -97,6 +138,10 @@ services:
       - "75000"
     ports: !reset []
     logging: *default-logging
+
+networks:
+  backend:
+    internal: true
 
 volumes:
   redis-data:

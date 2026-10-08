@@ -18,6 +18,13 @@
 # The backend suite runs against sqlite:///:memory:, so no Postgres or Redis
 # service container is needed. render-worker imports only the standard library,
 # so its job installs nothing at all.
+#
+# Backend packages come from backend/requirements.lock: every package, direct
+# or transitive, pinned with its hashes for Linux / CPython 3.12, the same file
+# backend/Dockerfile installs. backend/requirements.txt stays the hand-edited
+# input; the lock's header holds the `uv pip compile` command that regenerates
+# it. pip refuses to mix hashed and unhashed requirements in one command, so the
+# dev tools (requirements-dev.txt) install in a separate step.
 
 name: CI
 
@@ -51,12 +58,12 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
-          cache-dependency-path: backend/requirements.txt
+          cache-dependency-path: backend/requirements.lock
 
       - name: Install backend dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r backend/requirements.txt
+          pip install --require-hashes -r backend/requirements.lock
 
       # Cheap syntax gate: fails in seconds on a broken file instead of surfacing
       # as a confusing import error partway through discovery.
@@ -180,17 +187,60 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
           cache-dependency-path: |
-            backend/requirements.txt
+            backend/requirements.lock
             requirements-dev.txt
 
       # mypy needs the runtime packages present to resolve FastAPI, SQLAlchemy
       # and Pydantic types. Without them it degrades to Any and stops finding
-      # anything useful, so this job installs the full backend requirements.
+      # anything useful, so this job installs the full backend lock.
       - name: Install dependencies and tooling
         run: |
           python -m pip install --upgrade pip
-          pip install -r backend/requirements.txt -r requirements-dev.txt
+          pip install --require-hashes -r backend/requirements.lock
+          pip install -r requirements-dev.txt
 
       # Scope and per-module debt live in mypy.ini.
       - name: mypy
         run: mypy
+
+  # The deploy kit only ever runs on the production VPS, so this is the one
+  # place its bash and the stacked production compose shape get checked before
+  # a deploy does it for real. No Python or Node needed.
+  deploy-kit:
+    name: Deploy scripts and compose
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: bash -n
+        run: |
+          failed=""
+          for f in scripts/*.sh scripts/deploy/*.sh; do
+            bash -n "$f" || failed="$failed $f"
+          done
+          if [ -n "$failed" ]; then
+            echo "::error::bash syntax errors in:$failed"
+            exit 1
+          fi
+
+      # Pinned image rather than the runner's apt package, for the same reason
+      # ruff and mypy are pinned. Accepted findings live in .shellcheckrc.
+      - name: shellcheck
+        run: |
+          docker run --rm -v "$PWD:/mnt" -w /mnt koalaman/shellcheck:v0.11.0 \
+            -x scripts/*.sh scripts/deploy/*.sh
+
+      # Renders every compose shape the docs use without starting anything.
+      # The production shape needs Compose >= 2.24 (`!reset`) and reads the
+      # checked-in example env, so its CHANGE_ME placeholders must satisfy
+      # every `${VAR:?}` the stacked files require.
+      - name: docker compose config
+        run: |
+          docker compose version
+          docker compose -f docker-compose.yml config -q
+          docker compose -f docker-compose.yml -f docker-compose.dev.yml config -q
+          docker compose --env-file deploy/env.production.example \
+            -f docker-compose.yml -f docker-compose.preview.yml config -q
+          docker compose --env-file deploy/env.production.example \
+            -f docker-compose.yml -f docker-compose.preview.yml -f docker-compose.prod.yml config -q

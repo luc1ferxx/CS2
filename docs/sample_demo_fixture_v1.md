@@ -13,7 +13,7 @@ export SAMPLE_DEMO_PATH="$PWD/sample-demos/sample.dem"
 export SAMPLE_DEMO_NAME="Local Sample Demo"
 ```
 
-Ignored local locations include `sample-demos/`, `samples/`, `.local/`, root storage directories, `.dem`, demo archive names such as `*.dem.zip`, and common video outputs. The product smoke path should use a `.dem`; archive inputs are retained only as development compatibility. Do not commit real demos, replay blobs, media files, parser dumps, or generated storage artifacts.
+Ignored local locations include `sample-demos/`, `samples/`, `.local/`, root storage directories, `.dem`, demo archive names such as `*.dem.zip`, and common video outputs. The product smoke path should use a `.dem`; archive inputs are retained only as development compatibility. Do not commit real demos, replay blobs, media files, parser dumps, or generated storage artifacts. The one committed file derived from real demos is the aggregate manifest described under [Real-Demo Manifest](#real-demo-manifest).
 
 Real match demos can include player data or licensed match content. Use only samples you are allowed to keep locally and upload to the target API.
 
@@ -51,7 +51,42 @@ SAMPLE_DEMO_PATH="$PWD/sample-demos/sample.dem" ./scripts/rc_check.sh
 REQUIRE_SAMPLE_DEMO=1 SAMPLE_DEMO_PATH="$PWD/sample-demos/sample.dem" ./scripts/rc_check.sh
 ```
 
+With `SAMPLE_DEMO_PATH` set, `rc_check.sh` first checks the sample offline against the real-demo manifest (below) and then runs the upload smoke. A sample the manifest does not know is skipped there; a known sample whose parse no longer matches fails the gate.
+
 See `docs/release_candidate_qa_v1.md` for the full RC checklist and manual browser smoke expectations.
+
+## Real-Demo Manifest
+
+`backend/tests/fixtures/real_demo_manifest.json` records what the parser, normalizer and analyzer make of the four local sample demos kept in the repository root (one each on Dust2, Mirage, Ancient and Nuke). It holds aggregates only:
+
+- the key: file size and the first 16 hex characters of the file's sha256;
+- the versions it was built with: demoparser2, `REPLAY_CONTRACT_VERSION`, `COACHING_RULES_VERSION`, `MATCH_SUMMARY_VERSION`;
+- map name, tick rate, player count, round count and wins by side;
+- frame counts and frame-row counts (per side, with height, dead, hurt, carrying the bomb);
+- parser event counts per type, and how many of each carry a position and a player;
+- kill, equipment-state, utility (per type, with throw origin and thrower side), key-input and gun-shot counts;
+- the final score per team as start side and score, with how many team and player clan names resolved (never the names);
+- coaching suggestion counts per rule and severity, and the sha256 of the analyzer output (events sorted, canonical JSON).
+
+It never holds player ids, names, positions, events or any other demo content; `RealDemoManifestShapeTest` (always on, CI included) fails on any field or string outside that shape. The "with a position" and frame-row counts are what catch the parser's silent fallbacks: forcing `player_death`/`player_hurt` onto their prop-less retry on Ancient leaves every event count and the analyzer hash unchanged, but moves the kill and damage position counts from 154 and 501 to 0.
+
+Check the local demos (about 10 s per demo):
+
+```bash
+./scripts/verify.sh   # its last step runs this whenever the repository root holds a .dem
+PYTHONPATH=backend REAL_DEMO_MANIFEST_CHECK=1 python -m unittest discover -s backend/tests -p test_real_demo_manifest.py
+PYTHONPATH=backend python -m app.cli.real_demo_manifest check [path/to/demo.dem ...]
+```
+
+Without a path the command line uses the repository-root `*.dem`. A demo whose size and hash prefix match no entry is skipped, never failed; a known one that no longer matches prints each differing count as `path: expected -> actual`. `REPLAY_V2_SAMPLE_CHECK=1 ./scripts/verify.sh` also runs the replay contract v2–v5 sample checks (`test_sample_demo_contract_v2.py`) in its backend tests step; they parse the demos again.
+
+Regenerate the manifest, review the diff and commit it together with the change that moved it:
+
+```bash
+PYTHONPATH=backend python -m app.cli.real_demo_manifest update   # --prune drops entries for demos not given
+```
+
+Regenerate after a demoparser2 upgrade (or another parser dependency change), any change under `backend/app/parser/` that alters parser or normalizer output, a map-config transform change, an analyzer change, and every bump of `COACHING_RULES_VERSION`, `REPLAY_CONTRACT_VERSION` or `MATCH_SUMMARY_VERSION`. The versions are part of each entry, so a bump without regeneration fails the check by design.
 
 ## Manual Upload Command
 

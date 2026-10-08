@@ -21,6 +21,7 @@ Production 的上传额度（`DEMO_UPLOAD_DAILY_LIMIT`、`DEMO_ACTIVE_PARSE_LIMI
 ### Core
 
 - `GET /health`
+- `GET /health/worker`（解析 worker 心跳：所有模式都提供，production 也是）
 - `GET /diagnostics`（仅 development/test；production 返回 `404`）
 - `GET /auth/steam/login`
 - `GET /auth/steam/callback`（不在 `STEAM_LOGIN_ALLOWLIST` 中的 Steam ID 会 `303` 到 `/auth/callback?error=not_invited`，不创建账号、不发 session，并撤销浏览器已有的 session）
@@ -82,10 +83,11 @@ Production 的上传额度（`DEMO_UPLOAD_DAILY_LIMIT`、`DEMO_ACTIVE_PARSE_LIMI
 
 ```bash
 curl http://localhost:8000/health
+curl http://localhost:8000/health/worker
 curl http://localhost:8000/diagnostics
 ```
 
-`/health` 只返回 coarse `status=ok|degraded`：正常时 HTTP `200` `{"status":"ok"}`，数据库、Redis 或 worker 配置任一检查失败时 HTTP `503` `{"status":"degraded"}`；不泄漏 dependency、URL 或 storage 配置。development/test 的 `/diagnostics` 返回 compact readiness、Redis queue/worker heartbeat、job counts、recent failed job summary 和 render-worker inferred status；production 对该 system endpoint 返回 `404`。它不暴露本地 storage path、env dump、token、stack trace、raw parser data 或上传内容。
+`/health` 只返回 coarse `status=ok|degraded`：正常时 HTTP `200` `{"status":"ok"}`，数据库、Redis 或 worker 配置任一检查失败时 HTTP `503` `{"status":"degraded"}`；不泄漏 dependency、URL 或 storage 配置。`/health/worker` 同样粗粒度：解析 worker 的 Redis 心跳不超过 90 秒时 HTTP `200` `{"status":"ok"}`，心跳缺失、过期、读不出或 Redis 连不上时 HTTP `503` `{"status":"degraded"}`。它在 production 也提供（经 Caddy 的 `@api` 路由），供 `deploy.sh`、`prod_smoke.sh`、`watch.sh` 和外部拨测使用；故意不并进 `/health`，因为 caddy 和 frontend 依赖 api 的健康检查启动，worker 挂掉不能把整站拖下。development/test 的 `/diagnostics` 返回 compact readiness、Redis queue/worker heartbeat、job counts、recent failed job summary 和 render-worker inferred status；production 对该 system endpoint 返回 `404`。它不暴露本地 storage path、env dump、token、stack trace、raw parser data 或上传内容。
 
 ### 上传 `.dem`
 

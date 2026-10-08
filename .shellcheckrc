@@ -1,0 +1,8 @@
+# shellcheck settings for scripts/*.sh and scripts/deploy/*.sh (CI shell job,
+# scripts/verify.sh). Run from the repository root:
+#   shellcheck -x scripts/*.sh scripts/deploy/*.sh
+# or, without a local install:
+#   docker run --rm -v "$PWD:/mnt:ro" -w /mnt koalaman/shellcheck:stable -x scripts/*.sh scripts/deploy/*.sh
+
+# Follow `# shellcheck source=...` directives (paths relative to the repo root).
+external-sources=true

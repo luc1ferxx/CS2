@@ -57,7 +57,7 @@ docker compose up --build
 ```
 
 - 比赛库：http://localhost:3000/dashboard
-- API：http://localhost:8000 · 健康检查 `/health` · 诊断 `/diagnostics`（仅 development/test；production 返回 `404`）
+- API：http://localhost:8000 · 健康检查 `/health` 和 `/health/worker`（解析 worker 心跳，所有模式都有）· 诊断 `/diagnostics`（仅 development/test；production 返回 `404`）
 
 本地为 development 模式，不需要登录。可以用"示例比赛"快速生成一场模拟数据，也可以上传真实 `.dem` 走完整解析流程。
 
@@ -89,7 +89,7 @@ cd frontend && npm install && npm run dev
             │        ├─── 对象存储     .dem 原文件、回放 JSON、视频（开发用本地目录，生产用私有 S3 兼容存储）
             │        └─── 本地暂存盘   未完成上传的分片（命名卷 upload-staging，完成时转存到对象存储）
             ▼
-         解析 worker（独立子进程解析，有超时与内存上限）→ 规则分析 → 写回回放与建议
+         解析 worker（独立子进程解析：超时、内存上限、环境变量白名单、低权限账户）→ 规则分析 → 写回回放与建议
             ⋮
          独立渲染机（可选，操作者手动启用）：领取片段任务 → 渲染 → 回传 MP4
 ```
@@ -118,11 +118,11 @@ fixtures/        前后端共用的测试用例（match-rules/：每回合阵营
 ## 开发与验证
 
 ```bash
-./scripts/verify.sh      # 与 CI 相同：后端编译/测试、render-worker、ruff、mypy、前端测试/lint/类型检查/构建
+./scripts/verify.sh      # 与 CI 相同：后端编译/测试、render-worker、ruff、mypy、bash -n / shellcheck / 生产 compose 配置、前端测试/lint/类型检查/构建
 ./scripts/rc_check.sh    # verify.sh + Docker 构建启动 + 健康检查 + 预览冒烟（发布候选用）
 ```
 
-`verify.sh` 不会在第一个失败处停下，最后会汇总所有失败项。它优先使用 `.venv/` 里的 Python，也可以用 `PYTHON=/path/to/python ./scripts/verify.sh` 指定。
+`verify.sh` 不会在第一个失败处停下，最后会汇总所有失败项。它优先使用 `.venv/` 里的 Python，也可以用 `PYTHON=/path/to/python ./scripts/verify.sh` 指定。`bash -n` 必跑；本机没有 shellcheck 或 `docker compose` 时对应步骤跳过（CI 的 `deploy-kit` job 会跑），`compose config` 只在本地渲染三文件叠加的生产形态，不启动任何东西。最后一步只在本地跑：仓库根目录有 `.dem` 时，按 worker 的流程解析清单认识的每一场（约 10 秒一场），和 `backend/tests/fixtures/real_demo_manifest.json` 里的聚合数逐项比对，不认识的跳过（CI 没有 `.dem`）。`rc_check.sh` 带 `SAMPLE_DEMO_PATH` 时也先离线比对这份清单，再上传样本。
 
 单独运行：
 
@@ -138,12 +138,14 @@ PYTHONPATH=backend .venv/bin/python -m unittest discover backend/tests
 ```
 
 - **测试约定**：交互组件和页面状态的改动（加载、轮询、失败、重试）要附带同目录下的 `*.test.tsx`，用 mock 掉的 `@/lib/api` 挂载组件；测试数据放在 `frontend/lib/test-fixtures/review.ts`。前后端必须一致的规则用 `fixtures/` 下的共享 JSON 用例固定：`fixtures/match-rules/*.json` 同时由 `backend/tests/test_match_side_rules.py` 和 `frontend/lib/match-side-rules.test.mjs` 逐个运行；`fixtures/round-economy/*.json` 同时由 `backend/tests/test_round_economy.py` 和 `frontend/lib/round-economy-fixtures.test.mjs` 运行，固定 `frontend/lib/round-economy.ts` 与后端移植 `backend/app/analysis/round_economy.py` 的经济类型判定。改规则时两边和用例一起改。
+- **真实 demo 清单**：`backend/tests/fixtures/real_demo_manifest.json` 按文件大小和 sha256 前缀记录本地四场 demo 的聚合数（地图、回合/帧/事件数、各事件族及带坐标的数量、道具/状态/按键/射击计数、每条规则的建议数、分析输出的哈希），不含名字、SteamID、坐标或事件内容。升级 demoparser2 或其他解析依赖、改变解析/归一化输出、改地图变换、改分析器，或提升 `COACHING_RULES_VERSION` / `REPLAY_CONTRACT_VERSION` / `MATCH_SUMMARY_VERSION` 时，运行 `PYTHONPATH=backend .venv/bin/python -m app.cli.real_demo_manifest update`，审过 diff 后和引起变化的改动一起提交；版本号记在每条清单里，只提升版本不重新生成，检查会按设计失败。
+- **依赖锁**：Docker 镜像和 CI 都从 `backend/requirements.lock` 安装（`pip install --require-hashes`，每个直接和传递依赖都固定版本和哈希，目标 Linux / CPython 3.12）。`backend/requirements.txt` 仍是手工维护的输入，改了它就用锁文件头部的 `uv pip compile` 命令重新生成。本地 Windows 的 `.venv` 照旧装 `requirements.txt`：锁文件按 Linux 解析（含 uvloop、不含 colorama），在 Windows 上装不上。
 - **手动检查**：界面改动还需要在浏览器里走一遍比赛库和复盘页，清单见 [release_candidate_qa_v1](docs/release_candidate_qa_v1.md)。
 - **更多命令**：常用 API 调用（上传、状态轮询、回放、建议、评价、删除、渲染任务）见 [API Reference](docs/api_reference_v1.md) 和 `AGENTS.md`。
 
 ## 配置
 
-完整列表（101 项）见 [Configuration Reference](docs/configuration_reference_v1.md)。最常用的：
+完整列表（106 项）见 [Configuration Reference](docs/configuration_reference_v1.md)。最常用的：
 
 | 变量 | 默认值 | 说明 |
 | --- | --- | --- |
@@ -155,7 +157,7 @@ PYTHONPATH=backend .venv/bin/python -m unittest discover backend/tests
 | `FRONTEND_PUBLIC_URL` / `BACKEND_PUBLIC_URL` | `http://localhost:3000` / `:8000` | production 必须是同源 HTTPS |
 | `NEXT_PUBLIC_API_BASE_URL` | `http://localhost:8000` | 浏览器访问 API 和媒体的地址 |
 | `NEXT_PUBLIC_PRIVACY_CONTACT` / `NEXT_PUBLIC_DATA_REGION` | 未设置 | 构建时写进前端，显示在 `/privacy`：隐私问题和删除请求的联系方式（邮箱、网址或文字；VPS 部署必填，`deploy.sh` 会检查）和服务器所在地区；未设置时分别说明"本站没有公开联系方式"和显示"海外 VPS，具体地区由站长部署时选定" |
-| `DATABASE_URL` / `REDIS_URL` | 本地默认值 | API 与 worker |
+| `DATABASE_URL` / `REDIS_URL` | 本地默认值 | API 与 worker。production 的 `REDIS_URL` 必须带密码：preview/production 的 compose 用必填的 `REDIS_PASSWORD` 拼出 `redis://:<密码>@redis:6379/0` |
 | `ARTIFACT_STORAGE_BACKEND` / `OBJECT_STORAGE_BUCKET` | `local` / 未设置 | production 必须是 `s3` 和一个私有 bucket |
 | `STEAM_WEB_API_KEY` | 未设置 | 仅服务端使用，production 必填 |
 | `STEAM_CREDENTIAL_ENCRYPTION_KEY` | 仓库内的开发 key | production 必须换成 32 随机字节的 URL-safe base64，例如 `python -c "import os,base64;print(base64.urlsafe_b64encode(os.urandom(32)).decode())"` |
@@ -170,7 +172,8 @@ PYTHONPATH=backend .venv/bin/python -m unittest discover backend/tests
 - 真实的 Steam Web API key；
 - Steam 登录时的 `STEAM_LOGIN_ALLOWLIST`；
 - 非开发用的加密 key 和渲染 token；
-- 私有的 S3 兼容存储。
+- 私有的 S3 兼容存储；
+- 带密码的 `REDIS_URL`。
 
 **凭证与数据**：
 - production 凭证不能出现在 `NEXT_PUBLIC_*`、源码、日志、提交的 env 文件或浏览器响应里。
@@ -178,12 +181,15 @@ PYTHONPATH=backend .venv/bin/python -m unittest discover backend/tests
 
 ## 部署
 
-- **生产（单台海外 VPS）**：`docker-compose.prod.yml` 叠加在 base 和 preview 之上，加入 Caddy（自动 HTTPS、同源路由）；`scripts/deploy/` 提供初始化、部署/回滚、生产冒烟、每日备份和恢复演练。步骤见 [vps_deploy_v1](docs/vps_deploy_v1.md)。
-- **预览环境**：`docker compose -f docker-compose.yml -f docker-compose.preview.yml up --build`，使用 production 模式和生产构建的前端。必填变量、冒烟命令与回滚步骤见 [cloud_preview_deploy_v1](docs/cloud_preview_deploy_v1.md)。
+- **生产（单台海外 VPS）**：`docker-compose.prod.yml` 叠加在 base 和 preview 之上，加入 Caddy（自动 HTTPS、同源路由）；postgres 和 redis 只在 `internal` 的 `backend` 网络上，worker 容器有内存上限 `WORKER_MEM_LIMIT`（默认 `3g`，不用 swap）。`scripts/deploy/` 提供初始化、部署/回滚、生产冒烟、每日备份、恢复演练和健康巡检。步骤见 [vps_deploy_v1](docs/vps_deploy_v1.md)。
+  - **部署与回滚**：`deploy.sh` 在动任何运行中的服务之前先预检：目标提交不认识数据库里已应用的迁移时直接拒绝（跨迁移回滚必须先 `restore.sh … --no-start` 恢复迁移前的 dump，会丢掉那之后的改动），目标带新迁移时先自动跑 `backup.sh --db-only`，dump 名记进 `deploy/.deploy-history`（`--skip-backup` 仅在备份桶故障时作最后手段）。启动后依次等 `/health`、`/health/worker`（worker 容器要连续运行 95 秒以上）和生产冒烟。通过的部署把镜像打成 `cs2coach-backend:<sha>`（api 和 worker 共用）和 `cs2coach-frontend:<sha>`，保留最近 3 次；回滚到其中之一时直接用这两个镜像启动，不重新构建。
+  - **告警**：`watch.sh`（`cs2coach-watch.timer`，每 5 分钟）检查 `/health`、`/health/worker`、Docker、容器重启次数、磁盘占用和最新数据库备份的年龄，只在状态变化时向 `ALERT_WEBHOOK_URL` 发一行（ntfy、Telegram、Server酱），全部正常时 ping `DEADMAN_PING_URL`；`backup.sh` 成功后 ping `BACKUP_PING_URL`。告警内容只有检查名、状态和简短原因，不含账户、SteamID、文件名或 IP；三个地址都可留空。
+  - **解析日志**：worker 每个任务结束输出一行 JSON（`"event":"job_done"`，含任务类型、结果、`errorCode`、各步耗时、源文件字节数、建议数和解析子进程峰值内存 `peakRssMiB`），只有不透明的任务 id，没有文件名、账户或路径；`parseS` 和 `peakRssMiB` 也写进任务 metadata 的 `parseStats`。子进程异常退出时，它 stderr 的最后 2 KiB 只打进 worker 日志（`Parse child exited with <code>; end of its stderr:`），不会进入用户可见的错误信息。
+- **预览环境**：`docker compose -f docker-compose.yml -f docker-compose.preview.yml up --build`，使用 production 模式和生产构建的前端；Redis 带密码，必须先设置 `REDIS_PASSWORD`（十六进制，如 `openssl rand -hex 24`）。必填变量、冒烟命令与回滚步骤见 [cloud_preview_deploy_v1](docs/cloud_preview_deploy_v1.md)。
 - **冒烟测试**：`scripts/cloud_preview_smoke.py` 会读取 `/auth/me` 返回的能力开关，跳过 production 隐藏的模拟数据和片段步骤。对 production 预览需要提供已登录的会话 cookie 和一份真实 `.dem`，样本和浏览器一样走分片上传会话；每次运行都会占用该账号滚动 24 小时上传配额（`DEMO_UPLOAD_DAILY_LIMIT`）中的一次。
 - **上线检查清单**：[deployment_readiness_v1](docs/deployment_readiness_v1.md) 和 [release_candidate_qa_v1](docs/release_candidate_qa_v1.md)。
 
-在正式开放之前，[上线计划](docs/rules_2d_beta_launch_v1.md) 中还有这些没有完成：解析器的 CPU、磁盘与输出隔离（目前只有超时和内存上限），数据库迁移，自动部署（目前是手动运行 `scripts/deploy/deploy.sh`），监控告警，在真实部署上完成一次备份恢复演练，存储孤儿清理，以及真实 demo 语料的强制冒烟门禁。
+在正式开放之前，[上线计划](docs/rules_2d_beta_launch_v1.md) 中还有这些没有完成：解析器的 CPU、磁盘与输出隔离（目前有超时、内存上限、环境变量白名单和独立低权限账户），数据库迁移，自动部署（目前是手动运行 `scripts/deploy/deploy.sh`，已有迁移预检和迁移前自动备份），监控（目前只有 `watch.sh` 的状态告警和 dead-man ping，没有指标），在真实部署上完成一次备份恢复演练，存储孤儿清理，以及 CI 上的真实 demo 门禁（真实 demo 清单只在本地 `verify.sh` 和 `rc_check.sh` 里比对）。
 
 ## 安全与隐私边界
 
@@ -195,7 +201,8 @@ PYTHONPATH=backend .venv/bin/python -m unittest discover backend/tests
   - 分片上传：每个账号同时只有一个未完成的上传，全站同时最多 `UPLOAD_SESSION_GLOBAL_LIMIT` 个，暂存盘余量不足时拒绝新上传；同时读取的分片数有全站上限，整文件 intake 同一时间只有一个；
   - 分片 `PUT` 只认这次上传的令牌（数据库只存其哈希，Caddy 日志删掉这个请求头），是唯一不检查会话 cookie 的写请求，但仍要求 `Origin` 是站点源；
   - 并发的上传和重试通过加锁排队，不能绕过同时处理数的上限；
-  - 解析在子进程里运行，默认超时 20 分钟、内存上限 4 GB。
+  - 解析在子进程里运行，默认超时 20 分钟、内存上限 4 GB；production 的 worker 容器另有 `WORKER_MEM_LIMIT` 的上限。子进程的环境是白名单（只有 `PATH`、`PYTHONPATH`、`OPENBLAS_NUM_THREADS`、`LANG`、`TMPDIR`、`HOME`），拿不到数据库、存储、Redis、Steam 和渲染 token 等任何密钥；worker 以 root 运行时，子进程切到镜像里的低权限账户 `parser`（`PARSE_CHILD_USER`），工作区归它所有、源文件对它可读，读不到 worker 进程的环境。
+- **生产网络**：postgres 和 redis 只在 `internal` 的 `backend` 网络上，只有 api 和 worker 连得到，面向公网的 caddy 和 frontend 连不到；Redis 要密码（`REDIS_PASSWORD`），因为登录会话以未签名的形式存在 Redis 里，能写 Redis 就能伪造任何人的会话。
 - **Steam 比赛授权**：与登录分离。Game Authentication Code 和分享码在服务端以 AES-256-GCM 加密保存，不会回传给浏览器。
 - **开发模式**：可以用 `X-Dev-User-Id` 模拟不同用户，production 忽略这个请求头（不会用它选中任何账号），只认登录会话。
 
@@ -236,9 +243,9 @@ PYTHONPATH=backend .venv/bin/python -m unittest discover backend/tests
 - **只有六张地图有雷达底图**：Dust II、Mirage、Inferno、Ancient、Nuke、Anubis 的雷达图都由本项目按坐标配置里的同一个变换从导航网格渲染，玩家位置与底图天然对齐，六张图都标为已校准（ff6759f 起）；其他地图没有底图，按单场比赛的站位范围推算坐标。
 - **不能自动下载比赛**：Valve 没有公开个人比赛的下载接口，仓库也没有获得许可的来源，所以只能手动上传 `.dem`。相关导入代码已经写好并有测试，但在这个版本里走不到。
 - **解析是单 worker 串行执行**：崩溃恢复是自动的，但有分钟级延迟。租约为 60 秒；如果 Redis 数据全部丢失，排队中的任务约 5 分钟（`PARSE_REDISPATCH_AFTER_SECONDS`）后重新投递，正在解析的任务要等 `PARSE_RECLAIM_AFTER_SECONDS`（默认 30 分钟）。
-- **CI 不解析真实 `.dem`**：真实文件只在可选的样本冒烟测试里校验。
+- **CI 不解析真实 `.dem`**：真实文件只在本地校验：`verify.sh` 在仓库根目录有 `.dem` 时比对真实 demo 清单，`rc_check.sh` 带样本时先比对清单再走上传冒烟。
 - **并行分片不一定更快**：站点走 HTTP/2 / HTTP/3，浏览器把并行的分片复用在同一条连接上，提速可能远小于并行数。上线后用 API 日志里每个会话一行的 `Upload session completed: bytes=… seconds=…` 测速，再决定分片大小和并行数。
-- **健康检查很粗**：`/health` 在数据库、Redis 或 worker 配置任一项检查失败时返回 HTTP 503 `{"status":"degraded"}`（正常为 200 `{"status":"ok"}`），但不说明是哪一项；production 下要看 `docker compose logs api` 才能定位。
+- **健康检查很粗**：`/health` 在数据库、Redis 或 worker 配置任一项检查失败时返回 HTTP 503 `{"status":"degraded"}`（正常为 200 `{"status":"ok"}`），但不说明是哪一项；production 下要看 `docker compose logs api` 才能定位。解析 worker 不在 `/health` 里（故意的：caddy 和 frontend 依赖 api 的健康检查启动，worker 挂掉不能把整站拖下），由同样粗粒度的 `/health/worker` 报告：心跳 90 秒内为 200，否则 503。
 - **数据覆盖有限**：
   - 解析帧是采样数据；炸弹和道具事件尽量提取，不保证完整；
   - 没有视线信息（帧里没有玩家朝向；只在道具出手那一刻记录了投掷者的视角）。
@@ -246,7 +253,7 @@ PYTHONPATH=backend .venv/bin/python -m unittest discover backend/tests
   - 实时按键显示依赖 demo 里的 usercmd 数据，只在 BLAST.tv 的 GOTV demo 上验证过；匹配、FACEIT、第一人称 POV 等来源可能没有这类数据，这时不显示按键面板。
 - **第一人称片段**：只在一台本地 Windows 渲染机上验收过；排队超过 `RENDER_CLIP_QUEUE_TIMEOUT_SECONDS`（默认 30 分钟）的任务会被标记失败，可以重试。
 - **单场失败比赛可以无限次重新处理**；Redis 客户端没有设置超时。
-- **解析器隔离还不完整**：只有超时和内存上限，还没有 CPU、磁盘和输出的限制。
+- **解析器隔离还不完整**：子进程有超时、内存上限、环境变量白名单和独立的低权限账户，但还没有 CPU、磁盘和输出的限制；api 和 worker 容器本身仍以 root 运行（改成非 root 要先迁移命名卷的属主，留作后续）。
 - **Steam 登录尚未在真实部署中验证**：真实 HTTPS 回调、publisher key 资格、Game Authentication Code 行为和限流，都还需要在一次真实部署上冒烟。
 - **删除追不回备份**：已删除的数据在备份里最多再保留 30 天。从备份恢复数据库会把备份之后删除的数据带回来，要按 [VPS 部署](docs/vps_deploy_v1.md) 第 7 步用 `python -m app.cli.delete_data` 重做这些删除。
 - **删除账户后可以重新注册**：仍在邀请名单里的 Steam 账号重新登录，会得到一个全新的空账户，上传次数也从零算起；要禁止此人登录，只能把他移出 `STEAM_LOGIN_ALLOWLIST`。移出名单不会删除他的数据，需要时先用运维命令代为删除。
@@ -255,7 +262,7 @@ PYTHONPATH=backend .venv/bin/python -m unittest discover backend/tests
 
 当前方向是**网站优先**：先以邀请制内测验证建议是否真的有用，Windows 桌面安装包暂缓（见 [desktop_distribution_v1](docs/desktop_distribution_v1.md)）。按顺序：
 
-1. 完成上线计划剩下的阶段：解析器资源隔离，数据库迁移，自动部署与回滚，监控告警，备份恢复；配置 HTTPS 入口，并在真实 HTTPS 部署上跑一次 Steam 登录冒烟。
+1. 完成上线计划剩下的阶段：解析器资源隔离（已有环境变量白名单和低权限账户，还缺 CPU/磁盘/输出限制和非 root 容器），数据库迁移，自动部署与回滚（已有迁移预检、迁移前自动备份和按提交打标签的镜像），监控告警（已有 `watch.sh` 状态告警，还没有指标），备份恢复；配置 HTTPS 入口，并在真实 HTTPS 部署上跑一次 Steam 登录冒烟。
 2. ~~支持真正删除比赛和账号，补上隐私条款~~（已完成：永久删除比赛和账户、`/privacy` 隐私说明页，见 [data_deletion_v1](docs/data_deletion_v1.md)）；~~去掉第三方雷达图~~（已完成：原来的 MIT/GPL 第三方雷达图已换成本项目从 CS2 导航网格渲染的图，见 [scripts/maps](scripts/maps/README.md)）；这些图由 Valve 的游戏数据派生，能否公开分发还没有单独确认，扩大开放前要确认。
 3. 邀请少量玩家内测，用评价数据调整规则阈值、去重和排序；支持更多地图。
 4. 视内测反馈，再决定是否扩大开放、是否恢复第一人称片段。

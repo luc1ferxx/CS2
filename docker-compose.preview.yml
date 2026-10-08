@@ -2,9 +2,27 @@
 # Hosted preview is a production-auth shape. Steam OpenID is the default login
 # provider; server and storage credentials have no development fallback.
 services:
+  # Sign-in sessions live in Redis unsigned, so anything that can write to it
+  # could mint a session for any user: production requires a password, and
+  # config validation rejects a REDIS_URL without one. The api and worker
+  # REDIS_URL below carry it; keep REDIS_PASSWORD URL-safe (hex).
+  redis:
+    command:
+      - redis-server
+      - --requirepass
+      - ${REDIS_PASSWORD:?Set REDIS_PASSWORD (hex, e.g. openssl rand -hex 24); production has no default}
+    environment:
+      # redis-cli reads this, so the healthcheck and `compose exec redis
+      # redis-cli` authenticate without the password on a command line.
+      REDISCLI_AUTH: ${REDIS_PASSWORD:?Set REDIS_PASSWORD}
+    healthcheck:
+      # Match the reply: an unauthenticated ping answers NOAUTH, not PONG.
+      test: ["CMD-SHELL", "redis-cli ping | grep -q PONG"]
+
   api:
     environment:
       AUTH_MODE: production
+      REDIS_URL: redis://:${REDIS_PASSWORD:?Set REDIS_PASSWORD}@redis:6379/0
       AUTH_PROVIDER: ${AUTH_PROVIDER:?Set the production identity provider to steam or oidc}
       BACKEND_PUBLIC_URL: ${BACKEND_PUBLIC_URL:?Set the public HTTPS API origin}
       FRONTEND_PUBLIC_URL: ${FRONTEND_PUBLIC_URL:?Set the public HTTPS frontend origin}
@@ -66,6 +84,7 @@ services:
   worker:
     environment:
       AUTH_MODE: production
+      REDIS_URL: redis://:${REDIS_PASSWORD:?Set REDIS_PASSWORD}@redis:6379/0
       BACKEND_PUBLIC_URL: ${BACKEND_PUBLIC_URL:?Set the public HTTPS API origin}
       FRONTEND_PUBLIC_URL: ${FRONTEND_PUBLIC_URL:?Set the public HTTPS frontend origin}
       RENDER_WORKER_TOKEN: ${RENDER_WORKER_TOKEN:?Set a non-default render-worker credential}

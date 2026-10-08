@@ -350,7 +350,7 @@ class ParseSubprocessTest(unittest.TestCase):
 
         clock = iter([0.0, 10.0, 20.0])
         with parse_limits(timeout_seconds=15, renew_seconds=10), patch(
-            "app.workers.worker.subprocess.Popen", return_value=process
+            "app.workers.child_process.subprocess.Popen", return_value=process
         ), patch("app.workers.worker.time.monotonic", side_effect=lambda: next(clock)):
             with self.assertRaises(DemoParserError) as raised:
                 run_parse_subprocess(Path("source.dem"), on_tick=on_tick)
@@ -382,7 +382,7 @@ class ParseSubprocessTest(unittest.TestCase):
         process = FakeProcess(exits_after_polls=3, return_code=0, parsed={"mapName": "de_dust2"})
         clock = iter([0.0, 40.0, 80.0])
         with parse_limits(timeout_seconds=1200, renew_seconds=40), patch(
-            "app.workers.worker.subprocess.Popen", side_effect=process.open
+            "app.workers.child_process.subprocess.Popen", side_effect=process.open
         ), patch("app.workers.worker.time.monotonic", side_effect=lambda: next(clock)):
             parsed = run_parse_subprocess(Path("source.dem"), on_tick=on_tick)
 
@@ -409,7 +409,7 @@ class ParseChildEnvironmentTest(unittest.TestCase):
             return process
 
         with parse_limits(timeout_seconds=15, renew_seconds=10), patch(
-            "app.workers.worker.subprocess.Popen", side_effect=popen
+            "app.workers.child_process.subprocess.Popen", side_effect=popen
         ), patch.dict("os.environ", {}, clear=False):
             import os
 

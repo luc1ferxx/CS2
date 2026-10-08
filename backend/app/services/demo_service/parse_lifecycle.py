@@ -304,11 +304,13 @@ class ParseLifecycle(ServiceComponent):
         *,
         name: str | None = None,
         team_names: Mapping[str, Any] | None = None,
+        parse_stats: Mapping[str, Any] | None = None,
     ) -> bool:
         """Store the parse result; False when the demo was deleted meanwhile.
 
         `team_names` (player id -> clan name, from the parser) only feeds the
-        match summary stored next to the replay.
+        match summary stored next to the replay. `parse_stats` (the child's
+        `parseS` and `peakRssMiB`) lands in the job metadata as `parseStats`.
 
         A deletion anywhere up to the commit must not resurrect anything: the
         rows roll back and the replay blob staged for them is removed. Should
@@ -350,6 +352,7 @@ class ParseLifecycle(ServiceComponent):
             # coaching_recompute.py.
             metadata.pop("coachingRecompute", None)
             metadata["coachingRulesVersion"] = COACHING_RULES_VERSION
+            _record_parse_stats(metadata, parse_stats)
             job.metadata_json = _metadata_json(metadata)
             if job.job_type == "real_parse":
                 self._steam_matches.mark_ready(demo, replay, completed_at)
@@ -382,6 +385,7 @@ class ParseLifecycle(ServiceComponent):
         error: str,
         *,
         error_code: str = "PARSER_FAILED",
+        parse_stats: Mapping[str, Any] | None = None,
     ) -> bool:
         """Record a parse failure; False when the demo was deleted meanwhile."""
         demo_id, job_id = row_identity(demo), row_identity(job)
@@ -398,6 +402,7 @@ class ParseLifecycle(ServiceComponent):
             metadata = _job_metadata(job)
             metadata["failure"] = failure_metadata
             metadata["phase"] = "failed"
+            _record_parse_stats(metadata, parse_stats)
 
             demo.status = "failed"
             demo.error_message = short_message
@@ -711,3 +716,17 @@ def _match_summary_or_none(
 
 def _log_deleted_during_parse(demo_id: str | None, job_id: str | None) -> None:
     logger.info("demo deleted during parse: demo %s, job %s", demo_id, job_id)
+
+
+def _record_parse_stats(metadata: dict[str, Any], parse_stats: Mapping[str, Any] | None) -> None:
+    """Keep the latest parse's wall time and peak memory on its job (numbers only).
+
+    The peak is what PARSE_MEMORY_LIMIT_BYTES and the worker's mem_limit are
+    sized from; nothing else records it.
+    """
+    if not parse_stats:
+        return
+    metadata["parseStats"] = {
+        "parseS": parse_stats.get("parseS"),
+        "peakRssMiB": parse_stats.get("peakRssMiB"),
+    }

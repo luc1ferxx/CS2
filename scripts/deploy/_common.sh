@@ -28,6 +28,16 @@ env_get() {
   printf '%s' "$value"
 }
 
+# The <sha> of the cs2coach-backend:<sha> image the api container was created
+# from, or nothing (compose's default image names carry no sha).
+current_backend_sha() {
+  local id image
+  id="$(compose ps -a -q api 2>/dev/null | head -n 1 || true)"
+  [[ -n "$id" ]] || return 0
+  image="$(docker inspect -f '{{.Config.Image}}' "$id" 2>/dev/null || true)"
+  if [[ "$image" =~ ^cs2coach-backend:([0-9a-f]{7,40})$ ]]; then printf '%s' "${BASH_REMATCH[1]}"; fi
+}
+
 # The one compose invocation every deploy script uses.
 compose() {
   docker compose --env-file "$ENV_FILE" \
@@ -35,6 +45,73 @@ compose() {
     -f "$REPO_ROOT/docker-compose.preview.yml" \
     -f "$REPO_ROOT/docker-compose.prod.yml" \
     "$@"
+}
+
+# --- Alerts and pings (ALERT_WEBHOOK_URL, DEADMAN_PING_URL, BACKUP_PING_URL) ---
+# Messages carry a service name, a state and a short reason only: never an
+# account, SteamID, file name, path or IP.
+
+# watch.sh state; deploy.sh and restore.sh drop a maintenance marker here so a
+# watch pass during planned restarts stays quiet.
+WATCH_STATE_DIR="${CS2COACH_WATCH_STATE_DIR:-${XDG_STATE_HOME:-${HOME:-/tmp}/.local/state}/cs2coach-watch}"
+MAINTENANCE_MARKER="$WATCH_STATE_DIR/maintenance"
+
+maintenance_begin() { # REASON
+  if mkdir -p "$WATCH_STATE_DIR" 2>/dev/null; then
+    printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" >"$MAINTENANCE_MARKER" 2>/dev/null || true
+  fi
+}
+maintenance_end() { rm -f "$MAINTENANCE_MARKER" 2>/dev/null || true; }
+
+urlencode() { # TEXT: percent-encode every byte outside [A-Za-z0-9._~-]
+  local LC_ALL=C s="$1" out="" c i
+  for ((i = 0; i < ${#s}; i++)); do
+    c="${s:i:1}"
+    case "$c" in
+      [A-Za-z0-9.~_-]) out+="$c" ;;
+      *)
+        printf -v c '%%%02X' "'$c"
+        out+="$c"
+        ;;
+    esac
+  done
+  printf '%s' "$out"
+}
+
+# curl_secret_url URL [curl args...]: the URL goes through a curl config on
+# stdin, so tokens inside it (Telegram, Server酱, ping UUIDs) stay out of `ps`.
+curl_secret_url() {
+  local url="$1"
+  shift
+  url="${url//\\/\\\\}"
+  url="${url//\"/\\\"}"
+  printf 'url = "%s"\n' "$url" | curl -fsS --max-time 15 --retry 2 -o /dev/null -K - "$@"
+}
+
+# send_alert LINE: one plain-text line to ALERT_WEBHOOK_URL (empty = off). The
+# line is the POST body (ntfy and generic webhooks); a URL containing {message}
+# gets the URL-encoded line there instead and is fetched with GET (Telegram
+# sendMessage ...&text={message}, Server酱 ...send?title={message}).
+send_alert() {
+  local url encoded
+  [[ -f "$ENV_FILE" ]] || return 0
+  url="$(env_get ALERT_WEBHOOK_URL)"
+  [[ -n "$url" ]] || return 0
+  if [[ "$url" == *'{message}'* ]]; then
+    encoded="$(urlencode "$1")"
+    curl_secret_url "${url//'{message}'/"$encoded"}"
+  else
+    curl_secret_url "$url" -H 'Content-Type: text/plain; charset=utf-8' --data-binary "$1"
+  fi
+}
+
+# ping_url KEY: GET the URL in KEY (DEADMAN_PING_URL, BACKUP_PING_URL) when set.
+ping_url() {
+  local url
+  [[ -f "$ENV_FILE" ]] || return 0
+  url="$(env_get "$1")"
+  [[ -n "$url" ]] || return 0
+  curl_secret_url "$url"
 }
 
 # Defines two rclone remotes through env vars (no rclone.conf on disk):

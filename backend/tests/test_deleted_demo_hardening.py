@@ -208,7 +208,7 @@ class WorkerDeletionTest(unittest.TestCase):
         demo_id, job_id = self.create_upload("stopped.dem")
         renewals: list[int] = []
 
-        def parse(source_path, *, on_tick=None):
+        def parse(source_path, *, on_tick=None, **_kwargs):
             on_tick()  # still there: the parse carries on
             delete_demo_rows(self.Session, demo_id)
             on_tick()  # gone: the tick raises, which kills the child

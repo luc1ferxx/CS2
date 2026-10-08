@@ -1360,6 +1360,8 @@ def production_settings_kwargs() -> dict[str, Any]:
         "steam_login_allowlist_raw": "*",
         "steam_credential_encryption_key": base64.urlsafe_b64encode(b"q" * 32).decode("ascii"),
         "steam_credential_encryption_key_version": "test-v1",
+        # Production Redis requires a password (config._validate_production_redis_url).
+        "redis_url": "redis://:test-redis-password@redis:6379/0",
     }
 
 

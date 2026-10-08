@@ -30,6 +30,22 @@ Demo source/download 配置只属于 API。parser/render queue worker 校验的�
 
 Production credentials 绝不能进入 `NEXT_PUBLIC_*`、源码、日志、签入的 env 文件或浏览器响应。
 
+## Compose 怎样把设置送进容器
+
+`docker compose --env-file` 只用于 `${}` 插值：一个设置只有写在服务的 `environment:` 里才会进入容器，否则写进 `deploy/.env.production` 也静默无效。`docker-compose.yml` 因此把 `backend/app/core/config.py` 读取的每个名字都列在 api 或 worker 的 `environment:` 里；解析队列、后台补算、回放缓存和渲染队列的 19 个调优项集中在顶部的 `x-worker-tuning` 块，同时合并进 api 和 worker（两边共用的 `REPLAY_READY_CHANNEL`、`REPLAY_WARM_ENABLED` 必须一致），回退值与代码默认值相同。`backend/tests/test_compose_passthrough.py` 在 `config.py` 新增的名字既没透传、也不在它的 `NOT_PASSED_THROUGH` 白名单（写明理由）时失败，compose 传了 `config.py` 不读的名字（拼写错误）时失败，`x-worker-tuning` 的回退值和代码默认值不一致时也失败。
+
+下面几个只用于 compose 插值，不由 `config.py` 读取：
+
+| Name | Default | Used by |
+| --- | --- | --- |
+| `REDIS_PASSWORD` | unset（preview/production 必填） | `docker-compose.preview.yml`（production 叠加文件沿用）：作为 Redis 的 `--requirepass`，并拼进 api 和 worker 的 `REDIS_URL`（`redis://:<密码>@redis:6379/0`）；Redis 容器的 `REDISCLI_AUTH` 也取它，所以健康检查和 `compose exec redis redis-cli` 不用在命令行上带密码。登录会话未签名地存在 Redis 里，能写 Redis 就能为任意用户造会话，所以 production 启动校验拒绝不带密码的 `REDIS_URL`。密码会进 URL，用十六进制（例如 `openssl rand -hex 32`）。解析子进程的环境是白名单，拿不到它 |
+| `WORKER_MEM_LIMIT` | `3g` | `docker-compose.prod.yml`：worker 容器的 `mem_limit` 和 `memswap_limit`（两者相等，即 worker 不用 swap）。超限的解析在 worker 的 cgroup 里被 SIGKILL、记成 `PARSE_OUT_OF_MEMORY`，而不是把整台 VPS 拖进 swap。按 VPS 内存减去 postgres、redis、api、frontend、caddy 的占用来定（规格说明见 `deploy/env.production.example`） |
+| `DEPLOY_SHA` | `latest` | `docker-compose.prod.yml`：镜像标签。api 和 worker 共用 `cs2coach-backend:<DEPLOY_SHA>`，前端是 `cs2coach-frontend:<DEPLOY_SHA>`。`scripts/deploy/deploy.sh` 按提交导出它（12 位短 SHA），回滚时两个标签都在就不重新构建；部署通过后它还把这两个镜像标成 `latest`，所以不带 `DEPLOY_SHA` 的维护命令（`compose exec`、`restore.sh` 的 `up -d api worker`）启动的就是当前部署的镜像 |
+
+Production 叠加文件还把 postgres 和 redis 只放在 `internal: true` 的 `backend` 网络上（没有出站路由）；api 和 worker 同时在 `backend` 与默认网络上（要出站访问 R2 和 Steam）；caddy 和 frontend 只在默认网络上，面向公网的容器根本连不到数据库和 Redis。
+
+后端依赖装自 `backend/requirements.lock`：直接和传递依赖全部固定版本并带哈希（Linux / CPython 3.12），`backend/Dockerfile` 和 CI 都用 `pip install --require-hashes` 安装。`backend/requirements.txt` 仍是手工维护的输入；改了它就用锁文件头部记录的 `uv pip compile` 命令重新生成（已有的固定版本会保留，`--upgrade-package <名字>` 才会升级某个包），再跑一遍门禁。
+
 ## Frontend
 
 | Name | Default | Used by |
@@ -108,7 +124,7 @@ Production credentials 绝不能进入 `NEXT_PUBLIC_*`、源码、日志、签�
 | Name | Default | Used by |
 | --- | --- | --- |
 | `DATABASE_URL` | `postgresql+psycopg2://cs2coach:cs2coach@localhost:5432/cs2coach` | API, worker |
-| `REDIS_URL` | `redis://localhost:6379/0` | API, worker |
+| `REDIS_URL` | `redis://localhost:6379/0` | API, worker; production 必须带密码（preview/production compose 用 `REDIS_PASSWORD` 拼出来，见上文） |
 | `REDIS_QUEUE_NAME` | `cs2-demo-jobs` | API, worker |
 | `REPLAY_READY_CHANNEL` | `cs2:replay-ready` | API, worker; Redis pub/sub 频道：worker 在解析完成、回放升级、视频写入提交后发布比赛 id，API 的回放缓存预热线程订阅它（见 `REPLAY_WARM_ENABLED`）。两边必须一致；只传比赛 id |
 
@@ -119,7 +135,8 @@ Docker Compose 在容器内使用 service 名（`postgres`、`redis`），面向
 | Name | Default | Used by |
 | --- | --- | --- |
 | `PARSE_TIMEOUT_SECONDS` | `1200` | worker; 单个解析子进程的挂钟上限，超时按 `PARSE_TIMED_OUT` 落 failed |
-| `PARSE_MEMORY_LIMIT_BYTES` | `4294967296` | worker; 子进程 `RLIMIT_DATA` 上限（仅 POSIX 生效）；`0` 表示不限，其余取值不得低于 2 GiB |
+| `PARSE_MEMORY_LIMIT_BYTES` | `4294967296` | worker; 子进程 `RLIMIT_DATA` 上限（仅 POSIX 生效）；`0` 表示不限，其余取值不得低于 2 GiB。production 的 worker 容器另有 `WORKER_MEM_LIMIT`（默认 3g）的 cgroup 上限，默认配置下先触发的是它 |
+| `PARSE_CHILD_USER` | 代码默认空；后端镜像和 Compose 默认 `parser` | worker; worker 以 root 在 POSIX 上运行时，解析子进程切换到这个低权限账户（后端镜像里建好的 `parser`），工作区归它所有、源文件对它可读；账户不存在时 worker 在启动时就退出，而不是每次解析失败。设为空字符串（`PARSE_CHILD_USER=`）则子进程沿用 worker 自己的用户；Windows 或非 root 的 worker 不切换。Compose 用 `${PARSE_CHILD_USER-parser}`：未设置时为 `parser`，显式设空才关闭 |
 | `PARSE_LEASE_TTL_SECONDS` | `60` | worker; 租约 TTL，即 worker 猝死后在途消息被其它 worker 回收前的最长等待 |
 | `PARSE_LEASE_RENEW_SECONDS` | `15` | worker; 解析期间续租与写心跳的间隔，必须小于 TTL |
 | `PARSE_RECLAIM_AFTER_SECONDS` | `1800` | worker; DB 对账回收卡住的 `processing` 行的年龄阈值，必须大于 `PARSE_TIMEOUT_SECONDS` |
@@ -164,9 +181,9 @@ worker 空闲时（队列里有任务就让出）依次跑这两项，每项每�
 | `UPLOAD_SESSION_TTL_SECONDS` | `86400` | API; 会话从创建算起的硬过期时间（`3600`..`604800`，不续期）。过期后分片 `PUT` 和 `complete` 返回 `404`，清扫删除行和暂存分片。`/privacy` 写明未完成的上传最多保留 24 小时：调大之前先改隐私页 |
 | `UPLOAD_SESSION_GLOBAL_LIMIT` | `6` | API; 全站同时打开（`open` / `completing`）的会话上限（`1`..`64`），满了建会话返回 `503` `upload_capacity_busy`。暂存盘最多约占这个数 × `MAX_DEMO_UPLOAD_BYTES` |
 | `UPLOAD_STAGING_MIN_FREE_BYTES` | `5368709120` | API; 建会话时暂存盘至少要剩 `size` + 这么多字节（`0`..`1 TiB`），否则返回 `503` `upload_storage_full`。Postgres 和 Redis 通常在同一块盘上，这个余量就是留给它们的。开发模式同样生效：Docker Desktop 的虚拟磁盘剩余不到 5 GiB 时，本地上传也会得到 `upload_storage_full`，可以在本地 `.env` 里调小 |
-| `REPLAY_RESPONSE_CACHE_MB` | `64` | API; 进程内存里缓存 `GET /demos/{demo_id}/replay` 算好的 gzip 响应（按总字节数 LRU），并给响应加 `ETag`，`If-None-Match` 命中时返回 `304`；`0` 关闭缓存、`ETag` 和 `304`。旁边按条数限定（4096）的视频状态备忘不受它影响：比赛库、`/video`、`/render/jobs` 和媒体 Range 请求读 `artifact://` 回放的视频信息时，每个引用只读一次回放。目前的 Compose 文件没有把它转发进 `api` 容器，容器里用默认值 |
-| `REPLAY_WARM_ENABLED` | `true` | API, worker; API 进程里一个后台线程提前把回放响应算好放进上面的缓存（`backend/app/services/demo_service/replay_warmer.py`）：解析完成、回放升级、视频写入之后，以及 API 启动时最近完成的几场，第一次打开就直接命中缓存。`0` 时 API 不启动预热线程，worker 也不再发布通知；`REPLAY_RESPONSE_CACHE_MB=0` 时同样不预热。Compose 没有转发，容器里用默认值 |
-| `REPLAY_WARM_RECENT` | `10` | API; API 启动时预热的「最近完成」比赛场数（按 `completed_at` 倒序，只算真实、未归档、`artifact://` 回放的比赛），`0` 表示启动时不预热。队列最多同时排 32 场，超出丢最早的。Compose 没有转发，容器里用默认值 |
+| `REPLAY_RESPONSE_CACHE_MB` | `64` | API; 进程内存里缓存 `GET /demos/{demo_id}/replay` 算好的 gzip 响应（按总字节数 LRU），并给响应加 `ETag`，`If-None-Match` 命中时返回 `304`；`0` 关闭缓存、`ETag` 和 `304`。旁边按条数限定（4096）的视频状态备忘不受它影响：比赛库、`/video`、`/render/jobs` 和媒体 Range 请求读 `artifact://` 回放的视频信息时，每个引用只读一次回放 |
+| `REPLAY_WARM_ENABLED` | `true` | API, worker; API 进程里一个后台线程提前把回放响应算好放进上面的缓存（`backend/app/services/demo_service/replay_warmer.py`）：解析完成、回放升级、视频写入之后，以及 API 启动时最近完成的几场，第一次打开就直接命中缓存。`0` 时 API 不启动预热线程，worker 也不再发布通知；`REPLAY_RESPONSE_CACHE_MB=0` 时同样不预热 |
+| `REPLAY_WARM_RECENT` | `10` | API; API 启动时预热的「最近完成」比赛场数（按 `completed_at` 倒序，只算真实、未归档、`artifact://` 回放的比赛），`0` 表示启动时不预热。队列最多同时排 32 场，超出丢最早的 |
 | `DEMO_UPLOAD_DAILY_LIMIT` | `10` | API; 仅 production：每个 owner 在滚动 24 小时内（按上传账本 `upload_ledger` 计数：每次上传或 Steam 导入写一行，24 小时后清理；归档和永久删除的比赛都照样算）最多新建的 demo 数，超出时 `POST /uploads/demo` 返回 `429` `upload_daily_limit`，`Retry-After` 为窗口内对应那次上传移出窗口的秒数。范围 `0`..`1000`，`0` 表示不限 |
 | `DEMO_ACTIVE_PARSE_LIMIT` | `2` | API; 仅 production：每个 owner 同时处于 `queued`/`parsing`/`analyzing` 的 demo 上限，上传和解析重试超出时返回 `429` `active_parse_limit`（`Retry-After: 60`）。范围 `0`..`100`，`0` 表示不限 |
 | `PARSE_QUEUE_GLOBAL_LIMIT` | `50` | API; 仅 production：所有 owner 合计处于上述状态的 demo 上限（按数据库计数，不看 Redis 队列长度），上传和解析重试超出时返回 `503` `parse_queue_full`（`Retry-After: 60`）。范围 `0`..`100000`，`0` 表示不限 |
@@ -190,6 +207,7 @@ worker 空闲时（队列里有任务就让出）依次跑这两项，每项每�
 | `RENDER_WORKER_TOKEN` | `dev-render-worker-token` | API, render-worker |
 | `RENDER_WORKER_MODE` | `fallback` | API, worker; `external` 时短片任务保留在队列等待独立 worker 领取 |
 | `RENDER_CLIP_QUEUE_TIMEOUT_SECONDS` | `1800` | worker; 无人认领的 `render_clip` 任务在队列上等待的上限，超时按 `RENDER_QUEUE_TIMED_OUT` 落 failed，用户可重试 |
+| `RENDER_CLIP_SINGLE_CONSUMER` | `true` | API; 只有一台渲染机轮询时，`GET /render-worker/jobs/next` 把卡在 `rendering` 的任务直接收回队列（来要活的渲染机显然没在渲染）。第二台渲染机轮询同一个 API 之前必须设为 `0`，否则它的轮询会把第一台正在渲染的任务收走。超时清扫两种取值下都照常运行 |
 | `RENDER_CLIPS_ENABLED` | `0` | API; 仅 production 生效：为 `1` 时才开放 `POST /demos/{demo_id}/render/clip` 与 `.../render/jobs/{job_id}/retry`，否则返回 `404`，`/auth/me` 的 `capabilities.renderClips` 为 false。development/test 始终开放。没有部署外部 GPU worker（`RENDER_WORKER_MODE=external`）时保持 `0` |
 | `API_BASE_URL` | `http://localhost:8000` | render-worker runner |
 | `WORK_DIR` | `.render-worker-work` | render-worker runner |

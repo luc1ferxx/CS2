@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Anonymous production smoke through the public HTTPS origin: TLS, Caddy
-# routing (Next.js vs FastAPI), auth boundaries, hidden dev surfaces, Steam
-# sign-in redirect and security headers. curl only; no session needed.
+# routing (Next.js vs FastAPI), API and parse-worker health, auth boundaries,
+# hidden dev surfaces, Steam sign-in redirect and security headers. curl only;
+# no session needed.
 #
 #   bash scripts/deploy/prod_smoke.sh https://coach.example.com
 #
@@ -84,6 +85,17 @@ if [[ "$STATUS" == "200" && "$health_body" == '{"status":"ok"}' ]]; then
   pass "GET /health -> 200 {\"status\":\"ok\"}"
 else
   fail "GET /health -> 200 {\"status\":\"ok\"}" "HTTP $STATUS body '${health_body:0:120}' $(curl_error)"
+fi
+
+# 3b. The parse worker's heartbeat, through Caddy (/health leaves the worker out
+# on purpose: caddy and frontend start only once /health is green). A 404 here
+# means Caddy sent the path to Next.js; a 503 means no live worker heartbeat.
+request GET "$BASE/health/worker"
+if [[ "$STATUS" == "200" ]]; then
+  pass "GET /health/worker -> 200 (parse worker alive)"
+else
+  fail "GET /health/worker -> 200 (parse worker alive)" \
+    "HTTP $STATUS content-type '$(header content-type)' $(curl_error); check: dc logs --tail 60 worker"
 fi
 
 # 4. Dashboard is server-rendered HTML with the edge security headers.

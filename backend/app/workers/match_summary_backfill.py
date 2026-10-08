@@ -19,11 +19,7 @@ for the life of this process so it does not block the demos behind it.
 
 from __future__ import annotations
 
-import json
-import os
-import subprocess
 import sys
-import tempfile
 import time
 from collections.abc import Callable, Mapping
 from pathlib import Path
@@ -32,6 +28,16 @@ from typing import Any
 from app.core.config import settings
 from app.core.database import SessionLocal
 from app.services.demo_service import DemoService
+from app.workers.child_process import (
+    ChildUsage,
+    child_workspace,
+    read_child_json,
+    resolve_child_identity,
+    share_private_source,
+    spawn_child,
+    stderr_capture,
+    wait_for_exit,
+)
 
 PARSE_CHILD_MODULE = "app.workers.parse_child"
 PACKAGE_ROOT = str(Path(__file__).resolve().parents[2])
@@ -53,23 +59,19 @@ def run_team_names_subprocess(
     timeout_seconds: float = TEAM_NAMES_TIMEOUT_SECONDS,
     on_tick: Callable[[], None] | None = None,
 ) -> dict[str, str]:
-    """Clan names (player id -> name) read in the parse child; {} on any failure."""
+    """Clan names (player id -> name) read in the parse child; {} on any failure.
+
+    The same child, allow-listed environment and unprivileged account as a full
+    parse (child_process.py); only the argv differs.
+    """
     if not ticks:
         return {}
-    with tempfile.TemporaryDirectory(prefix="cs2-names-") as workspace:
-        output_path = Path(workspace) / "names.json"
-        environment = dict(os.environ)
-        existing_path = environment.get("PYTHONPATH")
-        environment["PYTHONPATH"] = (
-            f"{PACKAGE_ROOT}{os.pathsep}{existing_path}" if existing_path else PACKAGE_ROOT
-        )
-        # pandas pulls in numpy's OpenBLAS, which reserves buffers for every core
-        # at import (1.3 GB of the child's RLIMIT_DATA on a 32-thread host);
-        # the parse never uses BLAS. Measured: Mirage peak 4.3 GB -> 2.9 GB.
-        environment.setdefault("OPENBLAS_NUM_THREADS", "1")
-        # Fixed argv, no shell; the only variable parts are a path this process
-        # materialized and integers.
-        process = subprocess.Popen(
+    identity = resolve_child_identity()
+    usage = ChildUsage()
+    with child_workspace("cs2-names-", identity) as workspace, stderr_capture(workspace) as stderr:
+        output_path = workspace / "names.json"
+        share_private_source(source_path, identity)
+        process = spawn_child(
             [
                 sys.executable,
                 "-m",
@@ -83,30 +85,26 @@ def run_team_names_subprocess(
                 "--team-names-ticks",
                 ",".join(str(int(tick)) for tick in ticks),
             ],
-            env=environment,
+            package_root=PACKAGE_ROOT,
+            identity=identity,
+            workspace=workspace,
+            stderr=stderr,
         )
         started = time.monotonic()
         try:
-            while True:
-                try:
-                    process.wait(timeout=TEAM_NAMES_POLL_SECONDS)
-                    break
-                except subprocess.TimeoutExpired:
-                    if on_tick is not None:
-                        on_tick()
-                    if time.monotonic() - started >= timeout_seconds:
-                        return {}
+            while not wait_for_exit(process, TEAM_NAMES_POLL_SECONDS, usage):
+                if on_tick is not None:
+                    on_tick()
+                if time.monotonic() - started >= timeout_seconds:
+                    return {}
         finally:
             if process.poll() is None:
                 process.kill()
-                try:
-                    process.wait(timeout=30)
-                except subprocess.TimeoutExpired:
-                    pass
+                wait_for_exit(process, 30, usage)
         if process.returncode != 0:
             return {}
         try:
-            body = json.loads(output_path.read_text(encoding="utf-8"))
+            body = read_child_json(output_path)
         except (OSError, ValueError):
             return {}
     names = body.get("teamNames") if isinstance(body, dict) and body.get("ok") is True else None

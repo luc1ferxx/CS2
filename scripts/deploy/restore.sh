@@ -6,10 +6,13 @@
 #       and print row counts. Production is not touched. A bare pg-<UTC>.dump
 #       name is fetched from <BACKUP_BUCKET>/postgres/.
 #
-#   bash scripts/deploy/restore.sh <dump> --into-production --confirm-production-restore
+#   bash scripts/deploy/restore.sh <dump> --into-production --confirm-production-restore [--no-start]
 #       Stops api and worker, saves a pre-restore dump, RENAMES the live database
 #       to <db>_pre_restore_<UTC> (kept, never dropped), restores into a fresh
-#       <db>, prints row counts and starts api and worker again.
+#       <db>, prints row counts and starts api and worker again. --no-start
+#       leaves them stopped: the step before deploy.sh --rollback across a
+#       schema migration, because the current code would re-apply its
+#       migrations to the restored database the moment it started.
 set -Eeuo pipefail
 # shellcheck source=scripts/deploy/_common.sh
 source "$(dirname "${BASH_SOURCE[0]}")/_common.sh"
@@ -18,15 +21,17 @@ SCRATCH_DB="cs2coach_restore_check"
 CONTAINER_DUMP="/tmp/cs2coach-restore.dump"
 COUNT_TABLES=(accounts demos demo_jobs coaching_events)
 
-usage() { sed -n '2,12p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
+usage() { awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "${BASH_SOURCE[0]}"; }
 
 SOURCE=""
 INTO_PRODUCTION=0
 CONFIRMED=0
+NO_START=0
 while (($#)); do
   case "$1" in
     --into-production) INTO_PRODUCTION=1 ;;
     --confirm-production-restore) CONFIRMED=1 ;;
+    --no-start) NO_START=1 ;;
     -h | --help)
       usage
       exit 0
@@ -47,6 +52,7 @@ if ((INTO_PRODUCTION && !CONFIRMED)); then
   die "--into-production replaces the live database; add --confirm-production-restore to proceed"
 fi
 ((CONFIRMED && !INTO_PRODUCTION)) && die "--confirm-production-restore only applies with --into-production"
+((NO_START && !INTO_PRODUCTION)) && die "--no-start only applies with --into-production"
 
 require_env_file
 POSTGRES_USER="$(env_get POSTGRES_USER cs2coach)"
@@ -59,6 +65,7 @@ API_STOPPED=0
 KEPT_DB=""
 cleanup() {
   compose exec -T postgres rm -f "$CONTAINER_DUMP" >/dev/null 2>&1 || true
+  maintenance_end
   rm -rf "$TMP"
 }
 on_error() {
@@ -70,7 +77,7 @@ on_error() {
       "$POSTGRES_DB" "$KEPT_DB" "$POSTGRES_DB" >&2
   fi
   if ((API_STOPPED)); then
-    printf 'api and worker are stopped; start them with: docker compose --env-file deploy/.env.production -f docker-compose.yml -f docker-compose.preview.yml -f docker-compose.prod.yml up -d api worker\n' >&2
+    printf 'api and worker are stopped; start them with: %sdocker compose --env-file deploy/.env.production -f docker-compose.yml -f docker-compose.preview.yml -f docker-compose.prod.yml up -d api worker\n' "${DEPLOY_SHA:+DEPLOY_SHA=$DEPLOY_SHA }" >&2
   fi
 }
 trap on_error ERR
@@ -131,9 +138,18 @@ if ((!INTO_PRODUCTION)); then
   exit 0
 fi
 
+# Compose files that name the backend image by DEPLOY_SHA would otherwise start
+# api and worker again on `latest`, not on the image they run now.
+if [[ -z "${DEPLOY_SHA:-}" ]]; then
+  running_sha="$(current_backend_sha)"
+  if [[ -n "$running_sha" ]]; then export DEPLOY_SHA="$running_sha"; fi
+fi
+
 TS="$(date -u +%Y%m%d_%H%M%S)"
 KEEP_NAME="${POSTGRES_DB}_pre_restore_${TS}"
 log "PRODUCTION RESTORE of $POSTGRES_DB from $DUMP"
+# watch.sh stays quiet while api and worker are down on purpose.
+maintenance_begin "production restore"
 
 log "Stopping api and worker"
 API_STOPPED=1
@@ -159,6 +175,14 @@ psql_admin -c "CREATE DATABASE \"$POSTGRES_DB\""
 restore_into "$POSTGRES_DB"
 print_counts "$POSTGRES_DB"
 
+if ((NO_START)); then
+  log "Production restore complete. api and worker are left stopped (--no-start). Next:"
+  log "  bash scripts/deploy/deploy.sh --rollback <sha>   (starts them on the older code)"
+  log "  or start the current code again: ${DEPLOY_SHA:+DEPLOY_SHA=$DEPLOY_SHA }docker compose --env-file deploy/.env.production -f docker-compose.yml -f docker-compose.preview.yml -f docker-compose.prod.yml up -d api worker"
+  log "The previous database is kept as $KEEP_NAME and in $SAFETY; drop it once the site is verified."
+  API_STOPPED=0
+  exit 0
+fi
 log "Starting api and worker"
 compose up -d api worker
 API_STOPPED=0

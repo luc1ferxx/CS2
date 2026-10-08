@@ -904,6 +904,8 @@ def steam_production_settings() -> dict[str, object]:
             b"p" * 32
         ).decode("ascii"),
         "steam_credential_encryption_key_version": "test-v1",
+        # Production Redis requires a password (config._validate_production_redis_url).
+        "redis_url": "redis://:test-redis-password@redis:6379/0",
     }
 
 

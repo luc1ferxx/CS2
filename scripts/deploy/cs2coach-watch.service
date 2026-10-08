@@ -1,0 +1,18 @@
+# CS2 Coach health watch (docs/vps_deploy_v1.md). Install as root:
+#   cp scripts/deploy/cs2coach-watch.service scripts/deploy/cs2coach-watch.timer /etc/systemd/system/
+#   systemctl daemon-reload && systemctl enable --now cs2coach-watch.timer
+# Edit User/Group/paths if bootstrap.sh ran with a non-default APP_USER or APP_DIR.
+# Run once by hand: systemctl start cs2coach-watch.service; journalctl -u cs2coach-watch.service
+[Unit]
+Description=CS2 Coach health watch (alerts on state changes)
+Wants=network-online.target
+# No Requires=docker.service: with Docker down the watch must still run and say so.
+After=network-online.target docker.service
+
+[Service]
+Type=oneshot
+User=cs2coach
+Group=cs2coach
+WorkingDirectory=/opt/cs2coach
+ExecStart=/bin/bash /opt/cs2coach/scripts/deploy/watch.sh
+TimeoutStartSec=4min

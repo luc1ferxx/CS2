@@ -107,6 +107,8 @@ export BACKEND_PUBLIC_URL=https://cs2-preview.example.com
 export CORS_ORIGINS=https://cs2-preview.example.com
 export AUTH_PROVIDER=steam
 export NEXT_PUBLIC_AUTH_PROVIDER=steam
+# Required by the preview override (Redis --requirepass); keep the value in .env to reuse it.
+export REDIS_PASSWORD="$(openssl rand -hex 24)"
 
 docker compose -f docker-compose.yml -f docker-compose.preview.yml up --build -d
 ```

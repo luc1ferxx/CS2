@@ -69,7 +69,7 @@ else
     mkswap "$SWAPFILE"
   fi
   swapon "$SWAPFILE"
-  grep -qE "^$SWAPFILE[[:space:]]" /etc/fstab || echo "$SWAPFILE none swap sw 0 0" >>/etc/fstab
+  grep -qE "^${SWAPFILE}[[:space:]]" /etc/fstab || echo "$SWAPFILE none swap sw 0 0" >>/etc/fstab
 fi
 echo 'vm.swappiness=10' >/etc/sysctl.d/99-cs2coach-swap.conf
 sysctl -q --system
@@ -125,7 +125,10 @@ Bootstrap complete. Next steps (docs/vps_deploy_v1.md):
                                   nano deploy/.env.production   # replace coach.example.com and every CHANGE_ME
   3. Point the domain's DNS A/AAAA record at this VPS (Cloudflare: DNS only, grey cloud).
   4. Deploy:                      bash scripts/deploy/deploy.sh
-  5. Enable nightly backups (as root):
+  5. Enable nightly backups and the 5-minute health watch (as root):
        cp $APP_DIR/scripts/deploy/cs2coach-backup.service $APP_DIR/scripts/deploy/cs2coach-backup.timer /etc/systemd/system/
-       systemctl daemon-reload && systemctl enable --now cs2coach-backup.timer
+       cp $APP_DIR/scripts/deploy/cs2coach-watch.service $APP_DIR/scripts/deploy/cs2coach-watch.timer /etc/systemd/system/
+       systemctl daemon-reload && systemctl enable --now cs2coach-backup.timer cs2coach-watch.timer
+     Set ALERT_WEBHOOK_URL (and the ping URLs) in deploy/.env.production first, then
+     test the channel as $APP_USER: bash scripts/deploy/watch.sh --test-alert
 EOF

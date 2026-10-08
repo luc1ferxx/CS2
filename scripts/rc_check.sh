@@ -78,6 +78,39 @@ truthy() {
   esac
 }
 
+# The interpreter verify.sh picks: the manifest check needs the backend
+# dependencies, which a bare python3 usually lacks.
+backend_python() {
+  local candidate
+  if [ -n "${PYTHON:-}" ]; then
+    printf '%s\n' "$PYTHON"
+    return 0
+  fi
+  for candidate in .venv/Scripts/python.exe .venv/bin/python venv/Scripts/python.exe venv/bin/python; do
+    if [ -x "$ROOT_DIR/$candidate" ]; then
+      printf '%s\n' "$ROOT_DIR/$candidate"
+      return 0
+    fi
+  done
+  command -v python3 || command -v python
+}
+
+# Offline, before the upload: parse the sample like the worker does and compare
+# it with its aggregate entry in backend/tests/fixtures/real_demo_manifest.json.
+# A sample the manifest does not know is skipped (exit 0); a known one that no
+# longer matches fails the gate. verify.sh already checked the repo-root demos,
+# and a missing sample file is left to cloud_preview_smoke.py to report.
+check_sample_manifest() {
+  local sample="$1"
+  [ -f "$sample" ] || return 0
+  if [ "$(cd "$(dirname "$sample")" && pwd)" = "$ROOT_DIR" ] && [[ "$sample" == *.dem ]]; then
+    printf '\n==> real-demo manifest: %s was checked by verify.sh\n' "$(basename "$sample")"
+    return 0
+  fi
+  run env PYTHONPATH="$ROOT_DIR/backend" OPENBLAS_NUM_THREADS=1 \
+    "$(backend_python)" -m app.cli.real_demo_manifest check "$sample"
+}
+
 docker_cmd() {
   if command -v docker >/dev/null 2>&1; then
     command -v docker
@@ -119,6 +152,7 @@ main() {
     python3 scripts/cloud_preview_smoke.py
 
   if [ -n "$SAMPLE_DEMO_PATH" ]; then
+    check_sample_manifest "$SAMPLE_DEMO_PATH"
     sample_args=()
     if truthy "$REQUIRE_SAMPLE_DEMO"; then
       sample_args+=(--require-sample)

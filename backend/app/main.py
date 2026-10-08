@@ -27,6 +27,7 @@ from app.core.upload_slots import INTAKE_SLOT
 from app.services.artifact_intake import ArtifactIntakeError, ArtifactIntakePolicy, ArtifactIntakeService
 from app.services.deletion_service import DeletionService
 from app.services.demo_service.replay_warmer import start_replay_warmer, stop_replay_warmer
+from app.services.diagnostics import read_worker_heartbeat
 from app.services.storage import artifact_store_from_settings
 from app.services.upload_quota import prune_upload_ledger, upload_quota_precheck
 from app.services.upload_session_service import (
@@ -189,5 +190,28 @@ def health() -> JSONResponse:
     # The status code carries the verdict so Caddy, uptime checks and deploy
     # scripts can fail on it without parsing the body; the body stays coarse.
     if db_ok and redis_ok and worker_dependencies_ok:
+        return JSONResponse({"status": "ok"})
+    return JSONResponse({"status": "degraded"}, status_code=503)
+
+
+@app.get(
+    "/health/worker",
+    responses={
+        503: {"description": 'No fresh parse worker heartbeat; the body is {"status": "degraded"}.'},
+    },
+)
+def health_worker() -> JSONResponse:
+    """Whether the parse worker is alive: its Redis heartbeat is at most 90 s old.
+
+    Served in every mode, production included (/diagnostics is not), so deploys
+    and uptime probes can see a worker that crashed, loops on OOM or hangs.
+    Kept out of /health on purpose: caddy and the frontend wait on the API's
+    health, and a dead worker must not take the whole site down with it.
+    """
+    try:
+        alive = bool(read_worker_heartbeat(get_redis_client())["alive"])
+    except Exception:
+        alive = False
+    if alive:
         return JSONResponse({"status": "ok"})
     return JSONResponse({"status": "degraded"}, status_code=503)

@@ -285,6 +285,11 @@ class Settings:
     parse_memory_limit_bytes: int = int(
         os.getenv("PARSE_MEMORY_LIMIT_BYTES", str(4 * 1024 * 1024 * 1024))
     )
+    # The account the parse child runs as when the worker itself runs as root on
+    # POSIX (app/workers/child_process.py): the backend image sets `parser`, an
+    # unprivileged user it creates. Empty, on Windows, or under a non-root
+    # worker, the child runs as the worker's own user.
+    parse_child_user: str = os.getenv("PARSE_CHILD_USER", "").strip()
     # How long a consumer's claim on an in-flight message stays valid without a
     # renewal. Once it expires any other worker may return that consumer's
     # in-flight messages to the queue.
@@ -522,6 +527,7 @@ class Settings:
         self._validate_beta_access_configuration()
         self._validate_upload_quota_configuration()
         self._validate_upload_session_configuration()
+        self._validate_production_redis_url()
 
     def validate_worker_runtime_configuration(self) -> None:
         if self.render_worker_mode not in {"fallback", "external"}:
@@ -535,6 +541,8 @@ class Settings:
         self._validate_upload_session_configuration()
         if self.render_clip_queue_timeout_seconds <= 0:
             raise RuntimeError("RENDER_CLIP_QUEUE_TIMEOUT_SECONDS must be a positive integer")
+        if self.auth_mode == "production":
+            self._validate_production_redis_url()
 
     def _validate_parse_queue_configuration(self) -> None:
         positive = {
@@ -932,6 +940,24 @@ class Settings:
         if not self.render_worker_token or self.render_worker_token == "dev-render-worker-token":
             raise RuntimeError(
                 "RENDER_WORKER_TOKEN must be a non-default service credential in production"
+            )
+
+    def _validate_production_redis_url(self) -> None:
+        # Sign-in sessions sit in Redis unsigned (auth_service.py): anything that
+        # can write to it can mint a session for any user. Production Redis
+        # therefore requires a password (`--requirepass` in
+        # docker-compose.preview.yml, repeated in docker-compose.prod.yml), and
+        # the URL has to carry it. The message
+        # never echoes the URL, which may hold a wrong but real secret.
+        try:
+            parsed = urlparse(self.redis_url)
+            carries_password = parsed.scheme in {"redis", "rediss"} and bool(parsed.password)
+        except ValueError:
+            carries_password = False
+        if not carries_password:
+            raise RuntimeError(
+                "REDIS_URL must carry the Redis password in production "
+                "(redis://:<REDIS_PASSWORD>@redis:6379/0)"
             )
 
 

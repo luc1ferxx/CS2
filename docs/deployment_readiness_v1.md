@@ -23,7 +23,7 @@ The Steam/account contract is in `docs/steam_auth_accounts_v1.md`; match authori
 | Variable | Default | Used by | Notes |
 | --- | --- | --- | --- |
 | `DATABASE_URL` | `postgresql+psycopg2://cs2coach:cs2coach@localhost:5432/cs2coach` | API, worker | Use `postgres` as the host inside Docker Compose. Do not commit production credentials. |
-| `REDIS_URL` | `redis://localhost:6379/0` | API, worker | Use `redis` as the host inside Docker Compose. |
+| `REDIS_URL` | `redis://localhost:6379/0` | API, worker | Use `redis` as the host inside Docker Compose. Production must carry the Redis password (`redis://:<REDIS_PASSWORD>@redis:6379/0`, built by the preview override). |
 | `REDIS_QUEUE_NAME` | `cs2-demo-jobs` | API, worker | Queue used for parse, mock render, and render clip job dispatch. |
 
 ### Private Artifact Storage
@@ -157,6 +157,8 @@ See `docs/sample_demo_fixture_v1.md` for the local convention and ad hoc upload 
 ```
 
 When PostgreSQL, Redis, or required worker configuration is unavailable, the endpoint answers HTTP `503` with `{"status":"degraded"}`, so Compose health checks, the reverse proxy, uptime probes, and the smoke scripts can fail on the status code alone. The response does not reveal dependency names, internal URLs, credentials, queue names, or storage paths. It is not a monitoring system.
+
+`GET /health/worker` answers the same two bodies for the parse worker: `200` while its Redis heartbeat is at most 90 s old, `503` otherwise. It is served in every mode including production, kept out of `/health` on purpose (caddy and the frontend wait on the API health check, and a dead worker must not take the site down), and is what the VPS deploy, production smoke and `scripts/deploy/watch.sh` check (`docs/vps_deploy_v1.md`).
 
 ## Safe Diagnostics
 
@@ -334,8 +336,9 @@ Manual first-run preview should start at `/dashboard`. Verify the empty/loading/
 ## Docker Notes
 
 - Compose service names are used for in-container dependencies: `postgres` and `redis`.
-- `postgres` and `redis` have health checks.
+- `postgres` and `redis` have health checks. The preview and production overrides run Redis with `--requirepass ${REDIS_PASSWORD}` (required there) and build the api/worker `REDIS_URL` from it; production config validation rejects a `REDIS_URL` without a password.
 - `api` waits for healthy PostgreSQL and Redis, exposes `/health`, and has a Compose health check.
+- `worker` has a Compose health check on its Redis heartbeat (`python -m app.workers.healthcheck`); nothing depends on it, so a stuck worker never takes the site down. `GET /health/worker` reports the same signal over HTTP.
 - `frontend` waits for the API service health check before starting.
 - The default Compose frontend is already a production Next.js build (`frontend/Dockerfile.preview`, served by `next start`) and bakes in `NEXT_PUBLIC_API_BASE_URL=http://localhost:8000`, because browser requests originate from the host browser, not from the container network. `docker-compose.dev.yml` (used by `scripts/dev.sh`) swaps in the `next dev` image (`frontend/Dockerfile`) for live editing.
 - `docker-compose.preview.yml` rebuilds that frontend image with the public API origin and production auth provider.
