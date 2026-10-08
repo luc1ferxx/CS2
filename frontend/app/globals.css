@@ -724,8 +724,7 @@ meter {
   font-weight: 600;
 }
 
-.speed-select,
-.round-select {
+.speed-select {
   min-height: 28px;
   border: 1px solid var(--control-line);
   border-radius: var(--radius-control);
@@ -987,14 +986,7 @@ select:disabled {
 
 /* Page title, buttons, notices: see "S8 FOUNDATION (V-SHELL)" at the end of this file. */
 
-.round-select {
-  border-color: var(--control-line);
-  border-radius: var(--radius-control);
-  background: var(--row-alt);
-}
-
-.speed-select:focus-visible,
-.round-select:focus-visible {
+.speed-select:focus-visible {
   border-color: var(--focus-ring);
 }
 

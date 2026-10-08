@@ -2,6 +2,7 @@ import io
 import json
 import tempfile
 import unittest
+from collections import Counter
 from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
@@ -13,6 +14,8 @@ from app.core.database import Base
 from app.models import Demo, DemoJob
 from app.services.artifact_intake import ArtifactIntakeService
 from app.services.demo_service import DemoService
+from app.services.demo_service.replay_blob import ReplayBlob
+from app.services.demo_service.replay_response_cache import replay_response_cache
 from app.services.storage import LocalArtifactStore
 
 
@@ -352,6 +355,51 @@ class DemoLibraryTest(unittest.TestCase):
 
             with self.assertRaisesRegex(ValueError, "Only failed parse jobs can be retried"):
                 service.retry_parse_job(demo)
+
+    def test_library_polls_read_each_immutable_replay_at_most_once(self) -> None:
+        # The library polls every 1.8 s while work runs; each row's video status
+        # used to re-read and re-normalize its whole replay on every poll.
+        replay_response_cache.clear()
+        self.addCleanup(replay_response_cache.clear)
+        with tempfile.TemporaryDirectory() as directory:
+            db = self.Session()
+            store = LocalArtifactStore(directory)
+            service = DemoService(db, owner_id=settings.dev_user_id, artifact_store=store)
+            demo_ids = []
+            for index in range(3):
+                demo = add_demo(db, f"demo-poll-{index}", f"Poll {index}", f"poll-{index}.dem", "de_dust2")
+                demo.replay_storage_key = service.write_replay_blob(
+                    demo.id,
+                    {"demoId": demo.id, "video": {"status": "failed", "source": "rendered",
+                                                   "errorMessage": "GPU worker not connected for render_clip"}},
+                )
+                db.commit()
+                demo_ids.append(demo.id)
+            # Its local:// replay file does not exist; only the read count matters here.
+            legacy = add_demo(db, "demo-poll-legacy", "Poll legacy", "legacy.dem", "de_dust2")
+
+            with patch.object(
+                ReplayBlob, "load_replay_blob", autospec=True, side_effect=ReplayBlob.load_replay_blob
+            ) as load:
+                first = service.list_demos()
+                second = service.list_demos()
+
+            loads = Counter(call.args[1].id for call in load.call_args_list)
+            for demo_id in demo_ids:
+                self.assertEqual(loads[demo_id], 1, demo_id)
+            # A legacy local:// key is rewritten in place, so it is still read on every poll.
+            self.assertEqual(loads[legacy.id], 2)
+            self.assertEqual(
+                [(item.id, item.video_status, item.video_source) for item in first],
+                [(item.id, item.video_status, item.video_source) for item in second],
+            )
+            self.assertEqual({item.video_status for item in second if item.id in demo_ids}, {"failed"})
+
+            # Callers build the next video section from what they get; that must not reach the memo.
+            demo = service.get_demo(demo_ids[0])
+            video = service.get_video_status(demo)
+            video["status"] = "ready"
+            self.assertEqual(service.get_video_status(demo)["status"], "failed")
 
     def test_active_parse_snapshot_marks_stale_when_status_is_old(self) -> None:
         db = self.Session()

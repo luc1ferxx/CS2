@@ -47,8 +47,13 @@ describe("PrivacyPage", () => {
     );
     expect(screen.getByRole("region", { name: "保存多久" })).toHaveTextContent("数据不会因此自动删除");
     expect(screen.getByRole("region", { name: "保存多久" })).toHaveTextContent("未完成的上传最多保留 24 小时。");
+    expect(screen.getByRole("region", { name: "保存多久" })).toHaveTextContent(
+      "登录会话不使用时最多 1 小时后过期，使用中自动续期，从登录起最长保留 24 小时；"
+    );
     const storage = screen.getByRole("region", { name: "Cookie 和浏览器存储" });
-    expect(storage).toHaveTextContent("__Host-cs2_session");
+    expect(storage).toHaveTextContent("__Host-cs2_session：保持登录。不使用时最多 1 小时后过期，使用中会自动续期，但最迟在登录 24 小时后过期。");
+    // The old fixed-lifetime wording is gone.
+    expect(storage).not.toHaveTextContent("保持登录。1 小时后过期");
     expect(storage).toHaveTextContent(
       "未完成的上传：文件名、大小、文件的修改时间和上传编号，用来在刷新页面后接着上传；上传完成或放弃后清除。"
     );
@@ -62,7 +67,7 @@ describe("PrivacyPage", () => {
     expect(within(deletion).getByRole("link", { name: "账户与数据" })).toHaveAttribute("href", "/account");
     expect(deletion).toHaveTextContent("删除比赛不会恢复当天的上传次数。");
     expect(deletion).toHaveTextContent("在内存里暂存的回放只在内存里，删除后读不到，服务器重启后也不保留。");
-    expect(screen.getByText("最近更新：2026-10-04")).toBeInTheDocument();
+    expect(screen.getByText("最近更新：2026-10-07")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "隐私说明" })).toHaveAttribute("aria-current", "page");
   });
 

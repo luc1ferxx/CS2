@@ -1,5 +1,6 @@
 """Projection of stored replay/render data onto the user-facing contract: strips internal fields and reduces failures to safe codes and copy."""
 
+import math
 from typing import Any
 
 from app.services.demo_service.constants import (
@@ -77,16 +78,8 @@ def _public_replay_contract(
             for item in replay.get("frames", [])
             if isinstance(item, dict)
         ],
-        "kills": [
-            _public_kill(item)
-            for item in replay.get("kills", [])
-            if isinstance(item, dict)
-        ],
-        "deaths": [
-            _public_kill(item)
-            for item in replay.get("deaths", [])
-            if isinstance(item, dict)
-        ],
+        # The stored kills/deaths lists stay internal (analyzer input): the
+        # kill events already carry them, and the frontend reads only those.
         "events": [
             _public_replay_event(item)
             for item in replay.get("events", [])
@@ -225,44 +218,36 @@ def _public_replay_frame(value: dict[str, Any]) -> dict[str, Any]:
     projected = _project_fields(value, ("tick", "timeSeconds", "roundNumber"))
     players = value.get("players")
     projected["players"] = [
-        _project_fields(
-            player,
-            ("id", "name", "side", "x", "y", "z", "alive", "hp", "hasBomb"),
+        _with_public_z(
+            _project_fields(
+                player,
+                ("id", "name", "side", "x", "y", "z", "alive", "hp", "hasBomb"),
+            )
         )
         for player in players
         if isinstance(player, dict)
     ] if isinstance(players, list) else []
     bomb_state = value.get("bombState")
     projected["bombState"] = (
-        _project_fields(bomb_state, ("status", "carrierPlayerId", "x", "y", "z", "site"))
+        _with_public_z(_project_fields(bomb_state, ("status", "carrierPlayerId", "x", "y", "z", "site")))
         if isinstance(bomb_state, dict)
         else {"status": "unknown"}
     )
     return projected
 
 
-def _public_kill(value: dict[str, Any]) -> dict[str, Any]:
-    return _project_fields(
-        value,
-        (
-            "tick",
-            "roundNumber",
-            "attackerId",
-            "attackerName",
-            "attackerSide",
-            "victimId",
-            "victimName",
-            "victimSide",
-            "assisterId",
-            "assisterName",
-            "weapon",
-            "headshot",
-        ),
-    )
+def _with_public_z(projected: dict[str, Any]) -> dict[str, Any]:
+    """World height to 0.1 units, like utility points: demoparser2's full doubles
+    are a large, nearly incompressible share of the frames. Public response only;
+    the stored replay and the analyzer keep the full value."""
+    z = projected.get("z")
+    if isinstance(z, (int, float)) and not isinstance(z, bool) and math.isfinite(z):
+        projected["z"] = round(float(z), 1)
+    return projected
 
 
 def _public_replay_event(value: dict[str, Any]) -> dict[str, Any]:
-    projected = _project_fields(
+    projected = _with_public_z(_project_fields(
         value,
         (
             "id",
@@ -279,7 +264,7 @@ def _public_replay_event(value: dict[str, Any]) -> dict[str, Any]:
             "z",
             "label",
         ),
-    )
+    ))
     metadata = value.get("metadata")
     projected["metadata"] = (
         _project_fields(

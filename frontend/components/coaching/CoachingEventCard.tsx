@@ -4,7 +4,7 @@ import { Fragment, memo } from "react";
 
 import type { EvidenceSummaryItem, FeedbackSaveState, ReviewEvent } from "@/lib/coaching-review";
 import type { RenderJobStatus } from "@/lib/api";
-import { COACHING_VERDICT_LABELS, coachingCopy, coachingEvidenceLabel, coachingSeverityLabel } from "@/lib/coaching-copy";
+import { COACHING_VERDICT_HINTS, COACHING_VERDICT_LABELS, coachingCopy, coachingEvidenceLabel, coachingSeverityLabel } from "@/lib/coaching-copy";
 import { isRenderActiveStatus } from "@/lib/demo-library";
 import { playableClipVideo } from "@/lib/render-clips";
 import type { CoachingEvent, CoachingVerdict } from "@/types/coaching";
@@ -142,18 +142,17 @@ export const CoachingEventCard = memo(function CoachingEventCard({
           ) : null}
           <div className="coaching-feedback" role="group" aria-label={`这条建议是否有帮助：${copy.title}`}
             aria-busy={feedbackState?.status === "saving" ? true : undefined}>
-            {VERDICTS.map((verdict, index) => (
-              <Fragment key={verdict}>
-                {index > 0 ? <span className="coaching-verdict-divider" aria-hidden="true">/</span> : null}
-                <button
-                  className={`coaching-verdict ${currentVerdict === verdict ? "active" : ""}`}
-                  type="button"
-                  aria-pressed={currentVerdict === verdict}
-                  onClick={() => onFeedback(event, currentVerdict === verdict ? null : verdict)}
-                >
-                  {COACHING_VERDICT_LABELS[verdict]}
-                </button>
-              </Fragment>
+            {VERDICTS.map((verdict) => (
+              <button
+                key={verdict}
+                className={`coaching-verdict ${currentVerdict === verdict ? "active" : ""}`}
+                type="button"
+                aria-pressed={currentVerdict === verdict}
+                title={COACHING_VERDICT_HINTS[verdict]}
+                onClick={() => onFeedback(event, currentVerdict === verdict ? null : verdict)}
+              >
+                {COACHING_VERDICT_LABELS[verdict]}
+              </button>
             ))}
           </div>
         </div>

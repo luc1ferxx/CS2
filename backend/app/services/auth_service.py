@@ -15,8 +15,9 @@ from app.core.config import Settings, settings
 from app.core.redis import get_redis_client
 
 MAX_RETURN_TO_LENGTH = 2048
-# An owner revocation marker outlives every session it can revoke (the session
-# TTL is at most 86400 s in production) plus clock skew.
+# An owner revocation marker outlives every session it can revoke plus clock
+# skew: renewal never carries a session past AUTH_SESSION_MAX_AGE_SECONDS from
+# its sign-in, which production validation caps at 86400 s.
 OWNER_REVOCATION_TTL_SECONDS = 86_400 + 300
 
 
@@ -31,6 +32,17 @@ class SessionGrant:
     session_token: str
     max_age: int
     return_to: str
+
+
+@dataclass(frozen=True)
+class ActiveSession:
+    """A session record that passed every check in `resolve_session`."""
+
+    owner_id: str
+    expires_at: int
+    # Milliseconds; None for records written before issuedAt existed.
+    issued_at_ms: int | None
+    record: dict[str, object]
 
 
 @dataclass(frozen=True)
@@ -209,6 +221,10 @@ class AuthService:
         )
 
     def resolve_session(self, session_token: str | None) -> str | None:
+        session = self.resolve_active_session(session_token)
+        return session.owner_id if session is not None else None
+
+    def resolve_active_session(self, session_token: str | None) -> ActiveSession | None:
         if not _is_valid_opaque_value(session_token):
             return None
         raw_session = self.redis.get(_hashed_key("auth:session", session_token))
@@ -228,7 +244,47 @@ class AuthService:
         ):
             self.revoke_session(session_token)
             return None
-        return owner_id
+        issued_at = session.get("issuedAt")
+        return ActiveSession(
+            owner_id=owner_id,
+            expires_at=expires_at,
+            issued_at_ms=issued_at if isinstance(issued_at, int) and not isinstance(issued_at, bool) else None,
+            record=session,
+        )
+
+    def renew_session(self, session_token: str | None, session: ActiveSession) -> int | None:
+        """Slide the idle window of a session resolved in this request.
+
+        Renews only once less than half of AUTH_SESSION_TTL_SECONDS is left,
+        and never past AUTH_SESSION_MAX_AGE_SECONDS after sign-in. `issuedAt`
+        is kept, so an owner revocation marker still ends the session.
+        `SET ... XX` writes only while the key still exists: a logout or
+        revocation that deleted it meanwhile is never undone. Returns the new
+        lifetime in seconds (the cookie's Max-Age), or None when not renewed.
+        """
+        if not _is_valid_opaque_value(session_token) or session.issued_at_ms is None:
+            return None
+        idle_seconds = self.settings.auth_session_ttl_seconds
+        now_seconds = time.time()
+        now = int(now_seconds)
+        if (session.expires_at - now) * 2 >= idle_seconds:
+            return None
+        age_seconds = max(0.0, now_seconds - session.issued_at_ms / 1000)
+        lifetime = min(idle_seconds, int(self.settings.auth_session_max_age_seconds - age_seconds))
+        if now + lifetime <= session.expires_at:
+            return None
+        # Account deletion may have revoked every session of this owner while
+        # the request ran (renewals are rare, so this read is cheap).
+        if self._revoked_by_owner_marker(session.owner_id, session.issued_at_ms):
+            return None
+        record = {**session.record, "expiresAt": now + lifetime}
+        stored = self.redis.set(
+            _hashed_key("auth:session", session_token),
+            json.dumps(record, separators=(",", ":")),
+            ex=lifetime,
+            xx=True,
+        )
+        return lifetime if stored else None
 
     def revoke_session(self, session_token: str | None) -> None:
         if _is_valid_opaque_value(session_token):

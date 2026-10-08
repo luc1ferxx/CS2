@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import JSONResponse, RedirectResponse
 from sqlalchemy.orm import Session
 
-from app.core.auth import require_trusted_origin
+from app.core.auth import require_trusted_origin, set_session_cookie
 from app.core.database import get_db
 from app.core.features import feature_capabilities
 from app.services.account_service import (
@@ -114,15 +114,7 @@ def callback(
         httponly=True,
         samesite="lax",
     )
-    response.set_cookie(
-        service.settings.auth_session_cookie_name,
-        grant.session_token,
-        max_age=grant.max_age,
-        httponly=True,
-        secure=service.settings.auth_cookie_secure,
-        samesite="lax",
-        path="/",
-    )
+    set_session_cookie(response, service.settings, grant.session_token, max_age=grant.max_age)
     return response
 
 
@@ -234,15 +226,7 @@ def steam_callback(
         httponly=True,
         samesite="lax",
     )
-    response.set_cookie(
-        auth_service.settings.auth_session_cookie_name,
-        grant.session_token,
-        max_age=grant.max_age,
-        httponly=True,
-        secure=auth_service.settings.auth_cookie_secure,
-        samesite="lax",
-        path="/",
-    )
+    set_session_cookie(response, auth_service.settings, grant.session_token, max_age=grant.max_age)
     response.headers["Referrer-Policy"] = "no-referrer"
     return response
 

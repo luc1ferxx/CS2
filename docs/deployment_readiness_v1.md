@@ -108,7 +108,8 @@ PostgreSQL should store compact metadata and storage keys only. Large `.dem`, re
 | `AUTH_COOKIE_SECURE` | `false` | Backend API | Must be enabled in production. |
 | `AUTH_SESSION_COOKIE_NAME` | `__Host-cs2_session` | Backend API | Opaque `HttpOnly` browser session cookie; production requires the `__Host-` prefix. |
 | `AUTH_STATE_COOKIE_NAME` | `__Host-cs2_oidc_state` | Backend API | Compatibility OIDC state cookie, used only when `AUTH_PROVIDER=oidc`. |
-| `AUTH_SESSION_TTL_SECONDS` | `3600` | Backend API, Redis | Session TTL; production accepts `1..86400` and caps it at identity-token expiry. |
+| `AUTH_SESSION_TTL_SECONDS` | `3600` | Backend API, Redis | Idle window: a session expires after at most this long unused and is renewed while in use (sliding, see `AUTH_SESSION_MAX_AGE_SECONDS`); production accepts `1..86400`. |
+| `AUTH_SESSION_MAX_AGE_SECONDS` | `86400` | Backend API, Redis | Absolute cap from sign-in that sliding renewal never passes; production requires `TTL..86400`. |
 | `AUTH_LOGIN_TTL_SECONDS` | `300` | Backend API, Redis | One-time state/nonce/PKCE attempt TTL; production accepts `1..600`. |
 | `AUTH_CLOCK_SKEW_SECONDS` | `30` | Backend API | Bounded identity timestamp leeway; production accepts `0..300`. |
 | `DEV_USER_ID` | `dev-user` | Backend API | Development/test owner harness only. `X-Dev-User-Id` is never a production identity source. |

@@ -104,6 +104,13 @@ class FakeRedis:
     def setex(self, key: str, _ttl: int, value: str) -> None:
         self.values[key] = value
 
+    def set(self, key: str, value: str, *, ex: int | None = None, xx: bool = False) -> bool | None:
+        # Session renewal (SET ... EX ... XX): only an existing key is rewritten.
+        if xx and key not in self.values:
+            return None
+        self.values[key] = value
+        return True
+
     def get(self, key: str) -> str | None:
         return self.values.get(key)
 

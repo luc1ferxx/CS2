@@ -26,7 +26,7 @@ function load(path) {
 }
 
 const copy = load("./coaching-copy.ts");
-const { reviewEventForEvent } = load("./coaching-review.ts");
+const { coachingMomentLabel, reviewEventForEvent } = load("./coaching-review.ts");
 const { CoachingEventCard } = load("../components/coaching/CoachingEventCard.tsx");
 const { CoachingPanel } = load("../components/coaching/CoachingPanel.tsx");
 const event = {
@@ -53,10 +53,6 @@ assert.match(tooFarCopy.limitation, /近似值/);
 assert.match(copy.coachingCopy({ ...event, structured_context_json: { ...event.structured_context_json, spacingType: "too_far" } }).title, /支援距离/);
 assert.match(copy.coachingCopy(event).limitation, /不等于实际移动距离/);
 assert.match(copy.coachingCopy(event).limitation, /近似值/);
-assert.equal(copy.coachingLocation(event, rounds, 64), "第 2 回合 · 00:11");
-for (const rate of [undefined, 0, -1, NaN, Infinity]) assert.equal(copy.coachingLocation(event, rounds, rate), "第 2 回合");
-assert.equal(copy.coachingLocation(event, [], 64), "第 2 回合");
-assert.equal(copy.coachingLocation({ ...event, tick_start: 4700 }, rounds, 64), "第 2 回合");
 const unknown = { ...event, title: "Experimental finding", structured_context_json: { ruleId: "future_rule", action: "Keep original guidance.", limitation: "Unknown sensor." } };
 assert.equal(copy.coachingCopy(unknown).title, unknown.title);
 assert.equal(copy.coachingCopy(unknown).guidance, "Keep original guidance.");
@@ -75,7 +71,6 @@ for (const [ruleId, title, guidance] of [
   assert.equal(shot.title, title);
   assert.match(shot.guidance, guidance);
   assert.equal(shot.limitation, "速度取自每一枪记录的移动速度；没有计算弹道恢复、蹲下、开镜和对手的移动，没打中也可能有别的原因。");
-  assert.equal(copy.coachingRuleLabel(ruleId, "fallback"), title);
 }
 for (const [key, label] of [["weaponLabel", "武器"], ["accurateSpeed", "稳定线（单位/秒）"], ["keysAtShot", "开枪时按着的移动键"],
   ["counterStrafe", "有反向急停"], ["occurrencesInRound", "本回合出现次数"]]) assert.equal(copy.coachingEvidenceLabel(key), label);
@@ -83,13 +78,13 @@ for (const search of ["过近", "补枪", "xelex", "poor_spacing", "2.1", "直�
 assert.equal(copy.coachingMatchesSearch(reviewEvent, "不存在的内容"), false);
 
 const props = {
-  reviewEvent, active: false, inspected: false, locationLabel: copy.coachingLocation(event, rounds, 64),
+  reviewEvent, active: false, inspected: false, locationLabel: coachingMomentLabel(event, rounds, 64),
   clipRequesting: false, onToggleInspect() {}, onSeek() {}, onGenerateClip() {}
 };
 const closedCard = renderToStaticMarkup(React.createElement(CoachingEventCard, props));
 assert.match(closedCard, /查看这一刻/);
 assert.match(closedCard, /生成视频/);
-assert.match(closedCard, /第 2 回合 · 00:11/);
+assert.match(closedCard, /第 2 回合 0:11/);
 assert.match(closedCard, /补枪/);
 assert.doesNotMatch(closedCard, /poor_spacing|证据 tick|2\.1 radar/,
   "Primary actions and guidance must be visible without opening raw evidence");

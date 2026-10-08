@@ -29,6 +29,7 @@ from app.core.config import settings
 from app.core.database import Base, get_db
 from app.core.json_compression import JsonGzipMiddleware, accepts_gzip
 from app.services.demo_service.replay_blob import ReplayBlob
+from app.services.demo_service.replay_response_cache import replay_response_cache
 
 LARGE_JSON = {"items": [{"index": index, "label": f"row-{index}"} for index in range(400)]}
 
@@ -218,11 +219,16 @@ class ReplayPayloadApiTest(unittest.TestCase):
 
     def test_replay_video_and_render_polls_read_the_replay_blob_once(self) -> None:
         for path in ("/demos/demo-payload/replay", "/demos/demo-payload/video", "/demos/demo-payload/render/jobs"):
+            replay_response_cache.clear()  # cold: each path on its own reads the replay once
             with self.subTest(path=path), patch.object(
                 ReplayBlob, "load_replay_blob", autospec=True, side_effect=ReplayBlob.load_replay_blob
             ) as load:
                 response = self.client.get(path, headers=owner_headers(OWNER_A))
                 self.assertEqual(response.status_code, 200)
+                self.assertEqual(load.call_count, 1)
+                # The next poll reads nothing: the immutable replay key's video memo
+                # (and, for /replay, the cached body) answers it.
+                self.assertEqual(self.client.get(path, headers=owner_headers(OWNER_A)).status_code, 200)
                 self.assertEqual(load.call_count, 1)
 
 

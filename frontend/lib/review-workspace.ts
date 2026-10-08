@@ -16,9 +16,3 @@ export function savedClipAtTick(
   });
   return covering.find((job) => job.job_id === preferredJobId) ?? covering[0] ?? null;
 }
-
-export function roundClock(tick: number, startTick: number, tickRate: number): string {
-  const seconds = Number.isFinite(tickRate) && tickRate > 0
-    ? Math.max(0, Math.floor((tick - startTick) / tickRate)) : 0;
-  return `${Math.floor(seconds / 60).toString().padStart(2, "0")}:${(seconds % 60).toString().padStart(2, "0")}`;
-}

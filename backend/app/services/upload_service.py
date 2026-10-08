@@ -75,16 +75,6 @@ def safe_upload_filename(filename: str) -> str:
     return re.sub(r"[^A-Za-z0-9._-]+", "_", basename)[:255]
 
 
-def demo_upload_path(demo_id: str, filename: str) -> Path:
-    storage = LocalStorageService.from_settings()
-    return storage.path_for_key(demo_upload_key(demo_id, filename))
-
-
-def video_upload_path(demo_id: str, filename: str) -> Path:
-    storage = LocalStorageService.from_settings()
-    return storage.path_for_key(video_upload_key(demo_id, filename))
-
-
 def demo_upload_key(demo_id: str, filename: str) -> str:
     return LocalStorageService.from_settings().demo_upload_key(
         demo_id,

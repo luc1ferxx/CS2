@@ -255,6 +255,21 @@ describe("CoachingEventCard", () => {
     expect(within(facts).queryByText("m4a1_silencer")).not.toBeInTheDocument();
   });
 
+  it("names a shooting card's weapon with the death cards' Chinese table, not the analyzer's English label", () => {
+    renderCard(coachingEvent({
+      id: "ncs-deagle", category: "mechanics", severity: "low",
+      structured_context_json: {
+        ruleId: "no_counter_strafe", weapon: "deagle", weaponLabel: "Desert Eagle", accurateSpeed: 79, speed: 140, shotCount: 1,
+        movingShotCount: 1, hit: false, died: false, side: "CT", keysAtShot: ["D"], counterStrafe: false
+      }
+    }), { inspected: true });
+
+    expect(screen.getByRole("heading", { level: 3 })).toHaveTextContent("第一枪时速度约 140（沙漠之鹰 稳定线 79），按着 D 没有反向急停，没打中");
+    const facts = document.querySelector(".coaching-inspector-facts") as HTMLElement;
+    expect(within(facts).getByText("沙漠之鹰")).toBeInTheDocument();
+    expect(within(facts).queryByText("Desert Eagle")).not.toBeInTheDocument();
+  });
+
   it("says how long a stacked pair stayed together", () => {
     renderCard(stackedSpacingEvent());
     expect(screen.getByRole("heading", { level: 3 })).toHaveTextContent("两名队友相距约 88 单位，持续 3.5 秒");

@@ -166,6 +166,10 @@ class ProductionAuthConfigurationTest(unittest.TestCase):
             ({"auth_cookie_secure": False}, "AUTH_COOKIE_SECURE"),
             ({"auth_session_ttl_seconds": 0}, "AUTH_SESSION_TTL_SECONDS"),
             ({"auth_session_ttl_seconds": 86_401}, "AUTH_SESSION_TTL_SECONDS"),
+            # The absolute cap must hold the idle window and stay within the
+            # owner revocation marker's 24 h.
+            ({"auth_session_max_age_seconds": 3_599}, "AUTH_SESSION_MAX_AGE_SECONDS"),
+            ({"auth_session_max_age_seconds": 86_401}, "AUTH_SESSION_MAX_AGE_SECONDS"),
             ({"auth_login_ttl_seconds": 0}, "AUTH_LOGIN_TTL_SECONDS"),
             ({"auth_login_ttl_seconds": 601}, "AUTH_LOGIN_TTL_SECONDS"),
         )
@@ -940,12 +944,226 @@ class UploadPartCsrfExemptionTest(unittest.TestCase):
                 self.assertEqual(client.request(method, path, content=b"x").status_code, 401)
 
 
+class SessionRenewalTest(unittest.TestCase):
+    """Sliding renewal: idle window AUTH_SESSION_TTL_SECONDS, absolute cap AUTH_SESSION_MAX_AGE_SECONDS."""
+
+    TTL = 3_600
+    CAP = 86_400
+    OWNER = derive_owner_id("https://issuer.example.test", "renewal-user")
+
+    def setUp(self) -> None:
+        self.redis = FakeRedis()
+        self.service = AuthService(
+            Settings(
+                **valid_production_settings_kwargs(),
+                auth_session_ttl_seconds=self.TTL,
+                auth_session_max_age_seconds=self.CAP,
+            ),
+            self.redis,
+        )
+        self.token = self.service.create_session(self.OWNER).session_token
+        self.key = "auth:session:" + hashlib.sha256(self.token.encode("ascii")).hexdigest()
+
+    def client(self) -> TestClient:
+        client = auth_client(self.service)
+        client.cookies.set("__Host-cs2_session", self.token)
+        return client
+
+    def record(self) -> dict[str, object]:
+        return json.loads(self.redis.values[self.key])
+
+    def age(self, *, signed_in_ago: int, seconds_left: int, issued_at: bool = True) -> dict[str, object]:
+        """Put the session where it would be after `signed_in_ago` seconds of use."""
+        now = int(time.time())
+        record = self.record()
+        record["expiresAt"] = now + seconds_left
+        if issued_at:
+            record["issuedAt"] = (now - signed_in_ago) * 1000
+        else:
+            record.pop("issuedAt", None)
+        self.redis.values[self.key] = json.dumps(record)
+        self.redis.ttls[self.key] = seconds_left
+        return record
+
+    def session_cookies(self, response) -> list[str]:
+        return [value for value in response.headers.get_list("set-cookie") if value.startswith("__Host-cs2_session=")]
+
+    def test_a_session_in_use_is_renewed_once_less_than_half_its_idle_window_is_left(self) -> None:
+        client = self.client()
+        fresh = self.record()
+
+        for method, path in (("GET", "/owned"), ("POST", "/mutate")):
+            with self.subTest(method=method, path=path):
+                response = client.request(method, path, headers={"Origin": "https://coach.example.test"})
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(self.session_cookies(response), [])
+                self.assertEqual(self.record(), fresh)
+
+        # Exactly half left: not yet.
+        self.age(signed_in_ago=1_800, seconds_left=self.TTL // 2)
+        self.assertEqual(self.session_cookies(client.get("/owned")), [])
+
+        for method, path in (("GET", "/owned"), ("POST", "/mutate")):
+            with self.subTest(method=method, path=path, aged=True):
+                aged = self.age(signed_in_ago=2_000, seconds_left=self.TTL // 2 - 1)
+                before = int(time.time())
+                response = client.request(method, path, headers={"Origin": "https://coach.example.test"})
+                after = int(time.time())
+
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.json(), {"owner_id": self.OWNER})
+                [cookie] = self.session_cookies(response)
+                self.assertEqual(cookie_attributes(cookie)["__Host-cs2_session"], self.token)
+                self.assertEqual(cookie_attributes(cookie)["max-age"], str(self.TTL))
+                record = self.record()
+                self.assertEqual(record["issuedAt"], aged["issuedAt"])
+                self.assertEqual(record["ownerId"], self.OWNER)
+                self.assertTrue(before + self.TTL <= record["expiresAt"] <= after + self.TTL)
+                self.assertEqual(self.redis.ttls[self.key], self.TTL)
+
+    def test_the_renewed_cookie_keeps_every_sign_in_attribute_but_max_age(self) -> None:
+        key = rsa.generate_private_key(public_exponent=65_537, key_size=2048)
+        oidc = FakeOidcHttp(key)
+        self.service.http = oidc
+        client = auth_client(self.service)
+        login = client.get("/auth/login", follow_redirects=False)
+        query = parse_qs(urlparse(login.headers["location"]).query)
+        oidc.id_token = make_id_token(key, nonce=query["nonce"][0], sub="renewal-user", exp=int(time.time()) + 7_200)
+        callback = client.get(
+            "/auth/oidc/callback",
+            params={"code": "one-time-code", "state": query["state"][0]},
+            follow_redirects=False,
+        )
+        [signed_in] = self.session_cookies(callback)
+        self.token = cookie_attributes(signed_in)["__Host-cs2_session"]
+        self.key = "auth:session:" + hashlib.sha256(self.token.encode("ascii")).hexdigest()
+        self.age(signed_in_ago=2_000, seconds_left=100)
+
+        [renewed] = self.session_cookies(client.get("/owned"))
+
+        signed_in_attributes = cookie_attributes(signed_in)
+        renewed_attributes = cookie_attributes(renewed)
+        self.assertEqual(renewed_attributes.pop("max-age"), str(self.TTL))
+        signed_in_attributes.pop("max-age")
+        self.assertEqual(renewed_attributes, signed_in_attributes)
+        self.assertEqual(
+            set(renewed_attributes),
+            {"__Host-cs2_session", "httponly", "path", "samesite", "secure"},
+        )
+
+    def test_renewal_never_carries_a_session_past_the_cap_from_sign_in(self) -> None:
+        client = self.client()
+
+        aged = self.age(signed_in_ago=self.CAP - 100, seconds_left=50)
+        [cookie] = self.session_cookies(client.get("/owned"))
+        max_age = int(cookie_attributes(cookie)["max-age"])
+        self.assertTrue(98 <= max_age <= 100, max_age)
+        self.assertLessEqual(self.record()["expiresAt"], aged["issuedAt"] // 1000 + self.CAP)
+
+        for signed_in_ago, issued_at in ((self.CAP - 10, True), (self.CAP + 10, True), (2_000, False)):
+            with self.subTest(signed_in_ago=signed_in_ago, issued_at=issued_at):
+                aged = self.age(signed_in_ago=signed_in_ago, seconds_left=50, issued_at=issued_at)
+                response = client.get("/owned")
+                # Still signed in for what is left, but never extended.
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(self.session_cookies(response), [])
+                self.assertEqual(self.record(), aged)
+
+    def test_revoked_and_deleted_sessions_are_never_renewed(self) -> None:
+        client = self.client()
+
+        # Logout with a renewable session: only the clearing cookie goes out.
+        self.age(signed_in_ago=2_000, seconds_left=100)
+        logout = client.post("/auth/logout", headers={"Origin": "https://coach.example.test"})
+        self.assertEqual(logout.status_code, 204)
+        [cleared] = self.session_cookies(logout)
+        self.assertEqual(cookie_attributes(cleared)["max-age"], "0")
+        self.assertNotIn(self.key, self.redis.values)
+
+        # Revoked everywhere (account deletion's marker): 401, nothing renewed.
+        self.token = self.service.create_session(self.OWNER).session_token
+        self.key = "auth:session:" + hashlib.sha256(self.token.encode("ascii")).hexdigest()
+        self.age(signed_in_ago=2_000, seconds_left=100)
+        self.service.revoke_owner_sessions(self.OWNER)
+        client.cookies.set("__Host-cs2_session", self.token)
+        response = client.get("/owned")
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(self.session_cookies(response), [])
+        self.assertNotIn(self.key, self.redis.values)
+
+    def test_a_revocation_during_the_request_wins_over_the_renewal(self) -> None:
+        later = AuthService(self.service.settings, self.redis)
+        self.age(signed_in_ago=2_000, seconds_left=100)
+        session = later.resolve_active_session(self.token)
+        assert session is not None
+
+        # Logged out (key deleted) while the request ran: SET ... XX recreates nothing.
+        self.redis.delete(self.key)
+        self.assertIsNone(later.renew_session(self.token, session))
+        self.assertNotIn(self.key, self.redis.values)
+
+        # Account deleted (owner marker) while the request ran.
+        self.redis.values[self.key] = json.dumps(session.record)
+        later.revoke_owner_sessions(self.OWNER)
+        self.assertIsNone(later.renew_session(self.token, session))
+        self.assertEqual(json.loads(self.redis.values[self.key]), session.record)
+
+    def test_token_authenticated_routes_neither_resolve_nor_renew_the_session(self) -> None:
+        app = FastAPI()
+        app.add_middleware(
+            SessionCsrfMiddleware,
+            runtime_settings=self.service.settings,
+            auth_service_factory=lambda: self.service,
+        )
+
+        @app.api_route("/{path:path}", methods=["GET", "PUT"])
+        def reached(path: str) -> dict[str, str]:
+            return {"reached": path}
+
+        client = TestClient(app, base_url="https://coach.example.test")
+        client.cookies.set("__Host-cs2_session", self.token)
+        aged = self.age(signed_in_ago=2_000, seconds_left=100)
+
+        for method, path in (
+            ("PUT", f"/uploads/sessions/{'0123456789abcdef' * 2}/parts/3"),
+            ("GET", "/render-worker/jobs/next"),
+        ):
+            with self.subTest(method=method, path=path):
+                response = client.request(method, path, content=b"x")
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(self.session_cookies(response), [])
+                self.assertEqual(self.record(), aged)
+
+        # The same cookie on an ordinary read is renewed.
+        self.assertEqual(len(self.session_cookies(client.get("/demos"))), 1)
+
+
+def cookie_attributes(header: str) -> dict[str, str]:
+    """Set-Cookie as {name: value, attribute (lower case): value or ""}."""
+    attributes: dict[str, str] = {}
+    for index, part in enumerate(item.strip() for item in header.split(";")):
+        name, _, value = part.partition("=")
+        attributes[name if index == 0 else name.lower()] = value
+    return attributes
+
+
 class FakeRedis:
     def __init__(self) -> None:
         self.values: dict[str, str] = {}
+        self.ttls: dict[str, int] = {}
 
-    def setex(self, key: str, _: int, value: str) -> None:
+    def setex(self, key: str, ttl: int, value: str) -> None:
         self.values[key] = value
+        self.ttls[key] = ttl
+
+    def set(self, key: str, value: str, *, ex: int | None = None, xx: bool = False) -> bool | None:
+        # Session renewal (SET ... EX ... XX): only an existing key is rewritten.
+        if xx and key not in self.values:
+            return None
+        self.values[key] = value
+        if ex is not None:
+            self.ttls[key] = ex
+        return True
 
     def get(self, key: str) -> str | None:
         return self.values.get(key)

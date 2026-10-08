@@ -1,20 +1,32 @@
+import logging
 from collections.abc import Callable
 from typing import Annotated
 
 from fastapi import Depends, Header, HTTPException, Request
+from starlette.concurrency import run_in_threadpool
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.responses import JSONResponse, Response
 from starlette.types import ASGIApp
 
 from app.core.config import Settings, settings
 from app.core.upload_slots import is_upload_part_request
-from app.services.auth_service import AuthService, get_auth_service
+from app.services.auth_service import ActiveSession, AuthService, get_auth_service
 
 DEV_OWNER_HEADER = "X-Dev-User-Id"
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
 
+logger = logging.getLogger(__name__)
+
 
 class SessionCsrfMiddleware(BaseHTTPMiddleware):
+    """Production only: resolves the session cookie for the owner dependency and slides its idle window.
+
+    Writes need a valid session and an exact trusted Origin (401/403 here);
+    reads that carry the cookie are resolved too, so `get_current_owner_id`
+    reuses the result and a session kept in use by polling is renewed. The
+    one renewal per request happens here, after the route has answered.
+    """
+
     def __init__(
         self,
         app: ASGIApp,
@@ -30,9 +42,11 @@ class SessionCsrfMiddleware(BaseHTTPMiddleware):
         request: Request,
         call_next: RequestResponseEndpoint,
     ) -> Response:
+        service: AuthService | None = None
+        session: ActiveSession | None = None
+        session_token: str | None = None
         if (
             self.settings.auth_mode == "production"
-            and request.method not in SAFE_METHODS
             and not request.url.path.startswith("/render-worker/")
             # A chunked-upload part authenticates with its session's upload
             # token, never the cookie; the route checks the token and Origin.
@@ -41,21 +55,76 @@ class SessionCsrfMiddleware(BaseHTTPMiddleware):
             and not is_upload_part_request(request.method, request.scope.get("path", ""))
         ):
             session_token = request.cookies.get(self.settings.auth_session_cookie_name)
-            owner_id = self.auth_service_factory().resolve_session(session_token)
-            if owner_id is None:
-                return _protect_browser_response(request, JSONResponse(
-                    status_code=401,
-                    content={"detail": "Authentication required"},
-                    headers={"WWW-Authenticate": "Session"},
-                ))
-            request.state.authenticated_owner_id = owner_id
-            if request.headers.get("origin") not in self.settings.runtime_cors_origins:
-                return _protect_browser_response(request, JSONResponse(
-                    status_code=403,
-                    content={"detail": "Untrusted request origin"},
-                ))
+            if request.method not in SAFE_METHODS:
+                service = self.auth_service_factory()
+                session = service.resolve_active_session(session_token)
+                if session is None:
+                    return _protect_browser_response(request, JSONResponse(
+                        status_code=401,
+                        content={"detail": "Authentication required"},
+                        headers={"WWW-Authenticate": "Session"},
+                    ))
+                request.state.authenticated_owner_id = session.owner_id
+                if request.headers.get("origin") not in self.settings.runtime_cors_origins:
+                    return _protect_browser_response(request, JSONResponse(
+                        status_code=403,
+                        content={"detail": "Untrusted request origin"},
+                    ))
+            elif session_token:
+                # Off the event loop, like the owner dependency that used to do it for reads.
+                service = self.auth_service_factory()
+                session = await run_in_threadpool(_resolve_for_read, service, session_token)
+                if session is not None:
+                    request.state.authenticated_owner_id = session.owner_id
         response = await call_next(request)
+        if (
+            service is not None
+            and session is not None
+            and session_token is not None
+            # Sign-in, logout and account deletion set or clear this cookie
+            # themselves; their answer stands.
+            and not _sets_cookie(response, self.settings.auth_session_cookie_name)
+        ):
+            lifetime = await run_in_threadpool(_renew_quietly, service, session_token, session)
+            if lifetime is not None:
+                set_session_cookie(response, self.settings, session_token, max_age=lifetime)
         return _protect_browser_response(request, response)
+
+
+def _resolve_for_read(service: AuthService, session_token: str) -> ActiveSession | None:
+    try:
+        return service.resolve_active_session(session_token)
+    except Exception:
+        # A read decides nothing here: the route's owner dependency resolves
+        # again and fails exactly as it did before.
+        return None
+
+
+def _renew_quietly(service: AuthService, session_token: str, session: ActiveSession) -> int | None:
+    try:
+        return service.renew_session(session_token, session)
+    except Exception:
+        # The session keeps what it has left; the next request tries again.
+        logger.warning("Session renewal was unavailable")
+        return None
+
+
+def _sets_cookie(response: Response, cookie_name: str) -> bool:
+    prefix = f"{cookie_name}="
+    return any(value.startswith(prefix) for value in response.headers.getlist("set-cookie"))
+
+
+def set_session_cookie(response: Response, runtime_settings: Settings, session_token: str, *, max_age: int) -> None:
+    """The session cookie, with the same attributes on sign-in and on every renewal."""
+    response.set_cookie(
+        runtime_settings.auth_session_cookie_name,
+        session_token,
+        max_age=max_age,
+        httponly=True,
+        secure=runtime_settings.auth_cookie_secure,
+        samesite="lax",
+        path="/",
+    )
 
 
 def normalize_owner_id(owner_id: str | None = None) -> str:

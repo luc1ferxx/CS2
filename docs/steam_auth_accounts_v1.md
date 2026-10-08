@@ -102,7 +102,8 @@ The full protocol, the retention of deleted data in backups and logs, and the te
 | `AUTH_COOKIE_SECURE` | `false` | Must be true in production. |
 | `AUTH_SESSION_COOKIE_NAME` | `__Host-cs2_session` | Opaque session cookie; `__Host-` required in production. |
 | `STEAM_AUTH_STATE_COOKIE_NAME` | `__Host-cs2_steam_state` | Single-use Steam state cookie; distinct `__Host-` name required in production. |
-| `AUTH_SESSION_TTL_SECONDS` | `3600` | Redis/browser session lifetime. |
+| `AUTH_SESSION_TTL_SECONDS` | `3600` | Idle window of the Redis/browser session; renewed while in use. |
+| `AUTH_SESSION_MAX_AGE_SECONDS` | `86400` | Absolute cap from sign-in for sliding renewal. |
 | `AUTH_LOGIN_TTL_SECONDS` | `300` | Single-use login-attempt lifetime. |
 | `AUTH_CLOCK_SKEW_SECONDS` | `30` | Allowed future clock skew for the OpenID nonce. |
 | `STEAM_OPENID_NONCE_TTL_SECONDS` | `600` | Assertion freshness and replay-reservation window; must cover login TTL plus skew. |

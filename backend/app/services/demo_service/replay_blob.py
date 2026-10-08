@@ -1,5 +1,6 @@
 """The replay contract artifact: write/load/public projection, its video section and status, and the prepare/commit/abort transaction every video mutation goes through."""
 
+import copy
 import io
 import json
 from dataclasses import dataclass
@@ -16,6 +17,7 @@ from app.services.demo_service.constants import REPLAY_ARTIFACT_MISSING_MESSAGE
 from app.services.demo_service.errors import DemoGoneError, ReplayBlobUnavailableError
 from app.services.demo_service.gone import gone_rows_raise, row_identity
 from app.services.demo_service.projection import _project_fields, _public_render_failure, _public_replay_contract
+from app.services.demo_service.replay_response_cache import is_cacheable_replay_key, replay_response_cache
 from app.services.demo_service.replay_warmer import announce_replay_ready
 from app.services.storage import ArtifactStoreError
 
@@ -156,7 +158,29 @@ class ReplayBlob(ServiceComponent):
         )
 
     def get_video_status(self, demo: Demo) -> dict[str, Any]:
+        """The replay's internal video section, or the pending default when there is no replay.
+
+        The library row, /video, /render/jobs and every media Range request
+        ask for this. An ``artifact://`` replay never changes behind its key
+        (replay_response_cache.py), so its video section is read once and then
+        served from the response cache's video memo; legacy ``local://`` keys,
+        rewritten in place, still read the replay each time. Writers that must
+        see the current replay re-read it under the row lock
+        (prepare_replay_video_update), not through this memo.
+        """
+        replay_key = getattr(demo, "replay_storage_key", None)
+        if is_cacheable_replay_key(replay_key):
+            memoized = replay_response_cache.video_for(replay_key)
+            if memoized is not None:
+                # A copy: callers build the next video section from it.
+                return copy.deepcopy(memoized)
         replay = self.load_replay_blob(demo)
+        if replay is not None and is_cacheable_replay_key(replay_key):
+            video = _replay_video_section(replay)
+            replay_response_cache.remember_video(
+                replay_key, demo_id=demo.id, owner_id=demo.owner_id, video=video
+            )
+            return video
         if replay is None:
             return {
                 "status": "pending",

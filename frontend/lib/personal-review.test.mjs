@@ -28,6 +28,7 @@ function load(relativePath) {
       if (specifier === "@/lib/coaching-copy") return load("./coaching-copy.ts");
       if (specifier === "@/lib/coaching-review") return load("./coaching-review.ts");
       if (specifier === "@/lib/bomb-site") return load("./bomb-site.ts");
+      if (specifier === "@/lib/replay-events") return load("./replay-events.ts");
       throw new Error(`Unexpected runtime import: ${specifier}`);
     }
   }, { filename });

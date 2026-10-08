@@ -65,7 +65,7 @@ if TYPE_CHECKING:
 # Bump whenever the public replay changes for the same stored replay: the
 # projection in projection.py, the defaults normalize_replay_contract fills in,
 # or the serialization below.
-PUBLIC_REPLAY_CACHE_VERSION = "public_replay_cache_v1"
+PUBLIC_REPLAY_CACHE_VERSION = "public_replay_cache_v2"
 # Browsers never store a replay: _protect_browser_response (core/auth.py) sends private, no-store on
 # every private path, so the ETag/304 serves non-browser clients and the server cache does the work.
 CACHE_CONTROL = "private, no-store"

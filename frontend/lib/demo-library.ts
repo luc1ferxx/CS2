@@ -524,17 +524,6 @@ export function playbackReadiness(demo: DemoSummary): PlaybackReadiness {
   return "unavailable";
 }
 
-const PLAYBACK_LABELS: Record<PlaybackReadiness, string> = {
-  ready: "Play",
-  rendering: "Rendering",
-  none: "Watch 2D",
-  unavailable: "Not ready"
-};
-
-export function playbackActionLabel(readiness: PlaybackReadiness): string {
-  return PLAYBACK_LABELS[readiness];
-}
-
 export function detailSummaryItems(input: DetailSummaryInput): DetailSummaryItem[] {
   const { status, replay, latestRenderJob } = input;
   const video = replay?.video ?? null;

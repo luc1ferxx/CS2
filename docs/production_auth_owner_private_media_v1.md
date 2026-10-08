@@ -122,7 +122,8 @@ All identity-provider values are server-side. Do not place secrets in `NEXT_PUBL
 | `AUTH_COOKIE_SECURE` | Must be enabled | Requires the session and state cookies to travel over HTTPS. |
 | `AUTH_SESSION_COOKIE_NAME` | Defaults to `__Host-cs2_session`; production requires `__Host-` | Opaque browser session cookie. |
 | `AUTH_STATE_COOKIE_NAME` | Defaults to `__Host-cs2_oidc_state`; production requires a distinct `__Host-` name | Short-lived login state cookie. |
-| `AUTH_SESSION_TTL_SECONDS` | `1..86400`; default `3600` | Redis/browser session lifetime, capped by identity-token expiry. |
+| `AUTH_SESSION_TTL_SECONDS` | `1..86400`; default `3600` | Idle window of the Redis/browser session, renewed while in use (sliding). |
+| `AUTH_SESSION_MAX_AGE_SECONDS` | `TTL..86400`; default `86400` | Absolute cap from sign-in; renewal never extends a session past it. |
 | `AUTH_LOGIN_TTL_SECONDS` | `1..600`; default `300` | Single-use OIDC login-attempt lifetime. |
 | `AUTH_CLOCK_SKEW_SECONDS` | `0..300`; default `30` | Bounded timestamp validation leeway. |
 | `REDIS_URL` | Required runtime dependency | Opaque sessions and one-time login attempts. |

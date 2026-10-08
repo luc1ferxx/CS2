@@ -4,6 +4,7 @@ import type {
 } from "@/types/coaching";
 import type { PlayerSide, ReplayFrame, ReplayPlayer, ReplayRound } from "@/types/replay";
 import { bombPlantEvidenceLabel, normalizeBombSite } from "@/lib/bomb-site";
+import { weaponName } from "@/lib/replay-events";
 
 export type SeverityFilter = "all" | "high" | "medium" | "low";
 export type RuleFilter =
@@ -585,7 +586,7 @@ const MOVEMENT_KEYS = new Set(["W", "A", "S", "D"]);
 function shootingFacts(context: Record<string, unknown>, rule: string, withDeath: boolean): string {
   const speed = factSpeed(context.speed);
   const accurate = factSpeed(context.accurateSpeed);
-  const weapon = factText(context.weaponLabel);
+  const weapon = shotWeaponLabel(context);
   const stableLine = accurate ? `${weapon ? `${weapon} ` : ""}稳定线 ${accurate}` : "";
   const killer = factText(context.attackerName);
   const death = withDeath && context.died === true ? (killer ? `被 ${killer} 击杀` : "2 秒内阵亡") : "";
@@ -625,6 +626,7 @@ export function playerEvidenceForEvent(event: CoachingEvent): EvidenceSummaryIte
     else if (key === "utilityType" || key === "utilityLabel") text = utilityName(value) || formatEvidenceValue(value);
     else if (key === "utilityTypes" && Array.isArray(value)) text = value.slice(0, 6).map((item) => utilityName(item) || String(item)).join("、");
     else if (key === "keysAtShot" && Array.isArray(value)) text = value.slice(0, 4).join("+");
+    else if (key === "weaponLabel") text = shotWeaponLabel(context) || formatEvidenceValue(value);
     else text = formatEvidenceValue(value);
     summary.push({ label: key, value: text });
     if (summary.length >= 5) break;
@@ -769,6 +771,12 @@ function factSpeed(value: unknown): string {
 
 function factText(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
+}
+
+// A shooting card's weapon in the same Chinese names as the death cards; the analyzer's
+// English `weaponLabel` only when the card carries no weapon key.
+function shotWeaponLabel(context: Record<string, unknown>): string {
+  return weaponName(context.weapon) ?? factText(context.weaponLabel);
 }
 
 // Natural phrasing, not a dot-joined meta string.

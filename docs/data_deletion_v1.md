@@ -87,7 +87,7 @@ Caddy 路由：
 ## 会话撤销
 
 - 新签发的会话记录多一个 `issuedAt`（毫秒）。
-- 删除账户时写入 `auth:owner-revoked:{sha256(owner_id)}`，值为当前毫秒时间，TTL 为 86400 + 300 秒（production 会话最长 86400 秒，再加时钟余量）。
+- 删除账户时写入 `auth:owner-revoked:{sha256(owner_id)}`，值为当前毫秒时间，TTL 为 86400 + 300 秒（production 会话从登录起最长 86400 秒，再加时钟余量）。会话使用中会滑动续期，但续期不超过从登录起的 `AUTH_SESSION_MAX_AGE_SECONDS`（production 校验它不超过 86400），也不改 `issuedAt`，所以标记仍然比它要撤销的每个会话活得久。
 - 解析会话时，如果该 owner 有撤销标记，并且会话没有 `issuedAt` 或 `issuedAt` ≤ 标记，就删除这个会话并返回 `401`。
 - 只用到 Redis 的 `get`、`setex` 和 `delete`，所以测试里现有的 FakeRedis 都能用。
 - 标记存在期间，删除前签发的会话全部失效；标记过期时，这些会话本身也早已过期。

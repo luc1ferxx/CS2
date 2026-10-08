@@ -368,7 +368,10 @@ describe("CoachingPanel 本场最值得回看", () => {
     expect(ids().sort()).toEqual(["a", "b", "c", "d", "e", "g"]);
     // The totals elsewhere still count every suggestion.
     expect(screen.getByRole("button", { name: /^全部回合/ })).toHaveTextContent("全部回合 7 条");
-    expect(screen.getByText("已评价 0/7")).toBeInTheDocument();
+    const rated = screen.getByText("已评价 0/7");
+    // Visible (the beta's success signal), not tucked into a screen-reader-only span.
+    expect(rated).toHaveClass("coaching-progress-chip");
+    expect(rated.closest(".visually-hidden")).toBeNull();
   });
 
   it("seeks, rates and highlights from a card in the block like from any other card", async () => {

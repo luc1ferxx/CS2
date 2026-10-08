@@ -26,7 +26,7 @@
 | 场景 | 说明 |
 | --- | --- |
 | 比赛库 `/dashboard` | 上传 `.dem`（分片并行上传，断网自动重试，刷新页面后重新选择同一个文件即可续传；显示进度，可取消，可拖拽）、解析状态、失败原因与重新处理、每场比分（战队名取自 demo）、搜索、按地图和状态筛选、排序、重命名、软归档；永久删除（需确认，不可撤销） |
-| 复盘工作区 `/demos/{id}` | 战术地图、回合条、时间轴、播放控制与键盘快捷键；地图、时间轴、回合和建议共用同一个时间与回合状态；复盘位置写入网址，刷新后可恢复；再次打开同一场比赛时，浏览器先向 API 校验，回放没变就不重新下载（`304`），API 也在内存里缓存最近返回的回放，省掉每次约 1 秒的读取和计算 |
+| 复盘工作区 `/demos/{id}` | 战术地图、回合条、时间轴、播放控制与键盘快捷键；地图、时间轴、回合和建议共用同一个时间与回合状态；复盘位置写入网址，刷新后可恢复；浏览器不保存回放（响应是 `private, no-store`），快的是 API 这一侧：最近返回过的回放留在 API 内存里，解析完成后和 API 重启时还会在后台预先填好，所以打开比赛（包括第一次）通常不用再花约 1 秒读取和计算 |
 | 实时名单与道具 | 播放时两队名单随时间更新：金钱、血量、护甲、武器、携带的道具、到此刻的击杀/死亡、全队装备价值；地图上显示飞行中的道具和烟雾、火、闪光、手雷的效果范围 |
 | 实时按键显示 | 回放时显示一名玩家此刻按着的键：W/A/S/D、静步（Shift）、蹲（Ctrl）、跳（空格）和鼠标左右键，按下的键亮起；跟随在地图或名单上点选的玩家，没有点选时跟随正在复盘的玩家，阵亡后隐藏。面板不遮挡地图：宽屏复盘工作台上放在该玩家所在队伍名单的底部，较窄、较矮的屏幕和手机上放在地图下方。按键来自 demo 里的 usercmd 记录，没有这类数据的 demo 不显示（目前只在 BLAST.tv 的 GOTV demo 上验证过）；较早上传的比赛在后台重新解析后才会出现。面板的视觉设计改编自 [cs2-sandbox](https://github.com/bugkingZHT/cs2-sandbox)（MIT，见 [THIRD_PARTY_NOTICES](THIRD_PARTY_NOTICES.md)） |
 | 回合经济 | 回合条下标出两队每回合的经济类型（手枪局 / 全起 / 强起 / 半起 / ECO，按冻结时间结束时的装备价值和余钱判断），可按类型和队伍筛选回合；"经济"面板画出每回合两队的装备价值，并统计各经济类型的回合数和胜场。旧比赛没有经济数据时不显示 |
@@ -97,7 +97,7 @@ cd frontend && npm install && npm run dev
 - **上传流程**：浏览器先建上传会话，再把 `.dem` 按 8 MiB 分片、最多 4 片并行上传到 API 主机的本地暂存盘（每片核对长度和 SHA-256，第 0 片当场检查文件签名），断网时退避重试，刷新后可续传；最后 `complete` 把各片拼成一个流交给原有的 intake：先流式写入隔离区，同时计算真实长度和 SHA-256，校验通过后才转为正式文件，并在同一个事务里建比赛、解析任务和上传账本。旧的单请求 `POST /uploads/demo` 保留给 curl 和冒烟脚本，走同一个 intake。见 [api_reference_v1](docs/api_reference_v1.md#分片上传会话)。
 - **存储与数据库**：所有文件都经过 `backend/app/services/storage/` 的统一接口读写；PostgreSQL 只存元数据和存储引用。
 - **任务队列**：带租约和数据库对账。worker 崩溃后，任务会自动回到队列。
-- **回放响应缓存**：`GET /demos/{id}/replay` 先做 owner 检查，再按回放存储引用和公开视频状态算出 `ETag`，带 `Cache-Control: private, no-store`（和其他登录后的响应一样，浏览器不保存回放），`If-None-Match` 匹配时返回 `304`。API 进程在内存里按 LRU 缓存最近返回的 gzip 响应（`REPLAY_RESPONSE_CACHE_MB`，默认 64，`0` 关闭），重启即清空；删除比赛后路由直接返回 `404`。缓存会在后台预热：解析完成、回放升级、视频写入之后（worker 通过 Redis 频道 `REPLAY_READY_CHANNEL` 通知 API），以及 API 重启时最近完成的 `REPLAY_WARM_RECENT` 场真实比赛（默认 10），所以第一次打开也直接命中（`REPLAY_WARM_ENABLED`，默认开）。预热只填同一份内存缓存，不另存任何东西。见 [api_reference_v1](docs/api_reference_v1.md#回放响应缓存etag-与-304)。
+- **回放响应缓存**：`GET /demos/{id}/replay` 先做 owner 检查，再按回放存储引用和公开视频状态算出 `ETag`，带 `Cache-Control: private, no-store`（和其他登录后的响应一样，浏览器不保存回放），`If-None-Match` 匹配时返回 `304`。API 进程在内存里按 LRU 缓存最近返回的 gzip 响应（`REPLAY_RESPONSE_CACHE_MB`，默认 64，`0` 关闭），重启即清空；删除比赛后路由直接返回 `404`。缓存会在后台预热：解析完成、回放升级、视频写入之后（worker 通过 Redis 频道 `REPLAY_READY_CHANNEL` 通知 API），以及 API 重启时最近完成的 `REPLAY_WARM_RECENT` 场真实比赛（默认 10），所以第一次打开也直接命中（`REPLAY_WARM_ENABLED`，默认开）。预热只填同一份内存缓存，不另存任何东西。返回的是公开投影而不是存储的回放：玩家、炸弹和事件的高度 `z` 取到 0.1，不带存储里重复的 `kills`/`deaths` 列表（前端从 `events` 算击杀），gzip 后小约两成；存储的回放和规则分析的输入保持原精度。见 [api_reference_v1](docs/api_reference_v1.md#回放响应缓存etag-与-304)。
 - **比分摘要**：解析完成时把双方战队名、开局阵营和最终比分存进 `demos.match_summary`（按玩家帧判定每回合阵营，半场和加时换边都算对），比赛库和复盘页从 `matchSummary` 读取；此前已完成、或摘要版本低于当前版本（2）的比赛由 worker 空闲时回填，只读 replay 和源 `.dem`，不改 replay。阵营、队伍和比分的判定规则前后端各实现一份，写在 `match_summary.py` 和 `frontend/lib/match-stats.ts` 的注释里，由共享用例 `fixtures/match-rules/` 固定。见 [api_reference_v1](docs/api_reference_v1.md)。
 - **后台补算**：worker 空闲时（队列里有任务就让出）每轮最多处理一场已完成的比赛，不改比赛状态和时间，也不占上传次数。
   - 回放早于当前契约的比赛，从存储的 `.dem` 重新解析一次（`REPLAY_UPGRADE_ENABLED` / `REPLAY_UPGRADE_MAX_ATTEMPTS` / `REPLAY_UPGRADE_RETRY_SECONDS`）；这一步不重新分析建议。
@@ -187,7 +187,7 @@ PYTHONPATH=backend .venv/bin/python -m unittest discover backend/tests
 
 ## 安全与隐私边界
 
-- **身份**：production 使用 Steam OpenID 2.0，验证 SteamID64 后映射到不透明的账号 ID，会话保存在 Redis，通过 `HttpOnly` cookie 传递。不在邀请名单里的账号不会被创建；从名单移除后，已有会话立即失效。
+- **身份**：production 使用 Steam OpenID 2.0，验证 SteamID64 后映射到不透明的账号 ID，会话保存在 Redis，通过 `HttpOnly` cookie 传递。会话按 1 小时的空闲窗口滑动续期（`AUTH_SESSION_TTL_SECONDS`）：请求时发现剩余不到一半，就把 Redis 记录和 cookie 的有效期续回一个窗口，不使用时最多 1 小时后过期；但从登录起最长 24 小时（`AUTH_SESSION_MAX_AGE_SECONDS`），到时要重新登录；续期不改签发时间，所以删除账户时的"全部会话失效"照常生效。不在邀请名单里的账号不会被创建；从名单移除后，已有会话立即失效。
 - **数据隔离**：所有用户接口都按账号隔离；私有媒体在每次读取时都会重新校验会话和归属，不存在公开的静态文件目录。
 - **开发工具**：模拟数据、手动 MP4、模拟渲染和 API 文档页在 production 一律返回 `404`；前端根据 `/auth/me` 返回的能力开关隐藏对应入口。
 - **防滥用**：
@@ -197,7 +197,7 @@ PYTHONPATH=backend .venv/bin/python -m unittest discover backend/tests
   - 并发的上传和重试通过加锁排队，不能绕过同时处理数的上限；
   - 解析在子进程里运行，默认超时 20 分钟、内存上限 4 GB。
 - **Steam 比赛授权**：与登录分离。Game Authentication Code 和分享码在服务端以 AES-256-GCM 加密保存，不会回传给浏览器。
-- **开发模式**：可以用 `X-Dev-User-Id` 模拟不同用户，这个请求头在 production 会被拒绝。
+- **开发模式**：可以用 `X-Dev-User-Id` 模拟不同用户，production 忽略这个请求头（不会用它选中任何账号），只认登录会话。
 
 **隐私**：下面的事实与公开的 `/privacy` 页面（`frontend/app/privacy/page.tsx`）一致。改动数据的收集、保存或删除方式时，两边要一起改，同时更新 [data_deletion_v1](docs/data_deletion_v1.md)。
 
@@ -213,14 +213,14 @@ PYTHONPATH=backend .venv/bin/python -m unittest discover backend/tests
   - 上传还没完成时，已收到的分片连同规范化后的文件名和大小暂存在网站服务器的本地磁盘上（命名卷 `upload-staging`），上传完成时转存为比赛文件；放弃、从开始上传起 24 小时后仍未完成，或删除账户时删除。
 - **Steam 比赛记录（可选）**：只有用户主动关联时才保存，内容是加密后的游戏验证码和比赛分享码。每次点"同步"才向 Valve 查询；断开关联即删除。
 - **Cookie 和浏览器存储**：
-  - 只有两个必需的 cookie：`__Host-cs2_session` 保持登录 1 小时，`__Host-cs2_steam_state` 只在登录过程中存在 5 分钟。没有统计或广告 cookie。
+  - 只有两个必需的 cookie：`__Host-cs2_session` 保持登录，不使用时最多 1 小时后过期，使用中自动续期，但从登录起最长 24 小时；`__Host-cs2_steam_state` 只在登录过程中存在 5 分钟。没有统计或广告 cookie。
   - localStorage 只存两项："你在比赛里选的玩家"偏好（含本人 SteamID64），以及未完成上传的续传记录（文件名、大小、文件修改时间和上传编号，上传完成或放弃后清除）。删除账户时两项都在当前浏览器清除。
 - **日志**：服务器访问日志记录 IP 地址、浏览器标识和访问的页面地址（含搜索词），用于排查故障和防滥用。日志按大小轮转（每个服务最多约 50 MB），不按时间删除。
 - **存放位置和第三方**：
   - 网站跑在一台海外 VPS 上，地区由 `NEXT_PUBLIC_DATA_REGION` 写在隐私页。比赛文件和备份在 Cloudflare R2 私有存储桶。
   - 经手数据的第三方只有：VPS 服务商、Cloudflare（存储）、Valve/Steam（登录、公开资料、用户主动开启的比赛记录同步）、Let's Encrypt（只签发 HTTPS 证书）。不出售，也不共享给其他人。
 - **保存与删除**：
-  - 账户和比赛一直保存，直到用户删除；会话 1 小时后过期；未完成的上传最多保留 24 小时。
+  - 账户和比赛一直保存，直到用户删除；登录会话不使用时最多 1 小时后过期，使用中自动续期，从登录起最长保留 24 小时；未完成的上传最多保留 24 小时。
   - 可以永久删除单场比赛（`DELETE /demos/{id}`），也可以在 `/account` 删除账户和全部数据（`DELETE /auth/account`，仅 production），所有设备上的登录同时失效。
   - 删除立即作用于数据库和存储，存储清理失败会自动重试。API 为加快打开速度在内存里暂存的回放响应只在内存里，删除后读不到，重启后也不保留。每日备份里的副本最多再保留 30 天；从备份恢复后，站长会重做那之后的删除。
   - 用户自己无法删除时（同场其他玩家的移除请求、已被移出邀请名单的用户），站长用运维命令 `python -m app.cli.delete_data` 代为删除，走同一套删除流程（见 [data_deletion_v1](docs/data_deletion_v1.md#代用户删除)）。
@@ -233,7 +233,7 @@ PYTHONPATH=backend .venv/bin/python -m unittest discover backend/tests
 ## 已知限制
 
 - **建议是否真的有用还没有经过真人验证。** 规则阈值来自 Dust II 上的手工调整；评价功能已上线，要靠内测数据来校正。
-- **地图坐标精度不一**：只有 Dust II 和 Nuke 使用真实的 CS2 overview 校准；Mirage、Inferno、Ancient、Anubis 仍是手估范围；其他地图按单场比赛的站位范围推算。
+- **只有六张地图有雷达底图**：Dust II、Mirage、Inferno、Ancient、Nuke、Anubis 的雷达图都由本项目按坐标配置里的同一个变换从导航网格渲染，玩家位置与底图天然对齐，六张图都标为已校准（ff6759f 起）；其他地图没有底图，按单场比赛的站位范围推算坐标。
 - **不能自动下载比赛**：Valve 没有公开个人比赛的下载接口，仓库也没有获得许可的来源，所以只能手动上传 `.dem`。相关导入代码已经写好并有测试，但在这个版本里走不到。
 - **解析是单 worker 串行执行**：崩溃恢复是自动的，但有分钟级延迟。租约为 60 秒；如果 Redis 数据全部丢失，排队中的任务约 5 分钟（`PARSE_REDISPATCH_AFTER_SECONDS`）后重新投递，正在解析的任务要等 `PARSE_RECLAIM_AFTER_SECONDS`（默认 30 分钟）。
 - **CI 不解析真实 `.dem`**：真实文件只在可选的样本冒烟测试里校验。
@@ -257,7 +257,7 @@ PYTHONPATH=backend .venv/bin/python -m unittest discover backend/tests
 
 1. 完成上线计划剩下的阶段：解析器资源隔离，数据库迁移，自动部署与回滚，监控告警，备份恢复；配置 HTTPS 入口，并在真实 HTTPS 部署上跑一次 Steam 登录冒烟。
 2. ~~支持真正删除比赛和账号，补上隐私条款~~（已完成：永久删除比赛和账户、`/privacy` 隐私说明页，见 [data_deletion_v1](docs/data_deletion_v1.md)）；~~去掉第三方雷达图~~（已完成：原来的 MIT/GPL 第三方雷达图已换成本项目从 CS2 导航网格渲染的图，见 [scripts/maps](scripts/maps/README.md)）；这些图由 Valve 的游戏数据派生，能否公开分发还没有单独确认，扩大开放前要确认。
-3. 邀请少量玩家内测，用评价数据调整规则阈值、去重和排序；校准更多地图。
+3. 邀请少量玩家内测，用评价数据调整规则阈值、去重和排序；支持更多地图。
 4. 视内测反馈，再决定是否扩大开放、是否恢复第一人称片段。
 
 ## 文档索引

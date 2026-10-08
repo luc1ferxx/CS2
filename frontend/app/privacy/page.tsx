@@ -10,7 +10,7 @@ export const metadata: Metadata = {
   title: "隐私说明"
 };
 
-const PRIVACY_UPDATED = "2026-10-04";
+const PRIVACY_UPDATED = "2026-10-07";
 
 // Public: visitors read it before signing in, so it never sits behind the auth boundary.
 export default function PrivacyPage() {
@@ -71,7 +71,7 @@ export default function PrivacyPage() {
           <PrivacySection id="cookies" title="Cookie 和浏览器存储">
             <p>只有两个必需的 Cookie，没有统计或广告 Cookie：</p>
             <ul>
-              <li><code>__Host-cs2_session</code>：保持登录，1 小时后过期。</li>
+              <li><code>__Host-cs2_session</code>：保持登录。不使用时最多 1 小时后过期，使用中会自动续期，但最迟在登录 24 小时后过期。</li>
               <li><code>__Host-cs2_steam_state</code>：只在登录过程中使用，5 分钟后过期。</li>
             </ul>
             <p>浏览器本地存储里有两项：</p>
@@ -102,7 +102,7 @@ export default function PrivacyPage() {
           </PrivacySection>
 
           <PrivacySection id="retention" title="保存多久">
-            <p>账户和比赛会一直保存，直到你删除，或站长应你的要求代为删除；登录会话 1 小时后过期；未完成的上传最多保留 24 小时。</p>
+            <p>账户和比赛会一直保存，直到你删除，或站长应你的要求代为删除；登录会话不使用时最多 1 小时后过期，使用中自动续期，从登录起最长保留 24 小时；未完成的上传最多保留 24 小时。</p>
             <p>被移出邀请名单后你将无法再登录，但数据不会因此自动删除；需要删除时请联系站长代为处理。</p>
           </PrivacySection>
 

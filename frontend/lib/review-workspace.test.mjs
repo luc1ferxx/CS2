@@ -15,7 +15,7 @@ function load(path, imports = {}) {
   return module.exports;
 }
 const clips = load("./render-clips.ts");
-const { savedClipAtTick, usesVideoClock, roundClock } = load("./review-workspace.ts", { "@/lib/render-clips": clips });
+const { savedClipAtTick, usesVideoClock } = load("./review-workspace.ts", { "@/lib/render-clips": clips });
 const makeClip = (id, start, end, player = "xelex") => ({
   job_id: id, demo_id: "match", job_type: "render_clip", status: "completed", pov_steam_id: player, metadata: {},
   video: { status: "ready", source: "rendered", url: `/demos/match/render/jobs/${id}/media/video`,
@@ -37,6 +37,4 @@ assert.equal(savedClipAtTick([old], NaN, "xelex"), null);
 assert.equal(usesVideoClock("map", "active"), false, "Explicit tactical mode cannot wait on an unmounted video clock");
 assert.equal(usesVideoClock("auto", "active"), true);
 for (const state of ["unavailable", "outside-clip", "different-player"]) assert.equal(usesVideoClock("auto", state), false);
-assert.equal(roundClock(14299, 12500, 64), "00:28");
-assert.equal(roundClock(12500, 12500, 64), "00:00");
 console.log("Workspace clip selection, POV isolation, half-open coverage and map/video clock checks passed.");

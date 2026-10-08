@@ -50,7 +50,8 @@ Production credentials 绝不能进入 `NEXT_PUBLIC_*`、源码、日志、签�
 | `BACKEND_PUBLIC_URL` | `http://localhost:8000` | backend public origin; same exact origin as frontend in production |
 | `AUTH_COOKIE_SECURE` | `false` | must be enabled in production |
 | `AUTH_SESSION_COOKIE_NAME` | `__Host-cs2_session` | opaque session cookie name |
-| `AUTH_SESSION_TTL_SECONDS` | `3600` | bounded Redis/browser session lifetime |
+| `AUTH_SESSION_TTL_SECONDS` | `3600` | 会话的空闲窗口（Redis 记录和浏览器 cookie 的 `Max-Age`）：production 下请求解析到有效会话、且剩余不到一半时，`SessionCsrfMiddleware` 把它续回这个长度（只改 `expiresAt`，`issuedAt` 不变，撤销逻辑照旧），并重发同属性的 cookie；不超过 `AUTH_SESSION_MAX_AGE_SECONDS`。分片上传的 part `PUT` 和 `/render-worker/` 不续期。production 要求 1–86400 |
+| `AUTH_SESSION_MAX_AGE_SECONDS` | `86400` | 会话从登录起的绝对上限：续期永远不越过它，到点必须重新登录。production 要求不小于 `AUTH_SESSION_TTL_SECONDS`、不大于 86400（账户删除写的撤销标记只保留 86400 s 加时钟偏差） |
 | `AUTH_LOGIN_TTL_SECONDS` | `300` | bounded one-time login attempt lifetime |
 | `AUTH_CLOCK_SKEW_SECONDS` | `30` | bounded identity timestamp leeway |
 | `CORS_ORIGINS` | `http://localhost:3000,http://127.0.0.1:3000` | backend API; production requires only the exact `FRONTEND_PUBLIC_URL` origin |
@@ -163,7 +164,7 @@ worker 空闲时（队列里有任务就让出）依次跑这两项，每项每�
 | `UPLOAD_SESSION_TTL_SECONDS` | `86400` | API; 会话从创建算起的硬过期时间（`3600`..`604800`，不续期）。过期后分片 `PUT` 和 `complete` 返回 `404`，清扫删除行和暂存分片。`/privacy` 写明未完成的上传最多保留 24 小时：调大之前先改隐私页 |
 | `UPLOAD_SESSION_GLOBAL_LIMIT` | `6` | API; 全站同时打开（`open` / `completing`）的会话上限（`1`..`64`），满了建会话返回 `503` `upload_capacity_busy`。暂存盘最多约占这个数 × `MAX_DEMO_UPLOAD_BYTES` |
 | `UPLOAD_STAGING_MIN_FREE_BYTES` | `5368709120` | API; 建会话时暂存盘至少要剩 `size` + 这么多字节（`0`..`1 TiB`），否则返回 `503` `upload_storage_full`。Postgres 和 Redis 通常在同一块盘上，这个余量就是留给它们的。开发模式同样生效：Docker Desktop 的虚拟磁盘剩余不到 5 GiB 时，本地上传也会得到 `upload_storage_full`，可以在本地 `.env` 里调小 |
-| `REPLAY_RESPONSE_CACHE_MB` | `64` | API; 进程内存里缓存 `GET /demos/{demo_id}/replay` 算好的 gzip 响应（按总字节数 LRU），并给响应加 `ETag`，`If-None-Match` 命中时返回 `304`；`0` 关闭缓存、`ETag` 和 `304`。目前的 Compose 文件没有把它转发进 `api` 容器，容器里用默认值 |
+| `REPLAY_RESPONSE_CACHE_MB` | `64` | API; 进程内存里缓存 `GET /demos/{demo_id}/replay` 算好的 gzip 响应（按总字节数 LRU），并给响应加 `ETag`，`If-None-Match` 命中时返回 `304`；`0` 关闭缓存、`ETag` 和 `304`。旁边按条数限定（4096）的视频状态备忘不受它影响：比赛库、`/video`、`/render/jobs` 和媒体 Range 请求读 `artifact://` 回放的视频信息时，每个引用只读一次回放。目前的 Compose 文件没有把它转发进 `api` 容器，容器里用默认值 |
 | `REPLAY_WARM_ENABLED` | `true` | API, worker; API 进程里一个后台线程提前把回放响应算好放进上面的缓存（`backend/app/services/demo_service/replay_warmer.py`）：解析完成、回放升级、视频写入之后，以及 API 启动时最近完成的几场，第一次打开就直接命中缓存。`0` 时 API 不启动预热线程，worker 也不再发布通知；`REPLAY_RESPONSE_CACHE_MB=0` 时同样不预热。Compose 没有转发，容器里用默认值 |
 | `REPLAY_WARM_RECENT` | `10` | API; API 启动时预热的「最近完成」比赛场数（按 `completed_at` 倒序，只算真实、未归档、`artifact://` 回放的比赛），`0` 表示启动时不预热。队列最多同时排 32 场，超出丢最早的。Compose 没有转发，容器里用默认值 |
 | `DEMO_UPLOAD_DAILY_LIMIT` | `10` | API; 仅 production：每个 owner 在滚动 24 小时内（按上传账本 `upload_ledger` 计数：每次上传或 Steam 导入写一行，24 小时后清理；归档和永久删除的比赛都照样算）最多新建的 demo 数，超出时 `POST /uploads/demo` 返回 `429` `upload_daily_limit`，`Retry-After` 为窗口内对应那次上传移出窗口的秒数。范围 `0`..`1000`，`0` 表示不限 |

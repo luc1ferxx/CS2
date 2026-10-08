@@ -185,6 +185,10 @@ export const CoachingPanel = memo(function CoachingPanel({
     <aside className="panel coaching-panel" aria-label="重点建议">
       <div className="panel-bar coaching-header">
         <h2 className="panel-bar-title">重点建议</h2>
+        {/* The rated count is the beta's success signal: visible, but as quiet as a chip. */}
+        {selectedPlayerName && progress.total > 0 ? (
+          <span className="coaching-progress-chip" title="已评价的建议 / 当前玩家的全部建议">已评价 {progress.rated}/{progress.total}</span>
+        ) : null}
         <div className="coaching-round-scope" role="group" aria-label="建议回合范围" ref={scopeIndicator.groupRef}>
           <span className="segment-indicator" aria-hidden="true" ref={scopeIndicator.indicatorRef} />
           <button className={scope === "current" ? "active" : ""} type="button" aria-pressed={scope === "current"} onClick={() => changeScope("current")}>
@@ -199,10 +203,9 @@ export const CoachingPanel = memo(function CoachingPanel({
       <div className="coaching-toolbar">
         {selectedPlayerName ? (
           <p className="coaching-header-meta">
-            {/* Who and which round are already in the banner and 本回合; the rated count stays for screen readers. */}
+            {/* Who and which round are already in the banner and 本回合; the rated count is in the header. */}
             <strong className="coaching-header-player visually-hidden">{selectedPlayerName}</strong>
             <span className="coaching-header-round visually-hidden">第 {selectedRound} 回合</span>
-            {progress.total > 0 ? <span className="visually-hidden">已评价 {progress.rated}/{progress.total}</span> : null}
           </p>
         ) : <p className="coaching-header-meta"><span className="coaching-header-round visually-hidden">第 {selectedRound} 回合</span></p>}
         <details className="coaching-filter-toggle">

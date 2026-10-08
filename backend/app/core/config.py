@@ -178,7 +178,10 @@ class Settings:
     steam_demo_download_concurrency_lease_seconds: int = int(
         os.getenv("STEAM_DEMO_DOWNLOAD_CONCURRENCY_LEASE_SECONDS", "120")
     )
+    # Idle window: a session in use is renewed to this again once less than
+    # half of it is left, but never past the absolute cap from its sign-in.
     auth_session_ttl_seconds: int = int(os.getenv("AUTH_SESSION_TTL_SECONDS", "3600"))
+    auth_session_max_age_seconds: int = int(os.getenv("AUTH_SESSION_MAX_AGE_SECONDS", "86400"))
     auth_login_ttl_seconds: int = int(os.getenv("AUTH_LOGIN_TTL_SECONDS", "300"))
     auth_clock_skew_seconds: int = int(os.getenv("AUTH_CLOCK_SKEW_SECONDS", "30"))
     database_url: str = os.getenv(
@@ -440,6 +443,11 @@ class Settings:
             raise RuntimeError("AUTH_COOKIE_SECURE must be enabled in production")
         if not 1 <= self.auth_session_ttl_seconds <= 86_400:
             raise RuntimeError("AUTH_SESSION_TTL_SECONDS must be between 1 and 86400")
+        # The owner revocation marker (auth_service.py) lives 86400 s + skew.
+        if not self.auth_session_ttl_seconds <= self.auth_session_max_age_seconds <= 86_400:
+            raise RuntimeError(
+                "AUTH_SESSION_MAX_AGE_SECONDS must be at least AUTH_SESSION_TTL_SECONDS and at most 86400"
+            )
         if not 1 <= self.auth_login_ttl_seconds <= 600:
             raise RuntimeError("AUTH_LOGIN_TTL_SECONDS must be between 1 and 600")
         if not 0 <= self.auth_clock_skew_seconds <= 300:

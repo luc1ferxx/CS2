@@ -1,6 +1,5 @@
 import type { ReviewEvent } from "@/lib/coaching-review";
 import type { CoachingEvent, CoachingVerdict } from "@/types/coaching";
-import type { ReplayRound } from "@/types/replay";
 
 interface CoachingCopy {
   title: string;
@@ -119,25 +118,12 @@ export function coachingCopy(event: CoachingEvent): CoachingCopy {
   return { title, guidance, limitation: `${limitation}${approximate ? "当前地图校准为近似值。" : ""}` };
 }
 
-export function coachingRuleLabel(id: string, fallback: string): string {
-  return knownCopy(id)?.title ?? fallback;
-}
-
 export function coachingSeverityLabel(severity: string): string {
   return ({ critical: "优先回看", high: "优先回看", medium: "值得留意", low: "细节建议", info: "复盘提示" } as Record<string, string>)[severity] ?? severity;
 }
 
 export function coachingEvidenceLabel(label: string): string {
   return Object.prototype.hasOwnProperty.call(EVIDENCE_LABELS, label) ? EVIDENCE_LABELS[label] : label;
-}
-
-export function coachingLocation(event: CoachingEvent, rounds: ReplayRound[] = [], tickRate?: number): string {
-  const round = rounds.find((candidate) => candidate.roundNumber === event.round_number);
-  const roundLabel = Number.isFinite(event.round_number) ? `第 ${event.round_number} 回合` : "回合未知";
-  if (!round || !Number.isFinite(round.startTick) || !Number.isFinite(event.tick_start) ||
-    !Number.isFinite(tickRate) || (tickRate ?? 0) <= 0 || event.tick_start < round.startTick) return roundLabel;
-  const seconds = Math.floor((event.tick_start - round.startTick) / (tickRate as number));
-  return `${roundLabel} · ${Math.floor(seconds / 60).toString().padStart(2, "0")}:${(seconds % 60).toString().padStart(2, "0")}`;
 }
 
 export function coachingMatchesSearch(reviewEvent: ReviewEvent, rawSearch: string): boolean {
@@ -156,4 +142,11 @@ export const COACHING_VERDICT_LABELS: Record<CoachingVerdict, string> = {
   helpful: "有帮助",
   irrelevant: "无关",
   unsure: "判断不足"
+};
+
+// What each verdict means, on hover and for screen readers: 无关 and 判断不足 are easy to mix up.
+export const COACHING_VERDICT_HINTS: Record<CoachingVerdict, string> = {
+  helpful: "这条建议对复盘有用",
+  irrelevant: "事实没错，但不值得复盘",
+  unsure: "证据不够，判断不了"
 };

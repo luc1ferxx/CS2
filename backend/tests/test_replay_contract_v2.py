@@ -425,6 +425,8 @@ class NormalizerV2Test(unittest.TestCase):
                          "points": [{"tick": 1, "x": 1, "y": 2, "secret": True}], "raw": "x"}],
         })
         public = _public_replay_contract(replay, replay["video"])
+        # Internal analyzer input only; the kill events carry the same facts.
+        self.assertTrue({"kills", "deaths"}.isdisjoint(public))
         self.assertEqual(public["playerStates"], {"p1": [{"tick": 1, "money": 5}]})
         utility = public["utility"]
         assert isinstance(utility, list)

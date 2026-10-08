@@ -953,6 +953,10 @@ class MissingSessionAuthService:
     def resolve_session(_token: str | None) -> None:
         return None
 
+    @staticmethod
+    def resolve_active_session(_token: str | None) -> None:
+        return None
+
 
 def next_code_response(code: str) -> FakeResponse:
     return FakeResponse(200, {"result": {"nextcode": code}})

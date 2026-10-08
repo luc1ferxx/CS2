@@ -143,6 +143,44 @@ class PublicMediaProjectionTest(unittest.TestCase):
         self.assertNotIn("sourcePath", str(projected))
         self.assertNotIn("/data/", str(projected))
 
+    def test_public_replay_rounds_height_and_drops_the_duplicate_kill_lists(self) -> None:
+        demo = add_demo(self.db, "demo-public-height")
+        with tempfile.TemporaryDirectory() as directory, storage_dirs(Path(directory)):
+            service = DemoService.for_internal(self.db)
+            replay = replay_contract(demo.id, storage_key="", url="")
+            replay["frames"] = [{
+                "tick": 32, "roundNumber": 1,
+                "players": [{"id": "player-1", "name": "xelex", "side": "T", "x": 30.12, "y": 40.98,
+                             "z": -167.96875000000003, "alive": True, "hp": 80},
+                            {"id": "player-2", "name": "nozz", "side": "CT", "x": 31.0, "y": 41.0,
+                             "alive": True, "hp": 100}],
+                "bombState": {"status": "dropped", "x": 30, "y": 40, "z": 12.345678901234567},
+            }]
+            replay["events"] = [{"id": "kill-1", "type": "kill", "tick": 30, "roundNumber": 1,
+                                 "x": 30, "y": 40, "z": -700.0400000001, "playerId": "player-1"}]
+            kill = {"tick": 30, "roundNumber": 1, "attackerId": "player-1", "victimId": "player-2"}
+            replay["kills"] = [kill]
+            replay["deaths"] = [kill]
+            bind_replay(self.db, service, demo, replay)
+
+            projected = service.public_replay(demo)
+            stored = service.load_replay_blob(demo)
+
+        assert projected is not None and stored is not None
+        players = projected["frames"][0]["players"]
+        self.assertEqual(players[0]["z"], -168.0)
+        self.assertNotIn("z", players[1])
+        self.assertEqual(projected["frames"][0]["bombState"]["z"], 12.3)
+        self.assertEqual(projected["events"][0]["z"], -700.0)
+        # Only height: radar x/y keep their stored precision.
+        self.assertEqual((players[0]["x"], players[0]["y"]), (30.12, 40.98))
+        self.assertNotIn("kills", projected)
+        self.assertNotIn("deaths", projected)
+        # The stored replay (analyzer input) keeps the full values and both lists.
+        self.assertEqual(stored["frames"][0]["players"][0]["z"], -167.96875000000003)
+        self.assertEqual(stored["kills"], [kill])
+        self.assertEqual(stored["deaths"], [kill])
+
     def test_replay_storage_reference_must_belong_to_the_demo(self) -> None:
         demo = add_demo(self.db, "demo-owner-a")
         foreign_demo = add_demo(self.db, "demo-owner-b")

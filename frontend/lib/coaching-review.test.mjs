@@ -25,6 +25,7 @@ function loadTypeScriptModule(relativePath) {
     module,
     require(specifier) {
       if (specifier === "@/lib/bomb-site") return loadTypeScriptModule("./bomb-site.ts");
+      if (specifier === "@/lib/replay-events") return loadTypeScriptModule("./replay-events.ts");
       if (specifier.startsWith("@/types/")) {
         return {};
       }
@@ -613,6 +614,22 @@ const events = [
   assert.equal(evidence.find((item) => item.label === "weaponLabel").value, "M4A1-S");
   const keys = playerEvidenceForEvent(shooting("no_counter_strafe", { keysAtShot: ["W", "A"] })).find((item) => item.label === "keysAtShot");
   assert.equal(keys.value, "W+A");
+
+  // The weapon reads from the same Chinese table as the death cards, not the analyzer's English label.
+  for (const [weapon, weaponLabel, name] of [
+    ["deagle", "Desert Eagle", "沙漠之鹰"], ["famas", "FAMAS", "法玛斯"], ["galilar", "Galil AR", "加利尔"],
+    ["revolver", "R8 Revolver", "R8 左轮"], ["ak47", "AK-47", "AK-47"]
+  ]) {
+    const card = shooting("no_counter_strafe", { weapon, weaponLabel, speed: 150, hit: false });
+    assert.equal(coachingFacts(card), `第一枪时速度约 150（${name} 稳定线 76），没打中`, weapon);
+    assert.equal(coachingFeed(shooting("moving_shots", { weapon, weaponLabel, speed: 201, movingShotCount: 2 })).finding,
+      `边移动边开了 2 枪（最高速度约 201，${name} 稳定线 76），一枪没中`, weapon);
+    assert.equal(playerEvidenceForEvent(card).find((item) => item.label === "weaponLabel").value, name, weapon);
+  }
+  // Cards without the weapon key keep the analyzer's label.
+  const labelOnly = shooting("no_counter_strafe", { weapon: undefined, weaponLabel: "Desert Eagle", speed: 150, hit: false });
+  assert.equal(coachingFacts(labelOnly), "第一枪时速度约 150（Desert Eagle 稳定线 76），没打中");
+  assert.equal(playerEvidenceForEvent(labelOnly).find((item) => item.label === "weaponLabel").value, "Desert Eagle");
 }
 
 function coachingEvent(overrides) {

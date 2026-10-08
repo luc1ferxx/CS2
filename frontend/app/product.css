@@ -456,15 +456,13 @@
 .review-app .coaching-verdict { display: inline; min-height: 0; margin: 0; padding: 0; border: 0; border-radius: 0; background: none; color: var(--ink-3); font-family: var(--font-body); font-size: var(--step-sm); font-weight: 400; line-height: 20px; cursor: pointer; }
 .review-app .coaching-verdict:hover { color: var(--link-hover); text-decoration: underline; }
 .review-app .coaching-panel .coaching-feedback { display: inline-flex; flex-wrap: wrap; align-items: baseline; gap: 0 3px; margin: 0; }
-.review-app .coaching-panel .coaching-feedback > span:first-child { margin-right: 2px; color: var(--ink-3); }
-.review-app .coaching-verdict-divider { color: var(--line-bold); }
 .review-app .coaching-verdict[aria-pressed="true"] { color: var(--ink); font-weight: 600; }
 .review-app .coaching-feedback[aria-busy="true"] .coaching-verdict { cursor: progress; }
 .review-app .coaching-feedback-status { margin: 2px 0 0; color: var(--danger-text); font-size: var(--step-sm); line-height: var(--leading-body); }
 .review-app .coaching-feedback-status:empty { margin: 0; }
 .review-app .coaching-feedback-status .coaching-link { margin-left: 6px; }
 /* ink-3 is under 4.5:1 on the selected fill, so on the selected row the quiet line moves to ink-2. */
-.review-app .coaching-panel .coaching-feed-row.active :is(.coaching-feed-meta, .coaching-verdict, .coaching-feedback > span:first-child, .coaching-technical-details, .coaching-link:disabled) { color: var(--ink-2); }
+.review-app .coaching-panel .coaching-feed-row.active :is(.coaching-feed-meta, .coaching-verdict, .coaching-technical-details, .coaching-link:disabled) { color: var(--ink-2); }
 .review-app .coaching-panel .coaching-feed-row.active .coaching-verdict[aria-pressed="true"] { color: var(--ink); }
 /* 查看依据: a definition list sunk into the row, on the page's deeper navy. */
 .review-app .coaching-panel .event-ledger-inspector { display: grid; gap: 8px; margin: 6px 0 3px; padding: 8px 10px; border: 0; border-radius: 0; background: var(--page); font-size: var(--step-sm); }
@@ -949,10 +947,12 @@
 .review-app .timeline-lane-track .parser-event-marker:is(.own-death, .has-own-death) { z-index: 2; }
 .review-app .timeline-lane-track :is(.event-marker, .parser-event-marker):is(:hover, :focus-visible) { z-index: 4; }
 /* S14 fix: the suggestions are what the timeline is for, so their marks are the amber ones (solid,
-   wider than the event boxes are tall-thin); lower-severity ones keep the amber at its line strength. */
+   wider than the event boxes are tall-thin); lower-severity ones use a dimmer amber. The marker is a
+   focusable button whose fill is its only edge, so that amber is #8a7642 (3.44:1 on the panel, WCAG
+   1.4.11), not --accent-line (2.7:1), which stays the chip-border tone. */
 .review-app .timeline-lane-track .event-marker { width: 8px; height: 18px; padding: 0; border: 0; border-radius: 0; background: var(--accent); box-shadow: 0 0 0 2px var(--panel); }
 .review-app .timeline-lane-track .event-marker.medium { background: var(--accent); }
-.review-app .timeline-lane-track .event-marker:is(.low, .info) { background: var(--accent-line); }
+.review-app .timeline-lane-track .event-marker:is(.low, .info) { background: #8a7642; }
 .review-app .timeline-lane-track :is(.event-marker, .parser-event-marker):focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 /* Hit areas of at least 24 × 24 that stay inside their 24px lane. */
 .review-app :is(.event-marker, .parser-event-marker)::before { content: ""; position: absolute; inset: -4px -5px; }
@@ -2064,3 +2064,14 @@
   :is(.throw-analysis-panel, .throw-analysis-layer),
   :is(.throw-analysis-panel, .throw-analysis-layer) * { transition: none; animation: none; }
 }
+
+/* === S23 VERDICT PROMPT === the rated count back in sight (a chip after 重点建议) and the three
+   verdicts as one bordered segmented control with hover definitions (review 2026-10-07 §2.4). The row
+   stays quiet: hairline borders, secondary ink, the chosen verdict in the accent. */
+.review-app .coaching-panel .coaching-progress-chip { flex: none; margin-left: 8px; padding: 0 5px; border: 1px solid var(--accent-line); color: var(--accent); font-size: 11px; line-height: 18px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.review-app .coaching-panel .coaching-feedback { display: inline-flex; flex-wrap: nowrap; align-items: stretch; gap: 0; border: 1px solid var(--control-line); }
+.review-app .coaching-panel .coaching-verdict { display: inline-flex; align-items: center; padding: 0 7px; border-left: 1px solid var(--control-line); color: var(--ink-2); line-height: 20px; text-decoration: none; }
+.review-app .coaching-panel .coaching-verdict:first-child { border-left: 0; }
+.review-app .coaching-panel .coaching-verdict:hover { background: var(--row-hover); color: var(--ink); text-decoration: none; }
+.review-app .coaching-panel .coaching-verdict[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); font-weight: 500; }
+.review-app .coaching-panel .coaching-feed-row.active .coaching-verdict[aria-pressed="true"] { color: var(--accent); }
